@@ -6,6 +6,7 @@ pub const CR4_SMEP: u64 = 1 << 20;
 pub const CR4_SMAP: u64 = 1 << 21;
 const CR0_FIXED: u64 = 0x80000033;
 const CR0_WP: u64 = 1 << 16;
+const CR0_AM: u64 = 1 << 18;
 const CR0_NUMERIC: u64 = 0xe;
 const CR4_NUMERIC: u64 = 0x600;
 const CR4_PROTECTION: u64 = CR4_SMEP | CR4_SMAP;
@@ -80,7 +81,7 @@ impl State {
             Mode::Long64 | Mode::Compatibility => pe && lma,
         };
         if !coherent_mode
-            || self.cr0 & !0xe001003f != 0
+            || self.cr0 & !0xe005003f != 0
             || self.cr0 & 0x10 == 0
             || pg && !pe
             || self.cr0 & 0x60000000 == 0x20000000
@@ -187,9 +188,6 @@ impl State {
                 {
                     return Err(GeneralProtection);
                 }
-                if value & !0xe001003f != 0 {
-                    return Err(Unsupported);
-                }
                 candidate.cr0 = value;
                 candidate.efer = (self.efer & !0x400)
                     | if value & 0x80000000 != 0 && self.efer & 0x100 != 0 {
@@ -284,7 +282,7 @@ fn valid_pdpte(value: u64) -> bool {
 impl State {
     pub fn validate(self) -> Result<(), &'static str> {
         if self.pdpte.is_some()
-            || self.cr0 & !(CR0_WP | CR0_NUMERIC) != CR0_FIXED & !CR0_NUMERIC
+            || self.cr0 & !(CR0_WP | CR0_AM | CR0_NUMERIC) != CR0_FIXED & !CR0_NUMERIC
             || self.cr3 & !CR3_ALLOWED != 0
             || self.cr4 & !(CR4_NUMERIC | CR4_TSD | CR4_PROTECTION) != CR4_FIXED & !CR4_NUMERIC
             || self.efer & !(EFER_NXE | EFER_SCE) != EFER_FIXED
@@ -326,7 +324,7 @@ impl State {
                 {
                     return Err(GeneralProtection);
                 }
-                if value & !(CR0_WP | CR0_NUMERIC) != CR0_FIXED & !CR0_NUMERIC {
+                if value & !(CR0_WP | CR0_AM | CR0_NUMERIC) != CR0_FIXED & !CR0_NUMERIC {
                     return Err(Unsupported);
                 }
                 candidate.cr0 = value;
@@ -400,13 +398,13 @@ impl State {
 
     pub fn translation_changed(self, other: Self) -> bool {
         (
-            self.cr0 & !CR0_NUMERIC,
+            self.cr0 & !(CR0_NUMERIC | CR0_AM),
             self.cr3,
             self.cr4 & !(CR4_NUMERIC | CR4_TSD),
             self.efer & EFER_NXE,
             self.pdpte,
         ) != (
-            other.cr0 & !CR0_NUMERIC,
+            other.cr0 & !(CR0_NUMERIC | CR0_AM),
             other.cr3,
             other.cr4 & !(CR4_NUMERIC | CR4_TSD),
             other.efer & EFER_NXE,
@@ -419,6 +417,152 @@ impl State {
 mod tests {
     use super::*;
     use ControlFailure::{GeneralProtection, Undefined, Unsupported};
+
+    #[test]
+    fn alignment_mask_is_admitted_without_translation_or_pdpte_effects() {
+        const AM: u64 = 1 << 18;
+        let fixed = State::default();
+        for mode in [Mode::Compatibility, Mode::Long64] {
+            let enabled = State {
+                cr0: fixed.cr0 | AM,
+                ..fixed
+            };
+            assert_eq!(enabled.validate(), Ok(()));
+            assert_eq!(fixed.prepare_cr_write(0, enabled.cr0, mode), Ok(enabled));
+            assert_eq!(enabled.read_cr(0), Ok(fixed.cr0 | AM));
+            assert_eq!(enabled.prepare_cr_write(0, fixed.cr0, mode), Ok(fixed));
+            assert!(!fixed.translation_changed(enabled));
+            assert!(!enabled.translation_changed(fixed));
+            assert_eq!(fixed.numeric_controls(), enabled.numeric_controls());
+            assert!(fixed.translation_changed(State {
+                cr0: enabled.cr0 | (1 << 16),
+                ..enabled
+            }));
+        }
+        for (state, mode) in [
+            (State::reset(), Mode::Real),
+            (
+                State {
+                    cr0: 0x60000011,
+                    ..State::reset()
+                },
+                Mode::Protected,
+            ),
+            (
+                State {
+                    cr0: 0x60000011,
+                    ..State::reset()
+                },
+                Mode::Virtual8086,
+            ),
+            (
+                State {
+                    cr0: 0x80000033,
+                    cr4: 0x608,
+                    efer: 0,
+                    ..fixed
+                },
+                Mode::Protected,
+            ),
+            (
+                State {
+                    cr0: 0x80000033,
+                    cr4: 0x608,
+                    efer: 0,
+                    ..fixed
+                },
+                Mode::Virtual8086,
+            ),
+            (
+                State {
+                    cr0: 0x80000033,
+                    cr4: 0x628,
+                    efer: 0,
+                    pdpte: Some([0x3001, 0, 0, 0]),
+                    ..fixed
+                },
+                Mode::Protected,
+            ),
+            (
+                State {
+                    cr0: 0x80000033,
+                    cr4: 0x628,
+                    efer: 0,
+                    pdpte: Some([0x3001, 0, 0, 0]),
+                    ..fixed
+                },
+                Mode::Virtual8086,
+            ),
+            (fixed, Mode::Compatibility),
+            (fixed, Mode::Long64),
+        ] {
+            let enabled = State {
+                cr0: state.cr0 | AM,
+                ..state
+            };
+            assert_eq!(enabled.validate_physical(mode), Ok(()), "{mode:?}");
+            assert_eq!(
+                state.prepare_physical_cr_write(0, enabled.cr0, mode),
+                Ok(enabled)
+            );
+            assert_eq!(
+                enabled.prepare_physical_cr_write(0, state.cr0, mode),
+                Ok(state)
+            );
+            assert!(!state.translation_changed(enabled), "{mode:?}");
+            assert!(!enabled.translation_changed(state), "{mode:?}");
+            assert!(!state.needs_pdpte_reload(enabled, 0), "{mode:?}");
+            assert_eq!(state.pdpte, enabled.pdpte);
+            assert_eq!(state.numeric_controls(), enabled.numeric_controls());
+        }
+    }
+
+    #[test]
+    fn alignment_mask_does_not_relax_cr0_architectural_or_fixed_profile_rules() {
+        const AM: u64 = 1 << 18;
+        let fixed = State::default();
+        for value in [0x180040033, 0x80040032, 0xa0040033, 0x40033] {
+            assert_eq!(
+                fixed.prepare_cr_write(0, value, Mode::Long64),
+                Err(GeneralProtection)
+            );
+            assert_eq!(
+                fixed.prepare_physical_cr_write(0, value, Mode::Long64),
+                Err(GeneralProtection)
+            );
+        }
+        assert_eq!(
+            fixed.prepare_cr_write(0, 0xe0040033, Mode::Long64),
+            Err(Unsupported)
+        );
+        assert!(
+            State {
+                cr0: fixed.cr0 | AM | (1 << 6),
+                ..fixed
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            State {
+                cr0: State::reset().cr0 | AM | 0x80000000,
+                ..State::reset()
+            }
+            .validate_physical(Mode::Real)
+            .is_err()
+        );
+        let pae_off = State {
+            cr0: 0x33 | AM,
+            cr4: 0x628,
+            efer: 0,
+            ..fixed
+        };
+        let pae_on = pae_off
+            .prepare_physical_cr_write(0, 0x80040033, Mode::Protected)
+            .unwrap();
+        assert!(pae_off.needs_pdpte_reload(pae_on, 0));
+        assert!(pae_off.translation_changed(pae_on));
+    }
 
     #[test]
     fn supervisor_protection_controls_are_admitted_in_both_control_models() {
@@ -702,7 +846,7 @@ mod tests {
             state.prepare_cr_write(8, 16, Mode::Long64),
             Err(GeneralProtection)
         );
-        for value in [0x80000013, 0x80040033, 0xe0000033] {
+        for value in [0x80000013, 0xe0000033] {
             assert_eq!(
                 state.prepare_cr_write(0, value, Mode::Long64),
                 Err(Unsupported),
