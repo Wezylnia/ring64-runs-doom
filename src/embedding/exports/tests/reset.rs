@@ -99,7 +99,7 @@ fn cold_probe_does_not_evaluate_ne_pending_but_reached_begin_does() {
 }
 
 #[test]
-fn loaded_cs_activation_invalidity_precedes_a_deferred_cr0_facility() {
+fn loaded_cs_activation_invalidity_precedes_a_combined_paging_and_alignment_write() {
     initialize(0x1000, &[0x90]);
     BRIDGE.with_borrow_mut(|b| {
         let c = b.core.as_mut().unwrap();

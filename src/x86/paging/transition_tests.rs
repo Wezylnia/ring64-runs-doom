@@ -158,7 +158,6 @@ fn physical_transition_matrix_has_literal_control_failures_and_retains_raw_banks
         (0, 0x80000032, Gp),
         (0, 0x20000033, Gp),
         (0, 1 << 32 | 0x33, Gp),
-        (0, 0x40033, Unsupported),
         (4, 1 << 15, Gp),
         (4, 1 << 17, Gp),
         (4, 1 << 23, Gp),
@@ -173,6 +172,23 @@ fn physical_transition_matrix_has_literal_control_failures_and_retains_raw_banks
             "CR{register}={value:x}"
         );
     }
+    let aligned = pg0
+        .prepare_physical_cr_write(0, 0x40033, Mode::Protected)
+        .unwrap();
+    assert_eq!(
+        aligned,
+        State {
+            cr0: 0x40033,
+            ..pg0
+        }
+    );
+    assert_eq!(aligned.read_cr(0), Ok(0x40033));
+    assert_eq!(
+        aligned.prepare_physical_cr_write(0, 0x33, Mode::Protected),
+        Ok(pg0)
+    );
+    assert!(!pg0.translation_changed(aligned));
+    assert!(!pg0.needs_pdpte_reload(aligned, 0));
     for cache in [0, 0x40000000, 0x60000000] {
         let result = pg0
             .prepare_physical_cr_write(0, cache | 0x33, Mode::Protected)

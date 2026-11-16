@@ -21,7 +21,7 @@ export function negativeScenarios(compiler: WebAssembly.Module): Scenario[] {
         const cases: Array<[string, bigint, string]> = [
           ['0f22c0', 0x80000032n, 'protection-fault'],
           ['0f22c0', 0x20000033n, 'protection-fault'],
-          ['0f22c0', 0x40033n, 'unsupported'],
+          ['0f22e0', 0x100n, 'unsupported'],
           ['0f22e0', 0x8000n, 'protection-fault'],
           ['0f22e0', 0x20000n, 'protection-fault'],
           ['0f22e0', 0x80n, 'unsupported'],
@@ -77,7 +77,7 @@ export function negativeScenarios(compiler: WebAssembly.Module): Scenario[] {
             registers[0] = 0x80040033n;
             cpu.setState({ registers, flags: 2n, rip: 0x1000n });
             const result = await cpu.run({ budget: 1n });
-            equal(result.reason, 'protection-fault', 'loaded restriction before deferred AM');
+            equal(result.reason, 'protection-fault', 'loaded restriction before AM-enabled activation');
             equal(result.retired, 0n, 'activation refused');
             equal(cpu.readContext().mode, 'protected', 'no mode publication');
             equal(cpu.readPagingState().efer, 0x100n, 'no LMA publication');
