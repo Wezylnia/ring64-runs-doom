@@ -126,6 +126,7 @@ await writeFile(join(evidence, 'alignment-checking-mutation-cases.mjs'), catalog
 const env = {
   ...process.env,
   CARGO_TARGET_DIR: join(await realpath(work), 'target'),
+  CARGO_INCREMENTAL: '0',
   RUST_BACKTRACE: '0',
 };
 
@@ -234,6 +235,59 @@ async function build(label, kind) {
   if (kind === 'public') await copyFile(path, join(work, 'build/ring64.wasm'));
   return { path, sha256, fresh: artifact.fresh, process: publicResult(result) };
 }
+function unchangedOracle(candidate, baseline, line, testName) {
+  const source = candidate.split('\n')[line - 1];
+  if (!/^\s*assert(?:_eq|_ne)?!\(/.test(source)) return;
+  const offset = candidate
+    .split('\n')
+    .slice(0, line - 1)
+    .join('\n').length;
+  const leaf = testName.split('::').at(-1);
+  const functions = [...candidate.matchAll(/^([ \t]*)fn (\w+)\(/gm)];
+  const named = functions.filter((match) => match[2] === leaf);
+  if (named.length !== 1) return;
+  const testFunction = named[0];
+  const nextFunction = functions.find(
+    (match) => match.index > testFunction.index && match[1].length <= testFunction[1].length,
+  );
+  if (
+    !candidate.slice(0, testFunction.index).trimEnd().endsWith('#[test]') ||
+    offset < testFunction.index ||
+    (nextFunction && offset >= nextFunction.index)
+  )
+    return;
+  let region = candidate;
+  let baselineRegion = baseline;
+  let kind = 'file';
+  let candidateStartLine = 1;
+  let baselineStartLine = 1;
+  if (candidate !== baseline) {
+    // Production and tests may share a file. For the catalogue's inline test
+    // modules, the cfg(test) module and its unchanged suffix own the oracle.
+    const modules = [...candidate.matchAll(/^#\[cfg\(test\)\]\nmod (\w+) \{/gm)];
+    const owner = modules.findLast(
+      (match) => match.index <= offset && testName.includes(`::${match[1]}::`),
+    );
+    if (!owner || baseline.split(owner[0]).length !== 2) return;
+    const baselineOffset = baseline.indexOf(owner[0]);
+    region = candidate.slice(owner.index);
+    baselineRegion = baseline.slice(baselineOffset);
+    kind = 'cfg-test-module-suffix';
+    candidateStartLine = candidate.slice(0, owner.index).split('\n').length;
+    baselineStartLine = baseline.slice(0, baselineOffset).split('\n').length;
+  }
+  if (region !== baselineRegion) return;
+  return {
+    kind,
+    source: source.trim(),
+    candidateStartLine,
+    baselineStartLine,
+    baselineLine: baselineStartLine + line - candidateStartLine,
+    oracleRegionSha256: hash(region),
+    baselineFileSha256: hash(baseline),
+    candidateFileSha256: hash(candidate),
+  };
+}
 async function test(label, kind, filter, artifact) {
   const result =
     kind === 'native'
@@ -263,15 +317,16 @@ async function test(label, kind, filter, artifact) {
         line = Number(panic[3]);
       const original = await readFile(join(root, file), 'utf8');
       const copy = await readFile(join(work, file), 'utf8');
-      const source = copy.split('\n')[line - 1];
       // A production panic/unwrap, compiler rejection, or modified oracle does not count.
-      if (copy === original && /^\s*assert(?:_eq|_ne)?!\(/.test(source))
+      const oracle = unchangedOracle(copy, original, line, panic[1]);
+      if (oracle)
         assertion = {
           name: panic[1],
           file,
           line,
-          source: source.trim(),
-          oracleSha256: hash(copy),
+          source: oracle.source,
+          oracleRegionSha256: oracle.oracleRegionSha256,
+          oracle,
           message: panic[5],
         };
     }
@@ -310,6 +365,7 @@ async function receipt() {
     work,
     evidence,
     target: env.CARGO_TARGET_DIR,
+    cargoIncremental: env.CARGO_INCREMENTAL,
     sourceIdentitySha256: baselineIdentity.sha256,
     sourceIdentityScope:
       'src/** + host/** + tests/** + Cargo.toml/Cargo.lock/package.json/tsconfig.json',
