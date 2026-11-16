@@ -23,6 +23,65 @@ export function boundaryScenarios(compiler: WebAssembly.Module): Scenario[] {
   const side = { createCpu, compiler };
   return [
     {
+      name: 'alignment checking odd implicit GDT lookup stays exempt while SMAP still denies its user page under AC',
+      async run() {
+        for (const smap of [false, true]) {
+          const f = fixture(compiler, '8e1b'),
+            context = f.options.context as ExecutionContextSnapshot;
+          context.gdtr = { base: 0x7001n, limit: 0x3f };
+          f.bytes.set(new Uint8Array([0x13, 0]), 0xa000);
+          // Selector13 indexes offset10 from the odd GDTR base: descriptor7011.
+          f.bytes.set(new Uint8Array([0xff, 0xff, 0, 0, 0, 0xf3, 0xcf, 0]), 0xb011);
+          if (smap) f.paging.cr4 |= 0x200000n;
+          await using(side, f, async (cpu) => {
+            const before = state({ 3: 0x6000n }),
+              original = cpu.readContext(),
+              unchanged = preserved(cpu),
+              result = await runOne(cpu, before);
+            equal(result.alignmentCheck, undefined, 'implicit descriptor alignment is exempt');
+            if (smap) {
+              equal(
+                result.reason,
+                'page-fault',
+                'implicit supervisor traffic cannot use ordinary AC override',
+              );
+              same(
+                result.pageFault,
+                {
+                  vector: 14,
+                  instructionPc: PC,
+                  address: 0x7011n,
+                  access: 'read',
+                  errorCode: 1,
+                  table: 'gdt',
+                  systemPhase: 'descriptor-read',
+                  selector: 0x13,
+                },
+                'literal implicit SMAP provenance',
+              );
+              scalar(result, before);
+            } else {
+              equal(result.reason, 'budget', 'actual odd metadata lookup succeeds');
+              scalar(result, before, 1n, 2);
+            }
+            same(
+              cpu.readContext(),
+              original,
+              'no cache candidate on failure and equivalent descriptor on success',
+            );
+            equal(
+              cpu.readPagingState().cr2,
+              smap ? 0x7011n : 0xdeadn,
+              'only implicit PF changes CR2',
+            );
+            unchanged();
+            memory(cpu, f.bytes, 'already-accessed descriptor and warm page words unchanged');
+            clock(cpu, smap ? 100n : 101n);
+          });
+        }
+      },
+    },
+    {
       name: 'alignment checking CPL and SMAP consume the same live AC with separate meanings',
       async run() {
         for (const family of families)
