@@ -286,6 +286,13 @@ fn participates`,
             self.string_address(6, address_width, source_segment);
             self.load_address_value(width, false, exit_depth);`,
     ),
+    edit(
+      'src/dbt/wasm/mod.rs',
+      '    let write_intent = unit.instructions.iter().any(|instruction| {',
+      `    let write_intent = unit.instructions.iter().any(|instruction| matches!(instruction.operation,
+        Operation::String { kind: crate::x86::instruction::StringKind::Movs, .. }))
+        || unit.instructions.iter().any(|instruction| {`,
+    ),
   ),
   publicCpu(
     'ins-consumes-two-provider-values-for-one-element',
@@ -302,10 +309,34 @@ fn participates`,
     'OUTS source refusal prevents provider output',
     edit(
       'src/embedding/exports/io.rs',
-      '            if kind == 3 {\n                data = match guest_access!',
       `            if kind == 3 {
-                unsafe { port_write(port, width.bits(), data as u32); }
-                data = match guest_access!`,
+                data = match guest_access!(core, paged, read(address, u32::from(width.bytes()))) {
+                    Ok(value) => value,
+                    Err(failure) => {
+                        core.access_failure(failure);
+                        return Err(core.memory_failure_reason());
+                    }
+                };
+                if OBSERVED {
+                    core.debug_operand(address, u32::from(width.bytes()), Access::Read);
+                }
+            }`,
+      '            // Deliberately defer OUTS source admission until after the provider.',
+    ),
+    edit(
+      'src/embedding/exports/io.rs',
+      `        core.io_effect = false;
+        if kind == 2 {`,
+      `        core.io_effect = false;
+        if kind == 3 {
+            let paged = core.paging.is_some();
+            if let Err(failure) = guest_access!(core, paged, read(address, u32::from(width.bytes()))) {
+                core.access_failure(failure);
+                return core.memory_failure_reason();
+            }
+            if OBSERVED { core.debug_operand(address, u32::from(width.bytes()), Access::Read); }
+        }
+        if kind == 2 {`,
     ),
   ),
   publicCpu(
