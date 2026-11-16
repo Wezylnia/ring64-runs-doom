@@ -186,6 +186,7 @@ pub enum AccessFailure {
     Segment(SegmentFault),
     Linear(Fault),
     Paging(super::paging::walk::Failure),
+    AlignmentCheck(super::alignment::Fault),
 }
 
 impl ExecutionContext {

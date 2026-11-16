@@ -26,6 +26,9 @@ impl Core {
                     AccessFailure::Linear(f) => DecodeError::Fetch(f),
                     AccessFailure::Segment(f) => DecodeError::Segment(f),
                     AccessFailure::Paging(f) => DecodeError::Paging(f),
+                    AccessFailure::AlignmentCheck(_) => {
+                        unreachable!("instruction fetch is alignment exempt")
+                    }
                 })?;
             let request = paging::walk::Request {
                 linear,
@@ -120,6 +123,7 @@ impl Core {
             Some(Failure::Page(_)) => 24,
             Some(Failure::Physical(_)) => 25,
             None if self.segment_fault.is_some() => SEGMENT,
+            None if self.alignment_check.is_some() => super::super::layout::ALIGNMENT_CHECK,
             None => DATA,
         }
     }
@@ -172,7 +176,10 @@ pub extern "C" fn core_paged_access_failed() -> i32 {
     BRIDGE.with_borrow(|bridge| {
         let core = bridge.core.as_ref().unwrap();
         i32::from(
-            core.paging_failure.is_some() || core.fault.is_some() || core.segment_fault.is_some(),
+            core.paging_failure.is_some()
+                || core.fault.is_some()
+                || core.segment_fault.is_some()
+                || core.alignment_check.is_some(),
         )
     })
 }
@@ -199,6 +206,7 @@ pub extern "C" fn core_paged_debug_begin(pc: u64, flags: u64, shadow: u32) -> i3
     BRIDGE.with_borrow_mut(|bridge| {
         let core = bridge.core.as_mut().unwrap();
         core.paging_work.clear();
+        core.alignment_check = None;
         core.numeric_fault = None;
         core.numeric_form = None;
         core.paging_failure = None;

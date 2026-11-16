@@ -1,4 +1,5 @@
 use super::access::GuestMemory;
+use super::alignment::Intent;
 use super::context::{AccessFailure, ExecutionContext, Mode, Segment, SegmentCause, SegmentType};
 use super::instruction::Width;
 use super::protection::{Failure, ProtectionFault, ProtectionPhase};
@@ -196,7 +197,9 @@ fn read(
 ) -> Result<u64, Failure> {
     let size = u32::from(width.bytes());
     let address = stack_address(context, cursor, size, Access::Read)?;
-    let value = memory.read(address, size).map_err(Failure::Operand)?;
+    let value = memory
+        .read_aligned(address, size, Intent::Natural(size))
+        .map_err(Failure::Operand)?;
     observe(address, size, Access::Read);
     Ok(value & width.mask())
 }
@@ -214,11 +217,11 @@ fn push(
     let size = u32::from(width.bytes());
     let address = stack_address(context, next & stack.mask(), size, Access::Write)?;
     memory
-        .check_write(address, size)
+        .check_write_aligned(address, size, Intent::Natural(size))
         .map_err(Failure::Operand)?;
     memory.prepare_publication().map_err(Failure::Operand)?;
     memory
-        .write(address, size, value & width.mask())
+        .write_aligned(address, size, value & width.mask(), Intent::Natural(size))
         .map_err(Failure::Operand)?;
     observe(address, size, Access::Write);
     *sp = next;

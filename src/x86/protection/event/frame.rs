@@ -1,5 +1,6 @@
 use super::*;
 use crate::memory::Access;
+use crate::x86::alignment::Intent;
 
 #[derive(Clone, Copy, Default)]
 struct Write {
@@ -92,7 +93,12 @@ impl Frame {
     pub fn admit(&self, image: &impl GuestMemory) -> Result<(), EventFailure> {
         for slot in &self.writes[..self.count] {
             image
-                .check_frame_write(slot.address, slot.width, self.cpl)
+                .check_frame_write_aligned(
+                    slot.address,
+                    slot.width,
+                    self.cpl,
+                    Intent::Natural(slot.width),
+                )
                 .map_err(|failure| EventFailure::Operand {
                     segment: Segment::Ss,
                     failure,

@@ -35,9 +35,10 @@ pub const HALTED: i32 = 23;
 pub const PAGE_FAULT: i32 = 24;
 pub const PHYSICAL_MEMORY: i32 = 25;
 pub const DEVICE_NOT_AVAILABLE: i32 = 27;
+pub const ALIGNMENT_CHECK: i32 = 28;
 pub const SCALAR_STATE_SIZE: usize = 176;
 
-pub const REASONS: [&str; 28] = [
+pub const REASONS: [&str; 29] = [
     "dispatch",
     "budget",
     "stop",
@@ -66,6 +67,7 @@ pub const REASONS: [&str; 28] = [
     "physical-memory-fault",
     "paging-restart",
     "device-not-available",
+    "alignment-check",
 ];
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

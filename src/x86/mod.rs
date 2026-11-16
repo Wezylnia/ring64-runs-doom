@@ -1,4 +1,5 @@
 pub mod access;
+pub mod alignment;
 pub mod compound_stack;
 pub mod context;
 pub mod debug;

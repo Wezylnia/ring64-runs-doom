@@ -228,13 +228,17 @@ impl<'a, M: GuestMemory> Reader<'a, M> {
                 segment: Segment::Ss,
                 failure,
             })?;
-        let bytes =
-            self.image
-                .read_vector(address, width)
-                .map_err(|failure| EventFailure::Operand {
-                    segment: Segment::Ss,
-                    failure,
-                })?;
+        let bytes = self
+            .image
+            .read_vector_aligned(
+                address,
+                width,
+                crate::x86::alignment::Intent::Natural(width),
+            )
+            .map_err(|failure| EventFailure::Operand {
+                segment: Segment::Ss,
+                failure,
+            })?;
         self.cursor = self.cursor.wrapping_add(u64::from(width)) & self.pointer_width.mask();
         Ok(u64::from_le_bytes(bytes[..8].try_into().unwrap()))
     }

@@ -7,6 +7,7 @@ use super::{
 use crate::memory::{Access, Image, PreparedPhysicalUpdate, PreparedPhysicalWrite, check_span};
 use crate::x86::{
     access::{GuestMemory, PublicationFailure},
+    alignment::Intent,
     context::AccessFailure,
 };
 
@@ -49,6 +50,7 @@ pub struct Memory<'a> {
     paging: &'a State,
     class: AccessClass,
     raw_ac: bool,
+    alignment_controls: bool,
 }
 
 impl<'a> Memory<'a> {
@@ -65,6 +67,7 @@ impl<'a> Memory<'a> {
             paging,
             class: AccessClass::operand(cpl, ac),
             raw_ac: ac,
+            alignment_controls: ac && paging.cr0 & 0x40001 == 0x40001,
         }
     }
 
@@ -125,6 +128,26 @@ impl<'a> Memory<'a> {
         Ok(prepared)
     }
 
+    fn prepare_aligned(
+        &self,
+        address: u64,
+        width: u32,
+        access: Access,
+        rmw: bool,
+        class: AccessClass,
+        intent: Intent,
+    ) -> Result<Prepared, AccessFailure> {
+        let prepared = self.prepare(address, width, access, rmw, class)?;
+        if self.alignment_controls
+            && class.is_user()
+            && let Err(fault) = intent.check(address, width, access)
+        {
+            self.storage.borrow_mut().work.clear();
+            return Err(AccessFailure::AlignmentCheck(fault));
+        }
+        Ok(prepared)
+    }
+
     fn read_prepared(&self, prepared: &Prepared, output: &mut [u8]) {
         let storage = self.storage.borrow();
         for fragment in &prepared.fragments {
@@ -142,12 +165,43 @@ impl<'a> Memory<'a> {
         address: u64,
         width: u32,
         class: AccessClass,
+        intent: Intent,
     ) -> Result<[u8; 16], AccessFailure> {
         assert!(width <= 16);
-        let prepared = self.prepare(address, width, Access::Read, false, class)?;
+        let prepared = self.prepare_aligned(address, width, Access::Read, false, class, intent)?;
         let mut bytes = [0; 16];
         self.read_prepared(&prepared, &mut bytes);
         Ok(bytes)
+    }
+
+    fn read_fields_at(
+        &self,
+        address: u64,
+        width: u32,
+        fields: &[(u32, u32)],
+        output: &mut [u8],
+        intent: Intent,
+    ) -> Result<(), AccessFailure> {
+        let prepared =
+            self.prepare_aligned(address, width, Access::Read, false, self.class, intent)?;
+        let storage = self.storage.borrow();
+        for fragment in &prepared.fragments {
+            for &(start, length) in fields {
+                let begin = start.max(fragment.offset);
+                let end = (start + length).min(fragment.offset + fragment.length);
+                if begin < end {
+                    let bytes = storage
+                        .image
+                        .physical_read_bytes(
+                            fragment.translation.physical + u64::from(begin - fragment.offset),
+                            end - begin,
+                        )
+                        .expect("admitted physical field read");
+                    output[begin as usize..end as usize].copy_from_slice(&bytes);
+                }
+            }
+        }
+        Ok(())
     }
 
     fn capture_write(
@@ -155,8 +209,9 @@ impl<'a> Memory<'a> {
         address: u64,
         width: u32,
         class: AccessClass,
+        intent: Intent,
     ) -> Result<(), AccessFailure> {
-        self.capture_write_fields(address, width, &[(0, width)], class)
+        self.capture_write_fields(address, width, &[(0, width)], class, intent)
     }
 
     fn capture_write_fields(
@@ -165,8 +220,10 @@ impl<'a> Memory<'a> {
         width: u32,
         fields: &[(u32, u32)],
         class: AccessClass,
+        intent: Intent,
     ) -> Result<(), AccessFailure> {
-        let mut prepared = self.prepare(address, width, Access::Write, false, class)?;
+        let mut prepared =
+            self.prepare_aligned(address, width, Access::Write, false, class, intent)?;
         if prepared.fields.as_slice() != fields {
             prepared.fields = fields.to_vec();
         }
@@ -216,6 +273,7 @@ impl<'a> Memory<'a> {
         fields: &[(u32, u32)],
         bytes: &[u8],
         class: AccessClass,
+        intent: Intent,
     ) -> Result<(), AccessFailure> {
         let captured = {
             let mut storage = self.storage.borrow_mut();
@@ -228,7 +286,7 @@ impl<'a> Memory<'a> {
         };
         let prepared = match captured {
             Some(p) => p,
-            None => self.prepare(address, width, Access::Write, false, class)?,
+            None => self.prepare_aligned(address, width, Access::Write, false, class, intent)?,
         };
         if !prepared.published {
             let updates = self.dirty_admission(&prepared, fields)?;
@@ -271,18 +329,14 @@ impl GuestMemory for Memory<'_> {
             .expect("admitted physical fetch"))
     }
     fn read(&self, address: u64, width: u32) -> Result<u64, AccessFailure> {
-        let bytes = self.read_at(address, width, self.class)?;
+        let bytes = self.read_at(address, width, self.class, Intent::Exempt)?;
         Ok(u64::from_le_bytes(bytes[..8].try_into().unwrap()))
     }
     fn read_for_write(&self, address: u64, width: u32) -> Result<u64, AccessFailure> {
-        let prepared = self.prepare(address, width, Access::Write, true, self.class)?;
-        let mut bytes = [0; 8];
-        self.read_prepared(&prepared, &mut bytes);
-        self.storage.borrow_mut().work.pending.push(prepared);
-        Ok(u64::from_le_bytes(bytes))
+        self.read_for_write_aligned(address, width, Intent::Exempt)
     }
     fn read_vector(&self, address: u64, width: u32) -> Result<[u8; 16], AccessFailure> {
-        self.read_at(address, width, self.class)
+        self.read_at(address, width, self.class, Intent::Exempt)
     }
     fn read_fields(
         &self,
@@ -291,25 +345,7 @@ impl GuestMemory for Memory<'_> {
         fields: &[(u32, u32)],
         output: &mut [u8],
     ) -> Result<(), AccessFailure> {
-        let prepared = self.prepare(address, width, Access::Read, false, self.class)?;
-        let storage = self.storage.borrow();
-        for fragment in &prepared.fragments {
-            for &(start, length) in fields {
-                let begin = start.max(fragment.offset);
-                let end = (start + length).min(fragment.offset + fragment.length);
-                if begin < end {
-                    let bytes = storage
-                        .image
-                        .physical_read_bytes(
-                            fragment.translation.physical + u64::from(begin - fragment.offset),
-                            end - begin,
-                        )
-                        .expect("admitted physical field read");
-                    output[begin as usize..end as usize].copy_from_slice(&bytes);
-                }
-            }
-        }
-        Ok(())
+        self.read_fields_at(address, width, fields, output, Intent::Exempt)
     }
     fn write(&mut self, address: u64, width: u32, value: u64) -> Result<(), AccessFailure> {
         self.write_at(
@@ -318,6 +354,7 @@ impl GuestMemory for Memory<'_> {
             &[(0, width)],
             &value.to_le_bytes(),
             self.class,
+            Intent::Exempt,
         )
     }
     fn write_bytes(&mut self, address: u64, bytes: &[u8]) -> Result<(), AccessFailure> {
@@ -327,6 +364,7 @@ impl GuestMemory for Memory<'_> {
             &[(0, bytes.len() as u32)],
             bytes,
             self.class,
+            Intent::Exempt,
         )
     }
     fn write_fields(
@@ -336,14 +374,107 @@ impl GuestMemory for Memory<'_> {
         fields: &[(u32, u32)],
         bytes: &[u8],
     ) -> Result<(), AccessFailure> {
-        self.write_at(address, width, fields, bytes, self.class)
+        self.write_at(address, width, fields, bytes, self.class, Intent::Exempt)
     }
     fn check_read(&self, address: u64, width: u32) -> Result<(), AccessFailure> {
         self.prepare(address, width, Access::Read, false, self.class)
             .map(|_| ())
     }
     fn check_write(&self, address: u64, width: u32) -> Result<(), AccessFailure> {
-        self.capture_write(address, width, self.class)
+        self.capture_write(address, width, self.class, Intent::Exempt)
+    }
+    fn read_aligned(&self, address: u64, width: u32, intent: Intent) -> Result<u64, AccessFailure> {
+        let bytes = self.read_at(address, width, self.class, intent)?;
+        Ok(u64::from_le_bytes(bytes[..8].try_into().unwrap()))
+    }
+    fn read_for_write_aligned(
+        &self,
+        address: u64,
+        width: u32,
+        intent: Intent,
+    ) -> Result<u64, AccessFailure> {
+        let prepared =
+            self.prepare_aligned(address, width, Access::Write, true, self.class, intent)?;
+        let mut bytes = [0; 8];
+        self.read_prepared(&prepared, &mut bytes);
+        self.storage.borrow_mut().work.pending.push(prepared);
+        Ok(u64::from_le_bytes(bytes))
+    }
+    fn read_vector_aligned(
+        &self,
+        address: u64,
+        width: u32,
+        intent: Intent,
+    ) -> Result<[u8; 16], AccessFailure> {
+        self.read_at(address, width, self.class, intent)
+    }
+    fn read_fields_aligned(
+        &self,
+        address: u64,
+        width: u32,
+        fields: &[(u32, u32)],
+        output: &mut [u8],
+        intent: Intent,
+    ) -> Result<(), AccessFailure> {
+        self.read_fields_at(address, width, fields, output, intent)
+    }
+    fn write_aligned(
+        &mut self,
+        address: u64,
+        width: u32,
+        value: u64,
+        intent: Intent,
+    ) -> Result<(), AccessFailure> {
+        self.write_at(
+            address,
+            width,
+            &[(0, width)],
+            &value.to_le_bytes(),
+            self.class,
+            intent,
+        )
+    }
+    fn write_bytes_aligned(
+        &mut self,
+        address: u64,
+        bytes: &[u8],
+        intent: Intent,
+    ) -> Result<(), AccessFailure> {
+        self.write_at(
+            address,
+            bytes.len() as u32,
+            &[(0, bytes.len() as u32)],
+            bytes,
+            self.class,
+            intent,
+        )
+    }
+    fn write_fields_aligned(
+        &mut self,
+        address: u64,
+        width: u32,
+        fields: &[(u32, u32)],
+        bytes: &[u8],
+        intent: Intent,
+    ) -> Result<(), AccessFailure> {
+        self.write_at(address, width, fields, bytes, self.class, intent)
+    }
+    fn check_read_aligned(
+        &self,
+        address: u64,
+        width: u32,
+        intent: Intent,
+    ) -> Result<(), AccessFailure> {
+        self.prepare_aligned(address, width, Access::Read, false, self.class, intent)
+            .map(|_| ())
+    }
+    fn check_write_aligned(
+        &self,
+        address: u64,
+        width: u32,
+        intent: Intent,
+    ) -> Result<(), AccessFailure> {
+        self.capture_write(address, width, self.class, intent)
     }
     fn probe_write(&self, address: u64) -> Result<(), AccessFailure> {
         check_span(address, 1, Access::Write).map_err(AccessFailure::Linear)?;
@@ -363,10 +494,20 @@ impl GuestMemory for Memory<'_> {
             })
     }
     fn read_system(&self, address: u64, width: u32) -> Result<[u8; 16], AccessFailure> {
-        self.read_at(address, width, AccessClass::ImplicitSupervisor)
+        self.read_at(
+            address,
+            width,
+            AccessClass::ImplicitSupervisor,
+            Intent::Exempt,
+        )
     }
     fn check_system_write(&self, address: u64, width: u32) -> Result<(), AccessFailure> {
-        self.capture_write(address, width, AccessClass::ImplicitSupervisor)
+        self.capture_write(
+            address,
+            width,
+            AccessClass::ImplicitSupervisor,
+            Intent::Exempt,
+        )
     }
     fn check_system_write_fields(
         &self,
@@ -374,7 +515,13 @@ impl GuestMemory for Memory<'_> {
         width: u32,
         fields: &[(u32, u32)],
     ) -> Result<(), AccessFailure> {
-        self.capture_write_fields(address, width, fields, AccessClass::ImplicitSupervisor)
+        self.capture_write_fields(
+            address,
+            width,
+            fields,
+            AccessClass::ImplicitSupervisor,
+            Intent::Exempt,
+        )
     }
     fn write_system(&mut self, address: u64, width: u32, value: u64) -> Result<(), AccessFailure> {
         self.write_at(
@@ -383,6 +530,7 @@ impl GuestMemory for Memory<'_> {
             &[(0, width)],
             &value.to_le_bytes(),
             AccessClass::ImplicitSupervisor,
+            Intent::Exempt,
         )
     }
     fn publish_system_byte(
@@ -400,10 +548,30 @@ impl GuestMemory for Memory<'_> {
             &[(offset, 1)],
             &bytes,
             AccessClass::ImplicitSupervisor,
+            Intent::Exempt,
         )
     }
     fn check_frame_write(&self, address: u64, width: u32, cpl: u8) -> Result<(), AccessFailure> {
-        self.capture_write(address, width, AccessClass::operand(cpl, self.raw_ac))
+        self.capture_write(
+            address,
+            width,
+            AccessClass::operand(cpl, self.raw_ac),
+            Intent::Exempt,
+        )
+    }
+    fn check_frame_write_aligned(
+        &self,
+        address: u64,
+        width: u32,
+        cpl: u8,
+        intent: Intent,
+    ) -> Result<(), AccessFailure> {
+        self.capture_write(
+            address,
+            width,
+            AccessClass::operand(cpl, self.raw_ac),
+            intent,
+        )
     }
     fn prepare_publication(&mut self) -> Result<(), AccessFailure> {
         self.prepare_publication_ordered()
@@ -435,3 +603,7 @@ impl GuestMemory for Memory<'_> {
 #[cfg(test)]
 #[path = "access_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "alignment_tests.rs"]
+mod alignment_tests;

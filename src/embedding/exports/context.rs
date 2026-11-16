@@ -3,6 +3,7 @@ use super::*;
 impl Core {
     pub(super) fn access_failure(&mut self, failure: AccessFailure) {
         match failure {
+            AccessFailure::AlignmentCheck(fault) => self.alignment_check = Some(fault),
             AccessFailure::Linear(fault) => self.fault = Some(fault),
             AccessFailure::Segment(fault) => self.segment_fault = Some(fault),
             AccessFailure::Paging(fault) => {
@@ -20,6 +21,7 @@ impl Core {
         rmw: bool,
     ) -> Option<u64> {
         self.fault = None;
+        self.alignment_check = None;
         self.segment_fault = None;
         unsafe {
             (*self.state.get()).fault_segment = segment as u32;
@@ -95,6 +97,7 @@ pub extern "C" fn core_set_context() -> i32 {
         core.debug_exception = None;
         core.fault = None;
         core.alignment_fault = None;
+        core.alignment_check = None;
         core.simd_exception = None;
         core.numeric_fault = None;
         core.general_protection = None;
@@ -246,7 +249,9 @@ fn core_segmented_store_impl<const OBSERVED: bool, const PAGED: bool>(
 #[unsafe(no_mangle)]
 pub extern "C" fn core_access_reason() -> i32 {
     BRIDGE.with_borrow(|bridge| {
-        if bridge.core.as_ref().unwrap().alignment_fault.is_some() {
+        if bridge.core.as_ref().unwrap().alignment_check.is_some() {
+            super::super::layout::ALIGNMENT_CHECK
+        } else if bridge.core.as_ref().unwrap().alignment_fault.is_some() {
             super::super::layout::ALIGNMENT
         } else if bridge.core.as_ref().unwrap().segment_fault.is_some() {
             SEGMENT

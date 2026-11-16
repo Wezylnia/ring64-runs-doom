@@ -1,4 +1,5 @@
 use super::*;
+use crate::x86::alignment::Intent;
 use crate::x86::context::Mode;
 
 #[derive(Clone, Copy)]
@@ -34,7 +35,7 @@ impl DescriptorWrite {
             AccessFailure::Paging(crate::x86::paging::walk::Failure::Physical(failure)) => {
                 failure.linear
             }
-            AccessFailure::Segment(_) => return false,
+            AccessFailure::Segment(_) | AccessFailure::AlignmentCheck(_) => return false,
         };
         address >= self.address && address - self.address < u64::from(self.width)
     }
@@ -113,6 +114,7 @@ impl Lookup {
                 reference: SystemReference::Selector(self.selector),
             }),
             AccessFailure::Segment(_) => unreachable!("system access has no segment admission"),
+            AccessFailure::AlignmentCheck(_) => unreachable!("system access is alignment exempt"),
         }
     }
 
@@ -219,8 +221,10 @@ pub(super) fn read_operand(
     offset: u64,
     width: u32,
     segment: Segment,
+    intent: Intent,
 ) -> Result<[u8; 10], Failure> {
-    read_operand_with_address(context, image, offset, width, segment).map(|(bytes, _)| bytes)
+    read_operand_with_address(context, image, offset, width, segment, intent)
+        .map(|(bytes, _)| bytes)
 }
 
 pub(super) fn read_operand_with_address(
@@ -229,13 +233,14 @@ pub(super) fn read_operand_with_address(
     offset: u64,
     width: u32,
     segment: Segment,
+    intent: Intent,
 ) -> Result<([u8; 10], u64), Failure> {
     let address = context
         .translate(offset, width, segment, Access::Read, false)
         .map_err(Failure::Operand)?;
     let mut bytes = [0; 10];
     image
-        .read_fields(address, width, &[(0, width)], &mut bytes)
+        .read_fields_aligned(address, width, &[(0, width)], &mut bytes, intent)
         .map_err(Failure::Operand)?;
     Ok((bytes, address))
 }
@@ -246,11 +251,14 @@ pub(super) fn write_operand(
     offset: u64,
     bytes: &[u8],
     segment: Segment,
+    intent: Intent,
 ) -> Result<(), Failure> {
     let address = context
         .translate(offset, bytes.len() as u32, segment, Access::Write, false)
         .map_err(Failure::Operand)?;
-    image.write_bytes(address, bytes).map_err(Failure::Operand)
+    image
+        .write_bytes_aligned(address, bytes, intent)
+        .map_err(Failure::Operand)
 }
 
 pub(super) struct SystemRead {
@@ -312,6 +320,9 @@ impl SystemRead {
                 }
                 AccessFailure::Segment(_) => {
                     unreachable!("system access has no segment admission")
+                }
+                AccessFailure::AlignmentCheck(_) => {
+                    unreachable!("system access is alignment exempt")
                 }
             })
     }

@@ -1,6 +1,7 @@
 use super::*;
 mod access_faults;
 mod admission;
+mod alignment;
 mod call_gate_owners;
 mod call_gate_sources;
 mod compound_stack;

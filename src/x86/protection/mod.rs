@@ -4,6 +4,7 @@ use super::instruction::{ProtectionDescriptor, ProtectionKind, Width};
 use crate::memory::Image;
 use crate::memory::{Access, Cause};
 use crate::x86::access::GuestMemory;
+use crate::x86::alignment::Intent;
 
 mod access;
 mod descriptor;
@@ -212,7 +213,14 @@ pub fn execute(
             bytes[..2].copy_from_slice(&table.limit.to_le_bytes());
             bytes[2..].copy_from_slice(&table.base.to_le_bytes());
             let length = if context.is_long64() { 10 } else { 6 };
-            access::write_operand(context, image, offset, &bytes[..length], operand_segment)?;
+            access::write_operand(
+                context,
+                image,
+                offset,
+                &bytes[..length],
+                operand_segment,
+                Intent::SystemRecord((length - 2) as u32),
+            )?;
             Ok(Outcome::default())
         }
         LoadGdt | LoadIdt => {
@@ -222,6 +230,7 @@ pub fn execute(
                 offset,
                 if context.is_long64() { 10 } else { 6 },
                 operand_segment,
+                Intent::SystemRecord(if context.is_long64() { 8 } else { 4 }),
             )?;
             let mut base = u64::from_le_bytes(bytes[2..].try_into().unwrap());
             if !context.is_long64() && width == Width::W16 {
@@ -262,6 +271,7 @@ pub fn execute(
                     offset,
                     &selector.to_le_bytes(),
                     operand_segment,
+                    Intent::Natural(2),
                 )?;
                 Ok(Outcome::default())
             } else {
@@ -270,7 +280,14 @@ pub fn execute(
         }
         Lar | Lsl | Verr | Verw => {
             let selector = if memory {
-                let bytes = access::read_operand(context, image, offset, 2, operand_segment)?;
+                let bytes = access::read_operand(
+                    context,
+                    image,
+                    offset,
+                    2,
+                    operand_segment,
+                    Intent::Natural(2),
+                )?;
                 u16::from_le_bytes(bytes[..2].try_into().unwrap())
             } else {
                 input as u16
@@ -279,7 +296,14 @@ pub fn execute(
         }
         LoadLdt | LoadTask | LoadSegment(_) => {
             let selector = if memory {
-                let bytes = access::read_operand(context, image, offset, 2, operand_segment)?;
+                let bytes = access::read_operand(
+                    context,
+                    image,
+                    offset,
+                    2,
+                    operand_segment,
+                    Intent::Natural(2),
+                )?;
                 u16::from_le_bytes(bytes[..2].try_into().unwrap())
             } else {
                 input as u16
@@ -297,8 +321,14 @@ pub fn execute(
         }
         LoadFar(segment) => {
             let count = usize::from(width.bytes());
-            let bytes =
-                access::read_operand(context, image, offset, count as u32 + 2, operand_segment)?;
+            let bytes = access::read_operand(
+                context,
+                image,
+                offset,
+                count as u32 + 2,
+                operand_segment,
+                Intent::Natural(count as u32),
+            )?;
             let selector = u16::from_le_bytes(bytes[count..count + 2].try_into().unwrap());
             let mut offset_bytes = [0; 8];
             offset_bytes[..count].copy_from_slice(&bytes[..count]);

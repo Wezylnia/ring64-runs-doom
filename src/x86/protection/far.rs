@@ -4,6 +4,7 @@ use super::{ExecutionContext, GuestMemory, ProtectionFault, ProtectionPhase};
 use crate::memory::Access;
 #[cfg(test)]
 use crate::memory::Image;
+use crate::x86::alignment::Intent;
 use crate::x86::context::{
     AccessFailure, LoadedSegment, Mode, Segment, SegmentAttributes, SegmentType,
 };
@@ -96,6 +97,7 @@ pub fn execute_observing(
             operands.offset,
             size as u32 + 2,
             operands.segment,
+            Intent::Natural(size as u32),
         )
         .map_err(|failure| operand_failure(failure, operands.segment))?;
         observe(address, size as u32 + 2, Access::Read);
@@ -238,7 +240,7 @@ pub fn execute_observing(
     if let Some(slots) = slots {
         for slot in slots {
             image
-                .check_write(slot.address, slot.width)
+                .check_write_aligned(slot.address, slot.width, Intent::Natural(slot.width))
                 .map_err(|failure| linear_failure(failure, Segment::Ss))?;
             observe(slot.address, slot.width, Access::Write);
         }
@@ -502,7 +504,11 @@ fn read_stack(
 ) -> Result<u64, FarFailure> {
     let address = stack_geometry(context, offset, u32::from(width.bytes()), Access::Read)?;
     let bytes = image
-        .read_vector(address, u32::from(width.bytes()))
+        .read_vector_aligned(
+            address,
+            u32::from(width.bytes()),
+            Intent::Natural(u32::from(width.bytes())),
+        )
         .map_err(|failure| linear_failure(failure, Segment::Ss))?;
     observe(address, u32::from(width.bytes()), Access::Read);
     Ok(u64::from_le_bytes(bytes[..8].try_into().unwrap()))

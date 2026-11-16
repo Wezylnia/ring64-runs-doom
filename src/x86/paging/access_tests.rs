@@ -423,7 +423,7 @@ fn publication_geometry_write_rmw_and_sparse_intent_stays_exact() {
             .physical_write(0x4008, 8, 0x9027)
             .unwrap();
         memory
-            .capture_write_fields(0x1000, 8, &fields, memory.class)
+            .capture_write_fields(0x1000, 8, &fields, memory.class, Intent::Exempt)
             .unwrap();
         assert_eq!(
             memory.storage.borrow().work.pending.last().unwrap().fields,
@@ -449,7 +449,7 @@ fn publication_geometry_write_rmw_and_sparse_intent_stays_exact() {
         .unwrap();
     for fields in [vec![], vec![(0, 1)]] {
         assert_eq!(
-            memory.capture_write_fields(0x1ff8, 16, &fields, memory.class),
+            memory.capture_write_fields(0x1ff8, 16, &fields, memory.class, Intent::Exempt),
             Err(protection_fault(0x2000, Access::Write, 6))
         );
         assert!(memory.storage.borrow().work.pending.is_empty());

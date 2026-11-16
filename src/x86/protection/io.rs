@@ -55,6 +55,9 @@ fn word(
                 reference: SystemReference::Selector(tr.selector),
             }),
             AccessFailure::Segment(_) => unreachable!("implicit TSS access"),
+            AccessFailure::AlignmentCheck(_) => {
+                unreachable!("implicit TSS access is alignment exempt")
+            }
         })?;
     Ok(u16::from_le_bytes([bytes[0], bytes[1]]))
 }

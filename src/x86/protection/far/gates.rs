@@ -247,7 +247,7 @@ pub(super) fn execute(
         .map_err(system_failure)?;
     for slot in &frame.writes[..frame.count] {
         image
-            .check_frame_write(slot.address, slot.width, cpl)
+            .check_frame_write_aligned(slot.address, slot.width, cpl, Intent::Natural(slot.width))
             .map_err(|failure| linear_failure(failure, Segment::Ss))?;
         observe(slot.address, slot.width, Access::Write);
     }

@@ -19,6 +19,7 @@ impl Core {
         self.decode_fault = None;
         self.segment_fault = None;
         self.alignment_fault = None;
+        self.alignment_check = None;
         self.simd_exception = None;
         self.numeric_fault = None;
         self.numeric_form = None;

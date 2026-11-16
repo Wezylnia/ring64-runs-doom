@@ -59,6 +59,9 @@ pub(crate) fn discover_with_profile(
                         AccessFailure::Segment(fault) => DecodeError::Segment(fault),
                         AccessFailure::Linear(fault) => DecodeError::Fetch(fault),
                         AccessFailure::Paging(fault) => DecodeError::Paging(fault),
+                        AccessFailure::AlignmentCheck(_) => {
+                            unreachable!("instruction fetch has no natural alignment checking")
+                        }
                     })?;
                 if let Some(paging) = paging {
                     let request = crate::x86::paging::walk::Request {

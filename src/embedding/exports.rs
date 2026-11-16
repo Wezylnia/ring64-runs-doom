@@ -12,6 +12,15 @@ use super::layout::{
 };
 
 macro_rules! guest_access {
+    ($core:expr, $paged:expr, read($address:expr, $width:expr)) => {
+        guest_access!($core, $paged, read_aligned($address, $width, crate::x86::alignment::Intent::Natural($width)))
+    };
+    ($core:expr, $paged:expr, read_for_write($address:expr, $width:expr)) => {
+        guest_access!($core, $paged, read_for_write_aligned($address, $width, crate::x86::alignment::Intent::Natural($width)))
+    };
+    ($core:expr, $paged:expr, write($address:expr, $width:expr, $value:expr)) => {
+        guest_access!($core, $paged, write_aligned($address, $width, $value, crate::x86::alignment::Intent::Natural($width)))
+    };
     ($core:expr, $paged:expr, $method:ident($($argument:expr),* $(,)?)) => {{
         if $paged {
             let cpl = $core.context.cpl();
@@ -22,7 +31,7 @@ macro_rules! guest_access {
             );
             crate::x86::access::GuestMemory::$method(&mut memory, $($argument),*)
         } else {
-            $core.image.$method($($argument),*).map_err(AccessFailure::Linear)
+            crate::x86::access::GuestMemory::$method(&mut $core.image, $($argument),*)
         }
     }};
 }
@@ -84,6 +93,7 @@ struct Core {
     context_version: u64,
     segment_fault: Option<SegmentFault>,
     alignment_fault: Option<vector::AlignmentFault>,
+    alignment_check: Option<crate::x86::alignment::Fault>,
     simd_exception: Option<numeric::SimdException>,
     numeric_fault: Option<crate::x86::numeric_controls::Fault>,
     numeric_form: Option<(crate::x86::numeric_controls::Family, u64)>,
@@ -171,6 +181,7 @@ pub extern "C" fn core_init(code_base: u64, code_len: u32, ram_base: u64, ram_le
             context_version: 0,
             segment_fault: None,
             alignment_fault: None,
+            alignment_check: None,
             simd_exception: None,
             numeric_fault: None,
             numeric_form: None,
@@ -335,6 +346,7 @@ pub extern "C" fn core_import_state() -> i32 {
         };
         core.fault = None;
         core.alignment_fault = None;
+        core.alignment_check = None;
         core.simd_exception = None;
         core.numeric_fault = None;
         core.numeric_form = None;
@@ -359,6 +371,7 @@ pub extern "C" fn core_clear_fault() -> i32 {
         core.debug_candidate = 0;
         core.fault = None;
         core.alignment_fault = None;
+        core.alignment_check = None;
         core.simd_exception = None;
         core.numeric_fault = None;
         core.numeric_form = None;
@@ -384,6 +397,7 @@ pub extern "C" fn core_probe(pc: u64) -> i32 {
         core.debug_candidate = 0;
         core.fault = None;
         core.alignment_fault = None;
+        core.alignment_check = None;
         core.simd_exception = None;
         core.numeric_fault = None;
         core.numeric_form = None;
@@ -413,6 +427,9 @@ pub extern "C" fn core_probe(pc: u64) -> i32 {
                         AccessFailure::Linear(fault) => DecodeError::Fetch(fault),
                         AccessFailure::Segment(fault) => DecodeError::Segment(fault),
                         AccessFailure::Paging(fault) => DecodeError::Paging(fault),
+                        AccessFailure::AlignmentCheck(_) => {
+                            unreachable!("instruction fetch is alignment exempt")
+                        }
                     })
             })
         };
@@ -502,6 +519,9 @@ fn core_load_impl<const OBSERVED: bool, const PAGED: bool>(address: u64, width: 
     BRIDGE.with_borrow_mut(|bridge| {
         let core = bridge.core.as_mut().unwrap();
         core.fault = None;
+        if PAGED {
+            core.alignment_check = None;
+        }
         match guest_access!(core, PAGED, read(address, width)) {
             Ok(value) => {
                 if OBSERVED {
@@ -537,6 +557,9 @@ fn core_load_for_write_impl<const OBSERVED: bool, const PAGED: bool>(
     BRIDGE.with_borrow_mut(|bridge| {
         let core = bridge.core.as_mut().unwrap();
         core.fault = None;
+        if PAGED {
+            core.alignment_check = None;
+        }
         match guest_access!(core, PAGED, read_for_write(address, width)) {
             Ok(value) => {
                 if OBSERVED {
@@ -573,6 +596,9 @@ fn core_store_impl<const OBSERVED: bool, const PAGED: bool>(
     BRIDGE.with_borrow_mut(|bridge| {
         let core = bridge.core.as_mut().unwrap();
         core.fault = None;
+        if PAGED {
+            core.alignment_check = None;
+        }
         match guest_access!(core, PAGED, write(address, width, value)) {
             Ok(()) => {
                 if OBSERVED {
@@ -593,7 +619,10 @@ fn core_store_impl<const OBSERVED: bool, const PAGED: bool>(
 
 #[unsafe(no_mangle)]
 pub extern "C" fn core_access_failed() -> i32 {
-    BRIDGE.with_borrow(|bridge| i32::from(bridge.core.as_ref().unwrap().fault.is_some()))
+    BRIDGE.with_borrow(|bridge| {
+        let core = bridge.core.as_ref().unwrap();
+        i32::from(core.fault.is_some())
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -650,6 +679,15 @@ pub extern "C" fn core_fault_info(reason: i32) {
                 .alignment_fault
                 .as_ref()
                 .map(vector::AlignmentFault::json),
+            super::layout::ALIGNMENT_CHECK => core.alignment_check.map(|fault| {
+                let state=unsafe { &*core.state.get() };
+                let segment=Segment::from_id(state.fault_segment);
+                let offset=fault.address.wrapping_sub(core.context.segment_base(segment));
+                let offset=if core.context.is_long64() { offset } else { u64::from(offset as u32) };
+                let code=match state.event_state() { Ok(crate::x86::exception::EventState::Pending(event)) if event.vector==17 => event.error_code.unwrap_or(0), _=>0 };
+                serde_json::json!({ "segment":segment.name(), "offset":format!("0x{offset:x}"), "address":format!("0x{:x}",fault.address), "width":fault.width,
+                    "access":if fault.access==Access::Write { "write" } else { "read" }, "alignment":fault.alignment, "vector":17,"errorCode":code })
+            }),
             super::layout::PROTECTION => core.protection_fault.as_ref().map(protection::fault_json),
             super::layout::SYSTEM_MEMORY => core
                 .system_memory_fault

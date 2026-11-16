@@ -1,3 +1,4 @@
+use super::alignment::Intent;
 use super::context::AccessFailure;
 use crate::memory::Image;
 
@@ -32,6 +33,84 @@ pub trait GuestMemory {
     ) -> Result<(), AccessFailure>;
     fn check_read(&self, address: u64, width: u32) -> Result<(), AccessFailure>;
     fn check_write(&self, address: u64, width: u32) -> Result<(), AccessFailure>;
+    // Linear Image has fixed AM=0; its semantic access methods keep byte-plane behavior.
+    fn read_aligned(
+        &self,
+        address: u64,
+        width: u32,
+        _intent: Intent,
+    ) -> Result<u64, AccessFailure> {
+        self.read(address, width)
+    }
+    fn read_for_write_aligned(
+        &self,
+        address: u64,
+        width: u32,
+        _intent: Intent,
+    ) -> Result<u64, AccessFailure> {
+        self.read_for_write(address, width)
+    }
+    fn read_vector_aligned(
+        &self,
+        address: u64,
+        width: u32,
+        _intent: Intent,
+    ) -> Result<[u8; 16], AccessFailure> {
+        self.read_vector(address, width)
+    }
+    fn read_fields_aligned(
+        &self,
+        address: u64,
+        width: u32,
+        fields: &[(u32, u32)],
+        output: &mut [u8],
+        _intent: Intent,
+    ) -> Result<(), AccessFailure> {
+        self.read_fields(address, width, fields, output)
+    }
+    fn write_aligned(
+        &mut self,
+        address: u64,
+        width: u32,
+        value: u64,
+        _intent: Intent,
+    ) -> Result<(), AccessFailure> {
+        self.write(address, width, value)
+    }
+    fn write_bytes_aligned(
+        &mut self,
+        address: u64,
+        bytes: &[u8],
+        _intent: Intent,
+    ) -> Result<(), AccessFailure> {
+        self.write_bytes(address, bytes)
+    }
+    fn write_fields_aligned(
+        &mut self,
+        address: u64,
+        width: u32,
+        fields: &[(u32, u32)],
+        bytes: &[u8],
+        _intent: Intent,
+    ) -> Result<(), AccessFailure> {
+        self.write_fields(address, width, fields, bytes)
+    }
+    fn check_read_aligned(
+        &self,
+        address: u64,
+        width: u32,
+        _intent: Intent,
+    ) -> Result<(), AccessFailure> {
+        self.check_read(address, width)
+    }
+    fn check_write_aligned(
+        &self,
+        address: u64,
+        width: u32,
+        _intent: Intent,
+    ) -> Result<(), AccessFailure> {
+        self.check_write(address, width)
+    }
     /// Admit one ordinary write-intent byte without reading or publishing it.
     /// Page-walk accessed effects remain permitted; no dirty or captured write is created.
     fn probe_write(&self, address: u64) -> Result<(), AccessFailure>;
@@ -64,6 +143,15 @@ pub trait GuestMemory {
     }
     fn check_frame_write(&self, address: u64, width: u32, _cpl: u8) -> Result<(), AccessFailure> {
         self.check_write(address, width)
+    }
+    fn check_frame_write_aligned(
+        &self,
+        address: u64,
+        width: u32,
+        cpl: u8,
+        _intent: Intent,
+    ) -> Result<(), AccessFailure> {
+        self.check_frame_write(address, width, cpl)
     }
     /// Admit and apply every captured dirty update before a prepared owner's publications.
     fn prepare_publication(&mut self) -> Result<(), AccessFailure> {
