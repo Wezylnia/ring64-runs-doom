@@ -133,6 +133,146 @@ fn registers(sp: u64, bp: u64) -> [u64; 16] {
     banks
 }
 
+fn alignment_image() -> Image {
+    Image::physical_mapped(
+        vec![("ram".into(), vec![0xa5; 0x11000])],
+        vec![MappingInput {
+            base: 0,
+            backing: "ram".into(),
+            offset: 0,
+            length: 0x11000,
+            permissions: Permissions {
+                read: true,
+                write: true,
+                execute: true,
+            },
+        }],
+        MemoryLimits {
+            max_backing_bytes: 0x11000,
+            max_backings: 1,
+            max_mappings: 1,
+        },
+    )
+    .unwrap()
+}
+
+#[test]
+fn enter_alignment_keeps_earlier_stack_payload_but_no_register_candidate() {
+    let mut context = context(Mode::Protected, true, 0xffff);
+    context.set_mode_and_cpl(Mode::Protected, 3);
+    let mut image = alignment_image();
+    let bank = crate::x86::paging::State {
+        cr0: 0x40011,
+        cr4: 0,
+        efer: 0,
+        ..Default::default()
+    };
+    let mut work = crate::x86::paging::access::AccessState::default();
+    let mut memory =
+        crate::x86::paging::access::Memory::new(&mut image, &bank, 3, 0x40002, &mut work);
+    let mut banks = registers(0x5000, 0x6001);
+    let before = banks;
+    assert_eq!(
+        execute(
+            &context,
+            &mut memory,
+            &mut banks,
+            CompoundStack {
+                kind: CompoundStackKind::Enter {
+                    allocation: 0,
+                    nesting: 2
+                },
+                width: Width::W32
+            }
+        ),
+        Err(Failure::Operand(AccessFailure::AlignmentCheck(
+            crate::x86::alignment::Fault {
+                address: 0x5ffd,
+                width: 4,
+                access: Access::Read,
+                alignment: 4
+            }
+        )))
+    );
+    assert_eq!(banks, before);
+    assert_eq!(image.physical_read(0x4ffc, 4), Ok(0x6001));
+    assert_eq!(image.physical_read(0x4ff8, 4), Ok(0xa5a5a5a5));
+}
+
+#[test]
+fn enter_alignment_does_not_widen_its_final_byte_probe() {
+    let mut context = context(Mode::Protected, true, 0xffff);
+    context.set_mode_and_cpl(Mode::Protected, 3);
+    let mut image = alignment_image();
+    let bank = crate::x86::paging::State {
+        cr0: 0x40011,
+        cr4: 0,
+        efer: 0,
+        ..Default::default()
+    };
+    let mut work = crate::x86::paging::access::AccessState::default();
+    let mut memory =
+        crate::x86::paging::access::Memory::new(&mut image, &bank, 3, 0x40002, &mut work);
+    let mut banks = registers(0x5000, 0x12345678);
+    assert_eq!(
+        execute(
+            &context,
+            &mut memory,
+            &mut banks,
+            CompoundStack {
+                kind: CompoundStackKind::Enter {
+                    allocation: 1,
+                    nesting: 0
+                },
+                width: Width::W32
+            }
+        ),
+        Ok(())
+    );
+    assert_eq!(banks[4], 0x4ffb);
+    assert_eq!(banks[5], 0x4ffc);
+    assert_eq!(image.physical_read(0x4ffb, 1), Ok(0xa5));
+    assert_eq!(image.physical_read(0x4ffc, 4), Ok(0x12345678));
+}
+
+#[test]
+fn popa_alignment_does_not_publish_the_stack_limit_only_register_prefix() {
+    let mut context = context(Mode::Protected, true, 0xffff);
+    context.set_mode_and_cpl(Mode::Protected, 3);
+    let mut image = alignment_image();
+    let bank = crate::x86::paging::State {
+        cr0: 0x40011,
+        cr4: 0,
+        efer: 0,
+        ..Default::default()
+    };
+    let mut work = crate::x86::paging::access::AccessState::default();
+    let mut memory =
+        crate::x86::paging::access::Memory::new(&mut image, &bank, 3, 0x40002, &mut work);
+    let mut banks = registers(0x5001, 0x6000);
+    let before = banks;
+    assert_eq!(
+        execute(
+            &context,
+            &mut memory,
+            &mut banks,
+            CompoundStack {
+                kind: CompoundStackKind::PopAll,
+                width: Width::W32
+            }
+        ),
+        Err(Failure::Operand(AccessFailure::AlignmentCheck(
+            crate::x86::alignment::Fault {
+                address: 0x5001,
+                width: 4,
+                access: Access::Read,
+                alignment: 4
+            }
+        )))
+    );
+    assert_eq!(banks, before);
+}
+
 fn enter(width: Width, allocation: u16, nesting: u8) -> CompoundStack {
     CompoundStack {
         kind: CompoundStackKind::Enter {
