@@ -212,7 +212,21 @@ export function lifecycleScenarios(compiler: WebAssembly.Module): Scenario[] {
             result = await runOne(cpu, repaired);
           equal(result.reason, 'debug-exception', 'completed data access and TF share trap');
           equal(result.retired, 1n, 'repaired source retires once');
-          same(result.debugException, { vector: 1, class: 'trap', cause: 'combined', breakpoints: 1, singleStep: true, instructionPc: PC, resumePc: PC + 2n, instructionCompleted: true, resumeFlags: AC | 0x102n }, 'exact combined completed boundary');
+          same(
+            result.debugException,
+            {
+              vector: 1,
+              class: 'trap',
+              cause: 'combined',
+              breakpoints: 1,
+              singleStep: true,
+              instructionPc: PC,
+              resumePc: PC + 2n,
+              instructionCompleted: true,
+              resumeFlags: AC | 0x102n,
+            },
+            'exact combined completed boundary',
+          );
           same(
             cpu.readDebugState(),
             { ...debug, dr6: debug.dr6 | 0x4001n },

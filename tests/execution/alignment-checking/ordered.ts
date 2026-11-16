@@ -27,17 +27,56 @@ export function orderedScenarios(compiler: WebAssembly.Module): Scenario[] {
       async run() {
         for (const code of ['f36d', 'f36f'])
           for (const kind of ['zero', 'budget', 'privilege'] as const) {
-            const f = fixture(compiler, code), calls: unknown[] = [];
-            f.options.io = { read(...args) { calls.push(args); return 0x11; }, write(...args) { calls.push(args); } };
-            await using(side, f, async cpu => {
-              const before = state({ 1: kind === 'zero' ? 0n : 2n, 2: 0x80n, 6: 0x6001n, 7: 0x6001n });
-              cpu.setState(before); cpu.setTimeState({ tsc: 100n, tscAux: AUX });
-              const result = await cpu.run({ budget: 1n, repeatBudget: kind === 'privilege' ? 7n : 0n });
-              equal(result.reason, kind === 'zero' ? 'budget' : kind === 'budget' ? 'repeat-budget' : 'protection-fault', 'no-work before permission before reached operand');
+            const f = fixture(compiler, code),
+              calls: unknown[] = [];
+            f.options.io = {
+              read(...args) {
+                calls.push(args);
+                return 0x11;
+              },
+              write(...args) {
+                calls.push(args);
+              },
+            };
+            await using(side, f, async (cpu) => {
+              const before = state({
+                1: kind === 'zero' ? 0n : 2n,
+                2: 0x80n,
+                6: 0x6001n,
+                7: 0x6001n,
+              });
+              cpu.setState(before);
+              cpu.setTimeState({ tsc: 100n, tscAux: AUX });
+              const result = await cpu.run({
+                budget: 1n,
+                repeatBudget: kind === 'privilege' ? 7n : 0n,
+              });
+              equal(
+                result.reason,
+                kind === 'zero'
+                  ? 'budget'
+                  : kind === 'budget'
+                    ? 'repeat-budget'
+                    : 'protection-fault',
+                'no-work before permission before reached operand',
+              );
               equal(result.alignmentCheck, undefined, 'unreached operand has no AC');
-              if (kind === 'privilege') same(result.protectionFault, { vector: 13, errorCode: 0, phase: 'privilege', instructionPc: PC }, 'invalid TR with CPL3 IOPL0 precedes operand');
-              same(result.state, { ...before, rip: kind === 'zero' ? PC + 2n : PC }, 'I/O gate state');
-              equal(result.retired, kind === 'zero' ? 1n : 0n, 'zero instruction versus refused element');
+              if (kind === 'privilege')
+                same(
+                  result.protectionFault,
+                  { vector: 13, errorCode: 0, phase: 'privilege', instructionPc: PC },
+                  'invalid TR with CPL3 IOPL0 precedes operand',
+                );
+              same(
+                result.state,
+                { ...before, rip: kind === 'zero' ? PC + 2n : PC },
+                'I/O gate state',
+              );
+              equal(
+                result.retired,
+                kind === 'zero' ? 1n : 0n,
+                'zero instruction versus refused element',
+              );
               equal(result.repeatIterations, 0n, 'no completed provider element');
               same(calls, [], 'no provider before actual admitted work');
               memory(cpu, f.bytes, 'no operand walk or payload');
@@ -51,20 +90,40 @@ export function orderedScenarios(compiler: WebAssembly.Module): Scenario[] {
       async run() {
         const f = fixture(compiler, 'f36d');
         let calls = 0;
-        f.options.io = { read() { calls++; throw Error('provider effect before destination'); }, write() { throw Error('INS cannot write port'); } };
-        await using(side, f, async cpu => {
+        f.options.io = {
+          read() {
+            calls++;
+            throw Error('provider effect before destination');
+          },
+          write() {
+            throw Error('INS cannot write port');
+          },
+        };
+        await using(side, f, async (cpu) => {
           cpu.setState(state({ 1: 2n, 2: 0x80n, 7: 0x6001n }, AC | 0x3002n));
           let rejected = false;
-          try { await cpu.run({ budget: 1n, repeatBudget: 7n }); } catch { rejected = true; }
+          try {
+            await cpu.run({ budget: 1n, repeatBudget: 7n });
+          } catch {
+            rejected = true;
+          }
           equal(rejected, true, 'provider failure wins before possible destination AC');
           equal(calls, 1, 'one uncertain external effect');
           // Existing provider failure policy forbids a retryable snapshot. Do not
           // inspect guest RAM/state here or claim externally consumed input rollback.
           let checkpointRejected = false;
-          try { cpu.readState(); } catch { checkpointRejected = true; }
+          try {
+            cpu.readState();
+          } catch {
+            checkpointRejected = true;
+          }
           equal(checkpointRejected, true, 'terminal provider failure exposes no checkpoint');
           rejected = false;
-          try { await cpu.run({ budget: 1n }); } catch { rejected = true; }
+          try {
+            await cpu.run({ budget: 1n });
+          } catch {
+            rejected = true;
+          }
           equal(rejected, true, 'terminal CPU cannot replay input');
           equal(calls, 1, 'no duplicate provider call');
         });
