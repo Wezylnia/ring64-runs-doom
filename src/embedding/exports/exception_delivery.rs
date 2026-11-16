@@ -1,7 +1,8 @@
 use super::*;
 use crate::embedding::layout::{
-    ALIGNMENT, DEBUG_EXCEPTION, DEVICE_NOT_AVAILABLE, DISPATCH, DIVIDE_ERROR, GENERAL_PROTECTION,
-    INVALID, PAGE_FAULT, PROTECTION, SHUTDOWN, SIMD_EXCEPTION, SYSTEM_MEMORY, X87_EXCEPTION,
+    ALIGNMENT, ALIGNMENT_CHECK, DEBUG_EXCEPTION, DEVICE_NOT_AVAILABLE, DISPATCH, DIVIDE_ERROR,
+    GENERAL_PROTECTION, INVALID, PAGE_FAULT, PROTECTION, SHUTDOWN, SIMD_EXCEPTION, SYSTEM_MEMORY,
+    X87_EXCEPTION,
 };
 use crate::x86::exception::{EventState, ExceptionEvent};
 use crate::x86::flags;
@@ -79,6 +80,12 @@ pub extern "C" fn core_stage_exception(reason: i32) -> i32 {
                 }
             }
             DIVIDE_ERROR => ExceptionEvent::fault(0, pc, state.flags, &core.context, None),
+            ALIGNMENT_CHECK => {
+                if core.alignment_check.is_none() {
+                    return -1;
+                }
+                ExceptionEvent::fault(17, pc, state.flags, &core.context, Some(0))
+            }
             DEBUG_EXCEPTION => {
                 let Some(debug) = core.debug_exception.as_ref() else {
                     return -1;
@@ -206,6 +213,7 @@ pub extern "C" fn core_deliver_exception() -> i32 {
         core.fault = None;
         core.segment_fault = None;
         core.alignment_fault = None;
+        core.alignment_check = None;
         core.simd_exception = None;
         core.numeric_fault = None;
         core.general_protection = None;
@@ -292,6 +300,20 @@ pub extern "C" fn core_deliver_exception() -> i32 {
             }
             Err(EventFailure::Operand { segment, failure }) => {
                 unsafe { (*core.state.get()).fault_segment = segment as u32 };
+                if let AccessFailure::AlignmentCheck(fault) = failure {
+                    core.alignment_check = Some(fault);
+                    let next = match event {
+                        EventState::Pending(event) => event.escalate_alignment_check(),
+                        EventState::PendingInterrupt(event) => event.escalate_alignment_check(),
+                        _ => unreachable!("pending entry source"),
+                    };
+                    unsafe { (*core.state.get()).set_event(next) };
+                    return if next == EventState::Shutdown {
+                        SHUTDOWN
+                    } else {
+                        DISPATCH
+                    };
+                }
                 if let AccessFailure::Paging(failure) = failure {
                     let reason = core.paging_failure(failure);
                     return finish_entry_paging(core, event, failure, reason);
@@ -342,6 +364,165 @@ mod paging_tests {
                 origin: 0xff0,
             };
             core.debug_candidate = 2;
+        });
+    }
+
+    #[test]
+    fn alignment_staging_uses_captured_fault_even_after_eligibility_is_cleared() {
+        for enabled in [0, 1] {
+            initialize();
+            assert_eq!(core_configure_delivery(enabled), 0);
+            BRIDGE.with_borrow_mut(|bridge| {
+                let core = bridge.core.as_mut().unwrap();
+                core.paging.as_mut().unwrap().cr2 = 0xdead;
+                core.alignment_check = Some(crate::x86::alignment::Fault {
+                    address: 0x6001,
+                    width: 4,
+                    access: Access::Read,
+                    alignment: 4,
+                });
+            });
+            assert_eq!(core_stage_exception(ALIGNMENT_CHECK), enabled);
+            BRIDGE.with_borrow(|bridge| {
+                let core = bridge.core.as_ref().unwrap();
+                let state = unsafe { &*core.state.get() };
+                assert_eq!(core.paging.unwrap().cr2, 0xdead);
+                assert_eq!(core.debug_candidate, 0);
+                assert_eq!(
+                    state.debug.continuation,
+                    crate::embedding::layout::debug::Continuation::default()
+                );
+                if enabled != 0 {
+                    let EventState::Pending(event) = state.event_state().unwrap() else {
+                        panic!()
+                    };
+                    assert_eq!(
+                        (
+                            event.vector,
+                            event.error_code,
+                            event.saved_flags,
+                            event.page_fault_address
+                        ),
+                        (17, Some(0), 0x10202, None)
+                    );
+                } else {
+                    assert_eq!(state.event_state(), Ok(EventState::Ready));
+                }
+            });
+        }
+        initialize();
+        assert_eq!(core_stage_exception(ALIGNMENT_CHECK), -1);
+    }
+
+    #[test]
+    fn external_frame_alignment_refusal_stages_ext_one_and_repairs_without_reacceptance() {
+        use crate::x86::exception::{InterruptEvent, InterruptSource};
+        initialize();
+        BRIDGE.with_borrow_mut(|bridge| {
+            let core = bridge.core.as_mut().unwrap();
+            let mut bytes = vec![0xa5; 0x10000];
+            bytes[0x1008..0x1010].copy_from_slice(&0x00cf_fb00_0000_ffffu64.to_le_bytes());
+            for vector in [2usize, 17] {
+                let offset = 0x2000 + vector * 8;
+                bytes[offset..offset + 8].copy_from_slice(&0x0000_ee00_000b_7000u64.to_le_bytes());
+            }
+            core.image = Image::physical_mapped(
+                vec![("bytes".into(), bytes)],
+                vec![crate::memory::MappingInput {
+                    base: 0,
+                    backing: "bytes".into(),
+                    offset: 0,
+                    length: 0x10000,
+                    permissions: crate::memory::Permissions {
+                        read: true,
+                        write: true,
+                        execute: true,
+                    },
+                }],
+                crate::memory::MemoryLimits {
+                    max_backing_bytes: 0x10000,
+                    max_backings: 1,
+                    max_mappings: 1,
+                },
+            )
+            .unwrap();
+            core.paging = Some(crate::x86::paging::State {
+                cr0: 0x40011,
+                cr2: 0xdead,
+                ..crate::x86::paging::State::reset()
+            });
+            core.context
+                .set_mode_and_cpl(crate::x86::context::Mode::Protected, 3);
+            core.context.set_gdtr(crate::x86::context::TableRegister {
+                base: 0x1000,
+                limit: 15,
+            });
+            core.context.set_idtr(crate::x86::context::TableRegister {
+                base: 0x2000,
+                limit: 0xfff,
+            });
+            let state = unsafe { &mut *core.state.get() };
+            state.flags = 0x40002;
+            state.rip = 0x1000;
+            state.registers[4] = 0x8001;
+            state.interruptibility = 0;
+            state.interrupts.nmi_blocked = 1;
+            state.set_event(EventState::PendingInterrupt(InterruptEvent {
+                source: InterruptSource::Nmi,
+                return_pc: 0x1000,
+                saved_flags: 0x40002,
+            }));
+        });
+        assert_eq!(core_deliver_exception(), DISPATCH);
+        BRIDGE.with_borrow_mut(|bridge| {
+            let core = bridge.core.as_mut().unwrap();
+            let state = unsafe { &mut *core.state.get() };
+            let EventState::Pending(event) = state.event_state().unwrap() else {
+                panic!()
+            };
+            assert_eq!(
+                (
+                    event.vector,
+                    event.error_code,
+                    event.saved_flags,
+                    event.page_fault_address
+                ),
+                (17, Some(1), 0x50002, None)
+            );
+            assert_eq!(
+                core.alignment_check,
+                Some(crate::x86::alignment::Fault {
+                    address: 0x7ffd,
+                    width: 4,
+                    access: Access::Write,
+                    alignment: 4
+                })
+            );
+            assert_eq!(core.paging.unwrap().cr2, 0xdead);
+            assert_eq!(
+                (state.rip, state.registers[4], state.interrupts.nmi_blocked),
+                (0x1000, 0x8001, 1)
+            );
+            assert_eq!(
+                core.image.physical_read_bytes(0x7fe0, 0x30).unwrap(),
+                vec![0xa5; 0x30]
+            );
+            state.registers[4] = 0x8000;
+        });
+        assert_eq!(core_deliver_exception(), DISPATCH);
+        BRIDGE.with_borrow(|bridge| {
+            let core = bridge.core.as_ref().unwrap();
+            let state = unsafe { &*core.state.get() };
+            assert_eq!(
+                (state.rip, state.registers[4], state.interrupts.nmi_blocked),
+                (0x7000, 0x7ff0, 1)
+            );
+            assert_eq!(state.event_state(), Ok(EventState::Ready));
+            assert!(core.alignment_check.is_none());
+            assert_eq!(
+                core.image.physical_read_bytes(0x7ff0, 16).unwrap(),
+                vec![1, 0, 0, 0, 0, 0x10, 0, 0, 8, 0, 0, 0, 2, 0, 5, 0]
+            );
         });
     }
 

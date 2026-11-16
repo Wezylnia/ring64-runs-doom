@@ -54,6 +54,110 @@ fn enter(
 }
 
 #[test]
+fn alignment_exception_entry_checks_user_frame_but_not_odd_descriptor_tables() {
+    use crate::x86::paging::{
+        State,
+        access::{AccessState, Memory},
+    };
+    let gate = 0x0000_ee00_000b_2000;
+    let (mut context, mut image) = setup("protected", 3, 17, gate);
+    context.set_gdtr(TableRegister {
+        base: 0x1001,
+        limit: 0xff,
+    });
+    context.set_idtr(TableRegister {
+        base: 0x2001,
+        limit: 0x1ff,
+    });
+    image.write(0x1009, 8, 0x00cf_fb00_0000_ffff).unwrap();
+    image.write(0x2089, 8, gate).unwrap();
+    let before = context.clone();
+    let bank = State {
+        cr0: 0x40011,
+        ..State::reset()
+    };
+    let mut work = AccessState::default();
+    let mut memory = Memory::new(&mut image, &bank, 3, 0x40002, &mut work);
+    let event = ExceptionEvent::fault(17, 0x1000, 0x40002, &context, Some(0));
+    assert_eq!(
+        enter_exception(&mut context, &mut memory, event, 0x41f1, 0x40002),
+        Err(EventFailure::Operand {
+            segment: Segment::Ss,
+            failure: AccessFailure::AlignmentCheck(crate::x86::alignment::Fault {
+                address: 0x41ed,
+                width: 4,
+                access: crate::memory::Access::Write,
+                alignment: 4
+            })
+        })
+    );
+    assert_eq!(context, before);
+    assert_eq!(
+        image.physical_read_bytes(0x41e0, 0x14).unwrap(),
+        vec![0xa5; 0x14]
+    );
+}
+
+#[test]
+fn alignment_exception_entry_uses_target_privilege_and_iret_uses_current_stack() {
+    use crate::x86::paging::{
+        State,
+        access::{AccessState, Memory},
+    };
+    let (mut context, mut image) = setup("protected", 3, 17, 0x0000_8e00_0008_2000);
+    context.set_tr(TaskRegister {
+        selector: 0x28,
+        valid: true,
+        base: 0x3000,
+        limit: 0x67,
+        attributes: 0x8b,
+    });
+    image.write(0x3004, 4, 0x41f1).unwrap();
+    image.write(0x3008, 2, 16).unwrap();
+    let bank = State {
+        cr0: 0x40011,
+        ..State::reset()
+    };
+    let mut work = AccessState::default();
+    let mut memory = Memory::new(&mut image, &bank, 3, 0x40002, &mut work);
+    let event = ExceptionEvent::fault(17, 0x1000, 0x40002, &context, Some(0));
+    let outcome = enter_exception(&mut context, &mut memory, event, 0x4100, 0x40002).unwrap();
+    assert_eq!((outcome.sp, context.cpl()), (0x41d9, 0));
+    assert_eq!(image.physical_read(0x41d9, 4).unwrap(), 0);
+
+    let mut context = crate::x86::protection::tests::context("protected", 3);
+    let before = context.clone();
+    work.clear();
+    let mut memory = Memory::new(&mut image, &bank, 3, 0x40002, &mut work);
+    assert_eq!(
+        execute(
+            &mut context,
+            &mut memory,
+            SoftwareEventDescriptor {
+                kind: SoftwareEventKind::Return,
+                vector: 0,
+                width: Width::W32
+            },
+            EventInputs {
+                flags: 0x40002,
+                sp: 0x41d9,
+                next_pc: 0x1001
+            }
+        ),
+        Err(EventFailure::Operand {
+            segment: Segment::Ss,
+            failure: AccessFailure::AlignmentCheck(crate::x86::alignment::Fault {
+                address: 0x41d9,
+                width: 4,
+                access: crate::memory::Access::Read,
+                alignment: 4
+            })
+        })
+    );
+    assert_eq!(context, before);
+}
+
+#[test]
 fn processor_protected_error_frame_separates_saved_rf_from_handler_flags_and_slot_widths() {
     for (gate, width, expected_sp) in [
         (0x0000_8e00_0008_2000, 4, 0x41f0),

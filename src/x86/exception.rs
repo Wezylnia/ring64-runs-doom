@@ -115,6 +115,10 @@ impl InterruptEvent {
         self.secondary(14, error_code, Some(address))
     }
 
+    pub fn escalate_alignment_check(self) -> EventState {
+        self.secondary(17, 1, None)
+    }
+
     fn secondary(self, vector: u8, error_code: u16, page_fault_address: Option<u64>) -> EventState {
         EventState::Pending(ExceptionEvent {
             numeric: None,
@@ -154,6 +158,7 @@ impl ExceptionEvent {
             14 => self.error_code.is_some_and(|code| {
                 code <= 31 && (code & 8 == 0 || code & 1 != 0) && code & 0x12 != 0x12
             }),
+            17 => matches!(self.error_code, Some(0 | 1)),
             _ => false,
         };
         if !valid_code {
@@ -235,11 +240,16 @@ impl ExceptionEvent {
         self.secondary(14, error_code, Some(address))
     }
 
+    pub fn escalate_alignment_check(self) -> EventState {
+        self.secondary(17, 1, None)
+    }
+
     fn secondary(self, vector: u8, error_code: u16, page_fault_address: Option<u64>) -> EventState {
         if self.vector == 8 {
             return EventState::Shutdown;
         }
-        let double_fault = self.vector == 14 || vector != 14 && matches!(self.vector, 0 | 10..=13);
+        let double_fault = vector != 17
+            && (self.vector == 14 || vector != 14 && matches!(self.vector, 0 | 10..=13));
         EventState::Pending(Self {
             numeric: None,
             debug: None,
@@ -312,6 +322,102 @@ mod tests {
     use super::*;
     use crate::x86::context::ExecutionContext;
     use crate::x86::flags;
+
+    #[test]
+    fn alignment_exception_checkpoint_accepts_only_its_zero_or_ext_error_slot() {
+        let context = ExecutionContext::default();
+        let source = ExceptionEvent::fault(17, 0x1000, 0x40002, &context, Some(0));
+        for code in [None, Some(0), Some(1), Some(2), Some(4), Some(0x8000)] {
+            let event = ExceptionEvent {
+                error_code: code,
+                ..source
+            };
+            assert_eq!(
+                event.validate(0x1000, 0x40002, &context).is_ok(),
+                matches!(code, Some(0 | 1)),
+                "{code:?}"
+            );
+        }
+        assert!(
+            ExceptionEvent {
+                page_fault_address: Some(0x6001),
+                ..source
+            }
+            .validate(0x1000, 0x40002, &context)
+            .is_err()
+        );
+        assert!(
+            ExceptionEvent {
+                debug: Some(super::super::debug::Source::Execute(1)),
+                ..source
+            }
+            .validate(0x1000, 0x40002, &context)
+            .is_err()
+        );
+        assert_eq!(source.saved_flags, 0x50002);
+    }
+
+    #[test]
+    fn secondary_alignment_is_benign_after_page_or_contributory_faults() {
+        let context = ExecutionContext::default();
+        for first in [0, 1, 6, 10, 11, 12, 13, 14, 17, 8] {
+            let event = ExceptionEvent {
+                page_fault_address: (first == 14).then_some(0x7000),
+                ..ExceptionEvent::fault(
+                    first,
+                    0x1000,
+                    0x40002,
+                    &context,
+                    matches!(first, 8 | 10..=14 | 17).then_some(0),
+                )
+            };
+            let next = event.escalate_alignment_check();
+            if first == 8 {
+                assert_eq!(next, EventState::Shutdown);
+                continue;
+            }
+            let EventState::Pending(next) = next else {
+                panic!("{first}")
+            };
+            assert_eq!(
+                (
+                    next.vector,
+                    next.error_code,
+                    next.page_fault_address,
+                    next.numeric,
+                    next.debug
+                ),
+                (17, Some(1), None, None, None),
+                "{first}"
+            );
+            assert_eq!(
+                (next.instruction_pc, next.return_pc, next.saved_flags),
+                (0x1000, 0x1000, 0x50002)
+            );
+            assert_eq!(next.validate(0x1000, 0x40002, &context), Ok(()));
+        }
+        let alignment = ExceptionEvent::fault(17, 0x1000, 0x40002, &context, Some(0));
+        for second in 10..=14 {
+            let EventState::Pending(next) =
+                alignment.secondary(second, 0, (second == 14).then_some(0x7000))
+            else {
+                panic!("{second}")
+            };
+            assert_eq!(next.vector, second);
+        }
+        let interrupt = InterruptEvent {
+            source: InterruptSource::Nmi,
+            return_pc: 0x1000,
+            saved_flags: 0x40002,
+        };
+        let EventState::Pending(next) = interrupt.escalate_alignment_check() else {
+            panic!()
+        };
+        assert_eq!(
+            (next.vector, next.error_code, next.saved_flags),
+            (17, Some(1), 0x50002)
+        );
+    }
 
     #[test]
     fn page_fault_checkpoint_requires_its_frozen_canonical_address_and_exact_error_class() {
