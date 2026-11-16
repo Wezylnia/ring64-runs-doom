@@ -5,6 +5,7 @@ import { orderedScenarios } from './ordered.js';
 import { eventScenarios } from './events.js';
 import { lifecycleScenarios } from './lifecycle.js';
 import { largePageScenarios } from './large-pages.js';
+import { operandScenarios } from './operands.js';
 
 export function alignmentCheckingScenarios(compiler: WebAssembly.Module) {
   return [
@@ -15,5 +16,6 @@ export function alignmentCheckingScenarios(compiler: WebAssembly.Module) {
     ...eventScenarios(compiler),
     ...lifecycleScenarios(compiler),
     ...largePageScenarios(compiler),
+    ...operandScenarios(compiler),
   ];
 }
