@@ -21,7 +21,7 @@ import {
 
 type Width = 2 | 4 | 8;
 type Slot = { address: bigint; next: bigint; value: bigint };
-type Pair = { aligned: Slot; misaligned: Slot };
+type Pair = { aligned: Slot; misaligned: readonly Slot[] };
 type Geometry = { bank: bigint; seed: bigint; slots: Partial<Record<Width, Pair>> };
 
 // Literal stack cursors and little-endian loads, independent of stack lowering.
@@ -35,11 +35,15 @@ const geometry: Record<'s16' | 's32' | 'real32' | 's64', Geometry> = {
     slots: {
       2: {
         aligned: { address: 0x8ffen, next: 0x9000n, value: 0x8070n },
-        misaligned: { address: 0x8fffn, next: 0x9001n, value: 0x9080n },
+        misaligned: [{ address: 0x8fffn, next: 0x9001n, value: 0x9080n }],
       },
       4: {
         aligned: { address: 0x8ffcn, next: 0x9000n, value: 0x80706050n },
-        misaligned: { address: 0x8fffn, next: 0x9003n, value: 0xb0a09080n },
+        misaligned: [
+          { address: 0x8ffdn, next: 0x9001n, value: 0x90807060n },
+          { address: 0x8ffen, next: 0x9002n, value: 0xa0908070n },
+          { address: 0x8fffn, next: 0x9003n, value: 0xb0a09080n },
+        ],
       },
     },
   },
@@ -49,11 +53,15 @@ const geometry: Record<'s16' | 's32' | 'real32' | 's64', Geometry> = {
     slots: {
       2: {
         aligned: { address: 0x18ffen, next: 0x19000n, value: 0x8070n },
-        misaligned: { address: 0x18fffn, next: 0x19001n, value: 0x9080n },
+        misaligned: [{ address: 0x18fffn, next: 0x19001n, value: 0x9080n }],
       },
       4: {
         aligned: { address: 0x18ffcn, next: 0x19000n, value: 0x80706050n },
-        misaligned: { address: 0x18fffn, next: 0x19003n, value: 0xb0a09080n },
+        misaligned: [
+          { address: 0x18ffdn, next: 0x19001n, value: 0x90807060n },
+          { address: 0x18ffen, next: 0x19002n, value: 0xa0908070n },
+          { address: 0x18fffn, next: 0x19003n, value: 0xb0a09080n },
+        ],
       },
     },
   },
@@ -63,11 +71,15 @@ const geometry: Record<'s16' | 's32' | 'real32' | 's64', Geometry> = {
     slots: {
       2: {
         aligned: { address: 0xfffen, next: 0x10000n, value: 0x8070n },
-        misaligned: { address: 0xfffdn, next: 0xffffn, value: 0x7060n },
+        misaligned: [{ address: 0xfffdn, next: 0xffffn, value: 0x7060n }],
       },
       4: {
         aligned: { address: 0xfffcn, next: 0x10000n, value: 0x80706050n },
-        misaligned: { address: 0xfffbn, next: 0xffffn, value: 0x70605040n },
+        misaligned: [
+          { address: 0xfff9n, next: 0xfffdn, value: 0x50403020n },
+          { address: 0xfffan, next: 0xfffen, value: 0x60504030n },
+          { address: 0xfffbn, next: 0xffffn, value: 0x70605040n },
+        ],
       },
     },
   },
@@ -78,11 +90,19 @@ const geometry: Record<'s16' | 's32' | 'real32' | 's64', Geometry> = {
     slots: {
       2: {
         aligned: { address: 0x28ffen, next: 0x29000n, value: 0x8070n },
-        misaligned: { address: 0x28fffn, next: 0x29001n, value: 0x9080n },
+        misaligned: [{ address: 0x28fffn, next: 0x29001n, value: 0x9080n }],
       },
       8: {
         aligned: { address: 0x28ff8n, next: 0x29000n, value: 0x8070605040302010n },
-        misaligned: { address: 0x28fffn, next: 0x29007n, value: 0xf0e0d0c0b0a09080n },
+        misaligned: [
+          { address: 0x28ff9n, next: 0x29001n, value: 0x9080706050403020n },
+          { address: 0x28ffan, next: 0x29002n, value: 0xa090807060504030n },
+          { address: 0x28ffbn, next: 0x29003n, value: 0xb0a0908070605040n },
+          { address: 0x28ffcn, next: 0x29004n, value: 0xc0b0a09080706050n },
+          { address: 0x28ffdn, next: 0x29005n, value: 0xd0c0b0a090807060n },
+          { address: 0x28ffen, next: 0x29006n, value: 0xe0d0c0b0a0908070n },
+          { address: 0x28fffn, next: 0x29007n, value: 0xf0e0d0c0b0a09080n },
+        ],
       },
     },
   },
@@ -129,9 +149,12 @@ export function stackMatrixScenarios(compiler: WebAssembly.Module): Scenario[] {
                   cpu.setPagingState({ ...bank, cr0: bank.cr0 | AC });
                   equal(cpu.readPagingState().cr0 & AC, AC, 'stack AM round trip');
                 }
-                for (const arm of ['aligned', 'misaligned', 'inactive'] as const) {
-                  const slot = arm === 'aligned' ? row.aligned : row.misaligned,
-                    ac = arm !== 'inactive',
+                for (const [arm, slot] of [
+                  ['aligned', row.aligned],
+                  ...row.misaligned.map((slot) => ['misaligned', slot] as const),
+                  ['inactive', row.misaligned.at(-1)!],
+                ] as const) {
+                  const ac = arm !== 'inactive',
                     beforeSp = golden.bank | (push ? slot.next : slot.address),
                     afterSp = golden.bank | (push ? slot.address : slot.next),
                     before = state(
@@ -185,8 +208,8 @@ export function stackMatrixScenarios(compiler: WebAssembly.Module): Scenario[] {
               });
             }
         }
-        equal(checked, 516, 'three independent stack arms for both widths and directions');
-        equal(faults, 100, 'twenty-five AC-eligible cells with both widths and directions');
+        equal(checked, 712, 'all stack residues plus one inactive arm for both directions');
+        equal(faults, 216, 'all misaligned stack residues across twenty-five AC-eligible cells');
       },
     },
   ];
