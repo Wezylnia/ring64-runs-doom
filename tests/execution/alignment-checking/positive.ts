@@ -13,6 +13,7 @@ import {
   hex,
   put,
   preserved,
+  clock,
   type Scenario,
 } from './fixture.js';
 
@@ -66,7 +67,7 @@ export function positiveScenarios(compiler: WebAssembly.Module): Scenario[] {
     {
       name: 'alignment checking aligned FX image at16mod512 never gains a natural512 check',
       async run() {
-        const f = fixture(compiler, '0fae03');
+        const f = fixture(compiler, '0fae030fae0b');
         await using(side, f, async (cpu) => {
           const before = state({ 3: 0x6010n }),
             numeric = stack({ 0: ONE }, 5),
@@ -98,6 +99,36 @@ export function positiveScenarios(compiler: WebAssembly.Module): Scenario[] {
           scalar(result, before, 1n, 3);
           unchanged();
           memory(cpu, wanted, 'exact selected FX fields and reserved holes');
+
+          const changedNumeric = stack({ 0: 0x40008000000000000000n }, 1, 0x27f),
+            changedVector = vector.map((value) => value ^ 0xffffffffffffffffffffffffffffffffn);
+          changedNumeric.instructionPointer = 0x123456789abcdeffn;
+          changedNumeric.dataPointer = 0xfedcba9876543210n;
+          changedNumeric.opcode = 0x678;
+          cpu.setX87State(changedNumeric);
+          cpu.setXmmState(changedVector);
+          cpu.setMxcsr(0xffc5);
+          const restored = await cpu.run({ budget: 1n, repeatBudget: 7n });
+          equal(restored.reason, 'budget', 'aligned FXRSTOR uses its exempt full-image read');
+          equal(
+            restored.alignmentCheck,
+            undefined,
+            'restore gains no natural512 or internal-slot check',
+          );
+          scalar(restored, { ...before, rip: 0x1003n }, 1n, 3);
+          same(
+            cpu.readX87State(),
+            { ...numeric, instructionPointer: 0x9999aaaan, dataPointer: 0x33334444n },
+            'legacy image restores raw banks and its literal truncated pointers',
+          );
+          same(
+            cpu.readXmmState(),
+            [...vector.slice(0, 8), ...changedVector.slice(8)],
+            'legacy FXRSTOR restores XMM0..7 and preserves changed XMM8..15',
+          );
+          equal(cpu.readMxcsr(), 0x1f80, 'literal saved MXCSR restored');
+          memory(cpu, wanted, 'FXRSTOR reads the independently validated image without writing it');
+          clock(cpu, 102n);
         });
       },
     },
