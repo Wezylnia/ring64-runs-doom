@@ -128,6 +128,7 @@ impl<'a> Memory<'a> {
         Ok(prepared)
     }
 
+    #[inline(always)]
     fn prepare_aligned(
         &self,
         address: u64,
