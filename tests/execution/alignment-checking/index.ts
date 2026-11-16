@@ -7,6 +7,7 @@ import { lifecycleScenarios } from './lifecycle.js';
 import { largePageScenarios } from './large-pages.js';
 import { positiveScenarios } from './positive.js';
 import { operandScenarios } from './operands.js';
+import { priorityScenarios } from './priority.js';
 
 export function alignmentCheckingScenarios(compiler: WebAssembly.Module) {
   return [
@@ -19,5 +20,6 @@ export function alignmentCheckingScenarios(compiler: WebAssembly.Module) {
     ...largePageScenarios(compiler),
     ...positiveScenarios(compiler),
     ...operandScenarios(compiler),
+    ...priorityScenarios(compiler),
   ];
 }
