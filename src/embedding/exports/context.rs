@@ -3,7 +3,10 @@ use super::*;
 impl Core {
     pub(super) fn access_failure(&mut self, failure: AccessFailure) {
         match failure {
-            AccessFailure::AlignmentCheck(fault) => self.alignment_check = Some(fault),
+            AccessFailure::AlignmentCheck(fault) => {
+                self.alignment_fault = None;
+                self.alignment_check = Some(fault);
+            }
             AccessFailure::Linear(fault) => self.fault = Some(fault),
             AccessFailure::Segment(fault) => self.segment_fault = Some(fault),
             AccessFailure::Paging(fault) => {

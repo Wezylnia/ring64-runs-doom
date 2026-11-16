@@ -144,3 +144,89 @@ fn each_operand_admission_clears_a_previous_alignment_refusal() {
         );
     }
 }
+
+#[test]
+fn alignment_report_bank_switches_classes_without_resurrecting_an_older_fault() {
+    use super::super::super::layout::{ALIGNMENT, ALIGNMENT_CHECK, DATA};
+
+    fixture();
+    let bank = BRIDGE.with_borrow(|bridge| bridge.core.as_ref().unwrap().paging);
+    let mandatory = || {
+        assert_eq!(paging::core_paged_access_reason(), ALIGNMENT);
+        BRIDGE.with_borrow(|bridge| {
+            let core = bridge.core.as_ref().unwrap();
+            assert!(core.alignment_check.is_none());
+            assert_eq!(
+                core.alignment_fault.as_ref().map(|fault| (
+                    fault.segment,
+                    fault.offset,
+                    fault.address,
+                    fault.width,
+                    fault.access,
+                    fault.alignment,
+                )),
+                Some((Segment::Ds, 0x4001, 0x4001, 16, Access::Read, 16))
+            );
+        });
+    };
+    let natural = || {
+        assert_eq!(paging::core_paged_access_reason(), ALIGNMENT_CHECK);
+        assert_eq!(paging::core_paged_access_failed(), 1);
+        BRIDGE.with_borrow(|bridge| {
+            let core = bridge.core.as_ref().unwrap();
+            assert!(core.alignment_fault.is_none());
+            assert_eq!(
+                core.alignment_check,
+                Some(crate::x86::alignment::Fault {
+                    address: 0x4001,
+                    width: 4,
+                    access: Access::Read,
+                    alignment: 4,
+                })
+            );
+        });
+    };
+
+    assert_eq!(
+        vector::core_paged_vector_load(0x4001, 16, Segment::Ds as u32, 16),
+        0
+    );
+    mandatory();
+    // A scalar admission clears only natural AC, preserving the captured GP.
+    assert_eq!(core_paged_load(0x4000, 4), 0x90909090);
+    assert_eq!(paging::core_paged_access_failed(), 0);
+    mandatory();
+
+    assert_eq!(core_paged_load(0x4001, 4), 0);
+    natural();
+    assert_eq!(core_paged_load(0x4000, 4), 0x90909090);
+    assert_eq!(paging::core_paged_access_failed(), 0);
+    assert_eq!(paging::core_paged_access_reason(), DATA);
+    BRIDGE.with_borrow(|bridge| {
+        let core = bridge.core.as_ref().unwrap();
+        assert!(core.alignment_check.is_none());
+        assert!(
+            core.alignment_fault.is_none(),
+            "older GP cannot reappear after AC repair"
+        );
+    });
+
+    assert_eq!(core_paged_load(0x4001, 4), 0);
+    natural();
+    assert_eq!(
+        vector::core_paged_vector_load(0x4001, 16, Segment::Ds as u32, 16),
+        0
+    );
+    mandatory();
+    BRIDGE.with_borrow(|bridge| {
+        let core = bridge.core.as_ref().unwrap();
+        assert_eq!(
+            core.paging, bank,
+            "neither alignment class changes CR2 or controls"
+        );
+        assert_eq!(
+            core.image.physical_read_bytes(0, 0x5000),
+            Ok(vec![0x90; 0x5000])
+        );
+    });
+}
