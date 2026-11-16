@@ -1,4 +1,5 @@
 import { matrixScenarios } from './matrix.js';
+import { stackMatrixScenarios } from './stack-matrix.js';
 import { classScenarios } from './classes.js';
 import { boundaryScenarios } from './boundaries.js';
 import { orderedScenarios } from './ordered.js';
@@ -13,6 +14,7 @@ import { modelScenarios } from './models.js';
 export function alignmentCheckingScenarios(compiler: WebAssembly.Module) {
   return [
     ...matrixScenarios(compiler),
+    ...stackMatrixScenarios(compiler),
     ...classScenarios(compiler),
     ...boundaryScenarios(compiler),
     ...orderedScenarios(compiler),

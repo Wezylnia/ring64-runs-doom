@@ -17,7 +17,7 @@ import {
 } from './fixture.js';
 
 // Authored independently of the paging validators and decoder under test.
-const cells: Profile[] = [
+export const cells: Profile[] = [
   ...profiles.map((p) => ({ ...p, family: 'linear' as const })),
   ...profiles
     .filter((p) => ['real', 'protected', 'virtual8086'].includes(p.mode))
