@@ -21,6 +21,7 @@ fn fixture() {
             cr0: 0x40011,
             ..crate::x86::paging::State::reset()
         });
+        core.physical_controls = true;
         core.image = Image::physical_mapped(
             vec![("ram".into(), vec![0x90; 0x5000])],
             vec![MappingInput {
@@ -44,6 +45,52 @@ fn fixture() {
         unsafe {
             (*core.state.get()).flags = 0x40002;
         }
+    });
+}
+
+#[test]
+fn paging_import_clears_transient_alignment_only_after_validation_and_keeps_pending_source() {
+    fixture();
+    assert_eq!(core_load_impl::<false, true>(0x4001, 4), 0);
+    let (failure, bank, event) = BRIDGE.with_borrow_mut(|bridge| {
+        let core = bridge.core.as_mut().unwrap();
+        let state = unsafe { &mut *core.state.get() };
+        state.rip = 0x1000;
+        let event = crate::x86::exception::EventState::Pending(
+            crate::x86::exception::ExceptionEvent::fault(
+                17,
+                0x1000,
+                state.flags,
+                &core.context,
+                Some(1),
+            ),
+        );
+        state.set_event(event);
+        (core.alignment_check, core.paging, event)
+    });
+    let input = |cr0| {
+        BRIDGE.with_borrow_mut(|bridge| {
+            bridge.input = serde_json::to_vec(
+                &serde_json::json!({"cr0":cr0,"cr2":"0xdead","cr3":"0x0","cr4":"0x0","efer":"0x0"}),
+            )
+            .unwrap();
+        })
+    };
+    input("0x80040010");
+    assert_eq!(paging::core_import_paging(), 1);
+    BRIDGE.with_borrow(|bridge| {
+        let core = bridge.core.as_ref().unwrap();
+        assert_eq!(core.alignment_check, failure);
+        assert_eq!(core.paging, bank);
+        assert_eq!(unsafe { (*core.state.get()).event_state() }, Ok(event));
+    });
+    input("0x11");
+    assert_eq!(paging::core_import_paging(), 0);
+    assert_eq!(paging::core_paged_access_failed(), 0);
+    BRIDGE.with_borrow(|bridge| {
+        let core = bridge.core.as_ref().unwrap();
+        assert!(core.alignment_check.is_none());
+        assert_eq!(unsafe { (*core.state.get()).event_state() }, Ok(event));
     });
 }
 
