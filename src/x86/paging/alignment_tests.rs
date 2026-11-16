@@ -250,9 +250,61 @@ fn captured_frame_authority_does_not_recheck_initiating_privilege_at_commit() {
         .unwrap();
     memory.prepare_publication().unwrap();
     // The saved prospective-CPL0 admission is authoritative, even at current CPL3.
-    memory
-        .write_aligned(0x6001, 4, 0x12345678, Intent::Natural(4))
-        .unwrap();
+    assert_eq!(
+        memory.write_aligned(0x6001, 4, 0x12345678, Intent::Natural(4)),
+        Ok(()),
+        "captured prospective-CPL0 authority remains valid at commit",
+    );
     assert!(work.pending.is_empty());
     assert_eq!(image.physical_read(0x6001, 4), Ok(0x12345678));
+}
+
+#[test]
+fn odd_system_metadata_is_exempt_while_the_same_user_operand_faults() {
+    let (mut image, mut state) = fixture(0xb007);
+    state.cr0 = 0x40011;
+    let mut work = AccessState::default();
+    let memory = Memory::new(&mut image, &state, 3, 0x40002, &mut work);
+    assert_eq!(
+        memory.read_system(0x6001, 8),
+        Ok([0; 16]),
+        "implicit metadata does not acquire ordinary natural alignment"
+    );
+    assert_eq!(
+        memory.read_aligned(0x6001, 8, Intent::Natural(8)),
+        Err(alignment(0x6001, 8, Access::Read, 8)),
+        "the same address is an eligible ordinary user operand"
+    );
+}
+
+#[test]
+fn alignment_fault_retains_accessed_source_owner_invalidation_without_payload() {
+    let (mut image, state) = fixture(0xb007);
+    let owner = image.register_source([(0x2018, 4)]).unwrap();
+    assert!(image.activate(owner));
+    assert!(image.owner_valid(owner));
+    assert!(!image.active_changed());
+    let mut work = AccessState::default();
+    let memory = Memory::new(&mut image, &state, 3, 0x40002, &mut work);
+    assert_eq!(
+        memory.read_for_write_aligned(0x6fff, 4, Intent::Natural(4)),
+        Err(alignment(0x6fff, 4, Access::Write, 4)),
+        "reached RMW faults after its permitted walk A effects",
+    );
+    assert!(work.pending.is_empty());
+    assert_eq!(image.physical_read(0x2018, 4), Ok(0xa027));
+    assert_eq!(image.physical_read(0x201c, 4), Ok(0xb027));
+    assert_eq!(image.physical_read(0xafff, 1), Ok(0x11));
+    assert_eq!(
+        image.physical_read_bytes(0xb000, 3),
+        Ok(vec![0x22, 0x33, 0x44])
+    );
+    assert!(
+        !image.owner_valid(owner),
+        "A-only publication invalidates the actual leaf-word source owner",
+    );
+    assert!(
+        image.active_changed(),
+        "zero-payload refusal retains active source invalidation"
+    );
 }
