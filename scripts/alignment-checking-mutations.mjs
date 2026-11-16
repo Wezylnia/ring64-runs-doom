@@ -399,13 +399,19 @@ try {
       item.status = 'uncounted-error';
       item.error = error.message;
     } finally {
-      await restore();
-      item.restoredSourceMatches = (await identity(work)).sha256 === baselineIdentity.sha256;
-      if (!item.restoredSourceMatches) throw Error('per-case source restoration failed');
-      // A host-only mutant must never inherit the preceding mutated Wasm.
-      const baselineWasm = baselineArtifacts.get('public');
-      if (baselineWasm) await copyFile(baselineWasm.snapshot, join(work, 'build/ring64.wasm'));
+      try {
+        await restore();
+        item.restoredSourceMatches = (await identity(work)).sha256 === baselineIdentity.sha256;
+        if (!item.restoredSourceMatches)
+          item.restorationError = 'per-case source restoration failed';
+        // A host-only mutant must never inherit the preceding mutated Wasm.
+        const baselineWasm = baselineArtifacts.get('public');
+        if (baselineWasm) await copyFile(baselineWasm.snapshot, join(work, 'build/ring64.wasm'));
+      } catch (error) {
+        item.restorationError = error.message;
+      }
     }
+    if (item.restorationError) item.status = 'uncounted-error';
     item.seconds = Math.round((performance.now() - began) / 10) / 100;
     results.push(item);
     await receipt();
@@ -416,16 +422,32 @@ try {
         sourceSha256: item.sourceSha256,
         artifactSha256: item.artifact?.sha256,
         error: item.error,
+        restorationError: item.restorationError,
         assertion: item.detail?.assertion ?? item.detail?.error,
         seconds: item.seconds,
       }),
     );
+    if (item.restorationError) {
+      fatal ??= item.restorationError;
+      break;
+    }
   }
 } catch (error) {
   fatal = error.message;
 } finally {
-  await restore();
-  // Rebuild and re-run the same positive controls after all source is restored.
+  try {
+    await restore();
+  } catch (error) {
+    fatal ??= `final source restoration failed: ${error.message}`;
+  }
+}
+try {
+  finalIdentity = await identity(work);
+} catch (error) {
+  fatal ??= `final source identity failed: ${error.message}`;
+}
+// Validation follows cleanup so it cannot replace an earlier failure from finally.
+if (finalIdentity?.sha256 === baselineIdentity.sha256)
   for (const kind of baselineArtifacts.keys()) {
     try {
       const restored = await build(`restored-${kind}`, kind);
@@ -449,24 +471,27 @@ try {
       fatal ??= error.message;
     }
   }
+try {
   finalIdentity = await identity(work);
   finalParentIdentity = await identity(root);
-  const summary = await receipt();
-  console.log(
-    JSON.stringify({
-      evidence,
-      experiments: summary.experiments,
-      semanticKills: summary.semanticKills,
-      restoredSourceMatches: summary.restoredSourceMatches,
-      parentStillMatches: summary.parentStillMatches,
-      fatal,
-    }),
-  );
-  if (
-    fatal ||
-    results.some((item) => item.status !== 'semantic-kill') ||
-    !summary.restoredSourceMatches ||
-    !summary.parentStillMatches
-  )
-    process.exitCode = 1;
+} catch (error) {
+  fatal ??= `final source identity failed: ${error.message}`;
 }
+const summary = await receipt();
+console.log(
+  JSON.stringify({
+    evidence,
+    experiments: summary.experiments,
+    semanticKills: summary.semanticKills,
+    restoredSourceMatches: summary.restoredSourceMatches,
+    parentStillMatches: summary.parentStillMatches,
+    fatal,
+  }),
+);
+if (
+  fatal ||
+  results.some((item) => item.status !== 'semantic-kill') ||
+  !summary.restoredSourceMatches ||
+  !summary.parentStillMatches
+)
+  process.exitCode = 1;

@@ -18,6 +18,27 @@ const gate = `        let prepared = self.prepare(address, width, access, rmw, c
         Ok(prepared)`;
 export const mutants = [
   native(
+    'natural-check-uses-last-fragment-start',
+    'split_page_alignment_retains_accessed_but_never_dirty_or_pending_payload',
+    edit(
+      access,
+      '            && let Err(fault) = intent.check(address, width, access)',
+      '            && let Err(fault) = intent.check(prepared.fragments.last().unwrap().request.linear, width, access)',
+    ),
+  ),
+  publicCpu(
+    'aligned-effective-offset-suppresses-linear-natural-check',
+    'final segmented linear address reverses effective-offset residues',
+    edit(
+      'src/embedding/exports/context.rs',
+      '        match guest_access!(core, PAGED, read(address, width)) {',
+      `        match guest_access!(core, PAGED,
+            read_aligned(address, width, if offset & u64::from(width - 1) == 0 {
+                crate::x86::alignment::Intent::Exempt
+            } else { crate::x86::alignment::Intent::Natural(width) })) {`,
+    ),
+  ),
+  native(
     'nominal-extent-replaces-natural-granule',
     'component_alignment_follows_complete_record_admission_and_reports_its_field',
     edit(
