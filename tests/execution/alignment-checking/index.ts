@@ -2,6 +2,7 @@ import { matrixScenarios } from './matrix.js';
 import { classScenarios } from './classes.js';
 import { boundaryScenarios } from './boundaries.js';
 import { orderedScenarios } from './ordered.js';
+import { eventScenarios } from './events.js';
 import { largePageScenarios } from './large-pages.js';
 
 export function alignmentCheckingScenarios(compiler: WebAssembly.Module) {
@@ -10,6 +11,7 @@ export function alignmentCheckingScenarios(compiler: WebAssembly.Module) {
     ...classScenarios(compiler),
     ...boundaryScenarios(compiler),
     ...orderedScenarios(compiler),
+    ...eventScenarios(compiler),
     ...largePageScenarios(compiler),
   ];
 }
