@@ -12,6 +12,7 @@ impl Core {
         }
     }
 
+    #[inline(always)]
     pub(super) fn segment_address(
         &mut self,
         offset: u64,
