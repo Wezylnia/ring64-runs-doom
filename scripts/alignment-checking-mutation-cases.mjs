@@ -18,6 +18,20 @@ const gate = `        let prepared = self.prepare(address, width, access, rmw, c
         Ok(prepared)`;
 export const mutants = [
   native(
+    'new-ac-retains-older-mandatory-alignment-report',
+    'alignment_report_bank_switches_classes_without_resurrecting_an_older_fault',
+    edit(
+      'src/embedding/exports/context.rs',
+      `            AccessFailure::AlignmentCheck(fault) => {
+                self.alignment_fault = None;
+                self.alignment_check = Some(fault);
+            }`,
+      `            AccessFailure::AlignmentCheck(fault) => {
+                self.alignment_check = Some(fault);
+            }`,
+    ),
+  ),
+  native(
     'natural-check-uses-last-fragment-start',
     'split_page_alignment_retains_accessed_but_never_dirty_or_pending_payload',
     edit(
@@ -219,9 +233,13 @@ fn participates`,
     granular,
     edit(
       'src/embedding/exports/context.rs',
-      '            AccessFailure::AlignmentCheck(fault) => self.alignment_check = Some(fault),',
+      `            AccessFailure::AlignmentCheck(fault) => {
+                self.alignment_fault = None;
+                self.alignment_check = Some(fault);
+            }`,
       `            AccessFailure::AlignmentCheck(fault) => {
                 if let Some(bank) = self.paging.as_mut() { bank.cr2 = fault.address; }
+                self.alignment_fault = None;
                 self.alignment_check = Some(fault);
             }`,
     ),
