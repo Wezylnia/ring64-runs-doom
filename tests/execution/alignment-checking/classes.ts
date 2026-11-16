@@ -32,7 +32,7 @@ type Packet = {
   si?: boolean;
   long?: boolean;
 };
-const packets: Packet[] = [
+export const packets: Packet[] = [
   { name: 'word', code: '668b03', at: 0x6001n, width: 2, granule: 2 },
   { name: 'dword RMW', code: '0103', at: 0x6001n, width: 4, granule: 4, write: true },
   { name: 'locked RMW', code: 'f00103', at: 0x6001n, width: 4, granule: 4, write: true },
