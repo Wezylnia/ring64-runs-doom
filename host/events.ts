@@ -15,6 +15,7 @@ interface ExceptionBoundary {
 export type ExceptionEvent = ExceptionBoundary &
   (
     | { vector: 14; errorCode: number; pageFaultAddress: bigint; debug?: never }
+    | { vector: 17; errorCode: 0 | 1; pageFaultAddress?: never; debug?: never }
     | {
         vector: 0 | 1 | 6 | 7 | 8 | 10 | 11 | 12 | 13 | 16 | 19;
         errorCode?: number;
@@ -122,7 +123,7 @@ export function captureEventState(input: EventState): EventState {
   if (typeof source !== 'object' || source === null || Array.isArray(source))
     throw new TypeError('pending event must contain an exception record');
   const vector = word(source.vector, 0xff, 'event vector') as ExceptionEvent['vector'];
-  if (![0, 1, 6, 7, 8, 10, 11, 12, 13, 14, 16, 19].includes(vector))
+  if (![0, 1, 6, 7, 8, 10, 11, 12, 13, 14, 16, 17, 19].includes(vector))
     throw new TypeError('event vector is outside the supported exception set');
   if ((vector === 6 || vector === 7) && 'errorCode' in source)
     throw new TypeError('UD/NM sources have no error code');
@@ -146,6 +147,20 @@ export function captureEventState(input: EventState): EventState {
       'debug' in source)
   )
     throw new TypeError('numeric source differs from event');
+  if (vector === 17) {
+    if ('debug' in source || 'pageFaultAddress' in source)
+      throw new TypeError('alignment check cannot contain a foreign fault source');
+    return {
+      kind,
+      exception: {
+        vector,
+        instructionPc,
+        returnPc,
+        savedFlags,
+        errorCode: word(source.errorCode!, 1, 'alignment check error code') as 0 | 1,
+      },
+    };
+  }
   if (vector === 14) {
     if ('debug' in source) throw new TypeError('page fault cannot contain a debug source');
     const address = pageFaultAddress(source.pageFaultAddress!);
@@ -375,6 +390,17 @@ export function readEvent(
   };
   const hasErrorCode = view.getUint32(offset + layout.hasErrorCode, true);
   if (hasErrorCode > 1) throw new Error('core returned an invalid event error-code tag');
+  if (vector === 17) {
+    if (hasErrorCode !== 1) throw new Error('core omitted an alignment check error code');
+    return captureEventState({
+      kind,
+      exception: {
+        vector,
+        ...boundary,
+        errorCode: view.getUint32(offset + layout.errorCode, true) as 0 | 1,
+      },
+    });
+  }
   if (vector === 14) {
     if (!pagingSource) throw new Error('core omitted a pending page fault source layout');
     const address = readPagingSource(view, pagingSource, pagingSource.offset);

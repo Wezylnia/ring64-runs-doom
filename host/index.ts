@@ -9,6 +9,7 @@ export type {
   DebugException,
   Fault,
   AlignmentFault,
+  AlignmentCheck,
   SimdException,
   GeneralProtectionFault,
   ProtectionFault,

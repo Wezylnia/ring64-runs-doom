@@ -118,6 +118,11 @@ export interface AlignmentFault {
   alignment: number;
 }
 
+export interface AlignmentCheck extends AlignmentFault {
+  vector: 17;
+  errorCode: 0 | 1;
+}
+
 export interface SimdException {
   instructionPc: bigint;
   vector: 19;
@@ -1472,6 +1477,23 @@ export class Core {
     this.#exports.core_fault_info(this.#layout.reasons.indexOf(reason));
     const raw = this.info<
       Omit<AlignmentFault, 'instructionPc' | 'offset' | 'address'> & {
+        offset: string;
+        address: string;
+      }
+    >();
+    return {
+      ...raw,
+      instructionPc: this.diagnosticPc(),
+      offset: BigInt(raw.offset),
+      address: BigInt(raw.address),
+    };
+  }
+
+  alignmentCheck(reason: string): AlignmentCheck | undefined {
+    if (reason !== 'alignment-check') return undefined;
+    this.#exports.core_fault_info(this.#layout.reasons.indexOf(reason));
+    const raw = this.info<
+      Omit<AlignmentCheck, 'instructionPc' | 'offset' | 'address'> & {
         offset: string;
         address: string;
       }

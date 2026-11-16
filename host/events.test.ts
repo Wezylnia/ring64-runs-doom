@@ -36,6 +36,34 @@ const pending = (): Extract<EventState, { kind: 'pending' }> => ({
   },
 });
 
+test('alignment-check checkpoints preserve EXT and reject foreign fault sources', () => {
+  for (const errorCode of [0, 1]) {
+    const event = {
+      ...pending(),
+      exception: { ...pending().exception, vector: 17, errorCode },
+    } as EventState;
+    assert.deepEqual(captureEventState(event), event);
+    const bytes = new Uint8Array(40);
+    writeEvent(new DataView(bytes.buffer), layout, event);
+    assert.equal(new DataView(bytes.buffer).getUint32(4, true), 17);
+    assert.equal(new DataView(bytes.buffer).getUint32(32, true), errorCode);
+    assert.deepEqual(readEvent(new DataView(bytes.buffer), layout), event);
+    for (const change of [
+      { errorCode: undefined },
+      { errorCode: 2 },
+      { errorCode: 0x10001 },
+      { pageFaultAddress: 0x1234n },
+      { debug: {} },
+    ])
+      assert.throws(() =>
+        captureEventState({
+          ...event,
+          exception: { ...pending().exception, vector: 17, errorCode, ...change },
+        } as EventState),
+      );
+  }
+});
+
 test('paging source transport appends a literal address without reusing mutable CR2 or event slots', () => {
   const sourceLayout = { offset: 712, bytes: 16, address: 0, hasAddress: 8, reserved: 12 };
   validatePagingSourceLayout(sourceLayout, 728, 712);

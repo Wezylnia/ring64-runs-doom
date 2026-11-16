@@ -25,6 +25,7 @@ import {
   type CompileLimits,
   type Fault,
   type AlignmentFault,
+  type AlignmentCheck,
   type SimdException,
   type GeneralProtectionFault,
   type ProtectionFault,
@@ -77,6 +78,7 @@ export interface RunResult {
   fault?: Fault;
   segmentFault?: SegmentFault;
   alignmentFault?: AlignmentFault;
+  alignmentCheck?: AlignmentCheck;
   simdException?: SimdException;
   generalProtectionFault?: GeneralProtectionFault;
   x87Exception?: X87Exception;
@@ -530,6 +532,8 @@ export class Cpu {
       const fault = this.#engine.fault(reason);
       const segmentFault = this.#engine.segmentFault(reason);
       const alignmentFault = this.#engine.alignmentFault(reason);
+      const alignmentCheck =
+        reason === 'alignment-check' ? this.#engine.alignmentCheck(reason) : undefined;
       const simdException =
         reason === 'simd-exception' ? this.#engine.simdException(reason) : undefined;
       const generalProtectionFault =
@@ -566,6 +570,7 @@ export class Cpu {
         ...(fault ? { fault } : {}),
         ...(segmentFault ? { segmentFault } : {}),
         ...(alignmentFault ? { alignmentFault } : {}),
+        ...(alignmentCheck ? { alignmentCheck } : {}),
         ...(simdException ? { simdException } : {}),
         ...(generalProtectionFault ? { generalProtectionFault } : {}),
         ...(x87Exception ? { x87Exception } : {}),
