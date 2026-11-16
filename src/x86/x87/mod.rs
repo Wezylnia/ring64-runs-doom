@@ -307,6 +307,16 @@ impl Op {
             _ => 0,
         }
     }
+    pub fn alignment_intent(self) -> super::alignment::Intent {
+        use super::alignment::Intent;
+        match self.format {
+            Format::F80 | Format::Bcd | Format::F64 | Format::I64 => Intent::Natural(8),
+            Format::F32 | Format::I32 => Intent::Natural(4),
+            Format::I16 => Intent::Natural(2),
+            Format::None if self.memory_bytes() != 0 => Intent::Natural(2),
+            _ => Intent::Exempt,
+        }
+    }
     pub fn is_store(self) -> bool {
         matches!(
             self.kind,

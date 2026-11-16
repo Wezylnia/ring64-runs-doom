@@ -113,6 +113,14 @@ impl ImageOp {
     pub fn alignment(self) -> u32 {
         if self.format.is_fx() { 16 } else { 1 }
     }
+    pub fn alignment_intent(self) -> super::alignment::Intent {
+        use super::alignment::Intent;
+        match self.format {
+            Format::Protected16 | Format::Real16 => Intent::Natural(2),
+            Format::Protected32 | Format::Real32 => Intent::Natural(4),
+            Format::FxLegacy | Format::Fx64 | Format::Fx64Wide => Intent::Exempt,
+        }
+    }
 
     pub fn spans(self) -> &'static [(u32, u32)] {
         let full = matches!(self.kind, Kind::Save | Kind::Restore);

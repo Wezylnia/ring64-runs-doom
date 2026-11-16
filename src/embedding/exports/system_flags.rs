@@ -95,6 +95,7 @@ pub extern "C" fn core_flags(operation: u32, flags: u64, input: u64) -> i32 {
         core.fault = None;
         core.segment_fault = None;
         core.alignment_fault = None;
+        core.alignment_check = None;
         core.simd_exception = None;
         core.numeric_fault = None;
         core.general_protection = None;

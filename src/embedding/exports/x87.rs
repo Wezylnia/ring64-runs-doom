@@ -56,6 +56,7 @@ fn core_x87_impl<const OBSERVED: bool, const PAGED: bool>(
         core.fault = None;
         core.segment_fault = None;
         core.alignment_fault = None;
+        core.alignment_check = None;
         core.simd_exception = None;
         core.numeric_fault = None;
         core.general_protection = None;
@@ -90,13 +91,21 @@ fn core_x87_impl<const OBSERVED: bool, const PAGED: bool>(
             };
             address = Some(linear);
             if operation.is_store() {
-                if let Err(fault) = guest_access!(core, PAGED, check_write(linear, width)) {
+                if let Err(fault) = guest_access!(
+                    core,
+                    PAGED,
+                    check_write_aligned(linear, width, operation.alignment_intent())
+                ) {
                     core.access_failure(fault);
                     return core.memory_failure_reason();
                 }
                 0
             } else {
-                match guest_access!(core, PAGED, read_vector(linear, width)) {
+                match guest_access!(
+                    core,
+                    PAGED,
+                    read_vector_aligned(linear, width, operation.alignment_intent())
+                ) {
                     Ok(bytes) => u128::from_le_bytes(bytes),
                     Err(fault) => {
                         core.access_failure(fault);
@@ -123,7 +132,11 @@ fn core_x87_impl<const OBSERVED: bool, const PAGED: bool>(
             if let Err(fault) = guest_access!(
                 core,
                 PAGED,
-                write_bytes(linear, &effect.value.to_le_bytes()[..width as usize])
+                write_bytes_aligned(
+                    linear,
+                    &effect.value.to_le_bytes()[..width as usize],
+                    operation.alignment_intent()
+                )
             ) {
                 core.access_failure(fault);
                 return core.memory_failure_reason();

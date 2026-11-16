@@ -47,6 +47,7 @@ pub extern "C" fn core_import_mxcsr() -> i32 {
         core.fault = None;
         core.segment_fault = None;
         core.alignment_fault = None;
+        core.alignment_check = None;
         core.simd_exception = None;
         core.numeric_fault = None;
         core.general_protection = None;
@@ -123,6 +124,7 @@ fn core_load_mxcsr_impl<const OBSERVED: bool, const PAGED: bool>(offset: u64, se
         core.protection_fault = None;
         core.system_memory_fault = None;
         core.alignment_fault = None;
+        core.alignment_check = None;
         let Some(address) =
             core.segment_address(offset, 4, Segment::from_id(segment), Access::Read, false)
         else {
@@ -177,12 +179,17 @@ fn core_store_mxcsr_impl<const OBSERVED: bool, const PAGED: bool>(
         core.protection_fault = None;
         core.system_memory_fault = None;
         core.alignment_fault = None;
+        core.alignment_check = None;
         let Some(address) =
             core.segment_address(offset, 4, Segment::from_id(segment), Access::Write, false)
         else {
             return 0;
         };
-        match guest_access!(core, PAGED, write_bytes(address, &value)) {
+        match guest_access!(
+            core,
+            PAGED,
+            write_bytes_aligned(address, &value, crate::x86::alignment::Intent::Natural(4))
+        ) {
             Ok(()) => {
                 if OBSERVED {
                     core.debug_operand(address, 4, Access::Write);

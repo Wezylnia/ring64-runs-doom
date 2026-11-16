@@ -41,6 +41,7 @@ fn core_masked_store_impl<const OBSERVED: bool, const PAGED: bool>(
         core.fault = None;
         core.segment_fault = None;
         core.alignment_fault = None;
+        core.alignment_check = None;
         core.simd_exception = None;
         core.numeric_fault = None;
         core.general_protection = None;
@@ -72,14 +73,24 @@ fn core_masked_store_impl<const OBSERVED: bool, const PAGED: bool>(
             };
         };
         let result = if mask_bits == 0 {
-            guest_access!(core, PAGED, check_write(address, width))
+            guest_access!(
+                core,
+                PAGED,
+                check_write_aligned(address, width, crate::x86::alignment::Intent::vector(width))
+            )
         } else {
             let bytes = unsafe { (*core.state.get()).vector_scratch };
             let selection = masked::select(mask_bits as u16, width);
             guest_access!(
                 core,
                 PAGED,
-                write_fields(address, width, selection.fields(), &bytes)
+                write_fields_aligned(
+                    address,
+                    width,
+                    selection.fields(),
+                    &bytes,
+                    crate::x86::alignment::Intent::vector(width)
+                )
             )
         };
         if let Err(fault) = result {
@@ -123,6 +134,7 @@ fn core_clflush_impl<const PAGED: bool>(offset: u64, segment: u32) -> i32 {
         core.fault = None;
         core.segment_fault = None;
         core.alignment_fault = None;
+        core.alignment_check = None;
         core.simd_exception = None;
         core.numeric_fault = None;
         core.general_protection = None;

@@ -28,6 +28,7 @@ fn core_numeric_image_impl<const OBSERVED: bool, const PAGED: bool>(
         core.fault = None;
         core.segment_fault = None;
         core.alignment_fault = None;
+        core.alignment_check = None;
         core.simd_exception = None;
         core.numeric_fault = None;
         core.general_protection = None;
@@ -76,7 +77,13 @@ fn core_numeric_image_impl<const OBSERVED: bool, const PAGED: bool>(
             if let Err(fault) = guest_access!(
                 core,
                 PAGED,
-                write_fields(address, width, operation.spans(), &saved.bytes)
+                write_fields_aligned(
+                    address,
+                    width,
+                    operation.spans(),
+                    &saved.bytes,
+                    operation.alignment_intent()
+                )
             ) {
                 core.access_failure(fault);
                 return core.memory_failure_reason();
@@ -95,7 +102,13 @@ fn core_numeric_image_impl<const OBSERVED: bool, const PAGED: bool>(
             if let Err(fault) = guest_access!(
                 core,
                 PAGED,
-                read_fields(address, width, operation.spans(), &mut bytes)
+                read_fields_aligned(
+                    address,
+                    width,
+                    operation.spans(),
+                    &mut bytes,
+                    operation.alignment_intent()
+                )
             ) {
                 core.access_failure(fault);
                 return core.memory_failure_reason();

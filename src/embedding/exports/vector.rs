@@ -34,6 +34,7 @@ impl Core {
         assert!(matches!(width, 2 | 4 | 8 | 16));
         assert!(alignment == 1 || alignment == 16 && width == 16);
         self.alignment_fault = None;
+        self.alignment_check = None;
         let segment = Segment::from_id(segment);
         let address = self.segment_address(offset, width, segment, access, false)?;
         if address & u64::from(alignment - 1) != 0 {
@@ -73,6 +74,7 @@ pub extern "C" fn core_import_xmm() -> i32 {
         core.fault = None;
         core.segment_fault = None;
         core.alignment_fault = None;
+        core.alignment_check = None;
         core.simd_exception = None;
         core.numeric_fault = None;
         core.general_protection = None;
@@ -110,7 +112,11 @@ fn core_vector_load_impl<const OBSERVED: bool, const PAGED: bool>(
         else {
             return 0;
         };
-        match guest_access!(core, PAGED, read_vector(address, width)) {
+        match guest_access!(
+            core,
+            PAGED,
+            read_vector_aligned(address, width, crate::x86::alignment::Intent::vector(width))
+        ) {
             Ok(bytes) => unsafe {
                 if OBSERVED {
                     core.debug_operand(address, width, Access::Read);
@@ -171,7 +177,15 @@ fn core_vector_store_impl<const OBSERVED: bool, const PAGED: bool>(
         else {
             return 0;
         };
-        match guest_access!(core, PAGED, write_bytes(address, &bytes[..width as usize])) {
+        match guest_access!(
+            core,
+            PAGED,
+            write_bytes_aligned(
+                address,
+                &bytes[..width as usize],
+                crate::x86::alignment::Intent::vector(width)
+            )
+        ) {
             Ok(()) => {
                 if OBSERVED {
                     core.debug_operand(address, width, Access::Write);
