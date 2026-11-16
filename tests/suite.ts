@@ -35,6 +35,7 @@ import { fastSystemScenarios } from './execution/fast-system/index.js';
 import { contextReuseScenarios } from './execution/context-reuse/index.js';
 import { identityTimeScenarios } from './execution/identity-time/index.js';
 import { supervisorAccessScenarios } from './execution/supervisor-access/index.js';
+import { alignmentCheckingScenarios } from './execution/alignment-checking/index.js';
 
 export async function runScenarios(
   compiler: Uint8Array | WebAssembly.Module,
@@ -79,6 +80,7 @@ export async function runScenarios(
     ...numericControlScenarios(core),
     ...identityTimeScenarios(core),
     ...supervisorAccessScenarios(core),
+    ...alignmentCheckingScenarios(core),
   ];
   const passed: string[] = [];
   for (const { name, run } of scenarios) {
