@@ -676,7 +676,7 @@ fn participates`,
   ),
   publicCpu(
     'sgdt-explicit-operand-inherits-metadata-exemption',
-    'system records use ordered field geometry and whole nominal admission',
+    granular,
     edit(
       'src/x86/protection/mod.rs',
       '                Intent::SystemRecord((length - 2) as u32),',
