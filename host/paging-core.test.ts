@@ -84,7 +84,7 @@ test('real core validates the complete normalized import atomically while CR2 re
     const before = cpu.readPagingState();
     for (const changed of [
       { cr0: 0n },
-      { cr0: before.cr0 | 0x40000n },
+      { cr0: before.cr0 | 0x40n },
       { cr3: 0x1001n },
       { cr3: 1n << 52n },
       { cr4: 0n },
@@ -93,6 +93,13 @@ test('real core validates the complete normalized import atomically while CR2 re
       assert.throws(() => cpu.setPagingState({ ...before, ...changed }), TypeError);
       assert.deepEqual(cpu.readPagingState(), before);
     }
+    const scalar = cpu.readState();
+    const alignment = { ...before, cr0: before.cr0 | 0x40000n };
+    cpu.setPagingState(alignment);
+    assert.deepEqual(cpu.readPagingState(), alignment);
+    assert.deepEqual(cpu.readState(), scalar);
+    cpu.setPagingState(before);
+    assert.deepEqual(cpu.readPagingState(), before);
     const repaired = {
       ...before,
       cr0: 0x80000033n,
