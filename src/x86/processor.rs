@@ -26,7 +26,7 @@ pub fn cpuid(eax: u32, ecx: u32, cr4: u64) -> [u32; 4] {
         1 => [0, 0, 0x00020200, 0x00002010],
         7 if ecx == 0 => [
             0,
-            0x00100480,
+            0x00102480,
             0x80000008 | if cr4 & (1 << 22) != 0 { 1 << 4 } else { 0 },
             0,
         ],
@@ -104,7 +104,7 @@ mod tests {
         );
         assert_eq!(
             cpuid(7, 0, 0),
-            [0, (1 << 20) | (1 << 10) | (1 << 7), 0x80000008, 0]
+            [0, (1 << 20) | (1 << 13) | (1 << 10) | (1 << 7), 0x80000008, 0]
         );
     }
 
@@ -114,7 +114,7 @@ mod tests {
             cpuid(0, u32::MAX, 0),
             [7, 0x676e6952, 0x656e6967, 0x6e453436]
         );
-        assert_eq!(cpuid(7, 0, 0), [0, 0x00100480, 0x80000008, 0]);
+        assert_eq!(cpuid(7, 0, 0), [0, 0x00102480, 0x80000008, 0]);
         for subleaf in [1, 2, 0x80000000, u32::MAX] {
             assert_eq!(cpuid(7, subleaf, 0), [0; 4], "subleaf {subleaf:x}");
         }
@@ -124,7 +124,7 @@ mod tests {
     fn protection_keys_identity_tracks_only_live_pke_at_the_structured_leaf() {
         for cr4 in [0, 1 << 22, 1 << 24, (1 << 22) | (1 << 24), u64::MAX] {
             let expected = 0x80000008 | if cr4 & (1 << 22) != 0 { 0x10 } else { 0 };
-            assert_eq!(cpuid(7, 0, cr4), [0, 0x100480, expected, 0]);
+            assert_eq!(cpuid(7, 0, cr4), [0, 0x102480, expected, 0]);
             for subleaf in [1, 2, u32::MAX] {
                 assert_eq!(cpuid(7, subleaf, cr4), [0; 4]);
             }

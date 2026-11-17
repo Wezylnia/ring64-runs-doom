@@ -335,7 +335,7 @@ export function instructionScenarios(compiler: WebAssembly.Module): Scenario[] {
                   [0, 3, 1, 2].map((index) => result.state.registers[index]),
                   subleaf
                     ? [0n, 0n, 0n, 0n]
-                    : [0n, 0x00100480n, enabled ? 0x80000018n : 0x80000008n, 0n],
+                    : [0n, 0x00102480n, enabled ? 0x80000018n : 0x80000008n, 0n],
                   'literal leaf7 words',
                 );
               }
