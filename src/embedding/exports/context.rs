@@ -1,6 +1,7 @@
 use super::*;
 
 impl Core {
+    #[inline(always)]
     pub(super) fn access_failure(&mut self, failure: AccessFailure) {
         match failure {
             AccessFailure::AlignmentCheck(fault) => {
