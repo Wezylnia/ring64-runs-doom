@@ -113,13 +113,19 @@ fn fisttp_chops_before_range_check_independent_of_rounding_control_and_exception
 #[test]
 fn fisttp_matches_native_store_pop_and_deferred_exceptions() {
     use core::arch::asm;
+    use std::io::Write;
 
     #[repr(align(16))]
     struct Area([u8; 512]);
 
     if !std::is_x86_feature_detected!("sse3") {
+        let _ = writeln!(
+            std::io::stderr(),
+            "native FISTTP oracle skipped: SSE3 unavailable"
+        );
         return;
     }
+    let mut packets = 0;
     for format in [Format::I16, Format::I32, Format::I64] {
         let op = operand(format);
         for raw in [
@@ -181,7 +187,12 @@ fn fisttp_matches_native_store_pop_and_deferred_exceptions() {
                 );
                 assert_eq!(observed.0[4] & 1 != 0, cpu.tag(0) != 3);
                 assert_eq!(observed.0[0..2], cpu.control_word.to_le_bytes());
+                packets += 1;
             }
         }
     }
+    let _ = writeln!(
+        std::io::stderr(),
+        "native FISTTP oracle verified {packets} store, pop and exception packets"
+    );
 }
