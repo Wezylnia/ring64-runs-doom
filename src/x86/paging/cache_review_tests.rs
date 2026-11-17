@@ -125,3 +125,18 @@ fn captured_dirty_feedback_cannot_mark_a_new_fill_with_the_same_leaf_slot() {
             .is_none()
     );
 }
+
+#[test]
+fn observational_peek_miss_does_not_install_an_already_accessed_translation() {
+    let (image, state, request) = fixture();
+    let cache = Cache::default();
+    let before = image.physical_read_bytes(0, 0x10000).unwrap();
+    let observed = cache.peek(&image, &state, request).unwrap();
+    assert_eq!(observed.physical, 0xa234);
+    assert!(
+        cache.observe(&state, request).unwrap().is_none(),
+        "an observational miss must not become a retained translation fill"
+    );
+    assert!(!cache.take_changed());
+    assert_eq!(image.physical_read_bytes(0, 0x10000).unwrap(), before);
+}
