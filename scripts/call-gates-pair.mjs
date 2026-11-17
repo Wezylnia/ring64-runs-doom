@@ -5,7 +5,7 @@ import { pathToFileURL } from 'node:url';
 import os from 'node:os';
 import { chromium } from 'playwright';
 import { encode, freeze, hash, manifest, root } from './paging-support.mjs';
-import { callGateNames } from './call-gate-kernels.mjs';
+import { callGateIterationCount, callGateNames } from './call-gate-kernels.mjs';
 
 const args = process.argv.slice(2),
   values = {};
@@ -13,9 +13,15 @@ const flags = new Set(['--browser', '--aa', '--reverse', '--plan']);
 for (let i = 0; i < args.length; i++) {
   if (flags.has(args[i])) continue;
   if (
-    !['--baseline', '--current', '--output', '--iterations', '--samples', '--workloads'].includes(
-      args[i],
-    ) ||
+    ![
+      '--baseline',
+      '--current',
+      '--output',
+      '--iterations',
+      '--resume-cap',
+      '--samples',
+      '--workloads',
+    ].includes(args[i]) ||
     args[i + 1] === undefined ||
     args[i + 1].startsWith('--')
   )
@@ -24,6 +30,7 @@ for (let i = 0; i < args.length; i++) {
 }
 const knobs = {
   iterations: Number(values.iterations ?? 4096),
+  resumeCap: Number(values['resume-cap'] ?? 257),
   samples: Number(values.samples ?? 5),
   workloads: (values.workloads ?? callGateNames.join(',')).split(','),
   aa: args.includes('--aa'),
@@ -31,6 +38,7 @@ const knobs = {
 };
 for (const [key, max] of [
   ['iterations', 1000001],
+  ['resumeCap', 1000001],
   ['samples', 101],
 ])
   if (!Number.isSafeInteger(knobs[key]) || knobs[key] < 1 || knobs[key] > max)
@@ -48,7 +56,11 @@ if (args.includes('--plan')) {
       knobs,
       samplesPerSideAndLeaf: knobs.samples + 1,
       schedule: 'First sample-1 A/B, warm0 B/A, then alternating; reverse flips initial order.',
-      caps: 'Unchanged literal kernel caps: hit/alias/repair/short-resume257; other rows1000001.',
+      iterationPlan: knobs.workloads.map((name) => ({
+        name,
+        iterations: callGateIterationCount(name, knobs.iterations, knobs.resumeCap),
+      })),
+      caps: 'Hit/alias/repair257; short-resume uses resumeCap (default257); other rows1000001.',
     }),
   );
   process.exit(0);

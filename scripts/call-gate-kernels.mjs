@@ -572,6 +572,20 @@ const performanceRows = [
   },
 ];
 export const callGateNames = performanceRows.map((row) => row.name);
+export function callGateIterationCount(name, iterations, resumeCap = 257) {
+  for (const [key, value] of [
+    ['iterations', iterations],
+    ['resumeCap', resumeCap],
+  ])
+    if (!Number.isSafeInteger(value) || value < 1 || value > 1000001)
+      throw Error(`${key} outside allowed integer range`);
+  const input = performanceRows.find((row) => row.name === name);
+  if (!input) throw Error(`unknown call-gate workload ${name}`);
+  const resetEach = input.debug === 'hit' || ['alias', 'repair'].includes(input.kind);
+  return BigInt(
+    Math.min(iterations, resetEach ? 257 : input.kind === 'resume' ? resumeCap : 1000001),
+  );
+}
 const resourceKeys = [
   'compilations',
   'cacheHits',
@@ -591,14 +605,17 @@ const zero = (keys) => Object.fromEntries(keys.map((key) => [key, 0]));
 const add = (to, from) => {
   for (const key of Object.keys(to)) to[key] += from[key] ?? 0;
 };
-export async function measureCallGates(side, { iterations, samples, workloads, onSample }) {
+export async function measureCallGates(
+  side,
+  { iterations, resumeCap = 257, samples, workloads, onSample },
+) {
   const definitions = [],
     results = [];
   for (const input of performanceRows.filter((row) => workloads.includes(row.name))) {
     const hit = input.debug === 'hit';
     const resetEach = hit || ['alias', 'repair'].includes(input.kind);
     const f = fixture(input, !resetEach),
-      n = BigInt(Math.min(iterations, resetEach || input.kind === 'resume' ? 257 : 1000001));
+      n = callGateIterationCount(input.name, iterations, resumeCap);
     const creationAt = performance.now();
     const cpu = await side.createCpu({ compiler: side.compiler, ...f.config });
     const creationMs = performance.now() - creationAt;
@@ -656,7 +673,7 @@ export async function measureCallGates(side, { iterations, samples, workloads, o
       firstSampleColdMeaning:
         'one CPU: sample-1 includes first execution; A/D and descriptor A first touches occur only there, warm samples retain them',
       timing:
-        'elapsedMs sums awaited run calls only; wallMs also includes host rearming, repair and per-call guards; final checkpoint guards follow the wall timer. creationMs is one CPU creation, not independent cold-start sampling',
+        'elapsedMs sums awaited Cpu.run intervals; wallMs times the whole run loop, also including wrapper/resource aggregation, per-call completion checks and any host rearming/repair. Initial sample rearming and final checkpoint guards are outside wallMs. Both timers include asynchronous host/runtime work; neither is pure native execution. creationMs is one CPU creation, not independent cold-start sampling',
       ceiling:
         'New-behavior characterization only; no old Unsupported denominator or native/application throughput equivalence.',
     });

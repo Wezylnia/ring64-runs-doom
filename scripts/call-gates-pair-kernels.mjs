@@ -183,7 +183,9 @@ export async function measureCallGatesPair(sides, knobs) {
       );
       samples.push(...pair);
       const denominator = pair[0].elapsedMs,
-        numerator = pair[1].elapsedMs;
+        numerator = pair[1].elapsedMs,
+        wallDenominator = pair[0].wallMs,
+        wallNumerator = pair[1].wallMs;
       pairs.push({
         workload,
         sample,
@@ -192,6 +194,10 @@ export async function measureCallGatesPair(sides, knobs) {
         numeratorMs: numerator,
         ratio: denominator === 0 ? null : numerator / denominator,
         ratioDefined: denominator !== 0,
+        wallDenominatorMs: wallDenominator,
+        wallNumeratorMs: wallNumerator,
+        wallRatio: wallDenominator === 0 ? null : wallNumerator / wallDenominator,
+        wallRatioDefined: wallDenominator !== 0,
       });
     }
   }
@@ -202,7 +208,7 @@ export async function measureCallGatesPair(sides, knobs) {
     schedule,
     reverse: knobs.reverse ?? false,
     timing:
-      'Kernel elapsedMs/wallMs are retained directly and start after permit acquisition; no queue subtraction or Cpu.run proxy. Entire setup/run/full guards/current time checks are serialized. creationMs measures actual own CPU creation inside the permit; kernelCreationMs is retained separately. Schedule timestamps include scheduler and guard work and are not native execution timers.',
+      'Kernel elapsedMs/wallMs are retained directly and start after permit acquisition; ratio uses summed awaited Cpu.run intervals, wallRatio uses the whole run loop including per-call checks and wrapper/resource aggregation. Initial sample rearming and final checkpoint guards are outside wallMs. No queue subtraction or Cpu.run proxy; neither timer is pure native execution. Entire setup/run/full guards/current time checks are serialized. creationMs measures actual own CPU creation inside the permit; kernelCreationMs is retained separately. Schedule timestamps include scheduler and guard work and are not native execution timers.',
     timeChecks:
       'Current (both A/A sides) only: default TSC0/AUX0 plus authored effectiveWork.retiredInstructions per completed sample, modulo64. Scalar rearming does not reset this bank. Baseline has no required TimeState API.',
     byteComparisons:

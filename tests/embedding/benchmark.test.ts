@@ -7,6 +7,47 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+test('call-gate plans bound resume amplification without changing other workloads', () => {
+  const script = fileURLToPath(new URL('../../scripts/call-gates-pair.mjs', import.meta.url));
+  const names = ['gate-w4-n1-short-resumes', 'gate-w4-n1-linear', 'gate-w4-n1-private-page-repair'];
+  const plan = (extra: string[]) =>
+    spawnSync(
+      process.execPath,
+      [script, '--plan', '--iterations', '16384', '--workloads', names.join(','), ...extra],
+      { encoding: 'utf8' },
+    );
+  for (const [extra, expected] of [
+    [[], [257, 16384, 257]],
+    [
+      ['--resume-cap', '16384'],
+      [16384, 16384, 257],
+    ],
+  ] as const) {
+    const result = plan([...extra]);
+    assert.ifError(result.error);
+    assert.equal(result.status, 0, result.stderr);
+    const output = JSON.parse(result.stdout) as {
+      mode: string;
+      iterationPlan: { name: string; iterations: string }[];
+    };
+    assert.equal(output.mode, 'static-plan-only');
+    assert.deepEqual(
+      output.iterationPlan.map((row) => row.name),
+      names,
+    );
+    assert.deepEqual(
+      output.iterationPlan.map((row) => Number(row.iterations)),
+      expected,
+    );
+  }
+  for (const cap of ['0', '1.5', '1000002']) {
+    const result = plan(['--resume-cap', cap]);
+    assert.ifError(result.error);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /resumeCap outside allowed integer range/);
+  }
+});
+
 test('frozen benchmarks preserve saved source and refuse changed artifacts before publishing', async () => {
   const root = fileURLToPath(new URL('../../', import.meta.url));
   const directory = await mkdtemp(join(tmpdir(), 'ring64-benchmark-'));
