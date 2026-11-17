@@ -67,7 +67,7 @@ fn fx_restore_literals_normalize_summaries_and_classify_loaded_physical_payloads
             image[160 + 16 * bank..176 + 16 * bank].fill(0xf0 ^ bank as u8);
         }
         let before = state();
-        let restored = restore(operation, &image, &before, &xmm(), 0x1f80).unwrap();
+        let restored = restored_fixture(operation, &image, &before, &xmm(), 0x1f80).unwrap();
         for (physical, &value) in raw.iter().enumerate() {
             assert_eq!(restored.x87.raw(physical), value);
         }
@@ -116,9 +116,12 @@ fn fx_restore_does_not_trust_the_image_mxcsr_mask() {
     image[28..32].fill(0xff);
     for value in [0x10000u32, 0x80000000, u32::MAX] {
         image[24..28].copy_from_slice(&value.to_le_bytes());
-        assert!(
-            matches!(restore(operation, &image, &state(), &xmm(), 0x1f80), Err(actual) if actual == value)
+        let (mut x87, mut registers, mut mxcsr) = (state(), xmm(), 0xffc5);
+        assert_eq!(
+            restore(operation, &image, &mut x87, &mut registers, &mut mxcsr),
+            Err(value)
         );
+        assert_eq!((x87, registers, mxcsr), (state(), xmm(), 0xffc5));
     }
 }
 

@@ -219,12 +219,6 @@ pub struct Saved {
     pub x87: X87State,
 }
 
-pub struct Restored {
-    pub x87: X87State,
-    pub xmm: [[u8; 16]; 16],
-    pub mxcsr: u32,
-}
-
 pub fn save(operation: ImageOp, x87: &X87State, xmm: &[[u8; 16]; 16], mxcsr: u32) -> Saved {
     assert!(operation.is_store());
     let mut after = *x87;
@@ -254,31 +248,23 @@ pub fn save(operation: ImageOp, x87: &X87State, xmm: &[[u8; 16]; 16], mxcsr: u32
 pub fn restore(
     operation: ImageOp,
     bytes: &[u8; 512],
-    before_x87: &X87State,
-    before_xmm: &[[u8; 16]; 16],
-    before_mxcsr: u32,
-) -> Result<Restored, u32> {
+    x87: &mut X87State,
+    xmm: &mut [[u8; 16]; 16],
+    mxcsr: &mut u32,
+) -> Result<(), u32> {
     assert!(!operation.is_store());
-    let mxcsr = if operation.format.is_fx() {
+    if operation.format.is_fx() {
         let loaded = dword(bytes, 24);
         if loaded & !0xffff != 0 {
             return Err(loaded);
         }
-        loaded
+        fx::restore_x87(operation, bytes, x87);
+        fx::restore_xmm(operation, bytes, xmm);
+        *mxcsr = loaded;
     } else {
-        before_mxcsr
-    };
-    let mut result = Restored {
-        x87: *before_x87,
-        xmm: *before_xmm,
-        mxcsr,
-    };
-    if operation.format.is_fx() {
-        fx::restore(operation, bytes, &mut result);
-    } else {
-        legacy::restore(operation, bytes, &mut result.x87);
+        legacy::restore(operation, bytes, x87);
     }
-    Ok(result)
+    Ok(())
 }
 
 fn word(bytes: &[u8], at: usize) -> u16 {

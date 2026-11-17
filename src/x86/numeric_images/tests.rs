@@ -5,6 +5,34 @@ mod legacy;
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 mod native_xsave;
 
+struct RestoredFixture {
+    x87: X87State,
+    xmm: [[u8; 16]; 16],
+    mxcsr: u32,
+}
+
+fn restored_fixture(
+    operation: ImageOp,
+    bytes: &[u8; 512],
+    x87: &X87State,
+    xmm: &[[u8; 16]; 16],
+    mxcsr: u32,
+) -> Result<RestoredFixture, u32> {
+    let mut result = RestoredFixture {
+        x87: *x87,
+        xmm: *xmm,
+        mxcsr,
+    };
+    restore(
+        operation,
+        bytes,
+        &mut result.x87,
+        &mut result.xmm,
+        &mut result.mxcsr,
+    )?;
+    Ok(result)
+}
+
 fn state() -> X87State {
     let mut state = X87State {
         control_word: 0x37b,

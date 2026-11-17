@@ -37,16 +37,15 @@ fn core_numeric_image_impl<const OBSERVED: bool, const PAGED: bool>(
         core.protection_fault = None;
         core.system_memory_fault = None;
         core.divide_failed = false;
-        let before = unsafe {
+        unsafe {
             let state = &mut *core.state.get();
             state.target = 0;
             state.fault_segment = Segment::Cs as u32;
-            state.x87
-        };
+        }
         if operation.is_xstate() {
             return extended::execute::<OBSERVED, PAGED>(core, operation, offset, segment);
         }
-        if operation.is_waiting() && before.pending() != 0 {
+        if operation.is_waiting() && unsafe { (*core.state.get()).x87.pending() } != 0 {
             return core.pending_x87_reason();
         }
         let width = operation.width();
@@ -77,7 +76,7 @@ fn core_numeric_image_impl<const OBSERVED: bool, const PAGED: bool>(
         if operation.is_store() {
             let saved = unsafe {
                 let state = &*core.state.get();
-                numeric_images::save(operation, &before, &state.xmm, state.mxcsr)
+                numeric_images::save(operation, &state.x87, &state.xmm, state.mxcsr)
             };
             if let Err(fault) = guest_access!(
                 core,
@@ -118,30 +117,23 @@ fn core_numeric_image_impl<const OBSERVED: bool, const PAGED: bool>(
                 core.access_failure(fault);
                 return core.memory_failure_reason();
             }
-            let restored = unsafe {
-                let state = &*core.state.get();
-                numeric_images::restore(operation, &bytes, &before, &state.xmm, state.mxcsr)
-            };
-            match restored {
-                Err(loaded) => {
-                    core.general_protection = Some(numeric::GeneralProtectionFault { loaded });
-                    GENERAL_PROTECTION
-                }
-                Ok(restored) => {
-                    unsafe {
-                        let state = &mut *core.state.get();
-                        state.x87 = restored.x87;
-                        state.xmm = restored.xmm;
-                        state.mxcsr = restored.mxcsr;
-                    }
-                    if OBSERVED {
-                        for &(offset, length) in operation.spans() {
-                            core.debug_operand(address + u64::from(offset), length, Access::Read);
-                        }
-                    }
-                    0
+            let state = unsafe { &mut *core.state.get() };
+            if let Err(loaded) = numeric_images::restore(
+                operation,
+                &bytes,
+                &mut state.x87,
+                &mut state.xmm,
+                &mut state.mxcsr,
+            ) {
+                core.general_protection = Some(numeric::GeneralProtectionFault { loaded });
+                return GENERAL_PROTECTION;
+            }
+            if OBSERVED {
+                for &(offset, length) in operation.spans() {
+                    core.debug_operand(address + u64::from(offset), length, Access::Read);
                 }
             }
+            0
         }
     })
 }

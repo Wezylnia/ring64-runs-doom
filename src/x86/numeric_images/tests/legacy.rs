@@ -73,7 +73,7 @@ fn environment_restore_uses_existing_physical_payloads_and_derived_summary() {
         kind: Kind::LoadEnvironment,
         format: Format::Protected16,
     };
-    let restored = restore(operation, &image, &before, &xmm(), 0xffc5).unwrap();
+    let restored = restored_fixture(operation, &image, &before, &xmm(), 0xffc5).unwrap();
     assert_eq!(restored.x87.registers, before.registers);
     assert_eq!(restored.x87.control_word, 0x37b);
     assert_eq!(restored.x87.status_word, 0x8084);
@@ -85,7 +85,7 @@ fn environment_restore_uses_existing_physical_payloads_and_derived_summary() {
     assert_eq!(restored.mxcsr, 0xffc5);
     image[..2].copy_from_slice(&0x37fu16.to_le_bytes());
     image[2..4].copy_from_slice(&0x8080u16.to_le_bytes());
-    let restored = restore(operation, &image, &before, &xmm(), 0xffc5).unwrap();
+    let restored = restored_fixture(operation, &image, &before, &xmm(), 0xffc5).unwrap();
     assert_eq!(restored.x87.status_word, 0);
 }
 
@@ -109,7 +109,7 @@ fn legacy_restoration_decodes_independent_real_pointer_packing() {
         let encoded = bytes(encoded);
         image[..encoded.len()].copy_from_slice(&encoded);
         let before = state();
-        let restored = restore(
+        let restored = restored_fixture(
             ImageOp {
                 kind: Kind::LoadEnvironment,
                 format,
@@ -192,7 +192,7 @@ fn full_legacy_restore_uses_loaded_top_and_classifies_payloads_without_a_save_ro
             }
             let mut before = state();
             before.opcode = 0x456;
-            let result = restore(operation, &image, &before, &xmm(), 0xffc5).unwrap();
+            let result = restored_fixture(operation, &image, &before, &xmm(), 0xffc5).unwrap();
             for logical in 0..8 {
                 let physical = (top as usize + logical) & 7;
                 assert_eq!(result.x87.raw(physical), raw[logical]);

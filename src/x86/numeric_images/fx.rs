@@ -43,11 +43,6 @@ pub(super) fn save_xmm(operation: ImageOp, xmm: &[[u8; 16]; 16], bytes: &mut [u8
     }
 }
 
-pub(super) fn restore(operation: ImageOp, bytes: &[u8; 512], result: &mut Restored) {
-    restore_x87(operation, bytes, &mut result.x87);
-    restore_xmm(operation, bytes, &mut result.xmm);
-}
-
 pub(super) fn restore_x87(operation: ImageOp, bytes: &[u8], state: &mut X87State) {
     state.control_word = word(bytes, 0);
     state.status_word = word(bytes, 2);
