@@ -188,6 +188,10 @@ impl<'a> Memory<'a> {
             {
                 candidates.push((prepared.fragments.len(), translation));
             }
+            if length == width {
+                // The whole access fits this translation. Avoid Vec's spare fragment slots.
+                prepared.fragments.reserve_exact(1);
+            }
             prepared.fragments.push(Fragment {
                 offset,
                 length,

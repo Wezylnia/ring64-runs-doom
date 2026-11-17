@@ -373,6 +373,27 @@ fn probe_write_pg0_checks_exact_final_byte_before_high_backing() {
 }
 
 #[test]
+fn fragment_storage_fits_empty_and_single_fragment_accesses() {
+    let (mut image, state) = fixture(0, true, false);
+    let mut work = AccessState::default();
+    let memory = Memory::new(&mut image, &state, 3, 2, &mut work, &Keys::ZERO);
+    for (width, slots) in [(0, 0), (4, 1)] {
+        let prepared = memory
+            .prepare(
+                0x1000,
+                width,
+                Access::Read,
+                false,
+                memory.class,
+                Intent::Exempt,
+            )
+            .unwrap();
+        assert_eq!(prepared.fragments.len(), slots);
+        assert_eq!(prepared.fragments.capacity(), slots);
+    }
+}
+
+#[test]
 fn publication_geometry_read_and_execute_do_not_allocate() {
     let (mut image, state) = fixture(0, true, false);
     let mut work = AccessState::default();
