@@ -321,7 +321,7 @@ fn narrowing_uses_unbounded_precision_for_tininess_even_when_result_is_normal() 
 }
 
 #[test]
-fn scalar_gpr_conversion_matches_single_lane_arbitration() {
+fn scalar_gpr_conversion_matches_native_rounding_and_status() {
     let old = 0x1234_5678_9abc_def0_4567_89ab_cdef_0123u128;
     for format in [Format::F32, Format::F64] {
         let mask = format.mask();
@@ -358,7 +358,8 @@ fn scalar_gpr_conversion_matches_single_lane_arbitration() {
                         for daz in [0, 64] {
                             for unmask in [0, 1 << 7, 1 << 12, (1 << 7) | (1 << 12)] {
                                 let mxcsr = (0x1fa4 & !unmask) | daz | (rc << 13);
-                                let expected = eval_lanes(op, old, right, mxcsr, 1);
+                                let expected =
+                                    native_reference::integer_conversion(op, old, right, mxcsr, 1);
                                 assert_eq!(
                                     eval(op, old, right, mxcsr),
                                     expected,

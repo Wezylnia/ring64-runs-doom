@@ -153,21 +153,7 @@ fn eval_scalar_to_integer(op: Op, left: u128, right: u128, mxcsr: u32) -> Outcom
         .format
         .daz(right as u64 & op.format.mask(), mxcsr & 64 != 0);
     let (value, raised) = arithmetic::to_integer(op, input, mxcsr);
-    let stage = match raised & !(mxcsr >> 7) {
-        1 => Some(Stage::PreComputation),
-        32 => Some(Stage::PostComputation),
-        _ => None,
-    };
-    Outcome {
-        value: if stage.is_some() {
-            left
-        } else {
-            u128::from(value)
-        },
-        mxcsr: mxcsr | raised,
-        raised,
-        stage,
-    }
+    integer_outcome(left, u128::from(value), mxcsr, raised)
 }
 
 #[inline(never)]
@@ -183,6 +169,11 @@ fn eval_packed_to_integer(op: Op, old: u128, mut source: u128, mxcsr: u32, count
         raised |= flags;
         source >>= op.format.bits();
     }
+    integer_outcome(old, value, mxcsr, raised)
+}
+
+#[inline]
+fn integer_outcome(old: u128, value: u128, mxcsr: u32, mut raised: u32) -> Outcome {
     let unmasked = raised & !(mxcsr >> 7);
     let stage = if unmasked & 1 != 0 {
         // Invalid aborts before precision from any other lane can be reported.
@@ -249,16 +240,10 @@ fn eval_lanes(op: Op, left: u128, right: u128, mxcsr: u32, count: u32) -> Outcom
     } else {
         op.format.bits()
     };
-    let output_bits = match op.kind {
-        Kind::FloatConvert => op.format.opposite().bits(),
-        Kind::FloatToInt | Kind::TruncToInt => {
-            if op.scalar && op.integer64 {
-                64
-            } else {
-                32
-            }
-        }
-        _ => op.format.bits(),
+    let output_bits = if op.kind == Kind::FloatConvert {
+        op.format.opposite().bits()
+    } else {
+        op.format.bits()
     };
     let mut lanes = [lane::Lane::default(); 4];
     let mut raised = 0;
@@ -293,10 +278,7 @@ fn eval_lanes(op: Op, left: u128, right: u128, mxcsr: u32, count: u32) -> Outcom
             stage: Some(Stage::PostComputation),
         };
     }
-    let gpr = matches!(
-        op.kind,
-        Kind::FloatToInt | Kind::TruncToInt | Kind::Comi | Kind::Ucomi
-    );
+    let gpr = matches!(op.kind, Kind::Comi | Kind::Ucomi);
     let mut value = if op.scalar && !gpr {
         left & !((1u128 << output_bits) - 1)
     } else {

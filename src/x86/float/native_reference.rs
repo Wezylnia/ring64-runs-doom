@@ -1,5 +1,68 @@
 use super::*;
 
+// Every f32 is exact in f64. Round in host arithmetic, then test the signed
+// destination's half-open range before the Rust integer cast can saturate.
+pub(super) fn integer_conversion(
+    op: Op,
+    old: u128,
+    input: u128,
+    mxcsr: u32,
+    count: u32,
+) -> Outcome {
+    let width = if op.integer64 { 64 } else { 32 };
+    let limit = 2_f64.powi(width - 1);
+    let mut value = 0;
+    let mut invalid = false;
+    let mut precision = false;
+    for index in 0..count {
+        let bits = (input >> (index * op.format.bits())) as u64;
+        let (number, subnormal) = match op.format {
+            Format::F32 => {
+                let n = f32::from_bits(bits as u32);
+                (f64::from(n), n.is_subnormal())
+            }
+            Format::F64 => {
+                let n = f64::from_bits(bits);
+                (n, n.is_subnormal())
+            }
+        };
+        let number = if subnormal && mxcsr & 64 != 0 {
+            0.0
+        } else {
+            number
+        };
+        let rounded = match (op.kind, (mxcsr >> 13) & 3) {
+            (Kind::TruncToInt, _) | (_, 3) => number.trunc(),
+            (_, 1) => number.floor(),
+            (_, 2) => number.ceil(),
+            _ => number.round_ties_even(),
+        };
+        let integer = if (-limit..limit).contains(&rounded) {
+            precision |= number != rounded;
+            rounded as i64 as u64
+        } else {
+            invalid = true;
+            1u64 << (width - 1)
+        };
+        value |= (u128::from(integer) & ((1u128 << width) - 1)) << (index * width as u32);
+    }
+    let pre_fault = invalid && mxcsr & 0x80 == 0;
+    let raised = u32::from(invalid) | (u32::from(precision && !pre_fault) << 5);
+    let stage = if pre_fault {
+        Some(Stage::PreComputation)
+    } else if precision && mxcsr & 0x1000 == 0 {
+        Some(Stage::PostComputation)
+    } else {
+        None
+    };
+    Outcome {
+        value: if stage.is_none() { value } else { old },
+        mxcsr: mxcsr | raised,
+        raised,
+        stage,
+    }
+}
+
 fn step(seed: &mut u64) -> u64 {
     *seed ^= *seed << 13;
     *seed ^= *seed >> 7;
