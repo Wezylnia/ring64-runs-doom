@@ -2,8 +2,8 @@ use super::{ADDRESS, Emitter, REASON, RHS, STORE_STATUS};
 use crate::dbt::unit::Unit;
 use crate::embedding::layout::RunState;
 use crate::x86::instruction::{
-    Address, Location, Operation, RegisterView, VectorBinary, VectorCount, VectorInstruction,
-    VectorMask, VectorOperand, VectorShift, VectorShuffle, Width,
+    Address, Location, Operation, RegisterView, VectorBinary, VectorCount, VectorDuplicate,
+    VectorInstruction, VectorMask, VectorOperand, VectorShift, VectorShuffle, Width,
 };
 use std::mem::offset_of;
 use wasm_encoder::{BlockType, Instruction as Op, MemArg, ValType};
@@ -93,7 +93,10 @@ impl Banks {
                     banks.read(src);
                     banks.stores |= matches!(dst, Location::Memory(_));
                 }
-                Binary { dst, src, .. } | Shuffle { dst, src, .. } | Ssse3 { dst, src, .. } => {
+                Binary { dst, src, .. }
+                | Shuffle { dst, src, .. }
+                | Ssse3 { dst, src, .. }
+                | Duplicate { dst, src, .. } => {
                     banks.write(dst);
                     banks.source(src);
                 }
@@ -225,6 +228,20 @@ impl Emitter {
         let [left, right, result] = self.vector_temps();
         use VectorInstruction::*;
         match instruction {
+            Duplicate { kind, dst, src } => {
+                let (bytes, dwords) = match kind {
+                    VectorDuplicate::LowDouble => (8, [0, 1, 0, 1]),
+                    VectorDuplicate::EvenSingles => (16, [0, 0, 2, 2]),
+                    VectorDuplicate::OddSingles => (16, [1, 1, 3, 3]),
+                };
+                self.vector_operand(src, bytes, bytes == 16, next_pc, exit_depth);
+                self.op(Op::LocalTee(right))
+                    .op(Op::LocalGet(right))
+                    .op(Op::I8x16Shuffle(std::array::from_fn(|i| {
+                        4 * dwords[i / 4] + (i % 4) as u8
+                    })));
+                self.op(Op::LocalSet(self.xmm(dst)));
+            }
             HalfMove {
                 register,
                 operand,

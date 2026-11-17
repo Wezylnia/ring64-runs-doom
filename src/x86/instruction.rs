@@ -295,6 +295,13 @@ pub enum VectorShuffle {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VectorDuplicate {
+    LowDouble,
+    EvenSingles,
+    OddSingles,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum VectorShift {
     Left(Width),
     Right(Width),
@@ -420,6 +427,11 @@ pub enum VectorInstruction {
         kind: VectorMask,
         dst: u8,
         src: u8,
+    },
+    Duplicate {
+        kind: VectorDuplicate,
+        dst: u8,
+        src: VectorOperand,
     },
 }
 

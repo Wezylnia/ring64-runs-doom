@@ -1,7 +1,7 @@
 use super::{DecodeError, cursor::Cursor, operand::ModRm, prefix::Prefixes};
 use crate::x86::instruction::{
-    VectorBinary, VectorCount, VectorInstruction, VectorMask, VectorOperand, VectorShift,
-    VectorShuffle, Width,
+    VectorBinary, VectorCount, VectorDuplicate, VectorInstruction, VectorMask, VectorOperand,
+    VectorShift, VectorShuffle, Width,
 };
 
 #[derive(Clone, Copy)]
@@ -26,6 +26,8 @@ enum Form {
     InsertWord,
     ExtractWord,
     Mask(VectorMask),
+    Duplicate(VectorDuplicate),
+    LoadUnaligned,
 }
 
 pub(super) fn refine<F>(
@@ -44,6 +46,10 @@ where
         .repeat
         .or(prefixes.operand_override.then_some(0x66));
     let form = match (mandatory, opcode) {
+        (Some(0xf2), 0x12) => Form::Duplicate(VectorDuplicate::LowDouble),
+        (Some(0xf3), 0x12) => Form::Duplicate(VectorDuplicate::EvenSingles),
+        (Some(0xf3), 0x16) => Form::Duplicate(VectorDuplicate::OddSingles),
+        (Some(0xf2), 0xf0) => Form::LoadUnaligned,
         (None | Some(0x66), 0x54..=0x57) => Form::Binary(match opcode {
             0x54 => B::And,
             0x55 => B::AndNot,
@@ -209,6 +215,24 @@ where
     let operands = ModRm::read(cursor, prefixes.rex)?;
     let reg = operands.register;
     Ok(match form {
+        Form::Duplicate(kind) => V::Duplicate {
+            kind,
+            dst: reg,
+            src: location(&operands, prefixes, cursor)?,
+        },
+        Form::LoadUnaligned => {
+            if operands.mode == 3 {
+                return Err(DecodeError::Invalid);
+            }
+            V::Move {
+                register: reg,
+                operand: VectorOperand::Memory(operands.address(cursor, prefixes)?),
+                bytes: 16,
+                preserve_upper: false,
+                aligned: false,
+                store: false,
+            }
+        }
         Form::HalfMove {
             high,
             store,

@@ -14,6 +14,47 @@ fn vector(bytes: &[u8]) -> V {
     }
 }
 
+#[test]
+fn sse3_raw_move_frontiers_preserve_neighbors_and_effective_prefixes() {
+    for (prefix, opcode) in [(0xf2, 0x12), (0xf3, 0x12), (0xf3, 0x16), (0xf2, 0xf0)] {
+        let code = [
+            0x66, prefix, 0x64, 0x67, 0x47, 0x0f, opcode, 0x94, 0xb3, 1, 2, 3, 4,
+        ];
+        assert!(matches!(operation(&code), Operation::Vector(_)));
+        for len in 1..code.len() {
+            assert_eq!(
+                at(0x1000, &code[..len]),
+                Err(DecodeError::Fetch(missing(0x1000 + len as u64)))
+            );
+        }
+    }
+    assert_eq!(
+        at(0x1000, &[0xf2, 0x0f, 0xf0, 0xc0]),
+        Err(DecodeError::Invalid)
+    );
+    for code in [
+        &[0xf2, 0x0f, 0x16][..],
+        &[0xf3, 0x0f, 0xf0],
+        &[0x66, 0x0f, 0xf0],
+    ] {
+        assert_eq!(at(0x1000, code), Err(DecodeError::Unsupported));
+    }
+    assert!(matches!(vector(&[0x0f, 0x12, 0xc1]), V::HalfMove { .. }));
+    assert_eq!(
+        at(0x1000, &[0x66, 0x0f, 0x16, 0xc1]),
+        Err(DecodeError::Invalid)
+    );
+    assert_eq!(
+        vector(&[0xf2, 0x45, 0xf3, 0x0f, 0x12, 0xc1]),
+        vector(&[0xf3, 0x0f, 0x12, 0xc1])
+    );
+    let mut code = vec![0x66; 11];
+    code.extend([0xf2, 0x0f, 0xf0, 0x03]);
+    assert_eq!(at(0x1000, &code).unwrap().next_pc, 0x100f);
+    code.insert(0, 0x66);
+    assert_eq!(at(0x1000, &code), Err(DecodeError::InstructionLength));
+}
+
 fn context(mode: &str, code32: bool) -> ExecutionContext {
     let segments = ["cs", "ss", "ds", "es", "fs", "gs"].into_iter().map(|name| {
         (name.to_string(), serde_json::json!({
