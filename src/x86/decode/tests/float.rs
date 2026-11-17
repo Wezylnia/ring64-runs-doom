@@ -371,3 +371,52 @@ fn imported_modes_select_numeric_addresses_without_narrowing_float_or_gpr_result
         }
     }
 }
+
+#[test]
+fn sse3_packed_arithmetic_decodes_rex_aliases_and_the_complete_memory_frontier() {
+    for (opcode, kind) in [
+        (0x7c, Kind::HorizontalAdd),
+        (0x7d, Kind::HorizontalSub),
+        (0xd0, Kind::AddSub),
+    ] {
+        for (prefix, format) in [(0xf2, Format::F32), (0x66, Format::F64)] {
+            let aliased = numeric(&[prefix, 0x45, 0x0f, opcode, 0xc9]);
+            assert_eq!(aliased.op, op(kind, format, false));
+            assert_eq!(aliased.dst, 9);
+            assert_eq!(aliased.src, Location::Register(RegisterView::low(9)));
+
+            let bytes = [prefix, 0x64, 0x45, 0x0f, opcode, 0x84, 0x24, 0x20, 0, 0, 0];
+            let memory = numeric(&bytes);
+            assert!(matches!(
+                memory.src,
+                Location::Memory(Address {
+                    segment: Segment::Fs,
+                    ..
+                })
+            ));
+            assert_eq!(memory.source_bytes(), 16);
+            assert_eq!(memory.dst, 8);
+            for end in 1..bytes.len() {
+                assert_eq!(
+                    at(0x1000, &bytes[..end]),
+                    Err(DecodeError::Fetch(missing(0x1000 + end as u64)))
+                );
+            }
+        }
+        assert_eq!(
+            at(0x1000, &[0xf0, 0x66, 0x0f, opcode, 0xc0]),
+            Err(DecodeError::Invalid)
+        );
+        for prefix in [vec![], vec![0xf3]] {
+            let mut bytes = prefix;
+            bytes.extend([0x0f, opcode]);
+            assert_eq!(at(0x1000, &bytes), Err(DecodeError::Unsupported));
+        }
+        for prefix in [[0xf2, 0x66], [0x66, 0xf2]] {
+            assert_eq!(
+                numeric(&[prefix[0], prefix[1], 0x0f, opcode, 0xc0]).op,
+                op(kind, Format::F32, false)
+            );
+        }
+    }
+}

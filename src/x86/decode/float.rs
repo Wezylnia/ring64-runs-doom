@@ -28,6 +28,19 @@ where
     };
     use Kind::*;
     op.kind = match opcode {
+        0x7c | 0x7d | 0xd0 if matches!(mandatory, Some(0xf2 | 0x66)) => {
+            op.scalar = false;
+            op.format = if mandatory == Some(0xf2) {
+                Format::F32
+            } else {
+                Format::F64
+            };
+            match opcode {
+                0x7c => HorizontalAdd,
+                0x7d => HorizontalSub,
+                _ => AddSub,
+            }
+        }
         0x58 => Add,
         0x5c => Sub,
         0x59 => Mul,
