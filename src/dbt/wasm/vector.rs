@@ -93,7 +93,7 @@ impl Banks {
                     banks.read(src);
                     banks.stores |= matches!(dst, Location::Memory(_));
                 }
-                Binary { dst, src, .. } | Shuffle { dst, src, .. } => {
+                Binary { dst, src, .. } | Shuffle { dst, src, .. } | Ssse3 { dst, src, .. } => {
                     banks.write(dst);
                     banks.source(src);
                 }
@@ -386,6 +386,18 @@ impl Emitter {
                 self.op(Op::LocalSet(right));
                 self.vector_binary(kind, left, right, result);
                 self.op(Op::LocalSet(self.xmm(dst)));
+            }
+            Ssse3 {
+                op,
+                dst,
+                src,
+                immediate,
+            } => {
+                let destination = self.xmm(dst);
+                self.vector_operand(src, 16, true, next_pc, exit_depth);
+                self.op(Op::LocalSet(right));
+                self.ssse3(op, immediate, 16, destination, right);
+                self.op(Op::LocalSet(destination));
             }
             Shuffle {
                 kind,

@@ -22,6 +22,7 @@ mod processor;
 mod protection;
 mod protection_keys;
 mod software_events;
+mod ssse3;
 mod stack;
 mod state;
 mod streaming;

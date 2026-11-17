@@ -389,6 +389,12 @@ pub enum VectorInstruction {
         dst: u8,
         src: VectorOperand,
     },
+    Ssse3 {
+        op: Ssse3Op,
+        dst: u8,
+        src: VectorOperand,
+        immediate: u8,
+    },
     Shuffle {
         kind: VectorShuffle,
         dst: u8,

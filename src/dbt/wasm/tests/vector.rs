@@ -243,6 +243,17 @@ fn vector_memory_forms_stage_before_mutation_and_request_exact_accesses() {
             !a & b,
         ),
         (
+            VectorInstruction::Ssse3 {
+                op: crate::x86::instruction::Ssse3Op::Palignr,
+                dst: 15,
+                src: VectorOperand::Memory(address),
+                immediate: u8::MAX,
+            },
+            16,
+            16,
+            0,
+        ),
+        (
             VectorInstruction::Shuffle {
                 kind: VectorShuffle::RawSingles,
                 dst: 15,

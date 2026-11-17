@@ -14,8 +14,7 @@ const TAGS: usize = X87 + offset_of!(X87State, tag_word);
 pub(super) fn direct(operation: MmxOp) -> bool {
     !matches!(
         operation.kind,
-        Kind::Ssse3(_)
-            | Kind::PiToPs
+        Kind::PiToPs
             | Kind::PiToPd
             | Kind::PsToPi
             | Kind::PdToPi
@@ -25,7 +24,10 @@ pub(super) fn direct(operation: MmxOp) -> bool {
 }
 
 pub(super) fn vector_temps(operation: MmxOp) -> bool {
-    matches!(operation.kind, Kind::Binary(_) | Kind::Shift(_))
+    matches!(
+        operation.kind,
+        Kind::Binary(_) | Kind::Shift(_) | Kind::Ssse3(_)
+    )
 }
 
 fn raw(bank: u8) -> usize {
@@ -175,6 +177,15 @@ impl Emitter {
                 return;
             }
             Kind::Binary(kind) => self.mmx_binary(operation, kind),
+            Kind::Ssse3(op) => {
+                let [left, right, _] = self.vector_temps();
+                self.mmx_read_vector(operation.dst);
+                self.op(Op::LocalSet(left));
+                self.mmx_source_vector(operation);
+                self.op(Op::LocalSet(right));
+                self.ssse3(op, operation.immediate, 8, left, right);
+                self.op(Op::I64x2ExtractLane(0)).op(Op::LocalSet(RESULT));
+            }
             Kind::Shift(kind) => self.mmx_shift(operation, kind),
             Kind::Shuffle => {
                 self.mmx_source_vector(operation);
