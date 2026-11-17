@@ -64,6 +64,10 @@ export const packets: Packet[] = [
   { name: 'MOVNTQ', code: '0fe703', at: 0x6004n, width: 8, granule: 8, write: true },
   { name: 'MOVSS', code: 'f30f1003', at: 0x6002n, width: 4, granule: 4 },
   { name: 'MOVSD', code: 'f20f1003', at: 0x6004n, width: 8, granule: 8 },
+  { name: 'MOVDDUP', code: 'f20f1203', at: 0x6004n, width: 8, granule: 8 },
+  { name: 'FISTTP word', code: 'df0b', at: 0x6001n, width: 2, granule: 2, write: true },
+  { name: 'FISTTP dword', code: 'db0b', at: 0x6002n, width: 4, granule: 4, write: true },
+  { name: 'FISTTP qword', code: 'dd0b', at: 0x6004n, width: 8, granule: 8, write: true },
   { name: 'x87 m32', code: 'd903', at: 0x6002n, width: 4, granule: 4 },
   { name: 'x87 m64', code: 'dd03', at: 0x6004n, width: 8, granule: 8 },
   { name: 'x87 m80 load', code: 'db2b', at: 0x6004n, width: 10, granule: 8 },
@@ -147,7 +151,7 @@ export function classScenarios(compiler: WebAssembly.Module): Scenario[] {
       name: 'alignment checking admitted unaligned128 loads differ from mandatory16 GP under every gate arm',
       async run() {
         for (const family of families)
-          for (const code of ['0f1003', '660f1003', 'f30f6f03']) {
+          for (const code of ['0f1003', '660f1003', 'f30f6f03', 'f20ff003']) {
             const f = fixture(compiler, code, family);
             await using(side, f, async (cpu) => {
               const vector = banks();
@@ -164,7 +168,17 @@ export function classScenarios(compiler: WebAssembly.Module): Scenario[] {
               clock(cpu, 101n);
             });
           }
-        for (const code of ['0f2803', '660f2803', '660f6f03', '660f2d03', '660f3a0f03ff'])
+        for (const code of [
+          '0f2803',
+          '660f2803',
+          '660f6f03',
+          '660f2d03',
+          '660f3a0f03ff',
+          'f30f1203',
+          'f30f1603',
+          'f20f7c03',
+          '660fd003',
+        ])
           for (const ac of [false, true]) {
             const f = fixture(compiler, code);
             await using(side, f, async (cpu) => {

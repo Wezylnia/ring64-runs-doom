@@ -240,6 +240,8 @@ export function numericControlScenarios(compiler: WebAssembly.Module): Scenario[
           ['9b', 'wait'],
           ['0fefc0', 'mmx'],
           ['660fefc0', 'simd'],
+          ['f20f7cc0', 'simd'],
+          ['f30f16c0', 'simd'],
           ['f30fd6c1', 'bridge'],
           ['0fae00', 'fx-image'],
         ] as const) {
