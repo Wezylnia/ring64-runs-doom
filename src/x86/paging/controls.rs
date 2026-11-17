@@ -2,6 +2,8 @@ use crate::x86::context::{ExecutionContext, Mode, Segment};
 
 pub const EFER_MSR: u32 = 0xc0000080;
 pub const CR4_TSD: u64 = 1 << 2;
+pub const CR4_PGE: u64 = 1 << 7;
+pub const CR4_PCIDE: u64 = 1 << 17;
 pub const CR4_SMEP: u64 = 1 << 20;
 pub const CR4_SMAP: u64 = 1 << 21;
 const CR0_FIXED: u64 = 0x80000033;
@@ -10,7 +12,9 @@ const CR0_AM: u64 = 1 << 18;
 const CR0_NUMERIC: u64 = 0xe;
 const CR4_NUMERIC: u64 = 0x600;
 const CR4_PROTECTION: u64 = CR4_SMEP | CR4_SMAP;
+const CR4_TRANSLATION: u64 = CR4_PGE | CR4_PCIDE;
 const CR3_ALLOWED: u64 = 0x000ffffffffff018;
+const CR3_RAW: u64 = 0x000fffffffffffff;
 const CR4_FIXED: u64 = 0x628;
 const EFER_FIXED: u64 = 0x500;
 const EFER_NXE: u64 = 1 << 11;
@@ -71,6 +75,14 @@ impl State {
         self.cr0 & (1 << 31) != 0 && self.cr4 & (1 << 5) != 0 && self.efer & (1 << 10) == 0
     }
 
+    pub fn pcid(self) -> u16 {
+        if self.cr4 & CR4_PCIDE != 0 {
+            (self.cr3 & 0xfff) as u16
+        } else {
+            0
+        }
+    }
+
     pub fn validate_physical(self, mode: Mode) -> Result<(), &'static str> {
         let pg = self.cr0 & 0x80000000 != 0;
         let pe = self.cr0 & 1 != 0;
@@ -85,11 +97,12 @@ impl State {
             || self.cr0 & 0x10 == 0
             || pg && !pe
             || self.cr0 & 0x60000000 == 0x20000000
-            || self.cr3 & !0x000f_ffff_ffff_fff8 != 0
-            || self.cr4 & !(0x63c | CR4_PROTECTION) != 0
+            || self.cr3 & !CR3_RAW != 0
+            || self.cr4 & !(0x63c | CR4_PROTECTION | CR4_TRANSLATION) != 0
             || self.efer & !0xd01 != 0
             || (self.efer & 0x400 != 0) != lma
             || lma && self.cr4 & 0x20 == 0
+            || self.cr4 & CR4_PCIDE != 0 && !lma
         {
             return Err("physical controls require a consistent execution family");
         }
@@ -184,6 +197,7 @@ impl State {
                 if value & 0x80000001 == 0x80000000
                     || value & 0x60000000 == 0x20000000
                     || mode == Mode::Long64 && value & 0x80000000 == 0
+                    || self.cr4 & CR4_PCIDE != 0 && value & 0x80000000 == 0
                     || value & 0x80000000 != 0 && self.efer & 0x100 != 0 && self.cr4 & 0x20 == 0
                 {
                     return Err(GeneralProtection);
@@ -214,12 +228,14 @@ impl State {
                 if value & !defined != 0
                     || self.efer & 0x400 != 0
                         && (value & 0x20 == 0 || (self.cr4 ^ value) & 0x1000 != 0)
-                    || value & (1 << 17) != 0 && (self.efer & 0x400 == 0 || self.cr3 & 0xfff != 0)
+                    || value & CR4_PCIDE != 0
+                        && (self.efer & 0x400 == 0
+                            || self.cr4 & CR4_PCIDE == 0 && self.cr3 & 0xfff != 0)
                     || value & (1 << 23) != 0 && self.cr0 & CR0_WP == 0
                 {
                     return Err(GeneralProtection);
                 }
-                if value & !(0x63c | CR4_PROTECTION) != 0 {
+                if value & !(0x63c | CR4_PROTECTION | CR4_TRANSLATION) != 0 {
                     return Err(Unsupported);
                 }
                 candidate.cr4 = value;
@@ -283,8 +299,9 @@ impl State {
     pub fn validate(self) -> Result<(), &'static str> {
         if self.pdpte.is_some()
             || self.cr0 & !(CR0_WP | CR0_AM | CR0_NUMERIC) != CR0_FIXED & !CR0_NUMERIC
-            || self.cr3 & !CR3_ALLOWED != 0
-            || self.cr4 & !(CR4_NUMERIC | CR4_TSD | CR4_PROTECTION) != CR4_FIXED & !CR4_NUMERIC
+            || self.cr3 & !CR3_RAW != 0
+            || self.cr4 & !(CR4_NUMERIC | CR4_TSD | CR4_PROTECTION | CR4_TRANSLATION)
+                != CR4_FIXED & !CR4_NUMERIC
             || self.efer & !(EFER_NXE | EFER_SCE) != EFER_FIXED
         {
             Err("paging controls do not match the normalized IA32e profile")
@@ -321,6 +338,7 @@ impl State {
                 if value & 0x80000001 == 0x80000000
                     || value & 0x60000000 == 0x20000000
                     || matches!(mode, Mode::Long64) && value & 0x80000000 == 0
+                    || self.cr4 & CR4_PCIDE != 0 && value & 0x80000000 == 0
                 {
                     return Err(GeneralProtection);
                 }
@@ -331,25 +349,36 @@ impl State {
             }
             2 => candidate.cr2 = value,
             3 => {
-                if value & 0x9ff0000000000000 != 0 {
+                if value & 0x1ff0000000000000 != 0
+                    || value & (1 << 63) != 0 && self.cr4 & CR4_PCIDE == 0
+                {
                     return Err(GeneralProtection);
                 }
                 if value & (3 << 61) != 0 {
                     return Err(Unsupported);
                 }
-                candidate.cr3 = value & CR3_ALLOWED;
+                candidate.cr3 = value
+                    & if self.cr4 & CR4_PCIDE != 0 {
+                        CR3_RAW
+                    } else {
+                        CR3_ALLOWED
+                    };
             }
             4 => {
                 let defined = 0x7fff | (0x3ff << 16) | (3 << 27) | (1 << 32);
                 if value & !defined != 0
                     || value & (1 << 5) == 0
                     || value & (1 << 12) != 0
-                    || value & (1 << 17) != 0 && self.cr3 & 0xfff != 0
+                    || value & CR4_PCIDE != 0
+                        && (self.efer & 0x400 == 0
+                            || self.cr4 & CR4_PCIDE == 0 && self.cr3 & 0xfff != 0)
                     || value & (1 << 23) != 0 && self.cr0 & CR0_WP == 0
                 {
                     return Err(GeneralProtection);
                 }
-                if value & !(CR4_NUMERIC | CR4_TSD | CR4_PROTECTION) != CR4_FIXED & !CR4_NUMERIC {
+                if value & !(CR4_NUMERIC | CR4_TSD | CR4_PROTECTION | CR4_TRANSLATION)
+                    != CR4_FIXED & !CR4_NUMERIC
+                {
                     return Err(Unsupported);
                 }
                 candidate.cr4 = value;
@@ -770,8 +799,8 @@ mod tests {
             match field {
                 0 => bad.cr0 |= 1 << 6,
                 1 => bad.cr0 &= !1,
-                2 => bad.cr3 |= 1,
-                3 => bad.cr4 |= 1 << 7,
+                2 => bad.cr3 |= 1 << 52,
+                3 => bad.cr4 |= 1,
                 4 => bad.efer |= 1 << 1,
                 _ => unreachable!(),
             }
@@ -906,7 +935,7 @@ mod tests {
             cr3: 0x3000,
             ..state
         };
-        for bit in [0, 7, 16, 17, 18, 19, 22, 23, 24, 25, 27, 28, 32] {
+        for bit in [0, 16, 18, 19, 22, 23, 24, 25, 27, 28, 32] {
             assert_eq!(
                 aligned.prepare_cr_write(4, 0x628 | (1 << bit), Mode::Long64),
                 Err(Unsupported),
@@ -1012,6 +1041,10 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "pcid_control_tests.rs"]
+mod pcid_control_tests;
 
 #[cfg(test)]
 #[path = "legacy_controls_tests.rs"]

@@ -161,7 +161,6 @@ fn physical_transition_matrix_has_literal_control_failures_and_retains_raw_banks
         (4, 1 << 15, Gp),
         (4, 1 << 17, Gp),
         (4, 1 << 23, Gp),
-        (4, 1 << 7, Unsupported),
         (4, 1 << 12, Unsupported),
         (8, 16, Gp),
         (8, 0, Unsupported),
@@ -172,6 +171,10 @@ fn physical_transition_matrix_has_literal_control_failures_and_retains_raw_banks
             "CR{register}={value:x}"
         );
     }
+    assert_eq!(
+        pg0.prepare_physical_cr_write(4, 1 << 7, Mode::Protected),
+        Ok(State { cr4: 1 << 7, ..pg0 })
+    );
     let aligned = pg0
         .prepare_physical_cr_write(0, 0x40033, Mode::Protected)
         .unwrap();
