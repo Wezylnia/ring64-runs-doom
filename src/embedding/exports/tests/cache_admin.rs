@@ -131,3 +131,44 @@ fn host_code_alias_write_still_retires_the_affected_installed_owner() {
     assert_ne!(fresh, installed);
     assert_eq!(mapped::core_activate(fresh), 1);
 }
+
+#[test]
+fn pending_owner_cannot_publish_after_memory_admin_at_saturated_epoch() {
+    let (_, pending) = fixture(u64::MAX);
+    BRIDGE.with_borrow_mut(|bridge| bridge.input = vec![0x99]);
+    assert_eq!(core_write_memory(0xa010), 0);
+    assert_eq!(
+        mapped::core_publish(pending),
+        0,
+        "memory administration must cancel pending publication even at saturated epoch"
+    );
+}
+
+#[test]
+fn equal_and_irrelevant_paging_imports_keep_retained_guest_mapping_facts() {
+    for change in 0..6 {
+        fixture(0);
+        assert_eq!(paging::core_paging_state(), 0);
+        BRIDGE.with_borrow_mut(|bridge| {
+            let mut bank: serde_json::Value = serde_json::from_slice(&bridge.info).unwrap();
+            let field = match change {
+                0 => None,
+                1 => Some(("cr2", "0xbeef")),
+                2 => Some(("cr0", "0x80040033")),
+                3 => Some(("cr0", "0x8000003b")),
+                4 => Some(("cr4", "0x62c")),
+                _ => Some(("efer", "0x501")),
+            };
+            if let Some((key, value)) = field {
+                bank[key] = serde_json::json!(value);
+            }
+            bridge.input = serde_json::to_vec(&bank).unwrap();
+        });
+        assert_eq!(paging::core_import_paging(), 0, "import {change}");
+        assert_eq!(
+            retained_data_physical(),
+            Some(0xa000),
+            "equal or irrelevant host paging imports must retain guest mapping facts: {change}"
+        );
+    }
+}
