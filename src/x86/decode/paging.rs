@@ -9,32 +9,6 @@ pub(super) fn two_byte<F>(
 where
     F: FnMut(u64) -> Result<u8, DecodeError>,
 {
-    if opcode == 0x38 {
-        return Some((|| {
-            if !prefixes.paged || !prefixes.operand_override || prefixes.repeat.is_some() {
-                return Err(DecodeError::Unsupported);
-            }
-            if cursor.byte()? != 0x82 {
-                return Err(DecodeError::Unsupported);
-            }
-            if prefixes.lock {
-                return Err(DecodeError::UndefinedEncoding);
-            }
-            let operands = ModRm::read(cursor, prefixes.rex)?;
-            if operands.mode == 3 {
-                return Err(DecodeError::Invalid);
-            }
-            Ok(Operation::Paging(PagingInstruction::InvalidatePcid {
-                address: operands.address(cursor, prefixes)?,
-                gpr: operands.register,
-                width: if prefixes.long64 {
-                    Width::W64
-                } else {
-                    Width::W32
-                },
-            }))
-        })());
-    }
     if prefixes.paged && opcode == 0x06 {
         return Some(if prefixes.repeat.is_some() {
             Err(DecodeError::Unsupported)
@@ -115,4 +89,32 @@ where
     Ok(Operation::Paging(PagingInstruction::InvalidatePage(
         operands.address(cursor, prefixes)?,
     )))
+}
+
+pub(super) fn invpcid<F>(
+    prefixes: Prefixes,
+    cursor: &mut Cursor<F>,
+) -> Result<Operation, DecodeError>
+where
+    F: FnMut(u64) -> Result<u8, DecodeError>,
+{
+    if !prefixes.paged || !prefixes.operand_override {
+        return Err(DecodeError::Unsupported);
+    }
+    if prefixes.lock {
+        return Err(DecodeError::UndefinedEncoding);
+    }
+    let operands = ModRm::read(cursor, prefixes.rex)?;
+    if operands.mode == 3 {
+        return Err(DecodeError::Invalid);
+    }
+    Ok(Operation::Paging(PagingInstruction::InvalidatePcid {
+        address: operands.address(cursor, prefixes)?,
+        gpr: operands.register,
+        width: if prefixes.long64 {
+            Width::W64
+        } else {
+            Width::W32
+        },
+    }))
 }

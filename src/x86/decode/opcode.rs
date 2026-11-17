@@ -656,6 +656,9 @@ where
             }))
         };
     }
+    if matches!(opcode, 0x38 | 0x3a) {
+        return super::three_byte::decode(opcode, prefixes, cursor);
+    }
     if let Some(result) = super::paging::two_byte(opcode, prefixes, cursor) {
         return result;
     }

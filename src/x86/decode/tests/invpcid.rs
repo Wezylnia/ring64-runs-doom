@@ -23,8 +23,7 @@ fn decode_bytes(bytes: &[u8], paged: bool) -> Result<Instruction, DecodeError> {
 #[test]
 fn invpcid_fetches_only_encoding_bytes_selected_by_the_profile() {
     for bytes in [
-        &[0x66, 0x0f, 0x38][..],
-        &[0x66, 0x0f, 0x38, 0x82],
+        &[0x66, 0x0f, 0x38, 0x82][..],
         &[0x66, 0x0f, 0x38, 0x82, 0x04],
         &[0x66, 0x0f, 0x38, 0x82, 0x05],
     ] {
@@ -36,7 +35,7 @@ fn invpcid_fetches_only_encoding_bytes_selected_by_the_profile() {
         assert_eq!(decode_bytes(bytes, false), Err(DecodeError::Unsupported));
     }
     for bytes in [
-        &[0x0f, 0x38][..],
+        &[0x0f, 0x38, 0x82][..],
         &[0xf2, 0x66, 0x0f, 0x38],
         &[0x66, 0xf3, 0x0f, 0x38],
         &[0x66, 0x0f, 0x38, 0x81],

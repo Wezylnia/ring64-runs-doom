@@ -17,6 +17,7 @@ mod protection;
 mod software_events;
 mod streaming;
 mod system_flags;
+mod three_byte;
 mod vector;
 mod x87;
 

@@ -500,7 +500,8 @@ export function invpcidScenarios(compiler: WebAssembly.Module): Scenario[] {
       name: 'INVPCID selected opcode prefix and illegal-form frontiers precede unavailable following fetch bytes',
       async run() {
         for (const [code, expected] of [
-          ['0f38', 'unsupported'],
+          ['0f38', 'page-fault'],
+          ['0f3882', 'unsupported'],
           ['f2660f38', 'unsupported'],
           ['66f30f38', 'unsupported'],
           ['660f3881', 'unsupported'],

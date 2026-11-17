@@ -24,6 +24,7 @@ mod processor;
 mod protection;
 mod scalar_data;
 mod software_events;
+mod ssse3;
 mod stack;
 mod streaming;
 mod strings;
