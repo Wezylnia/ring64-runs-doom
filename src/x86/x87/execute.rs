@@ -220,8 +220,9 @@ pub(super) fn eval(state: &mut State, op: Op, source: u128, flags: u64) -> Effec
         op.kind,
         Compare | CompareUnordered | CompareFlags | CompareUnorderedFlags | Test
     );
-    let empty = state.tag(top) == 3
-        || (op.format == Format::Register && op.kind != Store && state.tag(other) == 3);
+    let store = matches!(op.kind, Store | StoreTruncated);
+    let empty =
+        state.tag(top) == 3 || (op.format == Format::Register && !store && state.tag(other) == 3);
     if empty {
         let trapped = stack_fault(state, false);
         if op.writes_flags() {
@@ -236,7 +237,7 @@ pub(super) fn eval(state: &mut State, op: Op, source: u128, flags: u64) -> Effec
             } else {
                 state.status_word = (state.status_word & !0x4500) | 0x4500
             }
-        } else if op.kind == Store {
+        } else if store {
             let r = number::store(INDEFINITE, op.format, cw | 1);
             out.value = r.value;
             if op.format == Format::Register {
@@ -251,8 +252,13 @@ pub(super) fn eval(state: &mut State, op: Op, source: u128, flags: u64) -> Effec
         pops(state, op.pop);
         return out;
     }
-    if op.kind == Store {
-        let r = number::store(a, op.format, cw);
+    if store {
+        let conversion_control = if op.kind == StoreTruncated {
+            cw | 0x0c00
+        } else {
+            cw
+        };
+        let r = number::store(a, op.format, conversion_control);
         status(state, r);
         if r.suppress || r.pre & !cw & 63 != 0 {
             return out;

@@ -1,6 +1,8 @@
 #[cfg(test)]
 mod exception_review_tests;
 mod execute;
+#[cfg(test)]
+mod fisttp_tests;
 mod number;
 #[cfg(test)]
 mod reference_tests;
@@ -130,6 +132,7 @@ pub enum Kind {
     RemainderNearest,
     Scale,
     Extract,
+    StoreTruncated,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 #[repr(u8)]
@@ -207,6 +210,7 @@ impl Op {
             RemainderNearest,
             Scale,
             Extract,
+            StoreTruncated,
         ];
         let formats = [
             Format::None,
@@ -261,6 +265,7 @@ impl Op {
                 ) && self.pop <= 1
                     && (!matches!(self.format, F80 | I64 | Bcd) || self.pop == 1)
             }
+            StoreTruncated => matches!(self.format, I16 | I32 | I64) && self.pop == 1,
             Add | Mul | Sub | SubReverse | Div | DivReverse => {
                 matches!(self.format, Register | F32 | F64 | I16 | I32)
                     && if self.dest_index {
@@ -320,7 +325,7 @@ impl Op {
     pub fn is_store(self) -> bool {
         matches!(
             self.kind,
-            Kind::Store | Kind::StoreControl | Kind::StoreStatus
+            Kind::Store | Kind::StoreTruncated | Kind::StoreControl | Kind::StoreStatus
         ) && self.format != Format::Register
             && self.format != Format::Ax
     }

@@ -160,9 +160,9 @@ fn every_esc_selector_admits_exactly_the_documented_selection_and_rejects_lock()
             let selected = match opcode {
                 0xd8 | 0xda | 0xdc | 0xde => true,
                 0xd9 => matches!(selector, 0 | 2..=7),
-                0xdd => matches!(selector, 0 | 2..=4 | 6 | 7),
-                0xdb => matches!(selector, 0 | 2 | 3 | 5 | 7),
-                0xdf => matches!(selector, 0 | 2..=7),
+                0xdd => matches!(selector, 0..=4 | 6 | 7),
+                0xdb => matches!(selector, 0..=3 | 5 | 7),
+                0xdf => true,
                 _ => unreachable!(),
             };
             let modrm = (selector << 3) | 3;
@@ -183,7 +183,7 @@ fn every_esc_selector_admits_exactly_the_documented_selection_and_rejects_lock()
             }
         }
     }
-    assert_eq!((registers, memory), (337, 57));
+    assert_eq!((registers, memory), (337, 60));
 }
 
 #[test]
@@ -285,6 +285,9 @@ fn memory_forms_have_opcode_defined_formats_and_complete_original_fop() {
         (0xd9, 3, Store, F32, 1),
         (0xdd, 3, Store, F64, 1),
         (0xdb, 7, Store, F80, 1),
+        (0xdf, 1, StoreTruncated, I16, 1),
+        (0xdb, 1, StoreTruncated, I32, 1),
+        (0xdd, 1, StoreTruncated, I64, 1),
         (0xdf, 2, Store, I16, 0),
         (0xdb, 2, Store, I32, 0),
         (0xdf, 3, Store, I16, 1),
@@ -331,6 +334,9 @@ fn required_x87_address_tails_precede_lock_rejection_but_unselected_forms_stop_a
         &[0xf0, 0xdb, 0xbc, 0x24, 1, 2, 3, 4],
         &[0xf0, 0xdf, 0xa4, 0x24, 1, 2, 3, 4],
         &[0xf0, 0xdf, 0xb4, 0x24, 1, 2, 3, 4],
+        &[0xdb, 0x0c, 0x24],
+        &[0xdd, 0x0c, 0x24],
+        &[0xf0, 0xdf, 0x8c, 0x24, 1, 2, 3, 4],
     ] {
         for length in 1..full.len() {
             assert_eq!(
@@ -349,9 +355,6 @@ fn required_x87_address_tails_precede_lock_rejection_but_unselected_forms_stop_a
         assert_eq!(at(0x1000, prefix), Err(DecodeError::Unsupported));
     }
     for code in [
-        [0xdd, 0x0c],
-        [0xdb, 0x0c],
-        [0xdf, 0x0c],
         [0xdc, 0xd0],
         [0xdc, 0xd8],
         [0xd9, 0xd8],
