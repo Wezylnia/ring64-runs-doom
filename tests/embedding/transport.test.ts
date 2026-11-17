@@ -1,5 +1,9 @@
 import { DEBUG_LAYOUT } from '../support/debug-layout.js';
-import { TIME_LAYOUT, TIME_STATE_SIZE } from '../support/time-layout.js';
+import { TIME_LAYOUT } from '../support/time-layout.js';
+import {
+  PROTECTION_KEYS_LAYOUT,
+  PROTECTION_KEYS_STATE_SIZE,
+} from '../support/protection-keys-layout.js';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
@@ -59,8 +63,9 @@ async function fixture(
       initializationError
         ? { error: 'fixture initialization rejected' }
         : {
-            size: TIME_STATE_SIZE,
+            size: PROTECTION_KEYS_STATE_SIZE,
             time: TIME_LAYOUT,
+            protectionKeys: PROTECTION_KEYS_LAYOUT,
             debug: DEBUG_LAYOUT,
             scalarSize: 176,
             xmm: 176,

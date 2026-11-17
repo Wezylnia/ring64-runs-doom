@@ -3,6 +3,7 @@ import type { DeviceNotAvailable, NumericControlFault } from './numeric-controls
 import { captureDebugState, type DebugState } from './debug.js';
 import { capturePagingState, type PagingState } from './paging.js';
 import { captureTimeState, type TimeState } from './time.js';
+import { captureProtectionKeysState, type ProtectionKeysState } from './protection-keys.js';
 import {
   captureFastSystemState,
   zeroFastSystemState,
@@ -393,6 +394,16 @@ export class Cpu {
     const input = captureTimeState(state);
     this.requireIdle(generation);
     this.engineCall(() => this.#engine.setTimeState(input));
+  }
+  readProtectionKeysState(): ProtectionKeysState {
+    this.requireIdle();
+    return this.engineCall(() => this.#engine.readProtectionKeysState());
+  }
+  setProtectionKeysState(state: ProtectionKeysState): void {
+    const generation = this.requireIdle();
+    const input = captureProtectionKeysState(state);
+    this.requireIdle(generation);
+    this.engineCall(() => this.#engine.setProtectionKeysState(input));
   }
   readXmmState(): bigint[] {
     this.requireIdle();

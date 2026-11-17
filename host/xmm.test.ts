@@ -1,5 +1,9 @@
 import { DEBUG_LAYOUT } from '../tests/support/debug-layout.js';
-import { TIME_LAYOUT, TIME_STATE_SIZE } from '../tests/support/time-layout.js';
+import { TIME_LAYOUT } from '../tests/support/time-layout.js';
+import {
+  PROTECTION_KEYS_LAYOUT,
+  PROTECTION_KEYS_STATE_SIZE,
+} from '../tests/support/protection-keys-layout.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { captureXmmState, Core, type Interruptibility } from './core.js';
@@ -21,8 +25,9 @@ const options = () => ({
   limits,
 });
 const layout = {
-  size: TIME_STATE_SIZE,
+  size: PROTECTION_KEYS_STATE_SIZE,
   time: TIME_LAYOUT,
+  protectionKeys: PROTECTION_KEYS_LAYOUT,
   debug: DEBUG_LAYOUT,
   scalarSize: 176,
   registers: 0,
@@ -230,6 +235,9 @@ test('XMM layout rejects incompatible extents and cleans up the initialized core
     { ...layout, event: { ...layout.event, savedFlags: 16 } },
     { ...layout, event: { ...layout.event, bytes: 41 } },
     { ...layout, size: 599 },
+    { ...layout, protectionKeys: undefined as never },
+    { ...layout, protectionKeys: { ...layout.protectionKeys, pkrs: 0 } },
+    { ...layout, protectionKeys: { ...layout.protectionKeys, offset: TIME_LAYOUT.offset } },
   ]) {
     const fixture = await mockedCore(descriptor);
     assert.ok(fixture.error instanceof Error);

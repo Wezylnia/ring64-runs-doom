@@ -16,5 +16,6 @@ pub mod numeric_images;
 pub mod paging;
 pub mod processor;
 pub mod protection;
+pub mod protection_keys;
 pub mod state;
 pub mod x87;

@@ -31,6 +31,12 @@ import type { InitialMemory, MemoryBackingInput, MemoryMapping } from './memory.
 import { capturePagingState, pagingStateFromJson, type PagingState } from './paging.js';
 import { captureTimeState, validateTimeLayout, type TimeLayout, type TimeState } from './time.js';
 import {
+  captureProtectionKeysState,
+  validateProtectionKeysLayout,
+  type ProtectionKeysLayout,
+  type ProtectionKeysState,
+} from './protection-keys.js';
+import {
   captureFastSystemState,
   fastSystemStateFromJson,
   zeroFastSystemState,
@@ -242,6 +248,7 @@ export interface UnitMetadata {
 
 interface Layout {
   time: TimeLayout;
+  protectionKeys: ProtectionKeysLayout;
   pagingSource?: PagingSourceLayout;
   numericSource?: NumericSourceLayout;
   debug: DebugLayout;
@@ -725,6 +732,11 @@ export class Core {
           ? layout.pagingSource.offset + layout.pagingSource.bytes
           : layout.debug.offset + layout.debug.layout.bytes,
     );
+    validateProtectionKeysLayout(
+      layout.protectionKeys,
+      layout.size,
+      layout.time.offset + layout.time.size,
+    );
     this.stateView();
   }
 
@@ -1135,6 +1147,21 @@ export class Core {
       layout = this.#layout.time;
     view.setBigUint64(layout.offset + layout.tsc, input.tsc, true);
     view.setUint32(layout.offset + layout.tscAux, input.tscAux, true);
+  }
+  readProtectionKeysState(): ProtectionKeysState {
+    const view = this.stateView(),
+      layout = this.#layout.protectionKeys;
+    return {
+      pkru: view.getUint32(layout.offset + layout.pkru, true),
+      pkrs: view.getUint32(layout.offset + layout.pkrs, true),
+    };
+  }
+  setProtectionKeysState(state: ProtectionKeysState): void {
+    const input = captureProtectionKeysState(state),
+      view = this.stateView(),
+      layout = this.#layout.protectionKeys;
+    view.setUint32(layout.offset + layout.pkru, input.pkru, true);
+    view.setUint32(layout.offset + layout.pkrs, input.pkrs, true);
   }
   readXmmState(): bigint[] {
     const view = this.stateView();

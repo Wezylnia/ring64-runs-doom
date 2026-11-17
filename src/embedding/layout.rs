@@ -5,6 +5,7 @@ use crate::x86::exception::{
     EventState, ExceptionEvent, InterruptEvent, InterruptSource, InterruptState,
 };
 use crate::x86::processor::TimeState;
+use crate::x86::protection_keys::State as ProtectionKeysState;
 use crate::x86::state::State;
 use crate::x86::x87::State as X87State;
 
@@ -253,6 +254,7 @@ pub struct RunState {
     pub paging_source: paging::RawPagingSource,
     pub numeric_source: numeric::RawNumericSource,
     pub time: TimeState,
+    pub protection_keys: ProtectionKeysState,
 }
 
 impl Default for RunState {
@@ -277,6 +279,7 @@ impl Default for RunState {
             paging_source: paging::RawPagingSource::default(),
             numeric_source: numeric::RawNumericSource::default(),
             time: TimeState::default(),
+            protection_keys: ProtectionKeysState::ZERO,
         }
     }
 }
@@ -350,6 +353,12 @@ impl RunState {
         let mut paging_source = paging::RawPagingSource::descriptor();
         paging_source["offset"] = serde_json::json!(std::mem::offset_of!(Self, paging_source));
         serde_json::json!({
+            "protectionKeys": {
+                "offset": std::mem::offset_of!(Self, protection_keys),
+                "size": size_of::<ProtectionKeysState>(),
+                "pkru": std::mem::offset_of!(ProtectionKeysState, pkru),
+                "pkrs": std::mem::offset_of!(ProtectionKeysState, pkrs),
+            },
             "time": {
                 "offset": std::mem::offset_of!(Self, time),
                 "size": size_of::<TimeState>(),
@@ -419,7 +428,7 @@ mod tests {
         assert_eq!(std::mem::offset_of!(RunState, interruptibility), 164);
         assert_eq!(std::mem::offset_of!(RunState, repeat_remaining), 168);
         assert_eq!(std::mem::offset_of!(RunState, xmm), 176);
-        assert_eq!(size_of::<RunState>(), 784);
+        assert_eq!(size_of::<RunState>(), 792);
         assert_eq!(REASONS[18], "debug-exception");
         assert_eq!(RunState::descriptor()["interruptibilityBytes"], 4);
         let mut state = RunState {
@@ -435,7 +444,7 @@ mod tests {
         let mut transport = RunState::default();
         assert_eq!(std::mem::offset_of!(RunState, mxcsr), 448);
         assert_eq!(std::mem::offset_of!(RunState, x87), 456);
-        assert_eq!(size_of::<RunState>(), 784);
+        assert_eq!(size_of::<RunState>(), 792);
         let projection = &RunState::descriptor()["x87"];
         assert_eq!(projection["bytes"], 104);
         assert_eq!(projection["controlWord"], 80);
@@ -454,7 +463,7 @@ mod tests {
         let mut state = RunState::default();
         assert_eq!(std::mem::offset_of!(RunState, xmm), 176);
         assert_eq!(std::mem::offset_of!(RunState, vector_scratch), 432);
-        assert_eq!(size_of::<RunState>(), 784);
+        assert_eq!(size_of::<RunState>(), 792);
         assert_eq!(RunState::descriptor()["scalarSize"], 176);
         assert_eq!(RunState::descriptor()["xmmBytes"], 256);
         assert_eq!(state.xmm, [[0; 16]; 16]);
@@ -466,7 +475,7 @@ mod tests {
     #[test]
     fn repeated_work_extends_transport_after_existing_fields() {
         let descriptor = RunState::descriptor();
-        assert_eq!(descriptor["size"], 784);
+        assert_eq!(descriptor["size"], 792);
         assert_eq!(descriptor["repeatRemaining"], 168);
         assert_eq!(descriptor["reasons"][11], "repeat-budget");
     }
@@ -490,7 +499,7 @@ mod tests {
             ]
         );
         assert_eq!(RunState::descriptor()["reasons"][9], "divide-error");
-        assert_eq!(size_of::<RunState>(), 784);
+        assert_eq!(size_of::<RunState>(), 792);
     }
 
     #[test]
@@ -502,8 +511,8 @@ mod tests {
         assert_eq!(std::mem::offset_of!(RunState, target), 152);
         assert_eq!(std::mem::offset_of!(RunState, fault_segment), 160);
         assert_eq!(std::mem::offset_of!(RunState, repeat_remaining), 168);
-        assert_eq!(size_of::<RunState>(), 784);
-        assert_eq!(RunState::descriptor()["size"], 784);
+        assert_eq!(size_of::<RunState>(), 792);
+        assert_eq!(RunState::descriptor()["size"], 792);
     }
 
     #[test]
@@ -623,11 +632,46 @@ mod tests {
 }
 
 #[cfg(test)]
+mod protection_keys_append_tests {
+    use super::*;
+
+    #[test]
+    fn protection_keys_append_after_time_and_survive_scalar_import() {
+        assert_eq!(std::mem::offset_of!(RunState, time), 768);
+        assert_eq!(std::mem::offset_of!(RunState, protection_keys), 784);
+        assert_eq!(size_of::<ProtectionKeysState>(), 8);
+        assert_eq!(size_of::<RunState>(), 792);
+        let descriptor = RunState::descriptor();
+        assert_eq!(descriptor["protectionKeys"]["offset"], 784);
+        assert_eq!(descriptor["protectionKeys"]["size"], 8);
+        assert_eq!(descriptor["protectionKeys"]["pkru"], 0);
+        assert_eq!(descriptor["protectionKeys"]["pkrs"], 4);
+        assert_eq!(descriptor["scalarSize"], 176);
+        assert_eq!(REASONS.len(), 29);
+        assert_eq!(
+            RunState::default().protection_keys,
+            ProtectionKeysState::ZERO
+        );
+        assert_eq!(RunState::reset().protection_keys, ProtectionKeysState::ZERO);
+        let keys = ProtectionKeysState {
+            pkru: 0x8000_0001,
+            pkrs: u32::MAX,
+        };
+        let mut state = RunState {
+            protection_keys: keys,
+            ..RunState::default()
+        };
+        state.import(State::default());
+        assert_eq!(state.protection_keys, keys);
+    }
+}
+
+#[cfg(test)]
 mod debug_append_tests {
     use super::*;
     #[test]
     fn debug_state_appends_without_moving_instruction_or_numeric_offsets() {
-        assert_eq!(size_of::<RunState>(), 784);
+        assert_eq!(size_of::<RunState>(), 792);
         assert_eq!(RunState::descriptor()["debug"]["offset"], 616);
         let mut state = RunState::default();
         assert_eq!(RunState::descriptor()["xmm"], 176);
@@ -647,7 +691,7 @@ mod paging_append_tests {
         assert_eq!(std::mem::offset_of!(RunState, paging_source), 712);
         assert_eq!(std::mem::offset_of!(RunState, debug), 616);
         assert_eq!(std::mem::offset_of!(RunState, event), 560);
-        assert_eq!(size_of::<RunState>(), 784);
+        assert_eq!(size_of::<RunState>(), 792);
         let descriptor = RunState::descriptor();
         assert_eq!(descriptor["pagingSource"]["offset"], 712);
         assert_eq!(descriptor["pagingSource"]["bytes"], 16);
