@@ -354,8 +354,8 @@ export function hintScenarios(compiler: WebAssembly.Module): Scenario[] {
           ['0f2bc0', 'invalid-encoding'],
           ['660f2bc0', 'invalid-encoding'],
           ['0fc3c0', 'invalid-encoding'],
-          ['0fae2c', 'unsupported'],
-          ['0fae34', 'unsupported'],
+          ['0fae2c00', 'invalid-encoding'],
+          ['0fae34', 'invalid-encoding'],
           ['660faef0', 'unsupported'],
           ['f30faee8', 'unsupported'],
           ['0f1824', 'unsupported'],
@@ -384,6 +384,7 @@ export function hintScenarios(compiler: WebAssembly.Module): Scenario[] {
         for (const full of [
           '0f188423ffffffff',
           '0faebc23ffffffff',
+          '0fae2c00',
           '0fe78423ffffffff',
           'f00fe78423ffffffff',
           '660ff7c4',
