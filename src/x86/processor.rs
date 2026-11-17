@@ -23,7 +23,7 @@ pub struct TimeState {
 pub fn cpuid(eax: u32, ecx: u32, cr4: u64) -> [u32; 4] {
     match eax {
         0 => [7, 0x676e6952, 0x656e6967, 0x6e453436],
-        1 => [0, 0, 0x00020000, 0x00002010],
+        1 => [0, 0, 0x00020200, 0x00002010],
         7 if ecx == 0 => [
             0,
             0x00100480,
@@ -98,7 +98,10 @@ mod tests {
 
     #[test]
     fn paging_identity_discloses_only_the_completed_translation_facilities() {
-        assert_eq!(cpuid(1, 0, 0), [0, 0, 1 << 17, (1 << 13) | (1 << 4)]);
+        assert_eq!(
+            cpuid(1, 0, 0),
+            [0, 0, (1 << 17) | (1 << 9), (1 << 13) | (1 << 4)]
+        );
         assert_eq!(
             cpuid(7, 0, 0),
             [0, (1 << 20) | (1 << 10) | (1 << 7), 0x80000008, 0]
@@ -133,7 +136,7 @@ mod tests {
     fn identification_is_literal_and_ignores_unclaimed_subleaves() {
         for (leaf, expected) in [
             (0, [7, 0x676e6952, 0x656e6967, 0x6e453436]),
-            (1, [0, 0, 0x00020000, 0x00002010]),
+            (1, [0, 0, 0x00020200, 0x00002010]),
             (0x80000000, [0x80000001, 0, 0, 0]),
             (0x80000001, [0, 0, 0, 0x08000000]),
         ] {
