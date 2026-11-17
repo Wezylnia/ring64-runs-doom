@@ -21,6 +21,10 @@ pub enum Kind {
     TruncToInt,
     Rcp,
     Rsqrt,
+    // Bit 7 extends the helper opcode without overlapping the legacy format/width fields.
+    AddSub = 0x80,
+    HorizontalAdd,
+    HorizontalSub,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -50,24 +54,29 @@ impl Op {
 
     pub fn decode(value: u32) -> Self {
         use Kind::*;
-        let kind = [
-            Add,
-            Sub,
-            Mul,
-            Div,
-            Sqrt,
-            Min,
-            Max,
-            Cmp,
-            Comi,
-            Ucomi,
-            FloatConvert,
-            IntToFloat,
-            FloatToInt,
-            TruncToInt,
-            Rcp,
-            Rsqrt,
-        ][(value & 15) as usize];
+        let kind = match value & !0x10 {
+            0x80 => AddSub,
+            0x81 => HorizontalAdd,
+            0x82 => HorizontalSub,
+            _ => [
+                Add,
+                Sub,
+                Mul,
+                Div,
+                Sqrt,
+                Min,
+                Max,
+                Cmp,
+                Comi,
+                Ucomi,
+                FloatConvert,
+                IntToFloat,
+                FloatToInt,
+                TruncToInt,
+                Rcp,
+                Rsqrt,
+            ][(value & 15) as usize],
+        };
         Self {
             kind,
             format: if value & 16 == 0 {
@@ -105,7 +114,7 @@ pub(super) fn eval_pair(op: Op, left: u128, right: u128, mxcsr: u32) -> Outcome 
                 Kind::IntToFloat | Kind::FloatToInt | Kind::TruncToInt
             )
     );
-    eval_lanes(op, left, right, mxcsr, 2)
+    eval_lanes::<false>(op, left, right, mxcsr, 2)
 }
 
 pub fn eval(op: Op, left: u128, right: u128, mxcsr: u32) -> Outcome {
@@ -116,11 +125,38 @@ pub fn eval(op: Op, left: u128, right: u128, mxcsr: u32) -> Outcome {
     } else {
         128 / op.format.bits()
     };
-    eval_lanes(op, left, right, mxcsr, count)
+    if matches!(
+        op.kind,
+        Kind::AddSub | Kind::HorizontalAdd | Kind::HorizontalSub
+    ) {
+        eval_lanes::<true>(op, left, right, mxcsr, count)
+    } else {
+        eval_lanes::<false>(op, left, right, mxcsr, count)
+    }
 }
 
 #[inline]
-fn eval_lanes(op: Op, left: u128, right: u128, mxcsr: u32, count: u32) -> Outcome {
+fn lane_operation<const SSE3: bool>(op: Op, index: u32) -> Op {
+    if !SSE3 {
+        return op;
+    }
+    let kind = match op.kind {
+        Kind::AddSub if index & 1 == 0 => Kind::Sub,
+        Kind::AddSub | Kind::HorizontalAdd => Kind::Add,
+        Kind::HorizontalSub => Kind::Sub,
+        _ => unreachable!(),
+    };
+    Op { kind, ..op }
+}
+
+#[inline]
+fn eval_lanes<const SSE3: bool>(
+    op: Op,
+    left: u128,
+    right: u128,
+    mxcsr: u32,
+    count: u32,
+) -> Outcome {
     let masks = (mxcsr >> 7) & 0x3f;
     let source_bits = if op.kind == Kind::IntToFloat {
         if op.scalar && op.integer64 { 64 } else { 32 }
@@ -141,14 +177,25 @@ fn eval_lanes(op: Op, left: u128, right: u128, mxcsr: u32, count: u32) -> Outcom
     let mut lanes = [lane::Lane::default(); 4];
     let mut raised = 0;
     for index in 0..count {
-        let a = (left >> (index * op.format.bits())) as u64 & op.format.mask();
-        let b = (right >> (index * source_bits)) as u64
-            & if source_bits == 32 {
-                u32::MAX as u64
-            } else {
-                u64::MAX
-            };
-        lanes[index as usize] = lane::prepare(op, a, b, mxcsr);
+        let (a, b) = if SSE3 && matches!(op.kind, Kind::HorizontalAdd | Kind::HorizontalSub) {
+            let half = count / 2;
+            let operand = if index < half { left } else { right };
+            let pair = operand >> ((index % half) * 2 * source_bits);
+            (
+                pair as u64 & op.format.mask(),
+                (pair >> source_bits) as u64 & op.format.mask(),
+            )
+        } else {
+            let a = (left >> (index * op.format.bits())) as u64 & op.format.mask();
+            let b = (right >> (index * source_bits)) as u64
+                & if source_bits == 32 {
+                    u32::MAX as u64
+                } else {
+                    u64::MAX
+                };
+            (a, b)
+        };
+        lanes[index as usize] = lane::prepare(lane_operation::<SSE3>(op, index), a, b, mxcsr);
         raised |= lanes[index as usize].pre;
     }
     if raised & !masks != 0 {
@@ -160,7 +207,11 @@ fn eval_lanes(op: Op, left: u128, right: u128, mxcsr: u32, count: u32) -> Outcom
         };
     }
     for index in 0..count {
-        lanes[index as usize] = lane::calculate(op, lanes[index as usize], mxcsr);
+        lanes[index as usize] = lane::calculate(
+            lane_operation::<SSE3>(op, index),
+            lanes[index as usize],
+            mxcsr,
+        );
         raised |= lanes[index as usize].post;
     }
     if raised & !masks != 0 {
@@ -202,3 +253,9 @@ mod native_reference;
 
 #[cfg(test)]
 mod pair_tests;
+
+#[cfg(test)]
+mod sse3_tests;
+
+#[cfg(all(test, target_arch = "x86_64"))]
+mod sse3_native;
