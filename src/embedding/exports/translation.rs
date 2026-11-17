@@ -16,14 +16,17 @@ impl Core {
     }
 
     pub(super) fn activate_owner(&mut self, owner: u64) -> bool {
-        self.reconcile_translation_changes();
+        let paged_model = self.paging.is_some();
+        if paged_model {
+            self.reconcile_translation_changes();
+        }
         let observed = self.boundary_observed();
         let admitted = self
             .translation_owners
             .admit(owner, &self.context, observed, || {
                 self.image.activate(owner)
             });
-        if admitted {
+        if admitted && paged_model {
             self.active_owner = Some(owner);
         }
         admitted
