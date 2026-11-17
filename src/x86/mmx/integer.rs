@@ -171,3 +171,64 @@ pub(super) fn shuffle(value: u64, immediate: u8) -> u64 {
 pub(super) fn mask_bytes(value: u64) -> u64 {
     (0..8).map(|i| ((value >> (8 * i + 7)) & 1) << i).sum()
 }
+
+pub(super) fn ssse3(kind: Ssse3Op, left: u64, right: u64, immediate: u8) -> u64 {
+    use Ssse3Op::*;
+    match kind {
+        Pshufb => packed(8, |i| {
+            let selector = lane(right, 8, i) as u8;
+            if selector & 0x80 == 0 {
+                lane(left, 8, u32::from(selector & 7))
+            } else {
+                0
+            }
+        }),
+        Phaddw | Phaddd | Phaddsw | Phsubw | Phsubd | Phsubsw => {
+            let bits = if matches!(kind, Phaddd | Phsubd) {
+                32
+            } else {
+                16
+            };
+            let pairs = 32 / bits;
+            packed(bits, |i| {
+                let source = if i < pairs { left } else { right };
+                let first = 2 * (i % pairs);
+                let a = signed(lane(source, bits, first), bits);
+                let b = signed(lane(source, bits, first + 1), bits);
+                match kind {
+                    Phaddsw => (a + b).clamp(-32768, 32767) as u64,
+                    Phsubsw => (a - b).clamp(-32768, 32767) as u64,
+                    Phaddw | Phaddd => (a + b) as u64,
+                    _ => (a - b) as u64,
+                }
+            })
+        }
+        Pmaddubsw => packed(16, |i| {
+            let product = |j| lane(left, 8, j) as i64 * signed(lane(right, 8, j), 8);
+            (product(2 * i) + product(2 * i + 1)).clamp(-32768, 32767) as u64
+        }),
+        Pmulhrsw => packed(16, |i| {
+            let product = signed(lane(left, 16, i), 16) * signed(lane(right, 16, i), 16);
+            ((product + 0x4000) >> 15) as u64
+        }),
+        Psignb | Psignw | Psignd | Pabsb | Pabsw | Pabsd => {
+            let bits = match kind {
+                Psignb | Pabsb => 8,
+                Psignw | Pabsw => 16,
+                _ => 32,
+            };
+            packed(bits, |i| {
+                let sign = signed(lane(right, bits, i), bits);
+                if matches!(kind, Pabsb | Pabsw | Pabsd) {
+                    sign.unsigned_abs()
+                } else {
+                    (signed(lane(left, bits, i), bits) * sign.signum()) as u64
+                }
+            })
+        }
+        Palignr => {
+            let joined = u128::from(right) | (u128::from(left) << 64);
+            joined.checked_shr(8 * u32::from(immediate)).unwrap_or(0) as u64
+        }
+    }
+}

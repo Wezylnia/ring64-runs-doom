@@ -14,7 +14,8 @@ const TAGS: usize = X87 + offset_of!(X87State, tag_word);
 pub(super) fn direct(operation: MmxOp) -> bool {
     !matches!(
         operation.kind,
-        Kind::PiToPs
+        Kind::Ssse3(_)
+            | Kind::PiToPs
             | Kind::PiToPd
             | Kind::PsToPi
             | Kind::PdToPi

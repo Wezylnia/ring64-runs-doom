@@ -1,5 +1,5 @@
 use super::float;
-use super::instruction::{VectorBinary, VectorShift, Width};
+use super::instruction::{Ssse3Op, VectorBinary, VectorShift, Width};
 use super::x87;
 
 #[cfg(test)]
@@ -17,6 +17,7 @@ pub enum Kind {
     FromXmm,
     ToXmm,
     Binary(VectorBinary),
+    Ssse3(Ssse3Op),
     Shift(VectorShift),
     Shuffle,
     InsertWord,
@@ -81,13 +82,16 @@ impl Op {
             return false;
         }
         if self.immediate != 0
-            && !matches!(self.kind, Shuffle | InsertWord | ExtractWord)
+            && !matches!(
+                self.kind,
+                Shuffle | InsertWord | ExtractWord | Ssse3(Ssse3Op::Palignr)
+            )
             && !self.immediate_count
         {
             return false;
         }
         match self.kind {
-            Move | Binary(_) | Shuffle => self.dst < 8 && mmx_source,
+            Move | Binary(_) | Ssse3(_) | Shuffle => self.dst < 8 && mmx_source,
             Store => self.memory && self.dst == 0 && self.src < 8,
             FromGpr | InsertWord => self.dst < 8 && external_source,
             ToGpr => !self.memory && self.src < 8 && self.dst < 16,
@@ -181,6 +185,7 @@ fn code(kind: Kind) -> Option<u8> {
         PdToPi => 0x13,
         TruncPsToPi => 0x14,
         TruncPdToPi => 0x15,
+        Ssse3(op) => 0x40 + op as u8,
         Binary(b) => match b {
             B::And => 0xdb,
             B::AndNot => 0xdf,
@@ -268,6 +273,7 @@ fn kind(code: u8) -> Option<Kind> {
         0x13 => PdToPi,
         0x14 => TruncPsToPi,
         0x15 => TruncPdToPi,
+        0x40..=0x4f => Ssse3(Ssse3Op::ALL[usize::from(code - 0x40)]),
         0xdb => Binary(B::And),
         0xdf => Binary(B::AndNot),
         0xeb => Binary(B::Or),
@@ -344,10 +350,12 @@ pub fn eval(
     }
     let source = match op.kind {
         Store | ToGpr | ToXmm | ExtractWord | Mask => state.raw(op.src as usize) as u64,
-        Move | Binary(_) | Shift(_) | Shuffle if !op.memory => state.raw(op.src as usize) as u64,
+        Move | Binary(_) | Ssse3(_) | Shift(_) | Shuffle if !op.memory => {
+            state.raw(op.src as usize) as u64
+        }
         _ => input as u64,
     };
-    let left = if matches!(op.kind, Binary(_) | Shift(_) | InsertWord) {
+    let left = if matches!(op.kind, Binary(_) | Ssse3(_) | Shift(_) | InsertWord) {
         state.raw(op.dst as usize) as u64
     } else {
         0
@@ -362,6 +370,7 @@ pub fn eval(
             }
         }
         Binary(kind) => integer::binary(kind, left, source),
+        Ssse3(kind) => integer::ssse3(kind, left, source, op.immediate),
         Shift(kind) => integer::shift(
             kind,
             left,
@@ -383,7 +392,7 @@ pub fn eval(
     };
     if matches!(
         op.kind,
-        Move | FromGpr | FromXmm | Binary(_) | Shift(_) | Shuffle | InsertWord
+        Move | FromGpr | FromXmm | Binary(_) | Ssse3(_) | Shift(_) | Shuffle | InsertWord
     ) {
         state.set_raw(op.dst as usize, (0xffffu128 << 64) | u128::from(value));
     }

@@ -317,6 +317,48 @@ pub enum VectorMask {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum Ssse3Op {
+    Pshufb,
+    Phaddw,
+    Phaddd,
+    Phaddsw,
+    Pmaddubsw,
+    Phsubw,
+    Phsubd,
+    Phsubsw,
+    Psignb,
+    Psignw,
+    Psignd,
+    Pmulhrsw,
+    Pabsb,
+    Pabsw,
+    Pabsd,
+    Palignr,
+}
+
+impl Ssse3Op {
+    pub const ALL: [Self; 16] = [
+        Self::Pshufb,
+        Self::Phaddw,
+        Self::Phaddd,
+        Self::Phaddsw,
+        Self::Pmaddubsw,
+        Self::Phsubw,
+        Self::Phsubd,
+        Self::Phsubsw,
+        Self::Psignb,
+        Self::Psignw,
+        Self::Psignd,
+        Self::Pmulhrsw,
+        Self::Pabsb,
+        Self::Pabsw,
+        Self::Pabsd,
+        Self::Palignr,
+    ];
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum VectorInstruction {
     HalfMove {
         register: u8,
