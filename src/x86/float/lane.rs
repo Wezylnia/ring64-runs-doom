@@ -66,13 +66,7 @@ pub(super) fn prepare(op: Op, left: u64, right: u64, mxcsr: u32) -> Lane {
         return lane;
     }
     if matches!(op.kind, FloatToInt | TruncToInt) {
-        let (value, flags) = arithmetic::to_integer(
-            format,
-            b,
-            if op.scalar && op.integer64 { 64 } else { 32 },
-            op.kind == TruncToInt,
-            mxcsr,
-        );
+        let (value, flags) = arithmetic::to_integer(op, b, mxcsr);
         lane.value = value;
         lane.pre = flags & 1;
         lane.post = flags & 32;

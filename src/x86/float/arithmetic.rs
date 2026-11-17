@@ -1,4 +1,4 @@
-use super::{Format, Kind};
+use super::{Format, Kind, Op};
 use rustc_apfloat::ieee::{Double, IeeeFloat, Semantics, Single};
 use rustc_apfloat::{Float, FloatConvert, Round, Status, StatusAnd};
 
@@ -139,19 +139,14 @@ pub(super) fn from_integer(format: Format, value: i128, mxcsr: u32) -> (u64, u32
     }
 }
 
-pub(super) fn to_integer(
-    format: Format,
-    value: u64,
-    width: usize,
-    truncate: bool,
-    mxcsr: u32,
-) -> (u64, u32) {
-    let rc = if truncate {
+pub(super) fn to_integer(op: Op, value: u64, mxcsr: u32) -> (u64, u32) {
+    let width = if op.scalar && op.integer64 { 64 } else { 32 };
+    let rc = if op.kind == Kind::TruncToInt {
         Round::TowardZero
     } else {
         round(mxcsr)
     };
-    let r = match format {
+    let r = match op.format {
         Format::F32 => Single::from_bits(value as u128).to_i128_r(width, rc, &mut false),
         Format::F64 => Double::from_bits(value as u128).to_i128_r(width, rc, &mut false),
     };

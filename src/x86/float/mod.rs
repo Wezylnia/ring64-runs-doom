@@ -124,6 +124,9 @@ pub fn eval(op: Op, left: u128, right: u128, mxcsr: u32) -> Outcome {
     ) {
         return eval_sse3(op, left, right, mxcsr);
     }
+    if op.scalar && matches!(op.kind, Kind::FloatToInt | Kind::TruncToInt) {
+        return eval_scalar_to_integer(op, left, right, mxcsr);
+    }
     let count = if op.scalar || matches!(op.kind, Kind::Comi | Kind::Ucomi) {
         1
     } else if op.kind == Kind::FloatConvert {
@@ -132,6 +135,31 @@ pub fn eval(op: Op, left: u128, right: u128, mxcsr: u32) -> Outcome {
         128 / op.format.bits()
     };
     eval_lanes(op, left, right, mxcsr, count)
+}
+
+#[inline(never)]
+fn eval_scalar_to_integer(op: Op, left: u128, right: u128, mxcsr: u32) -> Outcome {
+    // A GPR conversion consumes only the low element. Invalid and precision are
+    // its only exceptions, and an invalid conversion suppresses precision.
+    let input = op
+        .format
+        .daz(right as u64 & op.format.mask(), mxcsr & 64 != 0);
+    let (value, raised) = arithmetic::to_integer(op, input, mxcsr);
+    let stage = match raised & !(mxcsr >> 7) {
+        1 => Some(Stage::PreComputation),
+        32 => Some(Stage::PostComputation),
+        _ => None,
+    };
+    Outcome {
+        value: if stage.is_some() {
+            left
+        } else {
+            u128::from(value)
+        },
+        mxcsr: mxcsr | raised,
+        raised,
+        stage,
+    }
 }
 
 #[inline(never)] // Keep ordinary floating-point instructions on the direct eval_lanes path.

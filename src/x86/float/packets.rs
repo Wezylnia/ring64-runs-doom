@@ -319,3 +319,56 @@ fn narrowing_uses_unbounded_precision_for_tininess_even_when_result_is_normal() 
         }
     }
 }
+
+#[test]
+fn scalar_gpr_conversion_matches_single_lane_arbitration() {
+    let old = 0x1234_5678_9abc_def0_4567_89ab_cdef_0123u128;
+    for format in [Format::F32, Format::F64] {
+        let mask = format.mask();
+        let poison = !u128::from(mask);
+        let inputs = [
+            0.,
+            -0.,
+            -7.,
+            1.5,
+            -1.5,
+            2147483647.5,
+            -2147483648.,
+            2f64.powi(63),
+        ]
+        .map(|value| match format {
+            Format::F32 => u64::from((value as f32).to_bits()),
+            Format::F64 => value.to_bits(),
+        });
+        for input in inputs.into_iter().chain([
+            1,
+            format.sign() | 1,
+            format.infinity(),
+            format.infinity() | 1,
+            format.sign() | format.infinity() | format.quiet() | 3,
+        ]) {
+            let right = poison | u128::from(input);
+            for kind in [Kind::FloatToInt, Kind::TruncToInt] {
+                for integer64 in [false, true] {
+                    let op = Op {
+                        integer64,
+                        ..op(kind, format, true)
+                    };
+                    for rc in 0..4 {
+                        for daz in [0, 64] {
+                            for unmask in [0, 1 << 7, 1 << 12, (1 << 7) | (1 << 12)] {
+                                let mxcsr = (0x1fa4 & !unmask) | daz | (rc << 13);
+                                let expected = eval_lanes(op, old, right, mxcsr, 1);
+                                assert_eq!(
+                                    eval(op, old, right, mxcsr),
+                                    expected,
+                                    "{op:?} source={right:x} mxcsr={mxcsr:x}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
