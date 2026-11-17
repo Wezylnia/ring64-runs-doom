@@ -6,6 +6,7 @@ use crate::x86::paging::{
     access::{AccessState, Memory},
     walk::{self, PhysicalPhase},
 };
+use crate::x86::protection_keys::State as Keys;
 
 fn put(bytes: &mut [u8], at: usize, value: u32) {
     bytes[at..at + 4].copy_from_slice(&value.to_le_bytes());
@@ -72,7 +73,7 @@ fn frame_dirty_failure_after_a_remap_is_not_an_earlier_descriptor_write() {
     let mut work = AccessState::default();
     let result = execute(
         &mut context,
-        &mut Memory::new(&mut image, &state, 3, 2, &mut work),
+        &mut Memory::new(&mut image, &state, 3, 2, &mut work, &Keys::ZERO),
         FarDescriptor {
             kind: FarKind::Call,
             width: Width::W32,
@@ -169,7 +170,7 @@ fn ordinary_call_frame_dirty_refusal_keeps_its_own_prepared_origin() {
     let mut work = AccessState::default();
     let result = execute(
         &mut context,
-        &mut Memory::new(&mut image, &state, 3, 2, &mut work),
+        &mut Memory::new(&mut image, &state, 3, 2, &mut work, &Keys::ZERO),
         FarDescriptor {
             kind: FarKind::Call,
             width: Width::W32,

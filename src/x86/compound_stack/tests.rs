@@ -1,6 +1,7 @@
 use super::*;
 use crate::memory::{Cause, Fault, Image, MappingInput, MemoryLimits, Permissions};
 use crate::x86::context::{AccessFailure, Mode, Segment, SegmentCause};
+use crate::x86::protection_keys::State as Keys;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
@@ -168,8 +169,14 @@ fn enter_alignment_keeps_earlier_stack_payload_but_no_register_candidate() {
         ..Default::default()
     };
     let mut work = crate::x86::paging::access::AccessState::default();
-    let mut memory =
-        crate::x86::paging::access::Memory::new(&mut image, &bank, 3, 0x40002, &mut work);
+    let mut memory = crate::x86::paging::access::Memory::new(
+        &mut image,
+        &bank,
+        3,
+        0x40002,
+        &mut work,
+        &Keys::ZERO,
+    );
     let mut banks = registers(0x5000, 0x6001);
     let before = banks;
     assert_eq!(
@@ -211,8 +218,14 @@ fn enter_alignment_does_not_widen_its_final_byte_probe() {
         ..Default::default()
     };
     let mut work = crate::x86::paging::access::AccessState::default();
-    let mut memory =
-        crate::x86::paging::access::Memory::new(&mut image, &bank, 3, 0x40002, &mut work);
+    let mut memory = crate::x86::paging::access::Memory::new(
+        &mut image,
+        &bank,
+        3,
+        0x40002,
+        &mut work,
+        &Keys::ZERO,
+    );
     let mut banks = registers(0x5000, 0x12345678);
     assert_eq!(
         execute(
@@ -247,8 +260,14 @@ fn popa_alignment_does_not_publish_the_stack_limit_only_register_prefix() {
         ..Default::default()
     };
     let mut work = crate::x86::paging::access::AccessState::default();
-    let mut memory =
-        crate::x86::paging::access::Memory::new(&mut image, &bank, 3, 0x40002, &mut work);
+    let mut memory = crate::x86::paging::access::Memory::new(
+        &mut image,
+        &bank,
+        3,
+        0x40002,
+        &mut work,
+        &Keys::ZERO,
+    );
     let mut banks = registers(0x5001, 0x6000);
     let before = banks;
     assert_eq!(

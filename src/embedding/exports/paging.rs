@@ -1,5 +1,6 @@
 use super::*;
 use crate::x86::paging::{self, walk::Failure};
+use crate::x86::protection_keys::State as Keys;
 
 impl Core {
     pub(super) fn paged_decode(
@@ -55,21 +56,28 @@ impl Core {
             warm_span = None;
             let mut accessed_write = false;
             let translation = match cache
-                .lookup(&paging, request)
+                .lookup(&paging, request, &Keys::ZERO)
                 .map_err(DecodeError::Paging)?
             {
                 Some(translation) => translation,
-                None => paging::walk::fetch_walk(&mut self.image, &paging, request, |image| {
-                    accessed_write = true;
-                    reuse_warm = false;
-                    encoding_current(
-                        image,
-                        &paging,
-                        cache,
-                        &consumed[..consumed_length],
-                        request.class,
-                    )
-                })
+                // Keys do not restrict fetch; required fetch keeps normal A/fill effects.
+                None => paging::walk::fetch_walk(
+                    &mut self.image,
+                    &paging,
+                    request,
+                    |image| {
+                        accessed_write = true;
+                        reuse_warm = false;
+                        encoding_current(
+                            image,
+                            &paging,
+                            cache,
+                            &consumed[..consumed_length],
+                            request.class,
+                        )
+                    },
+                    &Keys::ZERO,
+                )
                 .map_err(|failure| DecodeError::Paging(cache.fault(&paging, failure)))?
                 .ok_or(DecodeError::PagingRestart)?,
             };
@@ -81,7 +89,7 @@ impl Core {
                     &consumed[..consumed_length],
                     request.class,
                 ) || !cache
-                    .peek(&self.image, &paging, request)
+                    .peek(&self.image, &paging, request, &Keys::ZERO)
                     .is_ok_and(|fresh| fresh.physical == translation.physical))
             {
                 return Err(DecodeError::PagingRestart);
@@ -187,6 +195,7 @@ fn encoding_current(
                     access: Access::Execute,
                     class,
                 },
+                &Keys::ZERO,
             )
             .is_ok_and(|translation| translation.physical == physical)
             && image.physical_fetch(physical) == Ok(byte)
@@ -421,6 +430,25 @@ pub extern "C" fn core_paging_control(
                 selector: None,
             });
             return super::super::layout::PROTECTION;
+        }
+        if matches!(kind, 2 | 3) && register == crate::x86::protection_keys::PKRS_MSR {
+            if kind == 3 && value > u64::from(u32::MAX) {
+                core.protection_fault = Some(ProtectionFault {
+                    vector: 13,
+                    error_code: 0,
+                    phase: ProtectionPhase::Target,
+                    selector: None,
+                });
+                return super::super::layout::PROTECTION;
+            }
+            let raw = unsafe { &mut *core.state.get() };
+            if kind == 2 {
+                raw.vector_scratch[..8]
+                    .copy_from_slice(&u64::from(raw.protection_keys.pkrs).to_le_bytes());
+            } else {
+                raw.protection_keys.pkrs = value as u32;
+            }
+            return 0;
         }
         let mut invalidation_target = None;
         let operation = match kind {

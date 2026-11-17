@@ -6,12 +6,15 @@ pub const CR4_PGE: u64 = 1 << 7;
 pub const CR4_PCIDE: u64 = 1 << 17;
 pub const CR4_SMEP: u64 = 1 << 20;
 pub const CR4_SMAP: u64 = 1 << 21;
+pub const CR4_PKE: u64 = 1 << 22;
+pub const CR4_PKS: u64 = 1 << 24;
 const CR0_FIXED: u64 = 0x80000033;
 const CR0_WP: u64 = 1 << 16;
 const CR0_AM: u64 = 1 << 18;
 const CR0_NUMERIC: u64 = 0xe;
 const CR4_NUMERIC: u64 = 0x600;
 const CR4_PROTECTION: u64 = CR4_SMEP | CR4_SMAP;
+const CR4_KEYS: u64 = CR4_PKE | CR4_PKS;
 const CR4_TRANSLATION: u64 = CR4_PGE | CR4_PCIDE;
 const CR3_ALLOWED: u64 = 0x000ffffffffff018;
 const CR3_RAW: u64 = 0x000fffffffffffff;
@@ -98,7 +101,7 @@ impl State {
             || pg && !pe
             || self.cr0 & 0x60000000 == 0x20000000
             || self.cr3 & !CR3_RAW != 0
-            || self.cr4 & !(0x63c | CR4_PROTECTION | CR4_TRANSLATION) != 0
+            || self.cr4 & !(0x63c | CR4_PROTECTION | CR4_TRANSLATION | CR4_KEYS) != 0
             || self.efer & !0xd01 != 0
             || (self.efer & 0x400 != 0) != lma
             || lma && self.cr4 & 0x20 == 0
@@ -235,7 +238,7 @@ impl State {
                 {
                     return Err(GeneralProtection);
                 }
-                if value & !(0x63c | CR4_PROTECTION | CR4_TRANSLATION) != 0 {
+                if value & !(0x63c | CR4_PROTECTION | CR4_TRANSLATION | CR4_KEYS) != 0 {
                     return Err(Unsupported);
                 }
                 candidate.cr4 = value;
@@ -300,7 +303,7 @@ impl State {
         if self.pdpte.is_some()
             || self.cr0 & !(CR0_WP | CR0_AM | CR0_NUMERIC) != CR0_FIXED & !CR0_NUMERIC
             || self.cr3 & !CR3_RAW != 0
-            || self.cr4 & !(CR4_NUMERIC | CR4_TSD | CR4_PROTECTION | CR4_TRANSLATION)
+            || self.cr4 & !(CR4_NUMERIC | CR4_TSD | CR4_PROTECTION | CR4_TRANSLATION | CR4_KEYS)
                 != CR4_FIXED & !CR4_NUMERIC
             || self.efer & !(EFER_NXE | EFER_SCE) != EFER_FIXED
         {
@@ -376,7 +379,7 @@ impl State {
                 {
                     return Err(GeneralProtection);
                 }
-                if value & !(CR4_NUMERIC | CR4_TSD | CR4_PROTECTION | CR4_TRANSLATION)
+                if value & !(CR4_NUMERIC | CR4_TSD | CR4_PROTECTION | CR4_TRANSLATION | CR4_KEYS)
                     != CR4_FIXED & !CR4_NUMERIC
                 {
                     return Err(Unsupported);
@@ -429,13 +432,13 @@ impl State {
         (
             self.cr0 & !(CR0_NUMERIC | CR0_AM),
             self.cr3,
-            self.cr4 & !(CR4_NUMERIC | CR4_TSD),
+            self.cr4 & !(CR4_NUMERIC | CR4_TSD | CR4_KEYS),
             self.efer & EFER_NXE,
             self.pdpte,
         ) != (
             other.cr0 & !(CR0_NUMERIC | CR0_AM),
             other.cr3,
-            other.cr4 & !(CR4_NUMERIC | CR4_TSD),
+            other.cr4 & !(CR4_NUMERIC | CR4_TSD | CR4_KEYS),
             other.efer & EFER_NXE,
             other.pdpte,
         )
@@ -446,6 +449,84 @@ impl State {
 mod tests {
     use super::*;
     use ControlFailure::{GeneralProtection, Undefined, Unsupported};
+
+    #[test]
+    fn protection_key_controls_are_admitted_in_fixed_and_dormant_physical_profiles() {
+        for bits in [1 << 22, 1 << 24, (1 << 22) | (1 << 24)] {
+            let fixed = State {
+                cr4: State::default().cr4 | bits,
+                ..State::default()
+            };
+            assert_eq!(fixed.validate(), Ok(()), "fixed controls {bits:x}");
+            for (bank, mode) in [
+                (State::reset(), Mode::Real),
+                (
+                    State {
+                        cr0: 0x60000011,
+                        ..State::reset()
+                    },
+                    Mode::Protected,
+                ),
+                (State::default(), Mode::Long64),
+            ] {
+                let candidate = State {
+                    cr4: bank.cr4 | bits,
+                    ..bank
+                };
+                assert_eq!(
+                    candidate.validate_physical(mode),
+                    Ok(()),
+                    "physical {mode:?} controls {bits:x}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn protection_key_toggles_preserve_translation_and_pdpte_authority() {
+        let fixed = State::default();
+        for bits in [1 << 22, 1 << 24, (1 << 22) | (1 << 24)] {
+            let enabled = State {
+                cr4: fixed.cr4 | bits,
+                ..fixed
+            };
+            assert_eq!(
+                fixed.prepare_cr_write(4, enabled.cr4, Mode::Long64),
+                Ok(enabled)
+            );
+            assert_eq!(
+                enabled.prepare_cr_write(4, fixed.cr4, Mode::Compatibility),
+                Ok(fixed)
+            );
+            assert!(!fixed.translation_changed(enabled));
+            assert!(!enabled.translation_changed(fixed));
+            let legacy = State {
+                efer: 0,
+                pdpte: Some([0x2001, 0, 0, 0]),
+                ..fixed
+            };
+            let enabled = State {
+                cr4: legacy.cr4 | bits,
+                ..legacy
+            };
+            assert_eq!(
+                legacy.prepare_physical_cr_write(4, enabled.cr4, Mode::Protected),
+                Ok(enabled)
+            );
+            assert!(!legacy.translation_changed(enabled));
+            assert!(!enabled.translation_changed(legacy));
+            assert!(!legacy.needs_pdpte_reload(enabled, 4));
+            assert!(!enabled.needs_pdpte_reload(legacy, 4));
+            assert!(legacy.translation_changed(State {
+                cr3: 0x1000,
+                ..enabled
+            }));
+        }
+        assert_eq!(
+            fixed.prepare_cr_write(4, fixed.cr4 | (1 << 18), Mode::Long64),
+            Err(Unsupported)
+        );
+    }
 
     #[test]
     fn alignment_mask_is_admitted_without_translation_or_pdpte_effects() {
@@ -935,7 +1016,7 @@ mod tests {
             cr3: 0x3000,
             ..state
         };
-        for bit in [0, 16, 18, 19, 22, 23, 24, 25, 27, 28, 32] {
+        for bit in [0, 16, 18, 19, 23, 25, 27, 28, 32] {
             assert_eq!(
                 aligned.prepare_cr_write(4, 0x628 | (1 << bit), Mode::Long64),
                 Err(Unsupported),

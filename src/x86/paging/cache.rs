@@ -5,6 +5,7 @@ use super::{
     walk::{Failure, Request, Translation},
 };
 use crate::memory::Access;
+use crate::x86::protection_keys::State as ProtectionKeys;
 
 const CAPACITY: usize = 64;
 
@@ -110,7 +111,12 @@ impl Cache {
         Self::new(capacity)
     }
 
-    pub fn lookup(&self, state: &State, request: Request) -> Result<Option<Translation>, Failure> {
+    pub fn lookup(
+        &self,
+        state: &State,
+        request: Request,
+        keys: &ProtectionKeys,
+    ) -> Result<Option<Translation>, Failure> {
         if state.cr0 & (1 << 31) == 0 {
             return Ok(None);
         }
@@ -125,7 +131,7 @@ impl Cache {
             return Ok(None);
         }
         let translation = entry.translation.at(request.linear);
-        if let Err(failure) = translation.rights.authorize(state, request) {
+        if let Err(failure) = translation.rights.authorize(state, request, keys) {
             drop(entries);
             return Err(self.fault(state, failure));
         }
@@ -134,7 +140,12 @@ impl Cache {
     }
 
     /// Pure retained-view projection: no A/D, fill, eviction or LRU effects.
-    pub fn observe(&self, state: &State, request: Request) -> Result<Option<Translation>, Failure> {
+    pub fn observe(
+        &self,
+        state: &State,
+        request: Request,
+        keys: &ProtectionKeys,
+    ) -> Result<Option<Translation>, Failure> {
         if state.cr0 & (1 << 31) == 0 {
             return Ok(None);
         }
@@ -146,7 +157,7 @@ impl Cache {
         if request.access == Access::Write && translation.dirty {
             return Ok(None);
         }
-        translation.rights.authorize(state, request)?;
+        translation.rights.authorize(state, request, keys)?;
         Ok(Some(translation))
     }
 
@@ -155,10 +166,11 @@ impl Cache {
         image: &crate::memory::Image,
         state: &State,
         request: Request,
+        keys: &ProtectionKeys,
     ) -> Result<Translation, Failure> {
-        match self.observe(state, request)? {
+        match self.observe(state, request, keys)? {
             Some(translation) => Ok(translation),
-            None => super::walk::peek(image, state, request),
+            None => super::walk::peek(image, state, request, keys),
         }
     }
 
@@ -343,11 +355,15 @@ mod tests {
     fn retained_mapping_and_live_rights_are_distinct_from_current_pte_bytes() {
         let (mut image, mut state, request) = fixture();
         let cache = Cache::default();
-        let translation = walk::walk(&mut image, &state, request).unwrap();
+        let translation = walk::walk(&mut image, &state, request, &ProtectionKeys::ZERO).unwrap();
         cache.fill(&state, request, translation);
         image.physical_write(0x4008, 8, 0xb067).unwrap();
         assert_eq!(
-            cache.lookup(&state, request).unwrap().unwrap().physical,
+            cache
+                .lookup(&state, request, &ProtectionKeys::ZERO)
+                .unwrap()
+                .unwrap()
+                .physical,
             0xa234
         );
         state.cr4 |= 1 << 21;
@@ -356,11 +372,16 @@ mod tests {
             ..request
         };
         assert!(matches!(
-            cache.lookup(&state, supervisor),
+            cache.lookup(&state, supervisor, &ProtectionKeys::ZERO),
             Err(walk::Failure::Page(walk::PageFault { error_code: 1, .. }))
         ));
-        assert!(cache.lookup(&state, request).unwrap().is_none());
-        let fresh = walk::walk(&mut image, &state, request).unwrap();
+        assert!(
+            cache
+                .lookup(&state, request, &ProtectionKeys::ZERO)
+                .unwrap()
+                .is_none()
+        );
+        let fresh = walk::walk(&mut image, &state, request, &ProtectionKeys::ZERO).unwrap();
         assert_eq!(fresh.physical, 0xb234);
     }
 
@@ -372,7 +393,7 @@ mod tests {
         cache.fill(
             &state,
             request,
-            walk::walk(&mut image, &state, request).unwrap(),
+            walk::walk(&mut image, &state, request, &ProtectionKeys::ZERO).unwrap(),
         );
         image.physical_write(0x4008, 8, 0xb067).unwrap();
         assert!(
@@ -382,12 +403,18 @@ mod tests {
                     Request {
                         access: Access::Write,
                         ..request
-                    }
+                    },
+                    &ProtectionKeys::ZERO
                 )
                 .unwrap()
                 .is_none()
         );
-        assert!(cache.lookup(&state, request).unwrap().is_none());
+        assert!(
+            cache
+                .lookup(&state, request, &ProtectionKeys::ZERO)
+                .unwrap()
+                .is_none()
+        );
     }
 }
 
@@ -403,7 +430,11 @@ mod boundary_tests {
         state: &State,
         request: Request,
     ) -> Translation {
-        cache.fill(state, request, walk::walk(image, state, request).unwrap())
+        cache.fill(
+            state,
+            request,
+            walk::walk(image, state, request, &ProtectionKeys::ZERO).unwrap(),
+        )
     }
 
     #[test]
@@ -423,13 +454,32 @@ mod boundary_tests {
         insert(&cache, &mut image, &state, first);
         insert(&cache, &mut image, &state, second);
         assert_eq!(
-            cache.observe(&state, first).unwrap().unwrap().physical,
+            cache
+                .observe(&state, first, &ProtectionKeys::ZERO)
+                .unwrap()
+                .unwrap()
+                .physical,
             0xa234
         );
-        assert!(cache.observe(&state, third).unwrap().is_none());
+        assert!(
+            cache
+                .observe(&state, third, &ProtectionKeys::ZERO)
+                .unwrap()
+                .is_none()
+        );
         insert(&cache, &mut image, &state, third);
-        assert!(cache.lookup(&state, first).unwrap().is_none());
-        assert!(cache.lookup(&state, second).unwrap().is_some());
+        assert!(
+            cache
+                .lookup(&state, first, &ProtectionKeys::ZERO)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            cache
+                .lookup(&state, second, &ProtectionKeys::ZERO)
+                .unwrap()
+                .is_some()
+        );
         assert!(cache.take_changed());
         assert!(!cache.take_changed());
     }
@@ -447,25 +497,46 @@ mod boundary_tests {
         image.physical_write(0x4008, 8, 0xb067).unwrap();
         insert(&cache, &mut image, &second, request);
         assert_eq!(
-            cache.lookup(&first, request).unwrap().unwrap().physical,
+            cache
+                .lookup(&first, request, &ProtectionKeys::ZERO)
+                .unwrap()
+                .unwrap()
+                .physical,
             0xa234
         );
         assert_eq!(
-            cache.lookup(&second, request).unwrap().unwrap().physical,
+            cache
+                .lookup(&second, request, &ProtectionKeys::ZERO)
+                .unwrap()
+                .unwrap()
+                .physical,
             0xb234
         );
         cache.invalidate_page(2, 0x1fff, false);
         assert_eq!(
-            cache.lookup(&second, request).unwrap().unwrap().physical,
+            cache
+                .lookup(&second, request, &ProtectionKeys::ZERO)
+                .unwrap()
+                .unwrap()
+                .physical,
             0xa234
         );
         cache.invalidate_non_global();
         assert_eq!(
-            cache.lookup(&first, request).unwrap().unwrap().physical,
+            cache
+                .lookup(&first, request, &ProtectionKeys::ZERO)
+                .unwrap()
+                .unwrap()
+                .physical,
             0xa234
         );
         cache.invalidate_page(2, 0x1001, true);
-        assert!(cache.lookup(&first, request).unwrap().is_none());
+        assert!(
+            cache
+                .lookup(&first, request, &ProtectionKeys::ZERO)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
@@ -485,7 +556,8 @@ mod boundary_tests {
                     Request {
                         linear: 0x1ffabc,
                         ..request
-                    }
+                    },
+                    &ProtectionKeys::ZERO
                 )
                 .unwrap()
                 .unwrap()
@@ -493,7 +565,12 @@ mod boundary_tests {
             0x3ffabc
         );
         cache.invalidate_page(0, 0x100000, false);
-        assert!(cache.lookup(&state, request).unwrap().is_none());
+        assert!(
+            cache
+                .lookup(&state, request, &ProtectionKeys::ZERO)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
@@ -509,12 +586,22 @@ mod boundary_tests {
             access: Access::Write,
             ..read
         };
-        assert!(cache.observe(&state, write).is_err());
-        assert!(cache.observe(&state, read).unwrap().is_some());
-        assert!(cache.lookup(&state, write).is_err());
-        assert!(cache.lookup(&state, read).unwrap().is_none());
+        assert!(cache.observe(&state, write, &ProtectionKeys::ZERO).is_err());
         assert!(
-            walk::walk(&mut image, &state, write)
+            cache
+                .observe(&state, read, &ProtectionKeys::ZERO)
+                .unwrap()
+                .is_some()
+        );
+        assert!(cache.lookup(&state, write, &ProtectionKeys::ZERO).is_err());
+        assert!(
+            cache
+                .lookup(&state, read, &ProtectionKeys::ZERO)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            walk::walk(&mut image, &state, write, &ProtectionKeys::ZERO)
                 .unwrap()
                 .rights
                 .writable
@@ -525,10 +612,15 @@ mod boundary_tests {
     fn accessed_zero_projection_cannot_become_a_ready_fill() {
         let (image, state, request) = fixture();
         let cache = Cache::default();
-        let translation = walk::peek(&image, &state, request).unwrap();
+        let translation = walk::peek(&image, &state, request, &ProtectionKeys::ZERO).unwrap();
         assert!(!translation.accessed);
         assert_eq!(cache.fill(&state, request, translation).cache_id, None);
-        assert!(cache.lookup(&state, request).unwrap().is_none());
+        assert!(
+            cache
+                .lookup(&state, request, &ProtectionKeys::ZERO)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
@@ -552,7 +644,8 @@ mod boundary_tests {
                     Request {
                         access: Access::Write,
                         ..other
-                    }
+                    },
+                    &ProtectionKeys::ZERO
                 )
                 .unwrap()
                 .is_none()
@@ -568,7 +661,12 @@ mod boundary_tests {
         image.physical_write(0x4008, 8, 0xb067).unwrap();
         assert_eq!(insert(&cache, &mut image, &state, request).cache_id, None);
         cache.mark_dirty(old.cache_id, old.leaf);
-        assert!(cache.lookup(&state, request).unwrap().is_none());
+        assert!(
+            cache
+                .lookup(&state, request, &ProtectionKeys::ZERO)
+                .unwrap()
+                .is_none()
+        );
         cache.clear();
         assert_eq!(insert(&cache, &mut image, &state, request).cache_id, None);
     }
@@ -590,10 +688,20 @@ mod boundary_tests {
         insert(&cache, &mut image, &state, first);
         insert(&cache, &mut image, &state, second);
         cache.entries.borrow_mut().clock = u64::MAX;
-        cache.lookup(&state, first).unwrap();
+        cache.lookup(&state, first, &ProtectionKeys::ZERO).unwrap();
         insert(&cache, &mut image, &state, third);
-        assert!(cache.lookup(&state, second).unwrap().is_none());
-        assert!(cache.lookup(&state, first).unwrap().is_some());
+        assert!(
+            cache
+                .lookup(&state, second, &ProtectionKeys::ZERO)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            cache
+                .lookup(&state, first, &ProtectionKeys::ZERO)
+                .unwrap()
+                .is_some()
+        );
     }
 }
 
@@ -644,20 +752,24 @@ mod family_tests {
                 _ => {}
             }
             let cache = Cache::default();
-            let walked = walk::walk(&mut image, &state, request).unwrap();
+            let walked = walk::walk(&mut image, &state, request, &ProtectionKeys::ZERO).unwrap();
             assert_eq!(
                 (walked.span, walked.physical),
                 (expected_span, expected_physical)
             );
             cache.fill(&state, request, walked);
-            let hit = cache.lookup(&state, request).unwrap().unwrap();
+            let hit = cache
+                .lookup(&state, request, &ProtectionKeys::ZERO)
+                .unwrap()
+                .unwrap();
             assert_eq!((hit.span, hit.physical), (expected_span, expected_physical));
             assert_eq!(
                 hit.rights,
                 walk::Rights {
                     user: true,
                     writable: true,
-                    executable: true
+                    executable: true,
+                    key: 0
                 }
             );
             cache.invalidate_page(
@@ -665,7 +777,12 @@ mod family_tests {
                 request.linear + (expected_span - (request.linear & (expected_span - 1))) - 1,
                 true,
             );
-            assert!(cache.lookup(&state, request).unwrap().is_none());
+            assert!(
+                cache
+                    .lookup(&state, request, &ProtectionKeys::ZERO)
+                    .unwrap()
+                    .is_none()
+            );
         }
     }
 
@@ -675,7 +792,7 @@ mod family_tests {
         state.efer |= 1 << 11;
         image.physical_write(0x1000, 8, 0x8000000000002027).unwrap();
         let cache = Cache::default();
-        let read = walk::walk(&mut image, &state, request).unwrap();
+        let read = walk::walk(&mut image, &state, request, &ProtectionKeys::ZERO).unwrap();
         assert!(!read.rights.executable);
         cache.fill(&state, request, read);
         assert_eq!(
@@ -684,7 +801,8 @@ mod family_tests {
                 Request {
                     access: Access::Execute,
                     ..request
-                }
+                },
+                &ProtectionKeys::ZERO
             ),
             Err(Failure::Page(PageFault {
                 address: 0x1234,
@@ -696,20 +814,25 @@ mod family_tests {
         cache.fill(
             &state,
             request,
-            walk::walk(&mut image, &state, request).unwrap(),
+            walk::walk(&mut image, &state, request, &ProtectionKeys::ZERO).unwrap(),
         );
         state.cr4 |= 1 << 21;
         let explicit = Request {
             class: AccessClass::Supervisor { ac: true },
             ..request
         };
-        assert!(cache.lookup(&state, explicit).unwrap().is_some());
+        assert!(
+            cache
+                .lookup(&state, explicit, &ProtectionKeys::ZERO)
+                .unwrap()
+                .is_some()
+        );
         let implicit = Request {
             class: AccessClass::ImplicitSupervisor,
             ..request
         };
         assert_eq!(
-            cache.lookup(&state, implicit),
+            cache.lookup(&state, implicit, &ProtectionKeys::ZERO),
             Err(Failure::Page(PageFault {
                 address: 0x1234,
                 access: Access::Read,

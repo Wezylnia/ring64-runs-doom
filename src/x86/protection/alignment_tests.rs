@@ -5,6 +5,7 @@ use crate::x86::paging::{
     State,
     access::{AccessState, Memory},
 };
+use crate::x86::protection_keys::State as Keys;
 
 fn image() -> Image {
     Image::physical_mapped(
@@ -55,7 +56,7 @@ fn explicit_system_record_checks_fields_after_nominal_admission_without_partial_
             let before = context.clone();
             let state = controls();
             let mut work = AccessState::default();
-            let mut memory = Memory::new(&mut image, &state, 3, 0x40002, &mut work);
+            let mut memory = Memory::new(&mut image, &state, 3, 0x40002, &mut work, &Keys::ZERO);
             let result = execute(
                 &mut context,
                 &mut memory,
@@ -138,7 +139,7 @@ fn explicit_selector_and_far_pointer_do_not_inherit_metadata_exemption() {
         let before = context.clone();
         let state = controls();
         let mut work = AccessState::default();
-        let mut memory = Memory::new(&mut image, &state, 3, 0x40002, &mut work);
+        let mut memory = Memory::new(&mut image, &state, 3, 0x40002, &mut work, &Keys::ZERO);
         assert_eq!(
             execute(
                 &mut context,
@@ -202,7 +203,7 @@ fn system_privilege_and_complete_record_backing_refusal_precede_field_alignment(
     let before = context.clone();
     let state = controls();
     let mut work = AccessState::default();
-    let mut memory = Memory::new(&mut image, &state, 3, 0x40002, &mut work);
+    let mut memory = Memory::new(&mut image, &state, 3, 0x40002, &mut work, &Keys::ZERO);
     assert!(matches!(
         execute(
             &mut context,
@@ -254,7 +255,7 @@ fn far_pointer_and_return_stack_reads_keep_their_ordinary_alignment_intent() {
         let before = context.clone();
         let state = controls();
         let mut work = AccessState::default();
-        let mut memory = Memory::new(&mut image, &state, 3, 0x40002, &mut work);
+        let mut memory = Memory::new(&mut image, &state, 3, 0x40002, &mut work, &Keys::ZERO);
         assert_eq!(
             far::execute(
                 &mut context,

@@ -25,9 +25,10 @@ macro_rules! guest_access {
         if $paged {
             let cpl = $core.context.cpl();
             let flags = unsafe { (*$core.state.get()).flags };
+            let keys = unsafe { &(*$core.state.get()).protection_keys };
             let mut memory = crate::x86::paging::access::Memory::new(
                 &mut $core.image, $core.paging.as_ref().expect("paged helper profile"),
-                cpl, flags, &mut $core.paging_work,
+                cpl, flags, &mut $core.paging_work, keys,
             ).with_cache(&$core.translation_cache);
             crate::x86::access::GuestMemory::$method(&mut memory, $($argument),*)
         } else {
@@ -41,7 +42,8 @@ macro_rules! guest_semantics {
         if $paged {
             let cpl=$core.context.cpl();
             let flags=unsafe { (*$core.state.get()).flags };
-            let mut memory=crate::x86::paging::access::Memory::new(&mut $core.image,$core.paging.as_ref().expect("paged helper profile"),cpl,flags,&mut $core.paging_work).with_cache(&$core.translation_cache);
+            let keys=unsafe { &(*$core.state.get()).protection_keys };
+            let mut memory=crate::x86::paging::access::Memory::new(&mut $core.image,$core.paging.as_ref().expect("paged helper profile"),cpl,flags,&mut $core.paging_work,keys).with_cache(&$core.translation_cache);
             $operation(&mut $core.context,&mut memory,$($argument),*)
         } else {$operation(&mut $core.context,&mut $core.image,$($argument),*)}
     }};

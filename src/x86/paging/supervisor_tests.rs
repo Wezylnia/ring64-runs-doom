@@ -1,5 +1,6 @@
 use super::*;
 use crate::memory::{MappingInput, MemoryLimits, Permissions};
+use crate::x86::protection_keys::State as Keys;
 
 #[derive(Clone, Copy, Debug)]
 enum Family {
@@ -187,8 +188,13 @@ fn independent_supervisor_rights_table_matches_all_three_walk_families() {
                         }))
                     };
                     assert_eq!(
-                        peek(&image, &state, request(0x1234, access, class, ac),)
-                            .map(|translation| translation.physical),
+                        peek(
+                            &image,
+                            &state,
+                            request(0x1234, access, class, ac),
+                            &Keys::ZERO,
+                        )
+                        .map(|translation| translation.physical),
                         expected,
                         "independent supervisor rights table: {family:?}/{class:?}/{access:?}/{bits:x}"
                     );
@@ -212,9 +218,14 @@ fn every_ia32e_level_contributes_to_supervisor_page_classification() {
             (LogicalClass::ImplicitSupervisor, Access::Read),
         ] {
             assert_eq!(
-                peek(&image, &state, request(0x1234, access, class, false),)
-                    .unwrap()
-                    .physical,
+                peek(
+                    &image,
+                    &state,
+                    request(0x1234, access, class, false),
+                    &Keys::ZERO,
+                )
+                .unwrap()
+                .physical,
                 0x9234,
                 "supervisor page at level {level:x}"
             );
@@ -245,7 +256,12 @@ fn supervisor_protection_applies_to_every_admitted_large_leaf() {
             (LogicalClass::Supervisor, Access::Read, true, None),
             (LogicalClass::User, Access::Execute, false, None),
         ] {
-            let result = peek(&image, &state, request(0x1234, access, class, ac));
+            let result = peek(
+                &image,
+                &state,
+                request(0x1234, access, class, ac),
+                &Keys::ZERO,
+            );
             if let Some(error_code) = expected {
                 assert_eq!(
                     result,
@@ -280,6 +296,7 @@ fn reached_protection_denial_keeps_accessed_effects_but_no_dirty_update() {
                 &mut image,
                 &state,
                 request(0x1234, Access::Write, class, ac),
+                &Keys::ZERO,
             ),
             Err(Failure::Page(PageFault {
                 address: 0x1234,
@@ -309,6 +326,7 @@ fn lower_structural_faults_precede_smap_and_smep_permission_denial() {
                 &mut image,
                 &state,
                 request(0x1234, Access::Execute, LogicalClass::Supervisor, false),
+                &Keys::ZERO,
             ),
             Err(Failure::Page(PageFault {
                 address: 0x1234,
@@ -335,7 +353,13 @@ fn inactive_paging_ignores_supervisor_permissions_without_inventing_table_work()
                 continue;
             }
             for ac in [false, true] {
-                let translation = peek(&image, &state, request(0x1234, access, class, ac)).unwrap();
+                let translation = peek(
+                    &image,
+                    &state,
+                    request(0x1234, access, class, ac),
+                    &Keys::ZERO,
+                )
+                .unwrap();
                 assert_eq!(translation.physical, 0x1234);
                 assert_eq!(translation.entry_width, 0);
                 assert!(!translation.dirty);

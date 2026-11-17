@@ -96,9 +96,16 @@ fn failed_gate_drops_earlier_frame_captures_before_returning_to_the_host() {
         // The first two frame writes were admitted before the third slot faulted.
         // A later owner must not publish their abandoned dirty updates.
         let paging = core.paging.unwrap();
-        Memory::new(&mut core.image, &paging, 3, 2, &mut core.paging_work)
-            .prepare_publication()
-            .unwrap();
+        Memory::new(
+            &mut core.image,
+            &paging,
+            3,
+            2,
+            &mut core.paging_work,
+            unsafe { &(*core.state.get()).protection_keys },
+        )
+        .prepare_publication()
+        .unwrap();
         assert_eq!(
             core.image.physical_read(0x11024, 4).unwrap(),
             0x9023,

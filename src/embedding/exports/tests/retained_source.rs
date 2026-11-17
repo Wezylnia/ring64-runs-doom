@@ -68,7 +68,13 @@ fn one_entry_cache_admits_a_two_page_instruction_then_reconciles_evicted_source_
             access: Access::Execute,
             class: AccessClass::Supervisor { ac: false },
         };
-        let translation = walk::walk(&mut core.image, &bank, request).unwrap();
+        let translation = walk::walk(
+            &mut core.image,
+            &bank,
+            request,
+            &crate::x86::protection_keys::State::ZERO,
+        )
+        .unwrap();
         core.image.physical_fetch(translation.physical).unwrap();
         core.translation_cache.fill(&bank, request, translation);
         // Retarget before creating the owner: the following eviction changes authority
@@ -99,7 +105,8 @@ fn one_entry_cache_admits_a_two_page_instruction_then_reconciles_evicted_source_
                         linear: PC,
                         access: Access::Execute,
                         class: AccessClass::Supervisor { ac: false }
-                    }
+                    },
+                    &crate::x86::protection_keys::State::ZERO,
                 )
                 .unwrap()
                 .is_none()

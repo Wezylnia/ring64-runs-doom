@@ -1,6 +1,7 @@
 use super::*;
 use crate::memory::{Access, Image, MappingInput, MemoryLimits, Permissions};
 use crate::x86::context::{Mode, Segment};
+use crate::x86::protection_keys::State as Keys;
 
 fn unpaged() -> State {
     State {
@@ -75,6 +76,7 @@ fn unpaged_walk_is_identity_without_table_reads_dirty_metadata_or_zero_remaining
                 access,
                 class: walk::AccessClass::User,
             },
+            &Keys::ZERO,
         )
         .unwrap();
         assert_eq!(translation.physical, 0);
@@ -109,12 +111,12 @@ fn unpaged_prepared_access_at_zero_has_no_fake_leaf_or_dirty_work() {
     )
     .unwrap();
     let mut work = access::AccessState::default();
-    access::Memory::new(&mut image, &unpaged(), 3, 0, &mut work)
+    access::Memory::new(&mut image, &unpaged(), 3, 0, &mut work, &Keys::ZERO)
         .write(0, 8, 0x1122334455667788)
         .unwrap();
     assert_eq!(image.physical_read(0, 8).unwrap(), 0x1122334455667788);
     assert_eq!(
-        access::Memory::new(&mut image, &unpaged(), 3, 0, &mut work)
+        access::Memory::new(&mut image, &unpaged(), 3, 0, &mut work, &Keys::ZERO)
             .read(0, 8)
             .unwrap(),
         0x1122334455667788

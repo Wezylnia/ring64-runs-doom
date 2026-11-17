@@ -2,6 +2,7 @@ use super::*;
 use crate::x86::context::{TableRegister, TaskRegister};
 use crate::x86::exception::{ExceptionEvent, InterruptEvent, InterruptSource};
 use crate::x86::protection::tests::{context, image, mapping};
+use crate::x86::protection_keys::State as Keys;
 
 fn setup(mode: &str, cpl: u8, vector: u8, gate: u64) -> (ExecutionContext, Image) {
     let mut context = context(mode, cpl);
@@ -77,7 +78,7 @@ fn alignment_exception_entry_checks_user_frame_but_not_odd_descriptor_tables() {
         ..State::reset()
     };
     let mut work = AccessState::default();
-    let mut memory = Memory::new(&mut image, &bank, 3, 0x40002, &mut work);
+    let mut memory = Memory::new(&mut image, &bank, 3, 0x40002, &mut work, &Keys::ZERO);
     let event = ExceptionEvent::fault(17, 0x1000, 0x40002, &context, Some(0));
     assert_eq!(
         enter_exception(&mut context, &mut memory, event, 0x41f1, 0x40002),
@@ -119,7 +120,7 @@ fn alignment_exception_entry_uses_target_privilege_and_iret_uses_current_stack()
         ..State::reset()
     };
     let mut work = AccessState::default();
-    let mut memory = Memory::new(&mut image, &bank, 3, 0x40002, &mut work);
+    let mut memory = Memory::new(&mut image, &bank, 3, 0x40002, &mut work, &Keys::ZERO);
     let event = ExceptionEvent::fault(17, 0x1000, 0x40002, &context, Some(0));
     let outcome = enter_exception(&mut context, &mut memory, event, 0x4100, 0x40002).unwrap();
     assert_eq!((outcome.sp, context.cpl()), (0x41d9, 0));
@@ -128,7 +129,7 @@ fn alignment_exception_entry_uses_target_privilege_and_iret_uses_current_stack()
     let mut context = crate::x86::protection::tests::context("protected", 3);
     let before = context.clone();
     work.clear();
-    let mut memory = Memory::new(&mut image, &bank, 3, 0x40002, &mut work);
+    let mut memory = Memory::new(&mut image, &bank, 3, 0x40002, &mut work, &Keys::ZERO);
     assert_eq!(
         execute(
             &mut context,

@@ -1,5 +1,6 @@
-use super::{CR4_SMAP, CR4_SMEP, State};
+use super::{CR4_PKE, CR4_PKS, CR4_SMAP, CR4_SMEP, State};
 use crate::memory::{Access, Fault, Image};
+use crate::x86::protection_keys::State as ProtectionKeys;
 
 const ADDRESS: u64 = 0x000f_ffff_ffff_f000;
 const ACCESSED: u64 = 1 << 5;
@@ -108,10 +109,16 @@ pub struct Rights {
     pub user: bool,
     pub writable: bool,
     pub executable: bool,
+    pub key: u8,
 }
 
 impl Rights {
-    pub fn authorize(self, state: &State, request: Request) -> Result<(), Failure> {
+    pub fn authorize(
+        self,
+        state: &State,
+        request: Request,
+        keys: &ProtectionKeys,
+    ) -> Result<(), Failure> {
         let user_request = request.class.is_user();
         let protection_denied = !user_request
             && self.user
@@ -121,18 +128,35 @@ impl Rights {
                 state.cr4 & CR4_SMAP != 0
                     && !matches!(request.class, AccessClass::Supervisor { ac: true })
             };
+        let key_denied = request.access != Access::Execute
+            && state.cr0 & (1 << 31) != 0
+            && state.efer & (1 << 10) != 0
+            && if self.user {
+                state.cr4 & CR4_PKE != 0 && key_denied(keys.pkru, self.key, state, request)
+            } else {
+                state.cr4 & CR4_PKS != 0 && key_denied(keys.pkrs, self.key, state, request)
+            };
         if user_request && !self.user
             || request.access == Access::Write
                 && !self.writable
                 && (user_request || state.cr0 & (1 << 16) != 0)
             || request.access == Access::Execute && !self.executable
             || protection_denied
+            || key_denied
         {
-            Err(request.page_fault(state, true, false))
+            Err(request.page_fault(state, true, false, key_denied))
         } else {
             Ok(())
         }
     }
+}
+
+fn key_denied(word: u32, key: u8, state: &State, request: Request) -> bool {
+    let pair = word >> (u32::from(key & 15) * 2) & 3;
+    pair & 1 != 0
+        || request.access == Access::Write
+            && pair & 2 != 0
+            && (request.class.is_user() || state.cr0 & (1 << 16) != 0)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -187,7 +211,7 @@ impl Request {
         Ok(self.linear)
     }
 
-    fn page_fault(self, state: &State, present: bool, reserved: bool) -> Failure {
+    fn page_fault(self, state: &State, present: bool, reserved: bool, key: bool) -> Failure {
         Failure::Page(PageFault {
             address: self.linear,
             access: self.access,
@@ -199,7 +223,8 @@ impl Request {
                     self.access == Access::Execute
                         && (state.cr4 & CR4_SMEP != 0
                             || state.cr4 & (1 << 5) != 0 && state.efer & (1 << 11) != 0),
-                ) << 4),
+                ) << 4)
+                | (u32::from(key) << 5),
         })
     }
 
@@ -213,17 +238,32 @@ impl Request {
     }
 }
 
-pub fn peek(image: &Image, state: &State, request: Request) -> Result<Translation, Failure> {
-    walk_with::<false, false>(state, request, |address, width, _| {
-        #[cfg(test)]
-        physical_counts::read(width);
-        image.physical_read(address, width).map(Some)
-    })
+pub fn peek(
+    image: &Image,
+    state: &State,
+    request: Request,
+    keys: &ProtectionKeys,
+) -> Result<Translation, Failure> {
+    walk_with::<false, false>(
+        state,
+        request,
+        |address, width, _| {
+            #[cfg(test)]
+            physical_counts::read(width);
+            image.physical_read(address, width).map(Some)
+        },
+        keys,
+    )
     .map(|translation| translation.expect("observational walk cannot restart"))
 }
 
-pub fn walk(image: &mut Image, state: &State, request: Request) -> Result<Translation, Failure> {
-    actual_walk::<false>(image, state, request, |_| true)
+pub fn walk(
+    image: &mut Image,
+    state: &State,
+    request: Request,
+    keys: &ProtectionKeys,
+) -> Result<Translation, Failure> {
+    actual_walk::<false>(image, state, request, |_| true, keys)
         .map(|translation| translation.expect("ordinary access does not abandon a walk"))
 }
 
@@ -233,8 +273,9 @@ pub fn fetch_walk(
     state: &State,
     request: Request,
     current: impl FnMut(&Image) -> bool,
+    keys: &ProtectionKeys,
 ) -> Result<Option<Translation>, Failure> {
-    actual_walk::<true>(image, state, request, current)
+    actual_walk::<true>(image, state, request, current, keys)
 }
 
 fn actual_walk<const FETCH: bool>(
@@ -242,31 +283,38 @@ fn actual_walk<const FETCH: bool>(
     state: &State,
     request: Request,
     mut current: impl FnMut(&Image) -> bool,
+    keys: &ProtectionKeys,
 ) -> Result<Option<Translation>, Failure> {
-    walk_with::<true, FETCH>(state, request, |address, width, accessed| {
-        if accessed {
-            #[cfg(test)]
-            physical_counts::check(width);
-            image.physical_check_write(address, width)?;
-            #[cfg(test)]
-            physical_counts::read(width);
-            let current_word = image.physical_read(address, width)?;
-            #[cfg(test)]
-            physical_counts::write(width);
-            image.physical_write(address, width, current_word | ACCESSED)?;
-            Ok(current(image).then_some(current_word | ACCESSED))
-        } else {
-            #[cfg(test)]
-            physical_counts::read(width);
-            image.physical_read(address, width).map(Some)
-        }
-    })
+    walk_with::<true, FETCH>(
+        state,
+        request,
+        |address, width, accessed| {
+            if accessed {
+                #[cfg(test)]
+                physical_counts::check(width);
+                image.physical_check_write(address, width)?;
+                #[cfg(test)]
+                physical_counts::read(width);
+                let current_word = image.physical_read(address, width)?;
+                #[cfg(test)]
+                physical_counts::write(width);
+                image.physical_write(address, width, current_word | ACCESSED)?;
+                Ok(current(image).then_some(current_word | ACCESSED))
+            } else {
+                #[cfg(test)]
+                physical_counts::read(width);
+                image.physical_read(address, width).map(Some)
+            }
+        },
+        keys,
+    )
 }
 
 fn walk_with<const EFFECTS: bool, const FETCH: bool>(
     state: &State,
     request: Request,
     entry_access: impl FnMut(u64, u32, bool) -> Result<Option<u64>, Fault>,
+    keys: &ProtectionKeys,
 ) -> Result<Option<Translation>, Failure> {
     if state.cr0 & (1 << 31) == 0 {
         let physical = request.unpaged_physical()?;
@@ -283,6 +331,7 @@ fn walk_with<const EFFECTS: bool, const FETCH: bool>(
                 user: true,
                 writable: true,
                 executable: true,
+                key: 0,
             },
             global: false,
             accessed: false,
@@ -292,11 +341,11 @@ fn walk_with<const EFFECTS: bool, const FETCH: bool>(
         }));
     }
     if state.efer & (1 << 10) != 0 {
-        walk_paged_with::<EFFECTS, FETCH, true, true>(state, request, entry_access)
+        walk_paged_with::<EFFECTS, FETCH, true, true>(state, request, entry_access, keys)
     } else if state.cr4 & (1 << 5) != 0 {
-        walk_paged_with::<EFFECTS, FETCH, false, true>(state, request, entry_access)
+        walk_paged_with::<EFFECTS, FETCH, false, true>(state, request, entry_access, keys)
     } else {
-        walk_paged_with::<EFFECTS, FETCH, false, false>(state, request, entry_access)
+        walk_paged_with::<EFFECTS, FETCH, false, false>(state, request, entry_access, keys)
     }
 }
 
@@ -305,6 +354,7 @@ fn walk_paged_with<const EFFECTS: bool, const FETCH: bool, const IA32E: bool, co
     state: &State,
     request: Request,
     mut entry_access: impl FnMut(u64, u32, bool) -> Result<Option<u64>, Fault>,
+    keys: &ProtectionKeys,
 ) -> Result<Option<Translation>, Failure> {
     let entry_width = if IA32E || PAE { 8 } else { 4 };
     let shifts: &[u32] = if IA32E {
@@ -323,7 +373,7 @@ fn walk_paged_with<const EFFECTS: bool, const FETCH: bool, const IA32E: bool, co
         let root =
             state.pdpte.expect("validated legacy PAE quartet")[(request.linear >> 30 & 3) as usize];
         if root & 1 == 0 {
-            return Err(request.page_fault(state, false, false));
+            return Err(request.page_fault(state, false, false, false));
         }
         table = root & ADDRESS;
     }
@@ -345,7 +395,7 @@ fn walk_paged_with<const EFFECTS: bool, const FETCH: bool, const IA32E: bool, co
         };
         words[index] = entry;
         if entry & 1 == 0 {
-            return Err(request.page_fault(state, false, false));
+            return Err(request.page_fault(state, false, false, false));
         }
         let large = index + 1 < shifts.len()
             && entry & (1 << 7) != 0
@@ -362,7 +412,7 @@ fn walk_paged_with<const EFFECTS: bool, const FETCH: bool, const IA32E: bool, co
             || !IA32E && PAE && entry & 0x7ff0000000000000 != 0
             || state.efer & (1 << 11) == 0 && entry & (1 << 63) != 0
         {
-            return Err(request.page_fault(state, true, true));
+            return Err(request.page_fault(state, true, true, false));
         }
         if EFFECTS && entry & ACCESSED == 0 {
             if entry_access(address, entry_width, true)
@@ -394,8 +444,9 @@ fn walk_paged_with<const EFFECTS: bool, const FETCH: bool, const IA32E: bool, co
                 user,
                 writable,
                 executable,
+                key: if IA32E { ((entry >> 59) & 15) as u8 } else { 0 },
             };
-            rights.authorize(state, request)?;
+            rights.authorize(state, request, keys)?;
             let offset_mask = (1u64 << shift) - 1;
             return Ok(Some(Translation {
                 physical: (if entry_width == 4 && large {
@@ -479,7 +530,7 @@ mod tests {
             access: Access::Read,
             class: AccessClass::User,
         };
-        let result = peek(&image, &state, request).unwrap();
+        let result = peek(&image, &state, request, &ProtectionKeys::ZERO).unwrap();
         assert_eq!(
             (result.physical, result.leaf, result.dirty),
             (0xa234, 0x4008, true)
@@ -499,6 +550,7 @@ mod tests {
                 access: Access::Write,
                 class: AccessClass::User,
             },
+            &ProtectionKeys::ZERO,
         )
         .unwrap_err();
         assert_eq!(
@@ -537,7 +589,8 @@ mod tests {
                         linear: 0x1234,
                         access,
                         class: AccessClass::operand(if user { 3 } else { 0 }, false),
-                    }
+                    },
+                    &ProtectionKeys::ZERO
                 ),
                 Err(Failure::Page(PageFault {
                     address: 0x1234,
@@ -562,7 +615,8 @@ mod tests {
                     linear: 0x1234,
                     access: Access::Read,
                     class: AccessClass::User,
-                }
+                },
+                &ProtectionKeys::ZERO
             ),
             Err(Failure::Page(PageFault {
                 address: 0x1234,
@@ -587,10 +641,15 @@ mod tests {
         ] {
             let old = image.physical_read(entry, 8).unwrap();
             image.physical_write(entry, 8, word).unwrap();
-            assert_eq!(peek(&image, &state, request).unwrap().physical, expected);
+            assert_eq!(
+                peek(&image, &state, request, &ProtectionKeys::ZERO)
+                    .unwrap()
+                    .physical,
+                expected
+            );
             image.physical_write(entry, 8, word | (1 << 13)).unwrap();
             assert_eq!(
-                peek(&image, &state, request),
+                peek(&image, &state, request, &ProtectionKeys::ZERO),
                 Err(Failure::Page(PageFault {
                     address: 0x1234,
                     access: Access::Read,
@@ -627,6 +686,7 @@ mod tests {
                     }
                     Ok(Some(*word))
                 },
+                &ProtectionKeys::ZERO,
             )
             .unwrap()
             .unwrap();
@@ -674,6 +734,7 @@ mod tests {
                         user: true,
                         writable: true,
                         executable: true,
+                        key: 0,
                     },
                     global: false,
                     accessed: false,
@@ -743,6 +804,7 @@ mod tests {
                         user: true,
                         writable: true,
                         executable: true,
+                        key: 0,
                     },
                     global: false,
                     accessed: false,
@@ -792,6 +854,7 @@ mod tests {
                         user: true,
                         writable: true,
                         executable: true,
+                        key: 0,
                     },
                     global: false,
                     accessed: false,
@@ -839,6 +902,7 @@ mod tests {
                         user: true,
                         writable: true,
                         executable: true,
+                        key: 0,
                     },
                     global: false,
                     accessed: false,
@@ -1004,14 +1068,21 @@ mod tests {
             };
             let mut actual = image(&words, width, false, 0x6000);
             physical_counts::take();
-            assert_eq!(peek(&actual, &state, request).unwrap().physical, physical);
+            assert_eq!(
+                peek(&actual, &state, request, &ProtectionKeys::ZERO)
+                    .unwrap()
+                    .physical,
+                physical
+            );
             assert_eq!(
                 physical_counts::take(),
                 warm,
                 "observational cold table reads"
             );
             assert_eq!(
-                walk(&mut actual, &state, request).unwrap().physical,
+                walk(&mut actual, &state, request, &ProtectionKeys::ZERO)
+                    .unwrap()
+                    .physical,
                 physical
             );
             assert_eq!(
@@ -1020,15 +1091,23 @@ mod tests {
                 "actual current-word A effects"
             );
             assert_eq!(
-                walk(&mut actual, &state, request).unwrap().physical,
+                walk(&mut actual, &state, request, &ProtectionKeys::ZERO)
+                    .unwrap()
+                    .physical,
                 physical
             );
             assert_eq!(physical_counts::take(), warm, "warm walk skips A updates");
             assert_eq!(
-                fetch_walk(&mut actual, &state, request, |_| true)
-                    .unwrap()
-                    .unwrap()
-                    .physical,
+                fetch_walk(
+                    &mut actual,
+                    &state,
+                    request,
+                    |_| true,
+                    &ProtectionKeys::ZERO
+                )
+                .unwrap()
+                .unwrap()
+                .physical,
                 physical
             );
             assert_eq!(
@@ -1038,10 +1117,16 @@ mod tests {
             );
             let mut actual = image(&words, width, false, 0x6000);
             assert_eq!(
-                fetch_walk(&mut actual, &state, request, |_| true)
-                    .unwrap()
-                    .unwrap()
-                    .physical,
+                fetch_walk(
+                    &mut actual,
+                    &state,
+                    request,
+                    |_| true,
+                    &ProtectionKeys::ZERO
+                )
+                .unwrap()
+                .unwrap()
+                .physical,
                 physical
             );
             assert_eq!(

@@ -1,6 +1,7 @@
 use super::*;
 use crate::memory::{MappingInput, MemoryLimits, Permissions};
 use crate::x86::paging::walk::{Failure, Request};
+use crate::x86::protection_keys::State as Keys;
 
 fn fixture(first: u64, second: u64) -> (Image, State, AccessState, Cache) {
     let mut bytes = vec![0; 0x10000];
@@ -59,7 +60,7 @@ fn request(linear: u64) -> Request {
 fn warm_read_uses_retained_mapping_without_walking_or_reasserting_accessed() {
     let (mut image, state, mut work, cache) = fixture(0x9027, 0);
     assert_eq!(
-        Memory::new(&mut image, &state, 3, 2, &mut work)
+        Memory::new(&mut image, &state, 3, 2, &mut work, &Keys::ZERO)
             .with_cache(&cache)
             .read(0x1000, 1)
             .unwrap(),
@@ -68,7 +69,7 @@ fn warm_read_uses_retained_mapping_without_walking_or_reasserting_accessed() {
     image.physical_write(0x4008, 8, 0xa007).unwrap();
     walk::physical_counts::take();
     assert_eq!(
-        Memory::new(&mut image, &state, 3, 2, &mut work)
+        Memory::new(&mut image, &state, 3, 2, &mut work, &Keys::ZERO)
             .with_cache(&cache)
             .read(0x1000, 1)
             .unwrap(),
@@ -78,7 +79,7 @@ fn warm_read_uses_retained_mapping_without_walking_or_reasserting_accessed() {
     assert_eq!(image.physical_read(0x4008, 8).unwrap(), 0xa007);
     cache.invalidate_page(0, 0x1000, true);
     assert_eq!(
-        Memory::new(&mut image, &state, 3, 2, &mut work)
+        Memory::new(&mut image, &state, 3, 2, &mut work, &Keys::ZERO)
             .with_cache(&cache)
             .read(0x1000, 1)
             .unwrap(),
@@ -90,20 +91,20 @@ fn warm_read_uses_retained_mapping_without_walking_or_reasserting_accessed() {
 #[test]
 fn dirty_zero_rmw_reads_new_mapping_before_capture_and_commit_keeps_that_plan() {
     let (mut image, state, mut work, cache) = fixture(0x9027, 0);
-    Memory::new(&mut image, &state, 3, 2, &mut work)
+    Memory::new(&mut image, &state, 3, 2, &mut work, &Keys::ZERO)
         .with_cache(&cache)
         .read(0x1000, 1)
         .unwrap();
     image.physical_write(0x4008, 8, 0xa027).unwrap();
     assert_eq!(
-        Memory::new(&mut image, &state, 3, 2, &mut work)
+        Memory::new(&mut image, &state, 3, 2, &mut work, &Keys::ZERO)
             .with_cache(&cache)
             .read_for_write(0x1000, 1)
             .unwrap(),
         0xb2
     );
     image.physical_write(0x4008, 8, 0xb027).unwrap();
-    Memory::new(&mut image, &state, 3, 2, &mut work)
+    Memory::new(&mut image, &state, 3, 2, &mut work, &Keys::ZERO)
         .with_cache(&cache)
         .write(0x1000, 1, 0x44)
         .unwrap();
@@ -113,7 +114,7 @@ fn dirty_zero_rmw_reads_new_mapping_before_capture_and_commit_keeps_that_plan() 
     assert_eq!(image.physical_read(0x4008, 8).unwrap(), 0xb067);
     assert_eq!(
         cache
-            .observe(&state, request(0x1000))
+            .observe(&state, request(0x1000), &Keys::ZERO)
             .unwrap()
             .unwrap()
             .physical,
@@ -124,12 +125,12 @@ fn dirty_zero_rmw_reads_new_mapping_before_capture_and_commit_keeps_that_plan() 
 #[test]
 fn dirty_ready_write_keeps_old_mapping_without_touching_retargeted_leaf() {
     let (mut image, state, mut work, cache) = fixture(0x9067, 0);
-    Memory::new(&mut image, &state, 3, 2, &mut work)
+    Memory::new(&mut image, &state, 3, 2, &mut work, &Keys::ZERO)
         .with_cache(&cache)
         .read(0x1000, 1)
         .unwrap();
     image.physical_write(0x4008, 8, 0xa027).unwrap();
-    Memory::new(&mut image, &state, 3, 2, &mut work)
+    Memory::new(&mut image, &state, 3, 2, &mut work, &Keys::ZERO)
         .with_cache(&cache)
         .write(0x1000, 1, 0x55)
         .unwrap();
@@ -141,19 +142,19 @@ fn dirty_ready_write_keeps_old_mapping_without_touching_retargeted_leaf() {
 #[test]
 fn failed_dirty_refresh_does_not_resurrect_the_old_mapping() {
     let (mut image, state, mut work, cache) = fixture(0x9027, 0);
-    Memory::new(&mut image, &state, 3, 2, &mut work)
+    Memory::new(&mut image, &state, 3, 2, &mut work, &Keys::ZERO)
         .with_cache(&cache)
         .read(0x1000, 1)
         .unwrap();
     image.physical_write(0x4008, 8, 0xa025).unwrap();
     assert!(matches!(
-        Memory::new(&mut image, &state, 3, 2, &mut work)
+        Memory::new(&mut image, &state, 3, 2, &mut work, &Keys::ZERO)
             .with_cache(&cache)
             .write(0x1000, 1, 0),
         Err(AccessFailure::Paging(Failure::Page(_)))
     ));
     assert_eq!(
-        Memory::new(&mut image, &state, 3, 2, &mut work)
+        Memory::new(&mut image, &state, 3, 2, &mut work, &Keys::ZERO)
             .with_cache(&cache)
             .read(0x1000, 1)
             .unwrap(),
@@ -166,7 +167,7 @@ fn later_page_private_or_alignment_refusal_does_not_publish_first_candidate() {
     for second in [0, 0x10027, 0xa027] {
         let (mut image, mut state, mut work, cache) = fixture(0x9027, second);
         state.cr0 |= 1 << 18;
-        let failure = Memory::new(&mut image, &state, 3, 0x40002, &mut work)
+        let failure = Memory::new(&mut image, &state, 3, 0x40002, &mut work, &Keys::ZERO)
             .with_cache(&cache)
             .read_aligned(0x1fff, 4, Intent::Natural(4))
             .unwrap_err();
@@ -178,10 +179,15 @@ fn later_page_private_or_alignment_refusal_does_not_publish_first_candidate() {
             )),
             _ => assert!(matches!(failure, AccessFailure::AlignmentCheck(_))),
         }
-        assert!(cache.observe(&state, request(0x1000)).unwrap().is_none());
+        assert!(
+            cache
+                .observe(&state, request(0x1000), &Keys::ZERO)
+                .unwrap()
+                .is_none()
+        );
         image.physical_write(0x4008, 8, 0xa027).unwrap();
         assert_eq!(
-            Memory::new(&mut image, &state, 3, 0x40002, &mut work)
+            Memory::new(&mut image, &state, 3, 0x40002, &mut work, &Keys::ZERO)
                 .with_cache(&cache)
                 .read(0x1000, 1)
                 .unwrap(),
@@ -194,12 +200,12 @@ fn later_page_private_or_alignment_refusal_does_not_publish_first_candidate() {
 #[test]
 fn write_only_probe_refreshes_without_dirty_or_payload_and_next_store_refreshes_again() {
     let (mut image, state, mut work, cache) = fixture(0x9027, 0);
-    Memory::new(&mut image, &state, 3, 2, &mut work)
+    Memory::new(&mut image, &state, 3, 2, &mut work, &Keys::ZERO)
         .with_cache(&cache)
         .read(0x1000, 1)
         .unwrap();
     image.physical_write(0x4008, 8, 0xa027).unwrap();
-    Memory::new(&mut image, &state, 3, 2, &mut work)
+    Memory::new(&mut image, &state, 3, 2, &mut work, &Keys::ZERO)
         .with_cache(&cache)
         .probe_write(0x1000)
         .unwrap();
@@ -207,7 +213,7 @@ fn write_only_probe_refreshes_without_dirty_or_payload_and_next_store_refreshes_
     assert_eq!(image.physical_read(0xa000, 1).unwrap(), 0xb2);
     assert!(work.pending.is_empty());
     image.physical_write(0x4008, 8, 0xb027).unwrap();
-    Memory::new(&mut image, &state, 3, 2, &mut work)
+    Memory::new(&mut image, &state, 3, 2, &mut work, &Keys::ZERO)
         .with_cache(&cache)
         .write(0x1000, 1, 0x66)
         .unwrap();
@@ -219,7 +225,7 @@ fn write_only_probe_refreshes_without_dirty_or_payload_and_next_store_refreshes_
 fn retained_hit_rechecks_current_private_permissions_without_fault_eviction() {
     for access in [Access::Read, Access::Write] {
         let (mut image, state, mut work, cache) = fixture(0x9067, 0);
-        Memory::new(&mut image, &state, 3, 2, &mut work)
+        Memory::new(&mut image, &state, 3, 2, &mut work, &Keys::ZERO)
             .with_cache(&cache)
             .read(0x1000, 1)
             .unwrap();
@@ -236,7 +242,8 @@ fn retained_hit_rechecks_current_private_permissions_without_fault_eviction() {
                 },
             }])
             .unwrap();
-        let mut memory = Memory::new(&mut image, &state, 3, 2, &mut work).with_cache(&cache);
+        let mut memory =
+            Memory::new(&mut image, &state, 3, 2, &mut work, &Keys::ZERO).with_cache(&cache);
         let failure = if access == Access::Read {
             memory.read(0x1000, 1).unwrap_err()
         } else {
@@ -249,7 +256,12 @@ fn retained_hit_rechecks_current_private_permissions_without_fault_eviction() {
                 ..
             }))
         ));
-        assert!(cache.observe(&state, request(0x1000)).unwrap().is_some());
+        assert!(
+            cache
+                .observe(&state, request(0x1000), &Keys::ZERO)
+                .unwrap()
+                .is_some()
+        );
     }
 }
 
@@ -257,35 +269,35 @@ fn retained_hit_rechecks_current_private_permissions_without_fault_eviction() {
 fn ordered_captured_dirty_feedback_cannot_mark_recycled_unrelated_mapping() {
     let (mut image, state, mut work, _) = fixture(0x9027, 0xa027);
     let cache = Cache::with_capacity(1);
-    Memory::new(&mut image, &state, 3, 2, &mut work)
+    Memory::new(&mut image, &state, 3, 2, &mut work, &Keys::ZERO)
         .with_cache(&cache)
         .check_write(0x1000, 1)
         .unwrap();
-    Memory::new(&mut image, &state, 3, 2, &mut work)
+    Memory::new(&mut image, &state, 3, 2, &mut work, &Keys::ZERO)
         .with_cache(&cache)
         .read(0x2000, 1)
         .unwrap();
     assert!(
         cache
-            .observe(&state, request(0x2000))
+            .observe(&state, request(0x2000), &Keys::ZERO)
             .unwrap()
             .unwrap()
             .dirty
     );
-    Memory::new(&mut image, &state, 3, 2, &mut work)
+    Memory::new(&mut image, &state, 3, 2, &mut work, &Keys::ZERO)
         .with_cache(&cache)
         .prepare_publication()
         .unwrap();
     assert!(
         cache
-            .observe(&state, request(0x2000))
+            .observe(&state, request(0x2000), &Keys::ZERO)
             .unwrap()
             .unwrap()
             .dirty
     );
     assert_eq!(image.physical_read(0x4008, 8).unwrap(), 0x9067);
     assert_eq!(image.physical_read(0x4010, 8).unwrap(), 0xa027);
-    Memory::new(&mut image, &state, 3, 2, &mut work)
+    Memory::new(&mut image, &state, 3, 2, &mut work, &Keys::ZERO)
         .with_cache(&cache)
         .write(0x1000, 1, 0x77)
         .unwrap();
@@ -296,7 +308,7 @@ fn ordered_captured_dirty_feedback_cannot_mark_recycled_unrelated_mapping() {
 #[test]
 fn refused_dirty_metadata_after_refill_keeps_new_facts_unready_until_real_publication() {
     let (mut image, state, mut work, cache) = fixture(0x9027, 0);
-    Memory::new(&mut image, &state, 3, 2, &mut work)
+    Memory::new(&mut image, &state, 3, 2, &mut work, &Keys::ZERO)
         .with_cache(&cache)
         .read(0x1000, 1)
         .unwrap();
@@ -318,7 +330,7 @@ fn refused_dirty_metadata_after_refill_keeps_new_facts_unready_until_real_public
             mapping(0x9000, 0x7000, true),
         ])
         .unwrap();
-    let failure = Memory::new(&mut image, &state, 3, 2, &mut work)
+    let failure = Memory::new(&mut image, &state, 3, 2, &mut work, &Keys::ZERO)
         .with_cache(&cache)
         .write(0x1000, 1, 0x99)
         .unwrap_err();
@@ -329,12 +341,15 @@ fn refused_dirty_metadata_after_refill_keeps_new_facts_unready_until_real_public
             ..
         }))
     ));
-    let retained = cache.observe(&state, request(0x1000)).unwrap().unwrap();
+    let retained = cache
+        .observe(&state, request(0x1000), &Keys::ZERO)
+        .unwrap()
+        .unwrap();
     assert_eq!((retained.physical, retained.dirty), (0xa000, true));
     assert_eq!(image.physical_read(0x4008, 8).unwrap(), 0xa027);
     assert_eq!(image.physical_read(0xa000, 1).unwrap(), 0xb2);
     image.set_mappings(vec![mapping(0, 0x10000, true)]).unwrap();
-    Memory::new(&mut image, &state, 3, 2, &mut work)
+    Memory::new(&mut image, &state, 3, 2, &mut work, &Keys::ZERO)
         .with_cache(&cache)
         .write(0x1000, 1, 0x99)
         .unwrap();
@@ -342,7 +357,7 @@ fn refused_dirty_metadata_after_refill_keeps_new_facts_unready_until_real_public
     assert_eq!(image.physical_read(0xa000, 1).unwrap(), 0x99);
     assert!(
         !cache
-            .observe(&state, request(0x1000))
+            .observe(&state, request(0x1000), &Keys::ZERO)
             .unwrap()
             .unwrap()
             .dirty
@@ -355,11 +370,11 @@ fn warmed_translation_rechecks_implicit_and_prospective_classes_then_keeps_captu
     state.cr0 |= 1 << 18;
     state.cr4 |= 1 << 21;
     let flags = 0x40002;
-    Memory::new(&mut image, &state, 3, flags, &mut work)
+    Memory::new(&mut image, &state, 3, flags, &mut work, &Keys::ZERO)
         .with_cache(&cache)
         .read(0x1000, 1)
         .unwrap();
-    let implicit = Memory::new(&mut image, &state, 3, flags, &mut work)
+    let implicit = Memory::new(&mut image, &state, 3, flags, &mut work, &Keys::ZERO)
         .with_cache(&cache)
         .read_system(0x1001, 8)
         .unwrap_err();
@@ -367,12 +382,17 @@ fn warmed_translation_rechecks_implicit_and_prospective_classes_then_keeps_captu
         implicit,
         AccessFailure::Paging(Failure::Page(walk::PageFault { error_code: 1, .. }))
     ));
-    assert!(cache.observe(&state, request(0x1000)).unwrap().is_none());
-    Memory::new(&mut image, &state, 3, flags, &mut work)
+    assert!(
+        cache
+            .observe(&state, request(0x1000), &Keys::ZERO)
+            .unwrap()
+            .is_none()
+    );
+    Memory::new(&mut image, &state, 3, flags, &mut work, &Keys::ZERO)
         .with_cache(&cache)
         .read(0x1000, 1)
         .unwrap();
-    let denied = Memory::new(&mut image, &state, 3, 2, &mut work)
+    let denied = Memory::new(&mut image, &state, 3, 2, &mut work, &Keys::ZERO)
         .with_cache(&cache)
         .check_frame_write_aligned(0x1001, 8, 0, Intent::Natural(8))
         .unwrap_err();
@@ -380,23 +400,24 @@ fn warmed_translation_rechecks_implicit_and_prospective_classes_then_keeps_captu
         denied,
         AccessFailure::Paging(Failure::Page(walk::PageFault { error_code: 3, .. }))
     ));
-    Memory::new(&mut image, &state, 3, flags, &mut work)
+    Memory::new(&mut image, &state, 3, flags, &mut work, &Keys::ZERO)
         .with_cache(&cache)
         .read(0x1000, 1)
         .unwrap();
-    let user = Memory::new(&mut image, &state, 0, flags, &mut work)
+    let user = Memory::new(&mut image, &state, 0, flags, &mut work, &Keys::ZERO)
         .with_cache(&cache)
         .check_frame_write_aligned(0x1001, 8, 3, Intent::Natural(8))
         .unwrap_err();
     assert!(matches!(user, AccessFailure::AlignmentCheck(_)));
-    Memory::new(&mut image, &state, 3, flags, &mut work)
+    Memory::new(&mut image, &state, 3, flags, &mut work, &Keys::ZERO)
         .with_cache(&cache)
         .check_frame_write_aligned(0x1001, 8, 0, Intent::Natural(8))
         .unwrap();
     image.physical_write(0x4008, 8, 0xa027).unwrap();
     cache.invalidate_page(0, 0x1000, true);
     {
-        let mut memory = Memory::new(&mut image, &state, 3, flags, &mut work).with_cache(&cache);
+        let mut memory =
+            Memory::new(&mut image, &state, 3, flags, &mut work, &Keys::ZERO).with_cache(&cache);
         memory.prepare_publication().unwrap();
         memory
             .write_aligned(0x1001, 8, 0x1122334455667788, Intent::Natural(8))
@@ -404,5 +425,10 @@ fn warmed_translation_rechecks_implicit_and_prospective_classes_then_keeps_captu
     }
     assert_eq!(image.physical_read(0x9001, 8).unwrap(), 0x1122334455667788);
     assert_eq!(image.physical_read(0xa001, 8).unwrap(), 0);
-    assert!(cache.observe(&state, request(0x1000)).unwrap().is_none());
+    assert!(
+        cache
+            .observe(&state, request(0x1000), &Keys::ZERO)
+            .unwrap()
+            .is_none()
+    );
 }

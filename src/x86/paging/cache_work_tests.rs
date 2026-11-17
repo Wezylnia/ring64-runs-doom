@@ -1,4 +1,5 @@
 use super::*;
+use crate::x86::protection_keys::State as Keys;
 use crate::x86::{instruction::Instruction, paging::walk};
 
 // outcome (0 miss/1 hit/2 uncached), admitted fill, PA, then actual walk read/check/write
@@ -43,7 +44,7 @@ fn completed_reads(cached: bool) -> (Vec<Row>, Vec<usize>) {
             );
         }
         let retained = if cached {
-            cache.lookup(&state, request).unwrap()
+            cache.lookup(&state, request, &Keys::ZERO).unwrap()
         } else {
             None
         };
@@ -53,8 +54,8 @@ fn completed_reads(cached: bool) -> (Vec<Row>, Vec<usize>) {
             u64::from(retained.is_some())
         };
         let walked = retained.is_none();
-        let mut translation =
-            retained.unwrap_or_else(|| walk::walk(&mut image, &state, request).unwrap());
+        let mut translation = retained
+            .unwrap_or_else(|| walk::walk(&mut image, &state, request, &Keys::ZERO).unwrap());
         image
             .physical_check_access(translation.physical, 8, Access::Read, false)
             .unwrap();

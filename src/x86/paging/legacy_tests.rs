@@ -1,5 +1,6 @@
 use super::*;
 use crate::memory::{MappingInput, MemoryLimits, Permissions};
+use crate::x86::protection_keys::State as Keys;
 
 fn image(words: &[(u64, u64, u32)]) -> Image {
     let backings = words
@@ -71,7 +72,12 @@ fn supervisor_protection_smep_denies_nonpae_user_fetch() {
         ..legacy(false)
     };
     assert_eq!(
-        peek(&image, &state, request(0x4000, Access::Execute, false)),
+        peek(
+            &image,
+            &state,
+            request(0x4000, Access::Execute, false),
+            &Keys::ZERO
+        ),
         Err(pf(0x4000, Access::Execute, 0x11))
     );
 }
@@ -85,7 +91,12 @@ fn supervisor_protection_smep_marks_all_nonpae_fetch_faults_as_instructions() {
             ..legacy(false)
         };
         assert_eq!(
-            walk(&mut image, &state, request(0x4000, Access::Execute, user)),
+            walk(
+                &mut image,
+                &state,
+                request(0x4000, Access::Execute, user),
+                &Keys::ZERO
+            ),
             Err(pf(0x4000, Access::Execute, code))
         );
     }
@@ -103,7 +114,8 @@ fn supervisor_protection_nonpae_reserved_large_fetch_keeps_reserved_priority() {
             walk(
                 &mut image,
                 &state,
-                request(0x400000, Access::Execute, false)
+                request(0x400000, Access::Execute, false),
+                &Keys::ZERO
             ),
             Err(pf(0x400000, Access::Execute, code))
         );
@@ -118,7 +130,13 @@ fn nonpae_literal_walk_uses_exact_dword_entries_and_preserves_adjacent_holes() {
         cr3: 0x1018,
         ..legacy(false)
     };
-    let result = walk(&mut image, &state, request(0x12345678, Access::Read, true)).unwrap();
+    let result = walk(
+        &mut image,
+        &state,
+        request(0x12345678, Access::Read, true),
+        &Keys::ZERO,
+    )
+    .unwrap();
     assert_eq!(
         (result.physical, result.leaf, result.entry_width),
         (0x9a678, 0x2d14, 4)
@@ -141,7 +159,12 @@ fn nonpae_permissions_and_lower_nonpresent_keep_literal_pf_priority() {
             cr0: 0x80000033 | (u64::from(wp) << 16),
             ..legacy(false)
         };
-        let result = walk(&mut image, &state, request(0x12345678, Access::Write, user));
+        let result = walk(
+            &mut image,
+            &state,
+            request(0x12345678, Access::Write, user),
+            &Keys::ZERO,
+        );
         if let Some(code) = expected {
             assert_eq!(result, Err(pf(0x12345678, Access::Write, code)));
         } else {
@@ -154,7 +177,8 @@ fn nonpae_permissions_and_lower_nonpresent_keep_literal_pf_priority() {
         walk(
             &mut image,
             &legacy(false),
-            request(0x12345678, Access::Read, true)
+            request(0x12345678, Access::Read, true),
+            &Keys::ZERO
         ),
         Err(pf(0x12345678, Access::Read, 4))
     );
@@ -169,14 +193,24 @@ fn pse36_high_bits_pat_and_reserved_bit_have_independent_literals() {
     };
     let mut image = image(&[(0x1810, 0x00557087, 4)]);
     assert_eq!(
-        walk(&mut image, &state, request(0x81234567, Access::Read, true))
-            .unwrap()
-            .physical,
+        walk(
+            &mut image,
+            &state,
+            request(0x81234567, Access::Read, true),
+            &Keys::ZERO
+        )
+        .unwrap()
+        .physical,
         0xab00634567
     );
     image.physical_write(0x1810, 4, 0x00757087).unwrap();
     assert_eq!(
-        walk(&mut image, &state, request(0x81234567, Access::Read, true)),
+        walk(
+            &mut image,
+            &state,
+            request(0x81234567, Access::Read, true),
+            &Keys::ZERO
+        ),
         Err(pf(0x81234567, Access::Read, 0xd))
     );
 }
@@ -188,7 +222,8 @@ fn pse_zero_ignores_ps_while_pse_one_selects_pse36_leaf() {
         peek(
             &image,
             &legacy(false),
-            request(0x12345678, Access::Read, true)
+            request(0x12345678, Access::Read, true),
+            &Keys::ZERO
         )
         .unwrap()
         .physical,
@@ -199,9 +234,14 @@ fn pse_zero_ignores_ps_while_pse_one_selects_pse36_leaf() {
         ..legacy(false)
     };
     assert_eq!(
-        peek(&image, &large, request(0x12345678, Access::Read, true))
-            .unwrap()
-            .physical,
+        peek(
+            &image,
+            &large,
+            request(0x12345678, Access::Read, true),
+            &Keys::ZERO
+        )
+        .unwrap()
+        .physical,
         0x100345678
     );
 }
@@ -214,7 +254,13 @@ fn pae_uses_latched_roots_and_only_two_live_qword_levels() {
         (0x0001000000003048, 0x0002000000004007, 8),
         (0x00020000000041a0, 0x000300000009a007, 8),
     ]);
-    let result = walk(&mut image, &state, request(0xc1234567, Access::Read, true)).unwrap();
+    let result = walk(
+        &mut image,
+        &state,
+        request(0xc1234567, Access::Read, true),
+        &Keys::ZERO,
+    )
+    .unwrap();
     assert_eq!(
         (result.physical, result.entry_width),
         (0x000300000009a567, 8)
@@ -223,7 +269,12 @@ fn pae_uses_latched_roots_and_only_two_live_qword_levels() {
     assert!(image.physical_read(state.cr3, 1).is_err());
     state.pdpte.as_mut().unwrap()[3] = 0xfffffffffffffffe;
     assert_eq!(
-        walk(&mut image, &state, request(0xc1234567, Access::Read, true)),
+        walk(
+            &mut image,
+            &state,
+            request(0xc1234567, Access::Read, true),
+            &Keys::ZERO
+        ),
         Err(pf(0xc1234567, Access::Read, 4))
     );
 }
@@ -234,9 +285,14 @@ fn pae_large_leaf_ignores_pse_but_checks_high_reserved_address_and_nx() {
     state.pdpte.as_mut().unwrap()[1] = 0x3001;
     let mut image = image(&[(0x3048, 0x000a000000201087, 8)]);
     assert_eq!(
-        walk(&mut image, &state, request(0x41234567, Access::Read, true))
-            .unwrap()
-            .physical,
+        walk(
+            &mut image,
+            &state,
+            request(0x41234567, Access::Read, true),
+            &Keys::ZERO
+        )
+        .unwrap()
+        .physical,
         0x000a000000234567
     );
     for (word, nxe, access, code) in [
@@ -248,7 +304,12 @@ fn pae_large_leaf_ignores_pse_but_checks_high_reserved_address_and_nx() {
         image.physical_write(0x3048, 8, word).unwrap();
         state.efer = u64::from(nxe) << 11;
         assert_eq!(
-            walk(&mut image, &state, request(0x41234567, access, true)),
+            walk(
+                &mut image,
+                &state,
+                request(0x41234567, access, true),
+                &Keys::ZERO
+            ),
             Err(pf(0x41234567, access, code))
         );
     }
@@ -265,7 +326,8 @@ fn nonpae_fetch_never_sets_id_even_with_nxe() {
         walk(
             &mut image,
             &state,
-            request(0x12345678, Access::Execute, true)
+            request(0x12345678, Access::Execute, true),
+            &Keys::ZERO
         ),
         Err(pf(0x12345678, Access::Execute, 4))
     );

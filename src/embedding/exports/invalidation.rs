@@ -51,6 +51,7 @@ pub extern "C" fn core_invpcid(segment: u32, offset: u64, kind: u64, flags: u64)
             core.context.cpl(),
             flags,
             &mut core.paging_work,
+            unsafe { &(*core.state.get()).protection_keys },
         )
         .with_cache(&core.translation_cache)
         .read_vector_aligned(address, 16, crate::x86::alignment::Intent::Exempt);

@@ -1,6 +1,7 @@
 use super::*;
 use crate::memory::{Cause, Fault, MappingInput, MemoryLimits, Permissions};
 use crate::x86::paging::walk::{Failure, PhysicalFault};
+use crate::x86::protection_keys::State as Keys;
 
 fn fixture(second_readable: bool, top_readable: bool) -> (Image, State, AccessState) {
     let mapping = |base, offset, length, read| MappingInput {
@@ -41,7 +42,7 @@ fn fixture(second_readable: bool, top_readable: bool) -> (Image, State, AccessSt
 #[test]
 fn compact_pg0_plan_captures_physical_spans_without_fake_dirty_metadata() {
     let (mut image, state, mut work) = fixture(true, true);
-    let mut memory = Memory::new(&mut image, &state, 0, 2, &mut work);
+    let mut memory = Memory::new(&mut image, &state, 0, 2, &mut work, &Keys::ZERO);
     memory.check_write(0x1001, 4).unwrap();
     {
         let storage = memory.storage.borrow();
@@ -68,7 +69,7 @@ fn compact_pg0_plan_captures_physical_spans_without_fake_dirty_metadata() {
 fn pg0_later_private_fragment_refusal_precedes_natural_alignment() {
     for second_readable in [false, true] {
         let (mut image, state, mut work) = fixture(second_readable, true);
-        let memory = Memory::new(&mut image, &state, 3, 0x40002, &mut work);
+        let memory = Memory::new(&mut image, &state, 3, 0x40002, &mut work, &Keys::ZERO);
         let failure = memory
             .read_aligned(0x1001, 4, Intent::Natural(4))
             .unwrap_err();
@@ -99,7 +100,7 @@ fn pg0_later_private_fragment_refusal_precedes_natural_alignment() {
 fn pg0_earlier_private_byte_or_later_domain_refusal_precedes_natural_alignment() {
     for top_readable in [false, true] {
         let (mut image, state, mut work) = fixture(true, top_readable);
-        let memory = Memory::new(&mut image, &state, 3, 0x40002, &mut work);
+        let memory = Memory::new(&mut image, &state, 3, 0x40002, &mut work, &Keys::ZERO);
         let failure = memory
             .read_aligned(0xffff_ffff, 4, Intent::Natural(4))
             .unwrap_err();

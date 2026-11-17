@@ -71,8 +71,19 @@ pub(crate) fn discover_with_profile(
                         class: crate::x86::paging::walk::AccessClass::operand(context.cpl(), false),
                     };
                     let translated = match cache {
-                        Some(cache) => cache.peek(image, paging, request),
-                        None => crate::x86::paging::walk::peek(image, paging, request),
+                        // Discovery observes instruction bytes; key rights never restrict fetch.
+                        Some(cache) => cache.peek(
+                            image,
+                            paging,
+                            request,
+                            &crate::x86::protection_keys::State::ZERO,
+                        ),
+                        None => crate::x86::paging::walk::peek(
+                            image,
+                            paging,
+                            request,
+                            &crate::x86::protection_keys::State::ZERO,
+                        ),
                     }
                     .map_err(DecodeError::Paging)?;
                     let byte = image

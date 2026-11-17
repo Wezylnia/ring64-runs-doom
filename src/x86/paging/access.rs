@@ -10,6 +10,7 @@ use crate::x86::{
     access::{GuestMemory, PublicationFailure},
     alignment::Intent,
     context::AccessFailure,
+    protection_keys::State as ProtectionKeys,
 };
 
 #[derive(Debug)]
@@ -57,6 +58,7 @@ pub struct Memory<'a> {
     class: AccessClass,
     raw_ac: bool,
     alignment_controls: bool,
+    keys: &'a ProtectionKeys,
 }
 
 impl<'a> Memory<'a> {
@@ -66,6 +68,7 @@ impl<'a> Memory<'a> {
         cpl: u8,
         flags: u64,
         work: &'a mut AccessState,
+        keys: &'a ProtectionKeys,
     ) -> Self {
         let ac = flags & (1 << 18) != 0;
         Self {
@@ -75,6 +78,7 @@ impl<'a> Memory<'a> {
             class: AccessClass::operand(cpl, ac),
             raw_ac: ac,
             alignment_controls: ac && paging.cr0 & 0x40001 == 0x40001,
+            keys,
         }
     }
 
@@ -90,13 +94,13 @@ impl<'a> Memory<'a> {
         request: Request,
     ) -> Result<walk::Translation, AccessFailure> {
         if let Some(cache) = self.cache {
-            match cache.lookup(self.paging, request) {
+            match cache.lookup(self.paging, request, self.keys) {
                 Ok(Some(translation)) => return Ok(translation),
                 Ok(None) => {}
                 Err(failure) => return Err(AccessFailure::Paging(failure)),
             }
         }
-        walk::walk(image, self.paging, request).map_err(|failure| {
+        walk::walk(image, self.paging, request, self.keys).map_err(|failure| {
             if let Some(cache) = self.cache {
                 cache.fault(self.paging, failure);
             }

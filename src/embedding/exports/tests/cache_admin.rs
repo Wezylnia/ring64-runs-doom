@@ -47,7 +47,8 @@ fn fixture(epoch: u64) -> (u64, u64) {
                 core.paging.as_ref().unwrap(),
                 0,
                 2,
-                &mut core.paging_work
+                &mut core.paging_work,
+                unsafe { &(*core.state.get()).protection_keys },
             )
             .with_cache(&core.translation_cache)
             .read(0x2000, 1)
@@ -71,6 +72,7 @@ fn retained_data_physical() -> Option<u64> {
                     access: Access::Read,
                     class: AccessClass::Supervisor { ac: false },
                 },
+                unsafe { &(*core.state.get()).protection_keys },
             )
             .unwrap()
             .map(|t| t.physical)
@@ -97,7 +99,8 @@ fn unrelated_host_payload_write_revokes_tlb_and_pending_proofs_but_keeps_install
                     core.paging.as_ref().unwrap(),
                     0,
                     2,
-                    &mut core.paging_work
+                    &mut core.paging_work,
+                    unsafe { &(*core.state.get()).protection_keys },
                 )
                 .with_cache(&core.translation_cache)
                 .read(0x2000, 1)

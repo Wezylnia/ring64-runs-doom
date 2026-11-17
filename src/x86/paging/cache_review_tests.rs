@@ -1,6 +1,7 @@
 use super::*;
 use crate::memory::{Image, MappingInput, MemoryLimits, Permissions};
 use crate::x86::paging::walk::{self, AccessClass, PageFault};
+use crate::x86::protection_keys::State as Keys;
 
 fn fixture() -> (Image, State, Request) {
     let mut bytes = vec![0; 0x10000];
@@ -65,14 +66,18 @@ fn stale_global_denial_evicts_originating_other_pcid_before_fresh_root_retry() {
     cache.fill(
         &origin,
         read,
-        walk::walk(&mut image, &origin, read).unwrap(),
+        walk::walk(&mut image, &origin, read, &Keys::ZERO).unwrap(),
     );
     let current = State {
         cr3: 0x5002,
         ..origin
     };
     assert_eq!(
-        cache.lookup(&current, read).unwrap().unwrap().physical,
+        cache
+            .lookup(&current, read, &Keys::ZERO)
+            .unwrap()
+            .unwrap()
+            .physical,
         0xa234
     );
     let write = Request {
@@ -80,20 +85,29 @@ fn stale_global_denial_evicts_originating_other_pcid_before_fresh_root_retry() {
         ..read
     };
     assert_eq!(
-        cache.lookup(&current, write),
+        cache.lookup(&current, write, &Keys::ZERO),
         Err(Failure::Page(PageFault {
             address: 0x1234,
             access: Access::Write,
             error_code: 3,
         }))
     );
-    assert!(cache.observe(&current, read).unwrap().is_none());
-    assert!(cache.observe(&origin, read).unwrap().is_none());
-    let fresh = walk::walk(&mut image, &current, write).unwrap();
+    assert!(
+        cache
+            .observe(&current, read, &Keys::ZERO)
+            .unwrap()
+            .is_none()
+    );
+    assert!(cache.observe(&origin, read, &Keys::ZERO).unwrap().is_none());
+    let fresh = walk::walk(&mut image, &current, write, &Keys::ZERO).unwrap();
     assert_eq!(fresh.physical, 0xb234);
     cache.fill(&current, write, fresh);
     assert_eq!(
-        cache.lookup(&current, write).unwrap().unwrap().physical,
+        cache
+            .lookup(&current, write, &Keys::ZERO)
+            .unwrap()
+            .unwrap()
+            .physical,
         0xb234
     );
 }
@@ -102,14 +116,22 @@ fn stale_global_denial_evicts_originating_other_pcid_before_fresh_root_retry() {
 fn captured_dirty_feedback_cannot_mark_a_new_fill_with_the_same_leaf_slot() {
     let (mut image, state, read) = fixture();
     let cache = Cache::with_capacity(1);
-    let old = cache.fill(&state, read, walk::walk(&mut image, &state, read).unwrap());
+    let old = cache.fill(
+        &state,
+        read,
+        walk::walk(&mut image, &state, read, &Keys::ZERO).unwrap(),
+    );
     cache.invalidate_page(0, read.linear, false);
     image.physical_write(0x4008, 8, 0xb027).unwrap();
-    let replacement = cache.fill(&state, read, walk::walk(&mut image, &state, read).unwrap());
+    let replacement = cache.fill(
+        &state,
+        read,
+        walk::walk(&mut image, &state, read, &Keys::ZERO).unwrap(),
+    );
     assert_eq!(old.leaf, replacement.leaf);
     assert_ne!(old.cache_id, replacement.cache_id);
     cache.mark_dirty(old.cache_id, old.leaf);
-    let retained = cache.observe(&state, read).unwrap().unwrap();
+    let retained = cache.observe(&state, read, &Keys::ZERO).unwrap().unwrap();
     assert_eq!(retained.physical, 0xb234);
     assert!(retained.dirty);
     assert!(
@@ -119,7 +141,8 @@ fn captured_dirty_feedback_cannot_mark_a_new_fill_with_the_same_leaf_slot() {
                 Request {
                     access: Access::Write,
                     ..read
-                }
+                },
+                &Keys::ZERO
             )
             .unwrap()
             .is_none()
@@ -131,10 +154,13 @@ fn observational_peek_miss_does_not_install_an_already_accessed_translation() {
     let (image, state, request) = fixture();
     let cache = Cache::default();
     let before = image.physical_read_bytes(0, 0x10000).unwrap();
-    let observed = cache.peek(&image, &state, request).unwrap();
+    let observed = cache.peek(&image, &state, request, &Keys::ZERO).unwrap();
     assert_eq!(observed.physical, 0xa234);
     assert!(
-        cache.observe(&state, request).unwrap().is_none(),
+        cache
+            .observe(&state, request, &Keys::ZERO)
+            .unwrap()
+            .is_none(),
         "an observational miss must not become a retained translation fill"
     );
     assert!(!cache.take_changed());

@@ -234,6 +234,7 @@ pub extern "C" fn core_deliver_exception() -> i32 {
                 cpl,
                 flags,
                 &mut core.paging_work,
+                unsafe { &(*core.state.get()).protection_keys },
             )
             .with_cache(&core.translation_cache);
             let outcome = match event {
