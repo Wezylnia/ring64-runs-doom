@@ -83,6 +83,7 @@ impl<'a> Memory<'a> {
         self
     }
 
+    #[inline(always)]
     fn translate(
         &self,
         image: &mut Image,
