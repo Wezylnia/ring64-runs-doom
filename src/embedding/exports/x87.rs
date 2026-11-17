@@ -114,19 +114,28 @@ fn core_x87_impl<const OBSERVED: bool, const PAGED: bool>(
                 }
             }
         };
-        // Operand admission cannot mutate x87; snapshot it only after those checks.
-        let mut candidate = unsafe { (*core.state.get()).x87 };
-        let effect = x87::eval(&mut candidate, operation, source, flags);
-        if operation.updates_environment() {
-            candidate.instruction_pointer =
-                saved_pointer(&core.context, instruction_pc, Segment::Cs);
-            if address.is_some() {
-                candidate.data_pointer = saved_pointer(&core.context, offset, segment);
+        // Operands are admitted; only stores still need fallible payload publication.
+        let mut staged = operation
+            .is_store()
+            .then(|| unsafe { (*core.state.get()).x87 });
+        let effect = {
+            let candidate = match staged.as_mut() {
+                Some(candidate) => candidate,
+                None => unsafe { &mut (*core.state.get()).x87 },
+            };
+            let effect = x87::eval(candidate, operation, source, flags);
+            if operation.updates_environment() {
+                candidate.instruction_pointer =
+                    saved_pointer(&core.context, instruction_pc, Segment::Cs);
+                if address.is_some() {
+                    candidate.data_pointer = saved_pointer(&core.context, offset, segment);
+                }
+                if candidate.pending() != 0 {
+                    candidate.opcode = operation.encoding;
+                }
             }
-            if candidate.pending() != 0 {
-                candidate.opcode = operation.encoding;
-            }
-        }
+            effect
+        };
         if effect.store {
             let linear = address.expect("x87 memory store address");
             if let Err(fault) = guest_access!(
@@ -144,7 +153,9 @@ fn core_x87_impl<const OBSERVED: bool, const PAGED: bool>(
         }
         unsafe {
             let state = &mut *core.state.get();
-            state.x87 = candidate;
+            if let Some(candidate) = staged {
+                state.x87 = candidate;
+            }
             if operation.writes_flags() {
                 state.flags = effect.flags;
             }

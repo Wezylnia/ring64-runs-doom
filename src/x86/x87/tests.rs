@@ -661,3 +661,27 @@ fn every_admitted_operation_word_roundtrips_without_field_collisions() {
         );
     }
 }
+
+#[test]
+fn admitted_operation_effects_never_add_undeclared_memory_stores() {
+    let occupied = stacked(&[one(), one() + 1]);
+    let unmasked = State {
+        control_word: 0x340,
+        ..occupied
+    };
+    for fields in 0..1u32 << 19 {
+        for encoding in [0, 0x7ff] {
+            let Some(operation) = Op::try_decode(fields | encoding << 19) else {
+                continue;
+            };
+            for mut state in [State::default(), occupied, unmasked] {
+                let effect = eval(&mut state, operation, one(), 0xcd7);
+                assert!(
+                    !effect.store || operation.is_store() && operation.memory_bytes() != 0,
+                    "{operation:?} requested an undeclared memory store"
+                );
+                assert_eq!(effect.ax, operation.writes_ax(), "{operation:?}");
+            }
+        }
+    }
+}
