@@ -349,3 +349,66 @@ fn pg0_decode_keeps_later_required_byte_cs_limit_priority() {
         }
     });
 }
+
+#[test]
+fn required_paged_decode_admits_fifteen_bytes_but_never_fetches_byte_sixteen() {
+    use crate::memory::{MappingInput, MemoryLimits, Permissions};
+    for length in [15, 16] {
+        let mut bytes = fixture("ia32e", true, true);
+        let mut encoding = vec![0x66; length - 1];
+        encoding.push(0x90);
+        bytes[0x9ff8..0xa000].copy_from_slice(&encoding[..8]);
+        bytes[0x8000..0x8000 + length - 8].copy_from_slice(&encoding[8..]);
+        bytes[0x4010..0x4018].copy_from_slice(&0x8027u64.to_le_bytes());
+        let mappings = [
+            (0, 0x8007, true),
+            (0x8007, 1, false),
+            (0x8008, 0xa000 - 0x8008, true),
+        ]
+        .into_iter()
+        .map(|(base, length, execute)| MappingInput {
+            base,
+            backing: "ram".into(),
+            offset: base as u32,
+            length,
+            permissions: Permissions {
+                read: true,
+                write: true,
+                execute,
+            },
+        })
+        .collect();
+        BRIDGE.with_borrow_mut(|bridge| {
+            let core = bridge.core.as_mut().unwrap();
+            core.image = Image::physical_mapped(
+                vec![("ram".into(), bytes.clone())],
+                mappings,
+                MemoryLimits {
+                    max_backing_bytes: 0xa000,
+                    max_backings: 1,
+                    max_mappings: 3,
+                },
+            )
+            .unwrap();
+            let bank = core.paging;
+            let before = unsafe { (*core.state.get()).registers };
+            if length == 15 {
+                let instruction = core.paged_decode(0x1ff8).unwrap();
+                assert_eq!(instruction.pc, 0x1ff8);
+                assert_eq!(instruction.next_pc, 0x2007);
+                assert_eq!(instruction.operation, Operation::Nop);
+            } else {
+                assert_eq!(
+                    core.paged_decode(0x1ff8),
+                    Err(DecodeError::InstructionLength)
+                );
+            }
+            assert_eq!(core.paging, bank);
+            assert_eq!(core.image.physical_read_bytes(0, 0xa000).unwrap(), bytes);
+            unsafe {
+                assert_eq!((*core.state.get()).registers, before);
+                assert_eq!((*core.state.get()).flags, RF);
+            }
+        });
+    }
+}

@@ -17,7 +17,8 @@ impl Core {
                 )
             })
         };
-        let mut consumed = Vec::new();
+        let mut consumed = if pg0 { None } else { Some([(0, 0, 0); 15]) };
+        let mut consumed_length = 0;
         let mut warm_span: Option<(u64, u64, u64)> = None;
         let mut reuse_warm = !pg0;
         decode::decode_with_profile(pc, context, true, |offset| {
@@ -43,13 +44,15 @@ impl Core {
                         .ok_or(DecodeError::PagingRestart)?;
                 return final_byte(&self.image, request, translation.physical);
             }
+            let consumed = consumed.as_mut().expect("paged encoding buffer");
             if let Some((base, physical, remaining)) = warm_span
                 && linear >= base
                 && linear - base < remaining
             {
                 let physical = physical + (linear - base);
                 let byte = final_byte(&self.image, request, physical)?;
-                consumed.push((linear, physical, byte));
+                consumed[consumed_length] = (linear, physical, byte);
+                consumed_length += 1;
                 return Ok(byte);
             }
             warm_span = None;
@@ -62,16 +65,27 @@ impl Core {
                 None => paging::walk::fetch_walk(&mut self.image, &paging, request, |image| {
                     accessed_write = true;
                     reuse_warm = false;
-                    encoding_current(image, &paging, cache, &consumed, request.class)
+                    encoding_current(
+                        image,
+                        &paging,
+                        cache,
+                        &consumed[..consumed_length],
+                        request.class,
+                    )
                 })
                 .map_err(|failure| DecodeError::Paging(cache.fault(&paging, failure)))?
                 .ok_or(DecodeError::PagingRestart)?,
             };
             if accessed_write
-                && (!encoding_current(&self.image, &paging, cache, &consumed, request.class)
-                    || !cache
-                        .peek(&self.image, &paging, request)
-                        .is_ok_and(|fresh| fresh.physical == translation.physical))
+                && (!encoding_current(
+                    &self.image,
+                    &paging,
+                    cache,
+                    &consumed[..consumed_length],
+                    request.class,
+                ) || !cache
+                    .peek(&self.image, &paging, request)
+                    .is_ok_and(|fresh| fresh.physical == translation.physical))
             {
                 return Err(DecodeError::PagingRestart);
             }
@@ -80,7 +94,8 @@ impl Core {
             if reuse_warm {
                 warm_span = Some((linear, translation.physical, translation.remaining));
             }
-            consumed.push((linear, translation.physical, byte));
+            consumed[consumed_length] = (linear, translation.physical, byte);
+            consumed_length += 1;
             Ok(byte)
         })
     }
