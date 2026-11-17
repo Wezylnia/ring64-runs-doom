@@ -126,6 +126,7 @@ impl Op {
                 }
             }
             Kind::InsertWord => 2,
+            Kind::Binary(VectorBinary::UnpackLow(_)) => 4,
             Kind::PdToPi | Kind::TruncPdToPi => 16,
             _ => 8,
         }

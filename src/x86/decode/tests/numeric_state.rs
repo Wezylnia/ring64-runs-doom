@@ -112,7 +112,12 @@ fn every_selected_mmx_lane_opcode_roundtrips_and_keeps_exact_memory_widths() {
                 assert_eq!((op.dst, op.src, op.memory), (dst, src, false));
             }
         }
-        assert_eq!(mmx(&[0x0f, opcode, 3]).memory_bytes(), 8);
+        let width = if matches!(opcode, 0x60..=0x62) { 4 } else { 8 };
+        assert_eq!(
+            mmx(&[0x0f, opcode, 3]).memory_bytes(),
+            width,
+            "{opcode:02x}"
+        );
         assert_eq!(
             at(0x1000, &[0xf0, 0x0f, opcode, 0xc1]),
             Err(DecodeError::Invalid)
