@@ -28,7 +28,7 @@ pub fn cpuid(eax: u32, ecx: u32, cr4: u64, xcr0: u64) -> [u32; 4] {
         1 => [
             0,
             0,
-            0x04020200 | (u32::from(cr4 & paging::CR4_OSXSAVE != 0) << 27),
+            0x04020201 | (u32::from(cr4 & paging::CR4_OSXSAVE != 0) << 27),
             0x00002010,
         ],
         7 if ecx == 0 => [
@@ -121,7 +121,12 @@ mod tests {
     fn paging_identity_discloses_only_the_completed_translation_facilities() {
         assert_eq!(
             cpuid(1, 0, 0, 1),
-            [0, 0, (1 << 26) | (1 << 17) | (1 << 9), (1 << 13) | (1 << 4)]
+            [
+                0,
+                0,
+                (1 << 26) | (1 << 17) | (1 << 9) | 1,
+                (1 << 13) | (1 << 4)
+            ]
         );
         assert_eq!(
             cpuid(7, 0, 0, 1),
@@ -182,7 +187,7 @@ mod tests {
     fn identification_is_literal_and_ignores_unclaimed_subleaves() {
         for (leaf, expected) in [
             (0, [0xd, 0x676e6952, 0x656e6967, 0x6e453436]),
-            (1, [0, 0, 0x04020200, 0x00002010]),
+            (1, [0, 0, 0x04020201, 0x00002010]),
             (0x80000000, [0x80000001, 0, 0, 0]),
             (0x80000001, [0, 0, 0, 0x08000000]),
         ] {
