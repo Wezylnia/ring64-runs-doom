@@ -398,3 +398,33 @@ test('running, failed and disposed CPUs reject key access before touching input'
     }
   }
 });
+
+test('XCR0 checkpoints are per CPU and reject invalid imports without changing managed state', async () => {
+  const cpu = await createCpu(options('physical'));
+  const peer = await createCpu(options());
+  try {
+    assert.equal(cpu.readXcr0(), 1n);
+    const original = otherState(cpu, 'physical');
+    for (const value of [3n, 0x201n, 0x203n, 1n]) {
+      cpu.setXcr0(value);
+      assert.equal(cpu.readXcr0(), value);
+      assert.equal(peer.readXcr0(), 1n);
+      assert.deepEqual(otherState(cpu, 'physical'), original);
+    }
+    cpu.setXcr0(0x203n);
+    for (const bad of [0n, 2n, 5n, -1n, 1n << 64n, 1, Object(1n)]) {
+      assert.throws(() => cpu.setXcr0(bad as bigint), TypeError);
+      assert.equal(cpu.readXcr0(), 0x203n);
+    }
+    cpu.setState(cpu.readState());
+    cpu.setPagingState(cpu.readPagingState());
+    assert.equal(cpu.readXcr0(), 0x203n);
+    cpu.reset();
+    assert.equal(cpu.readXcr0(), 1n);
+  } finally {
+    cpu.dispose();
+    peer.dispose();
+  }
+  assert.throws(() => cpu.readXcr0(), /disposed/);
+  assert.throws(() => cpu.setXcr0(1n), /disposed/);
+});

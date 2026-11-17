@@ -249,6 +249,7 @@ export interface UnitMetadata {
 interface Layout {
   time: TimeLayout;
   protectionKeys: ProtectionKeysLayout;
+  xcr0?: number;
   pagingSource?: PagingSourceLayout;
   numericSource?: NumericSourceLayout;
   debug: DebugLayout;
@@ -738,6 +739,13 @@ export class Core {
       layout.size,
       layout.time.offset + layout.time.size,
     );
+    if (
+      layout.xcr0 !== undefined &&
+      (!Number.isSafeInteger(layout.xcr0) ||
+        layout.xcr0 < layout.protectionKeys.offset + layout.protectionKeys.size ||
+        layout.xcr0 + 8 > layout.size)
+    )
+      throw new Error('core returned an invalid XCR0 offset');
     this.stateView();
   }
 
@@ -1149,6 +1157,16 @@ export class Core {
       layout = this.#layout.time;
     view.setBigUint64(layout.offset + layout.tsc, input.tsc, true);
     view.setUint32(layout.offset + layout.tscAux, input.tscAux, true);
+  }
+  readXcr0(): bigint {
+    if (this.#layout.xcr0 === undefined) throw new TypeError('core lacks XCR0');
+    return this.stateView().getBigUint64(this.#layout.xcr0, true);
+  }
+  setXcr0(value: bigint): void {
+    if (this.#layout.xcr0 === undefined) throw new TypeError('core lacks XCR0');
+    if (typeof value !== 'bigint' || (value & ~0x203n) !== 0n || (value & 1n) === 0n)
+      throw new TypeError('XCR0 requires bit 0 and supports bits 0, 1 and 9');
+    this.stateView().setBigUint64(this.#layout.xcr0, value, true);
   }
   readProtectionKeysState(): ProtectionKeysState {
     const view = this.stateView(),

@@ -24,7 +24,7 @@ export function negativeScenarios(compiler: WebAssembly.Module): Scenario[] {
           ['0f22e0', 0x100n, 'unsupported'],
           ['0f22e0', 0x8000n, 'protection-fault'],
           ['0f22e0', 0x20000n, 'protection-fault'],
-          ['0f22e0', 0x40000n, 'unsupported'],
+          ['0f22e0', 0x10000n, 'unsupported'],
         ];
         for (const [code, value, reason] of cases) {
           const ram = new Uint8Array(0x10000);

@@ -19,3 +19,4 @@ pub mod protection;
 pub mod protection_keys;
 pub mod state;
 pub mod x87;
+pub mod xstate;

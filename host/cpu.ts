@@ -395,6 +395,14 @@ export class Cpu {
     this.requireIdle(generation);
     this.engineCall(() => this.#engine.setTimeState(input));
   }
+  readXcr0(): bigint {
+    this.requireIdle();
+    return this.engineCall(() => this.#engine.readXcr0());
+  }
+  setXcr0(value: bigint): void {
+    this.requireIdle();
+    this.engineCall(() => this.#engine.setXcr0(value));
+  }
   readProtectionKeysState(): ProtectionKeysState {
     this.requireIdle();
     return this.engineCall(() => this.#engine.readProtectionKeysState());
