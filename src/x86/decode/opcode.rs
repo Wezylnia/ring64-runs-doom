@@ -730,6 +730,13 @@ where
         }
         0xc7 => {
             let operands = ModRm::read(cursor, rex)?;
+            if operands.mode != 3
+                && matches!(operands.selector, 3..=5)
+                && !prefixes.operand_override
+            {
+                // XRSTORS, XSAVEC and XSAVES require features absent from CPUID.0DH.01H.
+                return Err(DecodeError::UndefinedEncoding);
+            }
             if operands.selector != 1 {
                 return Err(DecodeError::Unsupported);
             }

@@ -10,11 +10,20 @@ pub enum Family {
     Simd,
     Bridge,
     FxImage,
+    XstateImage,
 }
 
 impl Family {
     pub fn name(self) -> &'static str {
-        ["x87", "wait", "mmx", "simd", "bridge", "fx-image"][self as usize]
+        [
+            "x87",
+            "wait",
+            "mmx",
+            "simd",
+            "bridge",
+            "fx-image",
+            "xstate-image",
+        ][self as usize]
     }
 
     pub fn decode(value: u32) -> Option<Self> {
@@ -25,6 +34,7 @@ impl Family {
             Self::Simd,
             Self::Bridge,
             Self::FxImage,
+            Self::XstateImage,
         ]
         .get(value as usize)
         .copied()
@@ -35,6 +45,7 @@ pub fn family(operation: Operation) -> Option<Family> {
     Some(match operation {
         Operation::X87(i) if i.op.kind == x87::Kind::Wait => Family::Wait,
         Operation::X87(_) => Family::X87,
+        Operation::NumericImage { op, .. } if op.is_xstate() => Family::XstateImage,
         Operation::NumericImage { op, .. } => {
             if matches!(
                 op.kind,
@@ -102,6 +113,7 @@ impl Fault {
                 1 => match self.family {
                     Family::X87 | Family::FxImage => em || ts,
                     Family::Wait => mp && ts,
+                    Family::XstateImage => ts,
                     Family::Mmx => !em && ts,
                     Family::Simd | Family::Bridge => !em && osfxsr && ts,
                 },
@@ -166,6 +178,7 @@ pub fn admission(operation: Operation, controls: u8, pc: u64) -> Option<Fault> {
     let kind = match family {
         Family::X87 | Family::FxImage if em || ts => 1,
         Family::Wait if controls & 1 != 0 && ts => 1,
+        Family::XstateImage if ts => 1,
         Family::Mmx | Family::Simd | Family::Bridge if em => 2,
         Family::Simd | Family::Bridge if !osfxsr => 3,
         Family::Mmx | Family::Simd | Family::Bridge if ts => 1,
@@ -220,6 +233,28 @@ mod tests {
                 }
             }
             assert_eq!(counts, expected, "{bytes:x?}");
+        }
+        for kind in [numeric_images::Kind::SaveX, numeric_images::Kind::RestoreX] {
+            let Operation::NumericImage { mut op, address } =
+                decode::decode(0, |pc| Ok([0x0f, 0xae, 0x03][pc as usize]))
+                    .unwrap()
+                    .operation
+            else {
+                unreachable!()
+            };
+            op.kind = kind;
+            let operation = Operation::NumericImage { op, address };
+            for controls in 0..32 {
+                let result = admission(operation, controls, 0x1234);
+                assert_eq!(result.is_some(), controls & 4 != 0);
+                if let Some(fault) = result {
+                    assert_eq!(
+                        (fault.vector(), fault.family, fault.instruction_pc),
+                        (7, Family::XstateImage, 0x1234)
+                    );
+                    assert!(fault.validate().is_ok());
+                }
+            }
         }
         for bytes in [&[0x90][..], &[0x0f, 0xae, 0xf8], &[0x0f, 0xc3, 0x00]] {
             let op = decode::decode_with_context(0, &Default::default(), |pc| {

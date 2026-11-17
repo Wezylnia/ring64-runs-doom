@@ -10,10 +10,22 @@ impl Core {
         pc: u64,
         reached: bool,
     ) -> i32 {
-        if let Operation::DebugRegister { register, .. } = operation
-            && self.debug_register_admission(register) != 0
-        {
-            return INVALID;
+        match operation {
+            Operation::DebugRegister { register, .. }
+                if self.debug_register_admission(register) != 0 =>
+            {
+                return INVALID;
+            }
+            Operation::NumericImage { op, .. }
+                if op.is_xstate()
+                    && self
+                        .paging
+                        .is_none_or(|bank| bank.cr4 & crate::x86::paging::CR4_OSXSAVE == 0) =>
+            {
+                self.decode_fault = Some(crate::x86::decode::DecodeFault::UndefinedOpcode);
+                return INVALID;
+            }
+            _ => {}
         }
         // Both callers clear diagnostics first; NE1/all-enabled needs no saved numeric PC.
         if self

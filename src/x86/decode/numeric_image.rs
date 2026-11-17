@@ -33,7 +33,7 @@ where
     })
 }
 
-pub(super) fn fx<F>(
+pub(super) fn extended<F>(
     operands: &ModRm,
     prefixes: Prefixes,
     cursor: &mut Cursor<F>,
@@ -44,6 +44,22 @@ where
     if operands.mode == 3 {
         return Err(DecodeError::Invalid);
     }
+    let kind = match operands.selector {
+        0 => Kind::SaveFx,
+        1 => Kind::RestoreFx,
+        4 => Kind::SaveX,
+        5 => Kind::RestoreX,
+        _ => unreachable!(),
+    };
+    let xstate = matches!(kind, Kind::SaveX | Kind::RestoreX);
+    if xstate && prefixes.lock {
+        return Err(DecodeError::UndefinedEncoding);
+    }
+    let address = operands.address(cursor, prefixes)?;
+    if xstate && !prefixes.paged {
+        // The linear execution profile has no CR4 owner and OSXSAVE stays clear.
+        return Err(DecodeError::UndefinedEncoding);
+    }
     let format = if !prefixes.long64 {
         Format::FxLegacy
     } else if prefixes.rex.width() == Width::W64 {
@@ -52,14 +68,7 @@ where
         Format::Fx64
     };
     Ok(Operation::NumericImage {
-        op: ImageOp {
-            kind: if operands.selector == 0 {
-                Kind::SaveFx
-            } else {
-                Kind::RestoreFx
-            },
-            format,
-        },
-        address: operands.address(cursor, prefixes)?,
+        op: ImageOp { kind, format },
+        address,
     })
 }

@@ -97,7 +97,20 @@ impl Emitter {
         next_pc: u64,
         exit_depth: u32,
     ) {
-        if operation.kind == numeric_images::Kind::SaveFx {
+        if operation.is_xstate() {
+            // EDX:EAX may have changed in this unit since the last snapshot.
+            for bank in [0u32, 2] {
+                self.op(Wasm::LocalGet(0))
+                    .op(Wasm::LocalGet(GPR + bank))
+                    .op(Wasm::I64Store(MemArg {
+                        offset: (offset_of!(RunState, registers) + bank as usize * 8) as u64,
+                        align: 3,
+                        memory_index: 0,
+                    }));
+            }
+        }
+        if operation.kind == numeric_images::Kind::SaveFx || operation.is_xstate() {
+            // A masked XRSTOR can leave any live XMM bank unchanged.
             for bank in 0..operation.xmm_count() {
                 self.spill_xmm(bank as u8);
             }
@@ -108,7 +121,10 @@ impl Emitter {
         self.op(Wasm::I32Const(address.segment as i32))
             .op(Wasm::Call(helper));
         self.numeric_state_result(exit_depth);
-        if operation.kind == numeric_images::Kind::RestoreFx {
+        if matches!(
+            operation.kind,
+            numeric_images::Kind::RestoreFx | numeric_images::Kind::RestoreX
+        ) {
             for bank in 0..operation.xmm_count() {
                 self.reload_xmm(bank as u8);
             }

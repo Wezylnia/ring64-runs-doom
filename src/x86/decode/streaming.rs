@@ -107,8 +107,15 @@ where
     F: FnMut(u64) -> Result<u8, DecodeError>,
 {
     let operands = ModRm::read(cursor, prefixes.rex)?;
-    if operands.selector < 2 {
-        return super::numeric_image::fx(&operands, prefixes, cursor);
+    if operands.selector < 2 || operands.mode != 3 && matches!(operands.selector, 4 | 5) {
+        return super::numeric_image::extended(&operands, prefixes, cursor);
+    }
+    if operands.selector == 4 && operands.mode == 3 {
+        return Err(DecodeError::Invalid);
+    }
+    if operands.selector == 6 && operands.mode != 3 {
+        // XSAVEOPT is not enumerated by CPUID.0DH.01H.
+        return Err(DecodeError::UndefinedEncoding);
     }
     if matches!(operands.selector, 2 | 3) {
         if operands.mode == 3 {

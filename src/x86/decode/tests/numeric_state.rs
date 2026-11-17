@@ -228,3 +228,60 @@ fn required_mmx_and_image_tails_precede_lock_rejection() {
         }
     }
 }
+
+#[test]
+fn standard_xstate_images_decode_memory_width_rex_and_required_address_bytes() {
+    use crate::x86::decode::decode_with_profile;
+    for (modrm, kind) in [(0xa4, ImageKind::SaveX), (0xac, ImageKind::RestoreX)] {
+        for (rex, format) in [(0x43, Format::Fx64), (0x4b, Format::Fx64Wide)] {
+            let bytes = [rex, 0x0f, 0xae, modrm, 0x93, 0xfc, 0xff, 0xff, 0xff];
+            let decode = |prefix: &[u8], paged| {
+                decode_with_profile(0x1000, &ExecutionContext::default(), paged, |pc| {
+                    prefix
+                        .get((pc - 0x1000) as usize)
+                        .copied()
+                        .ok_or(DecodeError::Fetch(missing(pc)))
+                })
+            };
+            for end in 1..bytes.len() {
+                assert_eq!(
+                    decode(&bytes[..end], true),
+                    Err(DecodeError::Fetch(missing(0x1000 + end as u64)))
+                );
+            }
+            let instruction = decode(&bytes, true).unwrap();
+            assert_eq!(instruction.next_pc, 0x1009);
+            let Operation::NumericImage { op, address } = instruction.operation else {
+                panic!("expected XSAVE or XRSTOR");
+            };
+            assert_eq!((op.kind, op.format), (kind, format));
+            assert_eq!(address.base, AddressBase::Register(11));
+            let index = address.index.unwrap();
+            assert_eq!(
+                (index.register, index.scale, address.displacement),
+                (10, 4, -4)
+            );
+            assert_eq!(decode(&bytes, false), Err(DecodeError::UndefinedEncoding));
+        }
+    }
+}
+
+#[test]
+fn absent_xsave_extensions_and_invalid_memory_classes_keep_neighboring_register_forms() {
+    for code in [
+        &[0x0f, 0xae, 0x34][..],   // XSAVEOPT m
+        &[0x0f, 0xc7, 0x1c],       // XRSTORS m
+        &[0x0f, 0xc7, 0x24],       // XSAVEC m
+        &[0x0f, 0xc7, 0x2c],       // XSAVES m
+        &[0xf0, 0x0f, 0xae, 0x24], // LOCK XSAVE m
+    ] {
+        assert_eq!(
+            at(0x1000, code),
+            Err(DecodeError::UndefinedEncoding),
+            "{code:x?}"
+        );
+    }
+    assert_eq!(at(0x1000, &[0x0f, 0xae, 0xe0]), Err(DecodeError::Invalid));
+    assert_eq!(operation(&[0x0f, 0xae, 0xe8]), Operation::Nop);
+    assert_eq!(operation(&[0x0f, 0xae, 0xf0]), Operation::Nop);
+}

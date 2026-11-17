@@ -5,7 +5,8 @@ export interface NumericControls {
   osfxsr: boolean;
   osxmmexcpt: boolean;
 }
-export type NumericFamily = 'x87' | 'wait' | 'mmx' | 'simd' | 'bridge' | 'fx-image';
+export type NumericFamily =
+  'x87' | 'wait' | 'mmx' | 'simd' | 'bridge' | 'fx-image' | 'xstate-image';
 interface NumericBoundary {
   instructionPc: bigint;
   family: NumericFamily;
@@ -27,7 +28,15 @@ export type NumericControlFault = NumericBoundary & { vector: 6 } & (
       }
   );
 export type NumericFault = DeviceNotAvailable | NumericControlFault;
-const FAMILIES: NumericFamily[] = ['x87', 'wait', 'mmx', 'simd', 'bridge', 'fx-image'];
+const FAMILIES: NumericFamily[] = [
+  'x87',
+  'wait',
+  'mmx',
+  'simd',
+  'bridge',
+  'fx-image',
+  'xstate-image',
+];
 const CONTROLS = ['mp', 'em', 'ts', 'osfxsr', 'osxmmexcpt'] as const;
 function record(input: unknown): Record<string, unknown> {
   if (typeof input !== 'object' || input === null || Array.isArray(input))
@@ -64,9 +73,11 @@ export function captureNumericFault(input: unknown): NumericFault {
     const allowed =
       family === 'x87' || family === 'fx-image'
         ? em || ts
-        : family === 'wait'
-          ? mp && ts
-          : !em && ts && (family === 'mmx' || osfxsr);
+        : family === 'xstate-image'
+          ? ts
+          : family === 'wait'
+            ? mp && ts
+            : !em && ts && (family === 'mmx' || osfxsr);
     if (
       !allowed ||
       ['phase', 'cause', 'stage', 'raised', 'unmasked', 'mxcsrBefore', 'mxcsrAfter'].some(
