@@ -355,6 +355,8 @@ test('running, failed and disposed CPUs reject key access before touching input'
       io: {
         read() {
           assert.throws(() => cpu!.readProtectionKeysState(), /running/);
+          assert.throws(() => cpu!.readXcr0(), /running/);
+          assert.throws(() => cpu!.setXcr0(0n), /running/);
           let touched = false;
           assert.throws(
             () =>
@@ -380,6 +382,8 @@ test('running, failed and disposed CPUs reject key access before touching input'
       else assert.equal((await first.run({ budget: 1n })).retired, 1n);
       if (fatal) assert.throws(() => first.readProtectionKeysState(), /failed/);
       if (!fatal) first.dispose();
+      assert.throws(() => first.readXcr0(), fatal ? /failed/ : /disposed/);
+      assert.throws(() => first.setXcr0(0n), fatal ? /failed/ : /disposed/);
       let touched = false;
       assert.throws(
         () =>
