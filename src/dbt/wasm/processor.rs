@@ -6,22 +6,27 @@ use wasm_encoder::{Instruction as Op, MemArg};
 
 impl Emitter {
     pub(super) fn processor(&mut self, instruction: Instruction, depth: u32) {
-        self.op(Op::I32Const(match instruction {
-            Instruction::Cpuid => 0,
-            Instruction::Rdtsc => 1,
-            Instruction::Rdtscp => 2,
-        }))
-        .op(Op::LocalGet(GPR))
-        .op(Op::I32WrapI64)
-        .op(Op::LocalGet(GPR + 1))
-        .op(Op::I32WrapI64);
-        self.retired();
+        self.op(Op::I32Const(instruction as i32))
+            .op(Op::LocalGet(GPR))
+            .op(Op::I32WrapI64)
+            .op(Op::LocalGet(GPR + 1))
+            .op(Op::I32WrapI64);
+        match instruction {
+            Instruction::Xsetbv => {
+                self.op(Op::LocalGet(GPR + 2));
+            }
+            Instruction::Xgetbv => {
+                self.op(Op::I64Const(0));
+            }
+            _ => self.retired(),
+        }
         self.op(Op::Call(self.processor.expect("processor import")))
             .op(Op::LocalTee(REASON))
             .op(Op::BrIf(depth));
         let outputs: &[(u32, usize)] = match instruction {
             Instruction::Cpuid => &[(0, 0), (3, 4), (1, 8), (2, 12)],
-            Instruction::Rdtsc => &[(0, 0), (2, 4)],
+            Instruction::Rdtsc | Instruction::Xgetbv => &[(0, 0), (2, 4)],
+            Instruction::Xsetbv => &[],
             Instruction::Rdtscp => &[(0, 0), (2, 4), (1, 8)],
         };
         for &(register, offset) in outputs {

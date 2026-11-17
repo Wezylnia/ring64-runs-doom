@@ -188,3 +188,37 @@ fn rex_bytes_remain_separate_legacy_increment_or_decrement_instructions() {
         }
     }
 }
+
+#[test]
+fn xcr_control_encodings_ignore_rex_register_extensions_and_require_np() {
+    for (modrm, expected) in [(0xd0, Processor::Xgetbv), (0xd1, Processor::Xsetbv)] {
+        for mode in [
+            Mode::Real,
+            Mode::Protected,
+            Mode::Compatibility,
+            Mode::Virtual8086,
+            Mode::Long64,
+        ] {
+            let context = context(mode, false);
+            for paged in [false, true] {
+                let decode = |code: &[u8]| decoded(code, paged, &context).map(|i| i.operation);
+                assert_eq!(
+                    decode(&[0x0f, 1, modrm]),
+                    Ok(Operation::Processor(expected))
+                );
+                if mode == Mode::Long64 {
+                    assert_eq!(
+                        decode(&[0x4f, 0x0f, 1, modrm]),
+                        Ok(Operation::Processor(expected))
+                    );
+                }
+                for prefix in [0xf0, 0x66, 0xf2, 0xf3] {
+                    assert_eq!(
+                        decode(&[prefix, 0x0f, 1, modrm]),
+                        Err(DecodeError::UndefinedEncoding)
+                    );
+                }
+            }
+        }
+    }
+}

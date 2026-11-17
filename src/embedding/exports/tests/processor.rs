@@ -312,3 +312,45 @@ fn time_msr_unknown_frontiers_and_privilege_rejection_keep_the_output_packet() {
         assert_eq!((time(), scratch()), before);
     }
 }
+
+#[test]
+fn xcr_access_requires_osxsave_and_uses_low_input_dwords_at_the_current_cpl() {
+    use crate::x86::processor::Instruction::{Xgetbv, Xsetbv};
+    use crate::x86::xstate::XSS_MSR;
+    let read = Xgetbv as u32;
+    let write = Xsetbv as u32;
+    prepare(true, 3, false);
+    assert_eq!(core_processor(write, 0, 1, 9), INVALID);
+    assert_eq!(core_processor(read, 0, 1, 0), INVALID);
+    BRIDGE.with_borrow_mut(|bridge| {
+        bridge.core.as_mut().unwrap().paging.as_mut().unwrap().cr4 |=
+            crate::x86::paging::CR4_OSXSAVE;
+    });
+    assert_eq!(core_processor(write, 3, 0, 0), PROTECTION);
+    assert_eq!(core_processor(read, 0, 0, 0), 0);
+    assert_eq!(u64::from_le_bytes(scratch()[..8].try_into().unwrap()), 1);
+    assert_eq!(core_processor(read, 0, 1, 0), PROTECTION);
+    BRIDGE.with_borrow_mut(|bridge| {
+        bridge
+            .core
+            .as_mut()
+            .unwrap()
+            .context
+            .set_mode_and_cpl(Mode::Protected, 0);
+    });
+    for (eax, ecx, edx) in [(3, 1, 0), (0, 0, 0), (5, 0, 0), (1, 0, 1)] {
+        assert_eq!(core_processor(write, eax, ecx, edx), PROTECTION);
+    }
+    assert_eq!(core_processor(write, 0x203, 0, 1u64 << 32), 0);
+    assert_eq!(core_processor(read, 0, 0, 0), 0);
+    assert_eq!(
+        u64::from_le_bytes(scratch()[..8].try_into().unwrap()),
+        0x203
+    );
+    for kind in [2, 3] {
+        assert_eq!(
+            paging::core_paging_control(kind, XSS_MSR, 0, 0x1000, 2, 0),
+            PROTECTION
+        );
+    }
+}

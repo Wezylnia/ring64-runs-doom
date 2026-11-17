@@ -452,6 +452,9 @@ pub extern "C" fn core_paging_control(
         }
         let mut invalidation_target = None;
         let operation = match kind {
+            2 | 3 if register == crate::x86::xstate::XSS_MSR => {
+                Err(ControlFailure::GeneralProtection)
+            }
             0 => state.read_cr(register as u8).map(|v| (state, Some(v))),
             1 => {
                 let value = if core.context.is_long64() {

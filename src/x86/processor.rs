@@ -11,6 +11,8 @@ pub enum Instruction {
     Cpuid = 0,
     Rdtsc = 1,
     Rdtscp = 2,
+    Xgetbv = 3,
+    Xsetbv = 4,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -104,7 +106,12 @@ mod tests {
         );
         assert_eq!(
             cpuid(7, 0, 0),
-            [0, (1 << 20) | (1 << 13) | (1 << 10) | (1 << 7), 0x80000008, 0]
+            [
+                0,
+                (1 << 20) | (1 << 13) | (1 << 10) | (1 << 7),
+                0x80000008,
+                0
+            ]
         );
     }
 
