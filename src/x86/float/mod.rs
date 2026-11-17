@@ -114,7 +114,11 @@ pub(super) fn eval_pair(op: Op, left: u128, right: u128, mxcsr: u32) -> Outcome 
                 Kind::IntToFloat | Kind::FloatToInt | Kind::TruncToInt
             )
     );
-    eval_lanes(op, left, right, mxcsr, 2)
+    if op.kind == Kind::IntToFloat {
+        eval_lanes(op, left, right, mxcsr, 2)
+    } else {
+        eval_packed_to_integer(op, left, right, mxcsr, 2)
+    }
 }
 
 pub fn eval(op: Op, left: u128, right: u128, mxcsr: u32) -> Outcome {
@@ -124,8 +128,12 @@ pub fn eval(op: Op, left: u128, right: u128, mxcsr: u32) -> Outcome {
     ) {
         return eval_sse3(op, left, right, mxcsr);
     }
-    if op.scalar && matches!(op.kind, Kind::FloatToInt | Kind::TruncToInt) {
-        return eval_scalar_to_integer(op, left, right, mxcsr);
+    if matches!(op.kind, Kind::FloatToInt | Kind::TruncToInt) {
+        return if op.scalar {
+            eval_scalar_to_integer(op, left, right, mxcsr)
+        } else {
+            eval_packed_to_integer(op, left, right, mxcsr, 128 / op.format.bits())
+        };
     }
     let count = if op.scalar || matches!(op.kind, Kind::Comi | Kind::Ucomi) {
         1
@@ -158,6 +166,37 @@ fn eval_scalar_to_integer(op: Op, left: u128, right: u128, mxcsr: u32) -> Outcom
         },
         mxcsr: mxcsr | raised,
         raised,
+        stage,
+    }
+}
+
+#[inline(never)]
+fn eval_packed_to_integer(op: Op, old: u128, mut source: u128, mxcsr: u32, count: u32) -> Outcome {
+    let mut value = 0;
+    let mut raised = 0;
+    for index in 0..count {
+        let input = op
+            .format
+            .daz(source as u64 & op.format.mask(), mxcsr & 64 != 0);
+        let (integer, flags) = arithmetic::to_integer(op, input, mxcsr);
+        value |= u128::from(integer) << (32 * index);
+        raised |= flags;
+        source >>= op.format.bits();
+    }
+    let unmasked = raised & !(mxcsr >> 7);
+    let stage = if unmasked & 1 != 0 {
+        // Invalid aborts before precision from any other lane can be reported.
+        raised = 1;
+        Some(Stage::PreComputation)
+    } else if unmasked & 32 != 0 {
+        Some(Stage::PostComputation)
+    } else {
+        None
+    };
+    Outcome {
+        value: if stage.is_some() { old } else { value },
+        raised,
+        mxcsr: mxcsr | raised,
         stage,
     }
 }
