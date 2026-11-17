@@ -22,6 +22,41 @@ import { banks, stack } from '../x87/fixture.js';
 export function boundaryScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [
     {
+      name: 'XSAVE publishes to captured physical targets when its first field clears the leaf for its header and PKRU',
+      async run() {
+        const base = 0x1bfe00n,
+          header = 0x1c0000n,
+          pkru = 0x13579bdc;
+        await withImage(
+          compiler,
+          '480fae230f013f8b07',
+          async (cpu) => {
+            await enable(cpu);
+            cpu.setX87State(stack({}, 0, 0x037e)); // FCW bit zero clears the PTE present bit.
+            cpu.setProtectionKeysState({ pkru, pkrs: 0 });
+            position(cpu, PC, { 0: 0x201n, 2: 0n, 3: base, 7: header });
+            same(word(cpu, 0x4e00), 0xb063n, 'header PTE before XSAVE');
+            await run(cpu, 1);
+            same(word(cpu, 0x4e00, 2), 0x037en, 'first x87 field overwrote the header PTE');
+            same(word(cpu, 0xb000), 0x601n, 'header merged into original frame');
+            same(word(cpu, 0xb040, 4), BigInt(pkru), 'PKRU stored in original frame');
+            same(word(cpu, 0xb044, 4), 0xc7c7c7c7n, 'unused upper PKRU bytes preserved');
+            same(cpu.readPagingState().cr2, 0xdeadn, 'committed transfer did not fault');
+            await run(cpu, 1); // INVLPG [RDI] before testing the new page-table contents.
+            pageFault(await cpu.run({ budget: 1n }), header, 'read', 0, PC + 7n);
+          },
+          (f) => {
+            // The last 512 bytes of the first linear page map to the actual PT. PTE[1c0h]
+            // therefore lies at precisely the first destination byte of this image.
+            f.leaf(0x1bf000, 0x4063n);
+            f.leaf(Number(header), 0xb063n);
+            f.bytes.fill(0xc7, 0xb000, 0xb048);
+            put(f.bytes, 0xb000, 0x400n);
+          },
+        );
+      },
+    },
+    {
       name: 'XSAVE retained middle entry uses live XCR0 with FS, SIB, REX.B/X/W and 32-bit address wrap',
       async run() {
         // FS:[R13D + R10D * 2 + 40h]. Effective offset 0x1100, FS.base 0x4f00.
