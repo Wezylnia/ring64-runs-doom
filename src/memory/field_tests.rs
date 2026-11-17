@@ -265,6 +265,72 @@ fn selected_reads_admit_the_whole_operand_before_touching_output() {
 }
 
 #[test]
+fn sparse_reads_preserve_backing_offsets_and_padding_at_the_final_guest_byte() {
+    let base = u64::MAX - 66;
+    let address = base + 3;
+    let selected = [
+        (1, 1),
+        (4, 10),
+        (20, 2),
+        (24, 4),
+        (28, 3),
+        (32, 8),
+        (48, 16),
+    ];
+    for split in [false, true] {
+        let mappings = if split {
+            vec![
+                mapping(base, 5, 15, true, false),
+                mapping(base + 15, 80, 52, true, false),
+            ]
+        } else {
+            vec![mapping(base, 5, 67, true, false)]
+        };
+        let image = image(144, mappings);
+        for fields in [&selected[..], &[][..]] {
+            let mut output = [0xa5; 68];
+            assert_eq!(image.read_fields(address, 64, fields, &mut output), Ok(()));
+            let mut expected = [0xa5; 68];
+            if !fields.is_empty() {
+                expected[1] = 9;
+                if split {
+                    expected[4..14].copy_from_slice(&[12, 13, 14, 15, 16, 17, 18, 19, 80, 81]);
+                    expected[20..22].copy_from_slice(&[88, 89]);
+                    expected[24..28].copy_from_slice(&[92, 93, 94, 95]);
+                    expected[28..31].copy_from_slice(&[96, 97, 98]);
+                    expected[32..40].copy_from_slice(&[100, 101, 102, 103, 104, 105, 106, 107]);
+                    expected[48..64].copy_from_slice(&[
+                        116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130,
+                        131,
+                    ]);
+                } else {
+                    expected[4..14].copy_from_slice(&[12, 13, 14, 15, 16, 17, 18, 19, 20, 21]);
+                    expected[20..22].copy_from_slice(&[28, 29]);
+                    expected[24..28].copy_from_slice(&[32, 33, 34, 35]);
+                    expected[28..31].copy_from_slice(&[36, 37, 38]);
+                    expected[32..40].copy_from_slice(&[40, 41, 42, 43, 44, 45, 46, 47]);
+                    expected[48..64].copy_from_slice(&[
+                        56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71,
+                    ]);
+                }
+            }
+            assert_eq!(output, expected);
+            assert_eq!(
+                image.read_fields(address + 1, 64, fields, &mut output),
+                Err(Fault {
+                    address: address + 1,
+                    width: 64,
+                    access: Access::Read,
+                    cause: Cause::AddressRange,
+                    failing: 1u128 << 64,
+                })
+            );
+            assert_eq!(output, expected);
+        }
+    }
+}
+
+#[test]
 fn selected_fields_preserve_order_across_aliases_at_the_final_guest_byte() {
     let address = u64::MAX - 15;
     let fields = [(0, 2), (4, 3), (12, 4)];

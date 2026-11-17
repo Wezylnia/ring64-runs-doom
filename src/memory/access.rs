@@ -226,6 +226,30 @@ impl Image {
     ) -> Result<(), Fault> {
         Self::check_fields(width, fields, output.len());
         let mut index = self.preflight::<false>(address, width, Access::Read, false, false)?;
+        if fields.is_empty() {
+            return Ok(());
+        }
+        let mapping = &self.mappings[index];
+        let relative = address - mapping.base;
+        if u64::from(width) <= u64::from(mapping.length) - relative {
+            let offset = mapping.offset as usize + relative as usize;
+            let backing = &self.backings[mapping.backing].bytes;
+            for &(start, length) in fields {
+                let begin = offset + start as usize;
+                let source = &backing[begin..begin + length as usize];
+                let target = &mut output[start as usize..(start + length) as usize];
+                match length {
+                    1 => target[0] = source[0],
+                    2 => target[..2].copy_from_slice(&source[..2]),
+                    4 => target[..4].copy_from_slice(&source[..4]),
+                    8 => target[..8].copy_from_slice(&source[..8]),
+                    10 => target[..10].copy_from_slice(&source[..10]),
+                    16 => target[..16].copy_from_slice(&source[..16]),
+                    _ => target.copy_from_slice(source),
+                }
+            }
+            return Ok(());
+        }
         for &(start, length) in fields {
             let mut cursor = address + u64::from(start);
             while self.mappings[index].end() <= u128::from(cursor) {
