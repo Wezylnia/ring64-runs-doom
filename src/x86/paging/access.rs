@@ -2,6 +2,7 @@ use std::cell::RefCell;
 
 use super::{
     State,
+    cache::Cache,
     walk::{self, AccessClass, PhysicalPhase, Request},
 };
 use crate::memory::{Access, Image, PreparedPhysicalUpdate, PreparedPhysicalWrite, check_span};
@@ -48,6 +49,7 @@ struct Storage<'a> {
 pub struct Memory<'a> {
     storage: RefCell<Storage<'a>>,
     paging: &'a State,
+    cache: Option<&'a Cache>,
     class: AccessClass,
     raw_ac: bool,
     alignment_controls: bool,
@@ -65,9 +67,54 @@ impl<'a> Memory<'a> {
         Self {
             storage: RefCell::new(Storage { image, work }),
             paging,
+            cache: None,
             class: AccessClass::operand(cpl, ac),
             raw_ac: ac,
             alignment_controls: ac && paging.cr0 & 0x40001 == 0x40001,
+        }
+    }
+
+    pub fn with_cache(mut self, cache: &'a Cache) -> Self {
+        self.cache = (self.paging.cr0 & (1 << 31) != 0).then_some(cache);
+        self
+    }
+
+    fn translate(
+        &self,
+        image: &mut Image,
+        request: Request,
+    ) -> Result<walk::Translation, AccessFailure> {
+        if let Some(cache) = self.cache {
+            match cache.lookup(self.paging, request) {
+                Ok(Some(translation)) => return Ok(translation),
+                Ok(None) => {}
+                Err(failure) => return Err(AccessFailure::Paging(failure)),
+            }
+        }
+        walk::walk(image, self.paging, request).map_err(|failure| {
+            if let Some(cache) = self.cache {
+                cache.fault(self.paging, failure);
+            }
+            AccessFailure::Paging(failure)
+        })
+    }
+
+    fn publish_candidates(&self, prepared: &mut Prepared) {
+        if let Some(cache) = self.cache {
+            for fragment in &mut prepared.fragments {
+                fragment.translation =
+                    cache.fill(self.paging, fragment.request, fragment.translation);
+            }
+        }
+    }
+
+    fn mark_dirty(&self, prepared: &Prepared, fields: &[(u32, u32)]) {
+        if let Some(cache) = self.cache {
+            for fragment in &prepared.fragments {
+                if fragment.translation.dirty && participates(fragment, fields) {
+                    cache.mark_dirty(fragment.translation);
+                }
+            }
         }
     }
 
@@ -99,8 +146,7 @@ impl<'a> Memory<'a> {
                 access,
                 class,
             };
-            let translation =
-                walk::walk(storage.image, self.paging, request).map_err(AccessFailure::Paging)?;
+            let translation = self.translate(storage.image, request)?;
             let length = u64::from(width - offset).min(translation.remaining) as u32;
             let write = if access == Access::Write {
                 storage
@@ -138,7 +184,7 @@ impl<'a> Memory<'a> {
         class: AccessClass,
         intent: Intent,
     ) -> Result<Prepared, AccessFailure> {
-        let prepared = self.prepare(address, width, access, rmw, class)?;
+        let mut prepared = self.prepare(address, width, access, rmw, class)?;
         if self.alignment_controls
             && class.is_user()
             && let Err(fault) = intent.check(address, width, access)
@@ -146,6 +192,7 @@ impl<'a> Memory<'a> {
             self.storage.borrow_mut().work.clear();
             return Err(AccessFailure::AlignmentCheck(fault));
         }
+        self.publish_candidates(&mut prepared);
         Ok(prepared)
     }
 
@@ -292,6 +339,7 @@ impl<'a> Memory<'a> {
         if !prepared.published {
             let updates = self.dirty_admission(&prepared, fields)?;
             self.dirty_publish(&updates);
+            self.mark_dirty(&prepared, fields);
         }
         let mut storage = self.storage.borrow_mut();
         for fragment in &prepared.fragments {
@@ -322,7 +370,14 @@ fn participates(fragment: &Fragment, fields: &[(u32, u32)]) -> bool {
 
 impl GuestMemory for Memory<'_> {
     fn fetch(&self, address: u64) -> Result<u8, AccessFailure> {
-        let prepared = self.prepare(address, 1, Access::Execute, false, self.class)?;
+        let prepared = self.prepare_aligned(
+            address,
+            1,
+            Access::Execute,
+            false,
+            self.class,
+            Intent::Exempt,
+        )?;
         let storage = self.storage.borrow();
         Ok(storage
             .image
@@ -378,8 +433,15 @@ impl GuestMemory for Memory<'_> {
         self.write_at(address, width, fields, bytes, self.class, Intent::Exempt)
     }
     fn check_read(&self, address: u64, width: u32) -> Result<(), AccessFailure> {
-        self.prepare(address, width, Access::Read, false, self.class)
-            .map(|_| ())
+        self.prepare_aligned(
+            address,
+            width,
+            Access::Read,
+            false,
+            self.class,
+            Intent::Exempt,
+        )
+        .map(|_| ())
     }
     fn check_write(&self, address: u64, width: u32) -> Result<(), AccessFailure> {
         self.capture_write(address, width, self.class, Intent::Exempt)
@@ -485,14 +547,17 @@ impl GuestMemory for Memory<'_> {
             class: self.class,
         };
         let mut storage = self.storage.borrow_mut();
-        let translation =
-            walk::walk(storage.image, self.paging, request).map_err(AccessFailure::Paging)?;
+        let translation = self.translate(storage.image, request)?;
         storage
             .image
             .physical_check_write(translation.physical, 1)
             .map_err(|fault| {
                 AccessFailure::Paging(request.physical_failure(fault, PhysicalPhase::FinalAccess))
-            })
+            })?;
+        if let Some(cache) = self.cache {
+            cache.fill(self.paging, request, translation);
+        }
+        Ok(())
     }
     fn read_system(&self, address: u64, width: u32) -> Result<[u8; 16], AccessFailure> {
         self.read_at(
@@ -590,6 +655,9 @@ impl GuestMemory for Memory<'_> {
             )?);
         }
         self.dirty_publish(&updates);
+        for prepared in &pending {
+            self.mark_dirty(prepared, &prepared.fields);
+        }
         self.storage.borrow_mut().work.pending = pending
             .into_iter()
             .map(|mut p| {
@@ -608,3 +676,7 @@ mod tests;
 #[cfg(test)]
 #[path = "alignment_tests.rs"]
 mod alignment_tests;
+
+#[cfg(test)]
+#[path = "retained_tests.rs"]
+mod retained_tests;
