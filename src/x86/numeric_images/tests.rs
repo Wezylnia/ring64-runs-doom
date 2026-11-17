@@ -2,6 +2,8 @@ use super::*;
 
 mod fx;
 mod legacy;
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+mod native_xsave;
 
 fn state() -> X87State {
     let mut state = X87State {
