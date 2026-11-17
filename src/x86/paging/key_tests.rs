@@ -82,7 +82,7 @@ fn all_key_pairs_match_independent_direction_and_requester_literals() {
     // Columns select the effective user/supervisor address, not the requester.
     const ENABLED: [[bool; 2]; 4] = [[false, false], [true, false], [false, true], [true, true]];
     for key in 0..16 {
-        for pair in 0..4 {
+        for (pair, denied) in DENIED.iter().enumerate() {
             for user_page in [false, true] {
                 for (control, bits) in [0, 1 << 22, 1 << 24, (1 << 22) | (1 << 24)]
                     .into_iter()
@@ -123,8 +123,8 @@ fn all_key_pairs_match_independent_direction_and_requester_literals() {
                                     (Access::Write, false, false) => 3,
                                     (Access::Write, false, true) => 4,
                                 };
-                                let key_denied = ENABLED[control][usize::from(!user_page)]
-                                    && DENIED[pair][column];
+                                let key_denied =
+                                    ENABLED[control][usize::from(!user_page)] && denied[column];
                                 let ordinary_denied = user_request && !user_page;
                                 let expected = if ordinary_denied || key_denied {
                                     Err(page_fault(
@@ -196,6 +196,73 @@ fn leaf_keys_are_captured_while_disabled_and_nonleaf_bits_do_not_select_them() {
                 frame | if shift == 12 { 0 } else { 0x1000 }
             );
         }
+    }
+}
+
+#[test]
+fn physical_table_reads_and_ad_writes_bypass_denied_linear_aliases() {
+    let (mut image, mut state, mut work, cache) = fixture(0, 0);
+    for (address, value) in [(0x1000, 0x2007), (0x2000, 0x3007), (0x3000, 0x4007)] {
+        image.physical_write(address, 8, value).unwrap();
+    }
+    for index in 1..=4 {
+        image
+            .physical_write(0x4000 + index * 8, 8, (index * 0x1000) | (7 << 59) | 7)
+            .unwrap();
+    }
+    image.physical_write(0x4028, 8, 0x9007 | (3 << 59)).unwrap();
+    state.cr4 |= (1 << 22) | (1 << 24);
+    state.cr0 |= 1 << 16;
+    let keys = Keys {
+        pkru: 3 << 14,
+        pkrs: 3 << 14,
+    };
+    for linear in [0x1000, 0x2000, 0x3000, 0x4000] {
+        assert_eq!(
+            walk::peek(
+                &image,
+                &state,
+                Request {
+                    linear,
+                    access: Access::Read,
+                    class: AccessClass::User,
+                },
+                &keys,
+            ),
+            Err(page_fault(linear, Access::Read, 0x25)),
+            "the table's linear alias is denied"
+        );
+    }
+    assert_eq!(
+        Memory::new(&mut image, &state, 3, 2, &mut work, &keys)
+            .with_cache(&cache)
+            .read(0x5000, 1),
+        Ok(0xa1),
+        "cold physical table reads and A writes bypass linear key rights"
+    );
+    for (address, value) in [
+        (0x1000, 0x2027),
+        (0x2000, 0x3027),
+        (0x3000, 0x4027),
+        (0x4028, 0x9027 | (3 << 59)),
+    ] {
+        assert_eq!(image.physical_read(address, 8), Ok(value));
+    }
+    assert_eq!(
+        Memory::new(&mut image, &state, 3, 2, &mut work, &keys)
+            .with_cache(&cache)
+            .write(0x5000, 1, 0x5c),
+        Ok(()),
+        "physical D publication bypasses the denied table alias"
+    );
+    assert_eq!(image.physical_read(0x4028, 8), Ok(0x9067 | (3 << 59)));
+    assert_eq!(image.physical_read(0x9000, 1), Ok(0x5c));
+    for index in 1..=4 {
+        assert_eq!(
+            image.physical_read(0x4000 + index * 8, 8),
+            Ok((index * 0x1000) | (7 << 59) | 7),
+            "physical access does not touch its linear alias PTE"
+        );
     }
 }
 
@@ -355,17 +422,18 @@ fn implicit_metadata_obeys_keys_while_fetch_and_inactive_families_do_not() {
         pkru: 1 << 30,
         pkrs: 0,
     };
-    let memory = Memory::new(&mut image, &state, 0, 0x40002, &mut work, &keys);
-    assert_eq!(
-        memory.read_system(0x1000, 1),
-        Err(AccessFailure::Paging(page_fault(
-            0x1000,
-            Access::Read,
-            0x21
-        )))
-    );
-    assert_eq!(memory.fetch(0x1000), Ok(0xa1));
-    drop(memory);
+    {
+        let memory = Memory::new(&mut image, &state, 0, 0x40002, &mut work, &keys);
+        assert_eq!(
+            memory.read_system(0x1000, 1),
+            Err(AccessFailure::Paging(page_fault(
+                0x1000,
+                Access::Read,
+                0x21
+            )))
+        );
+        assert_eq!(memory.fetch(0x1000), Ok(0xa1));
+    }
     for (cr0, efer) in [(0x60000010, 0), (0x80000033, 0)] {
         state.cr0 = cr0;
         state.efer = efer;
