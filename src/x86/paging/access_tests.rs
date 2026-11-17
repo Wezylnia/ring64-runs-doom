@@ -373,7 +373,7 @@ fn publication_geometry_read_and_execute_do_not_allocate() {
         .into_iter()
         .map(|access| {
             let prepared = memory
-                .prepare(0x1000, 8, access, false, memory.class)
+                .prepare(0x1000, 8, access, false, memory.class, Intent::Exempt)
                 .unwrap();
             (access, prepared.fields.capacity(), prepared.fields.len())
         })
@@ -392,7 +392,7 @@ fn publication_geometry_write_rmw_and_sparse_intent_stays_exact() {
     let mut memory = Memory::new(&mut image, &state, 3, 2, &mut work);
     for rmw in [false, true] {
         let prepared = memory
-            .prepare(0x1000, 8, Access::Write, rmw, memory.class)
+            .prepare(0x1000, 8, Access::Write, rmw, memory.class, Intent::Exempt)
             .unwrap();
         assert_eq!(prepared.fields, [(0, 8)], "write/rmw{rmw} geometry");
     }

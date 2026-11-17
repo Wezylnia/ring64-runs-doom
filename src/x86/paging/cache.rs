@@ -221,13 +221,12 @@ impl Cache {
         translation.at(request.linear)
     }
 
-    pub fn mark_dirty(&self, translation: Translation) {
-        let Some(id) = translation.cache_id else {
+    pub fn mark_dirty(&self, cache_id: Option<u64>, leaf: u64) {
+        let Some(id) = cache_id else {
             return;
         };
         for entry in self.entries.borrow_mut().slots.iter_mut().flatten() {
-            if entry.translation.cache_id == Some(id) && entry.translation.leaf == translation.leaf
-            {
+            if entry.translation.cache_id == Some(id) && entry.translation.leaf == leaf {
                 entry.translation.dirty = false;
                 break;
             }
@@ -541,7 +540,7 @@ mod boundary_tests {
         let old = insert(&cache, &mut image, &state, request);
         let replacement = insert(&cache, &mut image, &state, other);
         assert_ne!(old.cache_id, replacement.cache_id);
-        cache.mark_dirty(old);
+        cache.mark_dirty(old.cache_id, old.leaf);
         assert!(
             cache
                 .lookup(
@@ -564,7 +563,7 @@ mod boundary_tests {
         cache.entries.borrow_mut().next_id = u64::MAX;
         image.physical_write(0x4008, 8, 0xb067).unwrap();
         assert_eq!(insert(&cache, &mut image, &state, request).cache_id, None);
-        cache.mark_dirty(old);
+        cache.mark_dirty(old.cache_id, old.leaf);
         assert!(cache.lookup(&state, request).unwrap().is_none());
         cache.clear();
         assert_eq!(insert(&cache, &mut image, &state, request).cache_id, None);

@@ -17,7 +17,11 @@ struct Fragment {
     offset: u32,
     length: u32,
     request: Request,
-    translation: walk::Translation,
+    physical: u64,
+    leaf: u64,
+    dirty: bool,
+    entry_width: u32,
+    cache_id: Option<u64>,
     write: Option<PreparedPhysicalWrite>,
 }
 
@@ -99,20 +103,11 @@ impl<'a> Memory<'a> {
         })
     }
 
-    fn publish_candidates(&self, prepared: &mut Prepared) {
-        if let Some(cache) = self.cache {
-            for fragment in &mut prepared.fragments {
-                fragment.translation =
-                    cache.fill(self.paging, fragment.request, fragment.translation);
-            }
-        }
-    }
-
     fn mark_dirty(&self, prepared: &Prepared, fields: &[(u32, u32)]) {
         if let Some(cache) = self.cache {
             for fragment in &prepared.fragments {
-                if fragment.translation.dirty && participates(fragment, fields) {
-                    cache.mark_dirty(fragment.translation);
+                if fragment.dirty && participates(fragment, fields) {
+                    cache.mark_dirty(fragment.cache_id, fragment.leaf);
                 }
             }
         }
@@ -125,6 +120,7 @@ impl<'a> Memory<'a> {
         access: Access,
         rmw: bool,
         class: AccessClass,
+        intent: Intent,
     ) -> Result<Prepared, AccessFailure> {
         check_span(address, width, access).map_err(AccessFailure::Linear)?;
         let mut prepared = Prepared {
@@ -138,6 +134,7 @@ impl<'a> Memory<'a> {
                 Vec::new()
             },
         };
+        let mut candidates = Vec::new();
         let mut offset = 0;
         let mut storage = self.storage.borrow_mut();
         while offset < width {
@@ -162,14 +159,37 @@ impl<'a> Memory<'a> {
             .map_err(|f| {
                 AccessFailure::Paging(request.physical_failure(f, PhysicalPhase::FinalAccess))
             })?;
+            if self.cache.is_some() && translation.cache_id.is_none() {
+                candidates.push((prepared.fragments.len(), translation));
+            }
             prepared.fragments.push(Fragment {
                 offset,
                 length,
                 request,
-                translation,
+                physical: translation.physical,
+                leaf: translation.leaf,
+                dirty: translation.dirty,
+                entry_width: translation.entry_width,
+                cache_id: translation.cache_id,
                 write,
             });
             offset += length;
+        }
+        drop(storage);
+        if self.alignment_controls
+            && class.is_user()
+            && let Err(fault) = intent.check(address, width, access)
+        {
+            self.storage.borrow_mut().work.clear();
+            return Err(AccessFailure::AlignmentCheck(fault));
+        }
+        if let Some(cache) = self.cache {
+            for (index, translation) in candidates {
+                let fragment = &mut prepared.fragments[index];
+                fragment.cache_id = cache
+                    .fill(self.paging, fragment.request, translation)
+                    .cache_id;
+            }
         }
         Ok(prepared)
     }
@@ -184,16 +204,7 @@ impl<'a> Memory<'a> {
         class: AccessClass,
         intent: Intent,
     ) -> Result<Prepared, AccessFailure> {
-        let mut prepared = self.prepare(address, width, access, rmw, class)?;
-        if self.alignment_controls
-            && class.is_user()
-            && let Err(fault) = intent.check(address, width, access)
-        {
-            self.storage.borrow_mut().work.clear();
-            return Err(AccessFailure::AlignmentCheck(fault));
-        }
-        self.publish_candidates(&mut prepared);
-        Ok(prepared)
+        self.prepare(address, width, access, rmw, class, intent)
     }
 
     fn read_prepared(&self, prepared: &Prepared, output: &mut [u8]) {
@@ -201,7 +212,7 @@ impl<'a> Memory<'a> {
         for fragment in &prepared.fragments {
             let bytes = storage
                 .image
-                .physical_read_bytes(fragment.translation.physical, fragment.length)
+                .physical_read_bytes(fragment.physical, fragment.length)
                 .expect("captured physical read admission");
             output[fragment.offset as usize..(fragment.offset + fragment.length) as usize]
                 .copy_from_slice(&bytes);
@@ -241,7 +252,7 @@ impl<'a> Memory<'a> {
                     let bytes = storage
                         .image
                         .physical_read_bytes(
-                            fragment.translation.physical + u64::from(begin - fragment.offset),
+                            fragment.physical + u64::from(begin - fragment.offset),
                             end - begin,
                         )
                         .expect("admitted physical field read");
@@ -287,13 +298,10 @@ impl<'a> Memory<'a> {
         let storage = self.storage.borrow();
         let mut updates = Vec::new();
         for fragment in &prepared.fragments {
-            if fragment.translation.dirty && participates(fragment, fields) {
+            if fragment.dirty && participates(fragment, fields) {
                 let update = storage
                     .image
-                    .prepare_physical_update(
-                        fragment.translation.leaf,
-                        fragment.translation.entry_width,
-                    )
+                    .prepare_physical_update(fragment.leaf, fragment.entry_width)
                     .map_err(|f| {
                         AccessFailure::Paging(
                             fragment
@@ -381,7 +389,7 @@ impl GuestMemory for Memory<'_> {
         let storage = self.storage.borrow();
         Ok(storage
             .image
-            .physical_fetch(prepared.fragments[0].translation.physical)
+            .physical_fetch(prepared.fragments[0].physical)
             .expect("admitted physical fetch"))
     }
     fn read(&self, address: u64, width: u32) -> Result<u64, AccessFailure> {

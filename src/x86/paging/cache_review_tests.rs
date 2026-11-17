@@ -108,7 +108,7 @@ fn captured_dirty_feedback_cannot_mark_a_new_fill_with_the_same_leaf_slot() {
     let replacement = cache.fill(&state, read, walk::walk(&mut image, &state, read).unwrap());
     assert_eq!(old.leaf, replacement.leaf);
     assert_ne!(old.cache_id, replacement.cache_id);
-    cache.mark_dirty(old);
+    cache.mark_dirty(old.cache_id, old.leaf);
     let retained = cache.observe(&state, read).unwrap().unwrap();
     assert_eq!(retained.physical, 0xb234);
     assert!(retained.dirty);
