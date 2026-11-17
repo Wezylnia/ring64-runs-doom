@@ -143,34 +143,55 @@ impl<'a> Memory<'a> {
                 access,
                 class,
             };
-            let translation = self.translate(storage.image, request)?;
-            let length = u64::from(width - offset).min(translation.remaining) as u32;
+            let translation = if self.paging.cr0 & (1 << 31) == 0 {
+                None
+            } else {
+                Some(self.translate(storage.image, request)?)
+            };
+            let (physical, remaining, leaf, dirty, entry_width, cache_id) = match translation {
+                Some(translation) => (
+                    translation.physical,
+                    translation.remaining,
+                    translation.leaf,
+                    translation.dirty,
+                    translation.entry_width,
+                    translation.cache_id,
+                ),
+                None => {
+                    let physical = request.unpaged_physical().map_err(AccessFailure::Paging)?;
+                    (physical, (1u64 << 32) - physical, 0, false, 0, None)
+                }
+            };
+            let length = u64::from(width - offset).min(remaining) as u32;
             let write = if access == Access::Write {
                 storage
                     .image
-                    .prepare_physical_write(translation.physical, length, rmw)
+                    .prepare_physical_write(physical, length, rmw)
                     .map(Some)
             } else {
                 storage
                     .image
-                    .physical_check_access(translation.physical, length, access, rmw)
+                    .physical_check_access(physical, length, access, rmw)
                     .map(|_| None)
             }
             .map_err(|f| {
                 AccessFailure::Paging(request.physical_failure(f, PhysicalPhase::FinalAccess))
             })?;
-            if self.cache.is_some() && translation.cache_id.is_none() {
+            if self.cache.is_some()
+                && let Some(translation) = translation
+                && translation.cache_id.is_none()
+            {
                 candidates.push((prepared.fragments.len(), translation));
             }
             prepared.fragments.push(Fragment {
                 offset,
                 length,
                 request,
-                physical: translation.physical,
-                leaf: translation.leaf,
-                dirty: translation.dirty,
-                entry_width: translation.entry_width,
-                cache_id: translation.cache_id,
+                physical,
+                leaf,
+                dirty,
+                entry_width,
+                cache_id,
                 write,
             });
             offset += length;
@@ -555,14 +576,22 @@ impl GuestMemory for Memory<'_> {
             class: self.class,
         };
         let mut storage = self.storage.borrow_mut();
-        let translation = self.translate(storage.image, request)?;
+        let translation = if self.paging.cr0 & (1 << 31) == 0 {
+            None
+        } else {
+            Some(self.translate(storage.image, request)?)
+        };
+        let physical = match translation {
+            Some(translation) => translation.physical,
+            None => request.unpaged_physical().map_err(AccessFailure::Paging)?,
+        };
         storage
             .image
-            .physical_check_write(translation.physical, 1)
+            .physical_check_write(physical, 1)
             .map_err(|fault| {
                 AccessFailure::Paging(request.physical_failure(fault, PhysicalPhase::FinalAccess))
             })?;
-        if let Some(cache) = self.cache {
+        if let (Some(cache), Some(translation)) = (self.cache, translation) {
             cache.fill(self.paging, request, translation);
         }
         Ok(())
@@ -688,3 +717,7 @@ mod alignment_tests;
 #[cfg(test)]
 #[path = "retained_tests.rs"]
 mod retained_tests;
+
+#[cfg(test)]
+#[path = "pg0_prepared_tests.rs"]
+mod pg0_prepared_tests;
