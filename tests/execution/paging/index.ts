@@ -10,6 +10,7 @@ import { pagingCurrentWalkReviewScenarios } from './review-current-walk.js';
 import { pagingMutationOracleScenarios } from './mutation-oracles.js';
 import { pagingPermissionReviewScenarios } from './review-permissions.js';
 import { invpcidScenarios } from './invpcid.js';
+import { pagingRetentionLifecycleScenarios } from './retention-lifecycle.js';
 import { retainedTranslationScenarios } from './retained-translations.js';
 import type { Scenario } from '../../support/fixture.js';
 
@@ -27,6 +28,7 @@ export function pagingScenarios(compiler: WebAssembly.Module): Scenario[] {
     ...pagingMutationOracleScenarios(compiler),
     ...pagingPermissionReviewScenarios(compiler),
     ...invpcidScenarios(compiler),
+    ...pagingRetentionLifecycleScenarios(compiler),
     ...retainedTranslationScenarios(compiler),
   ];
 }
