@@ -235,26 +235,28 @@ fn eval_sse3(op: Op, left: u128, right: u128, mxcsr: u32) -> Outcome {
 #[inline]
 fn eval_lanes(op: Op, left: u128, right: u128, mxcsr: u32, count: u32) -> Outcome {
     let masks = (mxcsr >> 7) & 0x3f;
+    let float_bits = op.format.bits();
+    let float_mask = op.format.mask();
     let source_bits = if op.kind == Kind::IntToFloat {
         if op.scalar && op.integer64 { 64 } else { 32 }
     } else {
-        op.format.bits()
+        float_bits
+    };
+    let source_mask = if source_bits == 32 {
+        u64::from(u32::MAX)
+    } else {
+        u64::MAX
     };
     let output_bits = if op.kind == Kind::FloatConvert {
         op.format.opposite().bits()
     } else {
-        op.format.bits()
+        float_bits
     };
     let mut lanes = [lane::Lane::default(); 4];
     let mut raised = 0;
     for index in 0..count {
-        let a = (left >> (index * op.format.bits())) as u64 & op.format.mask();
-        let b = (right >> (index * source_bits)) as u64
-            & if source_bits == 32 {
-                u32::MAX as u64
-            } else {
-                u64::MAX
-            };
+        let a = (left >> (index * float_bits)) as u64 & float_mask;
+        let b = (right >> (index * source_bits)) as u64 & source_mask;
         lanes[index as usize] = lane::prepare(op, a, b, mxcsr);
         raised |= lanes[index as usize].pre;
     }
