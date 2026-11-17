@@ -1,3 +1,4 @@
+import { fisttpScenarios } from './fisttp.js';
 import type { Scenario } from './fixture.js';
 import { literalScenarios } from './literals.js';
 import { modeScenarios } from './modes.js';
@@ -9,6 +10,7 @@ import { specialImageScenarios } from './special-images.js';
 
 export function x87Scenarios(compiler: WebAssembly.Module): Scenario[] {
   return [
+    ...fisttpScenarios(compiler),
     ...literalScenarios(compiler),
     ...specialScenarios(compiler),
     ...specialMemoryScenarios(compiler),
