@@ -99,6 +99,7 @@ struct Emitter {
     debug_step: Option<u32>,
     debug_register: Option<u32>,
     paging_control: Option<u32>,
+    invpcid: Option<u32>,
     processor: Option<u32>,
     fast_system: Option<u32>,
     debug_begin: Option<u32>,
@@ -305,7 +306,13 @@ pub(crate) fn emit_profile(unit: &Unit, observed: bool, paged: bool) -> Vec<u8> 
     let has_paging = unit
         .instructions
         .iter()
-        .any(|i| matches!(i.operation, Operation::Paging(_)));
+        .any(|i| matches!(i.operation, Operation::Paging(operation) if !matches!(operation, crate::x86::instruction::PagingInstruction::InvalidatePcid { .. })));
+    let has_invpcid = unit.instructions.iter().any(|i| {
+        matches!(
+            i.operation,
+            Operation::Paging(crate::x86::instruction::PagingInstruction::InvalidatePcid { .. })
+        )
+    });
     let has_fast_system = unit
         .instructions
         .iter()
@@ -465,6 +472,15 @@ pub(crate) fn emit_profile(unit: &Unit, observed: bool, paged: bool) -> Vec<u8> 
                 ValType::I64,
                 ValType::I64,
             ],
+            [ValType::I32],
+        );
+        next_type += 1;
+        index
+    });
+    let invpcid_type = has_invpcid.then(|| {
+        let index = next_type;
+        types.ty().function(
+            [ValType::I32, ValType::I64, ValType::I64, ValType::I64],
             [ValType::I32],
         );
         next_type += 1;
@@ -801,6 +817,12 @@ pub(crate) fn emit_profile(unit: &Unit, observed: bool, paged: bool) -> Vec<u8> 
         run_index += 1;
         function
     });
+    let invpcid = invpcid_type.map(|index| {
+        imports.import("env", "invpcid", EntityType::Function(index));
+        let function = run_index;
+        run_index += 1;
+        function
+    });
     let fast_system = fast_system_type.map(|index| {
         imports.import("env", "fast_system", EntityType::Function(index));
         let function = run_index;
@@ -920,6 +942,7 @@ pub(crate) fn emit_profile(unit: &Unit, observed: bool, paged: bool) -> Vec<u8> 
         debug_step,
         debug_register,
         paging_control,
+        invpcid,
         processor,
         fast_system,
         debug_begin,

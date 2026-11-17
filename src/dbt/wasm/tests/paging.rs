@@ -141,3 +141,67 @@ fn paging_failure_preserves_boundary_and_tf_completion_precedes_post_budget() {
     ]);
     run_cases(vec![refusal, trap]);
 }
+
+#[test]
+fn invpcid_helper_receives_mode_width_and_address_and_retires_before_trapping() {
+    let mut cases = Vec::new();
+    for (mode, width, input, expected_type) in [
+        (Mode::Long64, Width::W64, 0x100000002, "100000002"),
+        (Mode::Compatibility, Width::W32, 0x1234567800000003, "3"),
+    ] {
+        let mut unit = unit(vec![Instruction {
+            pc: 0x1000,
+            next_pc: 0x1007,
+            operation: Operation::Paging(Paging::InvalidatePcid {
+                address: Address {
+                    base: AddressBase::Register(5),
+                    index: None,
+                    displacement: 0x1000,
+                    size: Width::W32,
+                    segment: Segment::Fs,
+                },
+                gpr: 9,
+                width,
+            }),
+        }]);
+        unit.context.set_mode_and_cpl(mode, 0);
+        let input = [(5, 0xffff000000001000), (9, input)];
+        let mut success = execution_case(
+            &emit(&unit),
+            &[0x1000],
+            &input,
+            2,
+            0x1000,
+            2,
+            (&[], 2, 0x1007, DISPATCH as u32, 1),
+        );
+        success["accesses"] =
+            json!([{"kind":"invpcid","args":[4,"2000",expected_type,"2"],"result":0}]);
+        let mut refused = execution_case(
+            &emit(&unit),
+            &[0x1000],
+            &input,
+            2,
+            0x1000,
+            1,
+            (&[], 2, 0x1000, PROTECTION as u32, 1),
+        );
+        refused["accesses"] =
+            json!([{"kind":"invpcid","args":[4,"2000",expected_type,"2"],"result":PROTECTION}]);
+        let mut trap = execution_case(
+            &emit_observed(&unit, true),
+            &[0x1000],
+            &input,
+            0x302,
+            0x1000,
+            1,
+            (&[], 0x302, 0x1007, DEBUG_EXCEPTION as u32, 0),
+        );
+        trap["accesses"] = json!([
+            {"kind":"invpcid","args":[4,"2000",expected_type,"302"],"result":0},
+            {"kind":"debug_step","args":["1000","1007",1,"302"],"result":DEBUG_EXCEPTION}
+        ]);
+        cases.extend([success, refused, trap]);
+    }
+    run_cases(cases);
+}

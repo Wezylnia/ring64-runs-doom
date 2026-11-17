@@ -5,52 +5,65 @@ use wasm_encoder::{Instruction as Op, MemArg};
 
 impl Emitter {
     pub(super) fn paging_control(&mut self, operation: PagingInstruction, next: u64, depth: u32) {
-        match operation {
-            PagingInstruction::ClearTaskSwitched => {
-                self.op(Op::I32Const(5))
-                    .op(Op::I32Const(0))
-                    .op(Op::I64Const(0));
-            }
-            PagingInstruction::ControlRegister {
-                register,
-                gpr,
-                write,
-                width,
-            } => {
-                self.op(Op::I32Const(i32::from(write)))
-                    .op(Op::I32Const(i32::from(register)));
-                if write {
-                    self.register(gpr, width);
-                } else {
-                    self.op(Op::I64Const(0));
+        if let PagingInstruction::InvalidatePcid {
+            address,
+            gpr,
+            width,
+        } = operation
+        {
+            self.op(Op::I32Const(address.segment as i32));
+            self.address(address, next);
+            self.register(gpr, width);
+            self.full_flags();
+            self.op(Op::Call(self.invpcid.expect("INVPCID import")));
+        } else {
+            match operation {
+                PagingInstruction::ClearTaskSwitched => {
+                    self.op(Op::I32Const(5))
+                        .op(Op::I32Const(0))
+                        .op(Op::I64Const(0));
                 }
-            }
-            PagingInstruction::ModelSpecificRegister { write } => {
-                self.op(Op::I32Const(if write { 3 } else { 2 }));
-                self.register(1, Width::W32);
-                self.op(Op::I32WrapI64);
-                if write {
-                    self.register(0, Width::W32);
-                    self.register(2, Width::W32);
-                    self.op(Op::I64Const(32)).op(Op::I64Shl).op(Op::I64Or);
-                } else {
-                    self.op(Op::I64Const(0));
+                PagingInstruction::ControlRegister {
+                    register,
+                    gpr,
+                    write,
+                    width,
+                } => {
+                    self.op(Op::I32Const(i32::from(write)))
+                        .op(Op::I32Const(i32::from(register)));
+                    if write {
+                        self.register(gpr, width);
+                    } else {
+                        self.op(Op::I64Const(0));
+                    }
                 }
+                PagingInstruction::ModelSpecificRegister { write } => {
+                    self.op(Op::I32Const(if write { 3 } else { 2 }));
+                    self.register(1, Width::W32);
+                    self.op(Op::I32WrapI64);
+                    if write {
+                        self.register(0, Width::W32);
+                        self.register(2, Width::W32);
+                        self.op(Op::I64Const(32)).op(Op::I64Shl).op(Op::I64Or);
+                    } else {
+                        self.op(Op::I64Const(0));
+                    }
+                }
+                PagingInstruction::InvalidatePage(address) => {
+                    self.op(Op::I32Const(4))
+                        .op(Op::I32Const(address.segment as i32));
+                    self.address(address, next);
+                }
+                PagingInstruction::InvalidatePcid { .. } => unreachable!(),
             }
-            PagingInstruction::InvalidatePage(address) => {
-                self.op(Op::I32Const(4))
-                    .op(Op::I32Const(address.segment as i32));
-                self.address(address, next);
-            }
+            self.op(Op::I64Const(self.current_pc as i64));
+            self.full_flags();
+            self.retired();
+            self.op(Op::Call(
+                self.paging_control.expect("paging control import"),
+            ));
         }
-        self.op(Op::I64Const(self.current_pc as i64));
-        self.full_flags();
-        self.retired();
-        self.op(Op::Call(
-            self.paging_control.expect("paging control import"),
-        ))
-        .op(Op::LocalTee(REASON))
-        .op(Op::BrIf(depth));
+        self.op(Op::LocalTee(REASON)).op(Op::BrIf(depth));
         if matches!(
             operation,
             PagingInstruction::ControlRegister { write: false, .. }
@@ -77,7 +90,9 @@ impl Emitter {
                         .op(Op::I64ShrU)
                         .op(Op::LocalSet(GPR + 2));
                 }
-                PagingInstruction::InvalidatePage(_) | PagingInstruction::ClearTaskSwitched => {
+                PagingInstruction::InvalidatePage(_)
+                | PagingInstruction::InvalidatePcid { .. }
+                | PagingInstruction::ClearTaskSwitched => {
                     unreachable!()
                 }
             }

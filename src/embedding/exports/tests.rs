@@ -282,4 +282,5 @@ mod numeric_bridge;
 mod vectors;
 mod x87_state;
 
+mod invpcid;
 mod legacy_paging;

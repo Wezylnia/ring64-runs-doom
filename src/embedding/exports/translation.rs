@@ -56,6 +56,17 @@ impl Core {
         self.context_version = self.context_version.saturating_add(1);
     }
 
+    pub(super) fn invalidate_pcid(&mut self, kind: u32, pcid: u16, linear: u64) {
+        match kind {
+            0 => self.translation_cache.invalidate_page(pcid, linear, false),
+            1 => self.translation_cache.invalidate_pcid(pcid),
+            2 => self.translation_cache.clear(),
+            3 => self.translation_cache.invalidate_non_global(),
+            _ => unreachable!("admitted INVPCID type"),
+        }
+        self.invalidate_runtime_sources();
+    }
+
     pub(super) fn revoke_host_translations(&mut self) {
         self.translation_cache.clear();
         self.paging_work.clear();

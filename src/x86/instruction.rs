@@ -799,6 +799,11 @@ pub enum PagingInstruction {
         write: bool,
     },
     InvalidatePage(Address),
+    InvalidatePcid {
+        address: Address,
+        gpr: u8,
+        width: Width,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

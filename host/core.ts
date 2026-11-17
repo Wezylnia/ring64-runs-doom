@@ -304,6 +304,7 @@ type CoreExports = WebAssembly.Exports & {
     flags: bigint,
     retired: bigint,
   ): number;
+  core_invpcid(segment: number, offset: bigint, kind: bigint, flags: bigint): number;
   core_processor(kind: number, eax: number, ecx: number, retired: bigint): number;
   core_io(
     descriptor: number,
@@ -855,6 +856,7 @@ export class Core {
           'core_paging_state',
           'core_import_paging',
           'core_paging_control',
+          'core_invpcid',
           'core_fast_system_state',
           'core_import_fast_system',
           'core_fast_system',
@@ -1370,6 +1372,7 @@ export class Core {
       debug_finish: this.#exports.core_debug_finish,
       debug_register: this.#exports.core_debug_register,
       paging_control: this.#exports.core_paging_control,
+      invpcid: this.#exports.core_invpcid,
       processor: this.#exports.core_processor,
       debug_begin: this.#exports.core_debug_begin,
       external_step: this.#exports.core_external_step,

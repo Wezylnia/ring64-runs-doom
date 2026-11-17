@@ -111,3 +111,7 @@ mod tests;
 #[cfg(test)]
 #[path = "tests/paging.rs"]
 mod paging_tests;
+
+#[cfg(test)]
+#[path = "tests/invpcid.rs"]
+mod invpcid_tests;

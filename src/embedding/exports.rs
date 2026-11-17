@@ -55,6 +55,7 @@ mod exception_delivery;
 mod external_interrupts;
 mod far_control;
 mod fast_system;
+mod invalidation;
 mod io;
 mod mapped;
 mod mmx;
