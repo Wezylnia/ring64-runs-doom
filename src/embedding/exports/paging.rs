@@ -38,11 +38,8 @@ impl Core {
                 class: paging::walk::AccessClass::operand(context.cpl(), false),
             };
             if pg0 {
-                let translation =
-                    paging::walk::fetch_walk(&mut self.image, &paging, request, |_| true)
-                        .map_err(DecodeError::Paging)?
-                        .ok_or(DecodeError::PagingRestart)?;
-                return final_byte(&self.image, request, translation.physical);
+                let physical = request.unpaged_physical().map_err(DecodeError::Paging)?;
+                return final_byte(&self.image, request, physical);
             }
             let consumed = consumed.as_mut().expect("paged encoding buffer");
             if let Some((base, physical, remaining)) = warm_span

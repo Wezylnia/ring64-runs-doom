@@ -171,6 +171,22 @@ impl Translation {
 }
 
 impl Request {
+    pub fn unpaged_physical(self) -> Result<u64, Failure> {
+        if self.linear >= 1u64 << 32 {
+            return Err(self.physical_failure(
+                Fault {
+                    address: self.linear,
+                    width: 1,
+                    access: self.access,
+                    cause: crate::memory::Cause::AddressRange,
+                    failing: 1u128 << 32,
+                },
+                PhysicalPhase::FinalAccess,
+            ));
+        }
+        Ok(self.linear)
+    }
+
     fn page_fault(self, state: &State, present: bool, reserved: bool) -> Failure {
         Failure::Page(PageFault {
             address: self.linear,
@@ -253,23 +269,12 @@ fn walk_with<const EFFECTS: bool, const FETCH: bool>(
     entry_access: impl FnMut(u64, u32, bool) -> Result<Option<u64>, Fault>,
 ) -> Result<Option<Translation>, Failure> {
     if state.cr0 & (1 << 31) == 0 {
-        if request.linear >= 1u64 << 32 {
-            return Err(request.physical_failure(
-                Fault {
-                    address: request.linear,
-                    width: 1,
-                    access: request.access,
-                    cause: crate::memory::Cause::AddressRange,
-                    failing: 1u128 << 32,
-                },
-                PhysicalPhase::FinalAccess,
-            ));
-        }
+        let physical = request.unpaged_physical()?;
         return Ok(Some(Translation {
-            physical: request.linear,
+            physical,
             leaf: 0,
             dirty: false,
-            remaining: (1u64 << 32) - request.linear,
+            remaining: (1u64 << 32) - physical,
             entry_width: 0,
             linear_base: 0,
             physical_base: 0,
@@ -1072,3 +1077,7 @@ mod legacy_tests;
 #[cfg(test)]
 #[path = "supervisor_tests.rs"]
 mod supervisor_tests;
+
+#[cfg(test)]
+#[path = "unpaged_tests.rs"]
+mod unpaged_tests;
