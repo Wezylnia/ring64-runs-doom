@@ -1,5 +1,6 @@
 use super::x87::State as X87State;
 
+pub mod extended;
 mod fx;
 mod legacy;
 
@@ -15,6 +16,8 @@ pub enum Kind {
     Save,
     RestoreFx,
     SaveFx,
+    SaveX,
+    RestoreX,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -62,6 +65,8 @@ impl ImageOp {
             Kind::Save,
             Kind::RestoreFx,
             Kind::SaveFx,
+            Kind::SaveX,
+            Kind::RestoreX,
         ]
         .get((value & 7) as usize)?;
         let format = *[
@@ -74,12 +79,22 @@ impl ImageOp {
             Format::Fx64Wide,
         ]
         .get((value >> 3) as usize)?;
-        (format.is_fx() == matches!(kind, Kind::RestoreFx | Kind::SaveFx))
-            .then_some(Self { kind, format })
+        (format.is_fx()
+            == matches!(
+                kind,
+                Kind::RestoreFx | Kind::SaveFx | Kind::RestoreX | Kind::SaveX
+            ))
+        .then_some(Self { kind, format })
+    }
+
+    pub fn is_xstate(self) -> bool {
+        matches!(self.kind, Kind::SaveX | Kind::RestoreX)
     }
 
     pub fn width(self) -> u32 {
-        if self.format.is_fx() {
+        if self.is_xstate() {
+            super::xstate::MAX_BYTES as u32
+        } else if self.format.is_fx() {
             512
         } else {
             self.format.environment_bytes()
@@ -94,7 +109,7 @@ impl ImageOp {
     pub fn is_store(self) -> bool {
         matches!(
             self.kind,
-            Kind::StoreEnvironment | Kind::Save | Kind::SaveFx
+            Kind::StoreEnvironment | Kind::Save | Kind::SaveFx | Kind::SaveX
         )
     }
 
@@ -111,7 +126,13 @@ impl ImageOp {
     }
 
     pub fn alignment(self) -> u32 {
-        if self.format.is_fx() { 16 } else { 1 }
+        if self.is_xstate() {
+            64
+        } else if self.format.is_fx() {
+            16
+        } else {
+            1
+        }
     }
     pub fn alignment_intent(self) -> super::alignment::Intent {
         use super::alignment::Intent;
