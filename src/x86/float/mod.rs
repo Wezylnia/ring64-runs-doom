@@ -114,10 +114,16 @@ pub(super) fn eval_pair(op: Op, left: u128, right: u128, mxcsr: u32) -> Outcome 
                 Kind::IntToFloat | Kind::FloatToInt | Kind::TruncToInt
             )
     );
-    eval_lanes::<false>(op, left, right, mxcsr, 2)
+    eval_lanes(op, left, right, mxcsr, 2)
 }
 
 pub fn eval(op: Op, left: u128, right: u128, mxcsr: u32) -> Outcome {
+    if matches!(
+        op.kind,
+        Kind::AddSub | Kind::HorizontalAdd | Kind::HorizontalSub
+    ) {
+        return eval_sse3(op, left, right, mxcsr);
+    }
     let count = if op.scalar || matches!(op.kind, Kind::Comi | Kind::Ucomi) {
         1
     } else if op.kind == Kind::FloatConvert {
@@ -125,38 +131,51 @@ pub fn eval(op: Op, left: u128, right: u128, mxcsr: u32) -> Outcome {
     } else {
         128 / op.format.bits()
     };
-    if matches!(
-        op.kind,
-        Kind::AddSub | Kind::HorizontalAdd | Kind::HorizontalSub
-    ) {
-        eval_lanes::<true>(op, left, right, mxcsr, count)
+    eval_lanes(op, left, right, mxcsr, count)
+}
+
+#[inline(never)] // Keep ordinary floating-point instructions on the direct eval_lanes path.
+fn eval_sse3(op: Op, left: u128, right: u128, mxcsr: u32) -> Outcome {
+    let bits = op.format.bits();
+    let mask = u128::from(op.format.mask());
+    let count = 128 / bits;
+    let (kind, a, b) = if op.kind == Kind::AddSub {
+        // Subtraction is addition with the second sign reversed, except that an
+        // x86 subtraction propagates a second-operand NaN with its original sign.
+        let mut adjusted = right;
+        for index in (0..count).step_by(2) {
+            let shift = index * bits;
+            if !op.format.nan(((right >> shift) & mask) as u64) {
+                adjusted ^= u128::from(op.format.sign()) << shift;
+            }
+        }
+        (Kind::Add, left, adjusted)
     } else {
-        eval_lanes::<false>(op, left, right, mxcsr, count)
-    }
-}
-
-#[inline]
-fn lane_operation<const SSE3: bool>(op: Op, index: u32) -> Op {
-    if !SSE3 {
-        return op;
-    }
-    let kind = match op.kind {
-        Kind::AddSub if index & 1 == 0 => Kind::Sub,
-        Kind::AddSub | Kind::HorizontalAdd => Kind::Add,
-        Kind::HorizontalSub => Kind::Sub,
-        _ => unreachable!(),
+        let mut even = 0;
+        let mut odd = 0;
+        for index in 0..count {
+            let half = count / 2;
+            let operand = if index < half { left } else { right };
+            let pair = operand >> ((index & (half - 1)) * 2 * bits);
+            even |= (pair & mask) << (index * bits);
+            odd |= ((pair >> bits) & mask) << (index * bits);
+        }
+        let kind = if op.kind == Kind::HorizontalAdd {
+            Kind::Add
+        } else {
+            Kind::Sub
+        };
+        (kind, even, odd)
     };
-    Op { kind, ..op }
+    let mut outcome = eval_lanes(Op { kind, ..op }, a, b, mxcsr, count);
+    if outcome.stage.is_some() {
+        outcome.value = left;
+    }
+    outcome
 }
 
 #[inline]
-fn eval_lanes<const SSE3: bool>(
-    op: Op,
-    left: u128,
-    right: u128,
-    mxcsr: u32,
-    count: u32,
-) -> Outcome {
+fn eval_lanes(op: Op, left: u128, right: u128, mxcsr: u32, count: u32) -> Outcome {
     let masks = (mxcsr >> 7) & 0x3f;
     let source_bits = if op.kind == Kind::IntToFloat {
         if op.scalar && op.integer64 { 64 } else { 32 }
@@ -177,25 +196,14 @@ fn eval_lanes<const SSE3: bool>(
     let mut lanes = [lane::Lane::default(); 4];
     let mut raised = 0;
     for index in 0..count {
-        let (a, b) = if SSE3 && matches!(op.kind, Kind::HorizontalAdd | Kind::HorizontalSub) {
-            let half = count / 2;
-            let operand = if index < half { left } else { right };
-            let pair = operand >> ((index % half) * 2 * source_bits);
-            (
-                pair as u64 & op.format.mask(),
-                (pair >> source_bits) as u64 & op.format.mask(),
-            )
-        } else {
-            let a = (left >> (index * op.format.bits())) as u64 & op.format.mask();
-            let b = (right >> (index * source_bits)) as u64
-                & if source_bits == 32 {
-                    u32::MAX as u64
-                } else {
-                    u64::MAX
-                };
-            (a, b)
-        };
-        lanes[index as usize] = lane::prepare(lane_operation::<SSE3>(op, index), a, b, mxcsr);
+        let a = (left >> (index * op.format.bits())) as u64 & op.format.mask();
+        let b = (right >> (index * source_bits)) as u64
+            & if source_bits == 32 {
+                u32::MAX as u64
+            } else {
+                u64::MAX
+            };
+        lanes[index as usize] = lane::prepare(op, a, b, mxcsr);
         raised |= lanes[index as usize].pre;
     }
     if raised & !masks != 0 {
@@ -207,11 +215,7 @@ fn eval_lanes<const SSE3: bool>(
         };
     }
     for index in 0..count {
-        lanes[index as usize] = lane::calculate(
-            lane_operation::<SSE3>(op, index),
-            lanes[index as usize],
-            mxcsr,
-        );
+        lanes[index as usize] = lane::calculate(op, lanes[index as usize], mxcsr);
         raised |= lanes[index as usize].post;
     }
     if raised & !masks != 0 {

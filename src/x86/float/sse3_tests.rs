@@ -108,8 +108,15 @@ fn alternating_lanes_apply_local_operation_without_changing_nan_sign_or_rounding
     );
     assert_eq!((got.raised, got.stage), (1, None));
 
-    let zeros = eval(op, 0, 0, 0x3f80);
-    assert_eq!(zeros.value, words([0x80000000, 0, 0x80000000, 0]));
+    let source = words([0xffc00012, 0, 0xff800014, 0]);
+    let got = eval(op, 0, source, 0x1f80);
+    assert_eq!(got.value, words([0xffc00012, 0, 0xffc00014, 0]));
+    assert_eq!((got.raised, got.stage), (1, None));
+    for control in [0x1f80, 0x3f80, 0x5f80, 0x7f80] {
+        let zero = if control == 0x3f80 { 0x80000000 } else { 0 };
+        let got = eval(op, 0, 0, control);
+        assert_eq!((got.value, got.raised), (words([zero, 0, zero, 0]), 0));
+    }
     let daz = eval(op, words([1; 4]), 0, 0x1fc0);
     assert_eq!((daz.value, daz.raised), (0, 0));
     let gradual = eval(op, words([1; 4]), 0, 0x1f80);

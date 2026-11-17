@@ -29,8 +29,11 @@ fn native_sse3_packed_arithmetic_matches_result_bits_and_status() {
         0x8000_0000_0000_0000_0000_0000_0000_0001,
     );
     for (format, inputs) in [
-        (Format::F32, [nan32, limits32]),
-        (Format::F64, [nan64, limits64]),
+        (
+            Format::F32,
+            [nan32, limits32, (0, words([0xffc00012, 0, 0xff800014, 0]))],
+        ),
+        (Format::F64, [nan64, limits64, (0, 0xfff0_0000_0000_0014)]),
     ] {
         for (left, right) in inputs {
             for kind in [Kind::AddSub, Kind::HorizontalAdd, Kind::HorizontalSub] {
@@ -83,6 +86,6 @@ fn native_sse3_packed_arithmetic_matches_result_bits_and_status() {
     let vendor = String::from_utf8_lossy(&bytes);
     let _ = writeln!(
         std::io::stderr(),
-        "native SSE3 arithmetic oracle verified 48 result and MXCSR packets on {vendor}"
+        "native SSE3 arithmetic oracle verified 72 result and MXCSR packets on {vendor}"
     );
 }
