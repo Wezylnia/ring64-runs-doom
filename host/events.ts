@@ -164,10 +164,11 @@ export function captureEventState(input: EventState): EventState {
   if (vector === 14) {
     if ('debug' in source) throw new TypeError('page fault cannot contain a debug source');
     const address = pageFaultAddress(source.pageFaultAddress!);
-    const errorCode = word(source.errorCode!, 31, 'page fault error code');
+    const errorCode = word(source.errorCode!, 63, 'page fault error code');
     if (
       ((errorCode & 8) !== 0 && (errorCode & 1) === 0) ||
-      ((errorCode & 2) !== 0 && (errorCode & 16) !== 0)
+      ((errorCode & 2) !== 0 && (errorCode & 16) !== 0) ||
+      ((errorCode & 32) !== 0 && (errorCode & 0x19) !== 1)
     )
       throw new TypeError('incompatible page fault error bits');
     return {

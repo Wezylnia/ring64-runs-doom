@@ -156,7 +156,10 @@ impl ExceptionEvent {
             8 => self.error_code == Some(0),
             10..=13 => self.error_code.is_some(),
             14 => self.error_code.is_some_and(|code| {
-                code <= 31 && (code & 8 == 0 || code & 1 != 0) && code & 0x12 != 0x12
+                code <= 63
+                    && (code & 8 == 0 || code & 1 != 0)
+                    && code & 0x12 != 0x12
+                    && (code & 32 == 0 || code & 0x19 == 1)
             }),
             17 => matches!(self.error_code, Some(0 | 1)),
             _ => false,
@@ -426,9 +429,9 @@ mod tests {
         assert_eq!(event.page_fault_address, Some(0x501000));
         assert_eq!(event.saved_flags, 0x10202);
         let valid_codes = [
-            0, 1, 2, 3, 4, 5, 6, 7, 9, 11, 13, 15, 16, 17, 20, 21, 25, 29,
+            0, 1, 2, 3, 4, 5, 6, 7, 9, 11, 13, 15, 16, 17, 20, 21, 25, 29, 0x21, 0x23, 0x25, 0x27,
         ];
-        for code in 0..=63 {
+        for code in 0..=127 {
             let changed = ExceptionEvent {
                 error_code: Some(code),
                 ..event

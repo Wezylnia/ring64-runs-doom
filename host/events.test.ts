@@ -163,6 +163,25 @@ test('pending page faults capture a canonical frozen address and error shape wit
     );
 });
 
+test('pending key faults retain only coherent historical protection error codes', () => {
+  const source = { ...pending().exception, vector: 14, pageFaultAddress: 0x501000n };
+  for (const errorCode of [0x21, 0x23, 0x25, 0x27]) {
+    assert.deepEqual(
+      captureEventState({ kind: 'pending', exception: { ...source, errorCode } } as never),
+      {
+        kind: 'pending',
+        exception: { ...source, errorCode },
+      },
+    );
+  }
+  for (const errorCode of [0x20, 0x22, 0x29, 0x2b, 0x31, 0x33, 0x3f, 0x40]) {
+    assert.throws(
+      () => captureEventState({ kind: 'pending', exception: { ...source, errorCode } } as never),
+      TypeError,
+    );
+  }
+});
+
 test('event capture owns nested state and reads each selected field once', () => {
   const input = pending();
   const reads = new Map<string, number>();
