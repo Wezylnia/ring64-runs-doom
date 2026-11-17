@@ -3,6 +3,44 @@ use crate::x86::context::Segment;
 use std::cell::Cell;
 
 #[test]
+fn reached_instruction_proof_rejects_a_different_body_or_encoded_length() {
+    use crate::x86::instruction::{Instruction, Operation};
+    let context = ExecutionContext::default();
+    let mut owners = Owners::default();
+    let first = Instruction {
+        pc: 0x1000,
+        next_pc: 0x1001,
+        operation: Operation::Nop,
+    };
+    let second = Instruction {
+        pc: 0x1001,
+        next_pc: 0x1002,
+        operation: Operation::Halt,
+    };
+    assert!(owners.register(1, &context, false, 0));
+    assert!(owners.record_instructions(1, vec![first, second]));
+    assert!(owners.instruction_matches(1, first));
+    assert!(owners.instruction_matches(1, second));
+    assert!(!owners.instruction_matches(
+        1,
+        Instruction {
+            operation: Operation::Halt,
+            ..first
+        }
+    ));
+    assert!(!owners.instruction_matches(
+        1,
+        Instruction {
+            next_pc: 0x1002,
+            ..first
+        }
+    ));
+    assert!(!owners.instruction_matches(2, first));
+    owners.release(1);
+    assert!(!owners.instruction_matches(1, first));
+}
+
+#[test]
 fn context_proof_requires_full_match_and_successful_source_admission() {
     let context = ExecutionContext::default();
     let mut other = context.clone();

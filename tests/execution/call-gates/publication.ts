@@ -11,7 +11,8 @@ export function gatePublicationScenarios(compiler: WebAssembly.Module): Scenario
         // PTE1's A byte aliases PDE byte1: 53->73 redirects PT55000 to PT57000.
         for (const [address, value] of [
           [0x4000, 0x55327n],
-          [0x5000, 0xb063n],
+          // A read-filled D0 page must refresh before frame write admission.
+          [0x5000, 0xb023n],
           [0x5004, 0xa053n],
           [0x5008, 0xc063n],
           [0x500c, 0xd063n],

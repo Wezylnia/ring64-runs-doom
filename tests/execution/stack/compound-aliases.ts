@@ -8,17 +8,17 @@ const permissions = { read: true, write: true, execute: true };
 export function compoundAliasScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [
     {
-      name: 'compound ordered PUSHA payload retargets later stack slots through the live PTE',
+      name: 'compound ordered PUSHA retains its D-ready mapping until an explicit stack invalidation',
       async run() {
         for (const family of families) {
           const side = { createCpu, compiler };
-          const f = fixture(side, family, '60', { bits: 32 });
+          const f = fixture(side, family, '600f013f8b17', { bits: 32 });
           const offset = 8 * f.width;
           f.leaf(0x8000, BigInt(f.pt) | 0x23n);
           await using(side, f, async (cpu) => {
             const before = initial(
               PC,
-              { 0: 0x1122334400012063n, 4: BigInt(0x8000 + offset + 4) },
+              { 0: 0x1122334400012063n, 4: BigInt(0x8000 + offset + 4), 7: 0x8000n },
               2n,
             );
             cpu.setState(before);
@@ -34,9 +34,21 @@ export function compoundAliasScenarios(compiler: WebAssembly.Module): Scenario[]
             const wanted = f.bytes.slice();
             put(wanted, f.pt + offset, 0x12063n, 4);
             for (let ordinal = 1; ordinal < 8; ordinal++)
-              put(wanted, 0x12000 + offset - 4 * ordinal, before.registers[ordinal]!, 4);
-            memory(cpu, wanted, 'first captured slot changes the next live translation');
+              put(wanted, f.pt + offset - 4 * ordinal, before.registers[ordinal]!, 4);
+            memory(cpu, wanted, 'later stores retain the admitted D-ready page-table mapping');
             same(cpu.readTimeState(), { tsc: 101n, tscAux: 7 }, 'eight stores retire once');
+            const fresh = await cpu.run({ budget: 2n });
+            exit(
+              fresh,
+              'budget',
+              2n,
+              2n,
+              expected(before, PC + 6n, {
+                4: BigInt(0x8000 + offset - 28),
+                2: merge(before.registers[2]!, 0xa5a5a5a5n, 32),
+              }),
+            );
+            memory(cpu, wanted, 'INVLPG exposes the new page without changing earlier payload');
           });
         }
       },

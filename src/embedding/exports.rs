@@ -28,7 +28,7 @@ macro_rules! guest_access {
             let mut memory = crate::x86::paging::access::Memory::new(
                 &mut $core.image, $core.paging.as_ref().expect("paged helper profile"),
                 cpl, flags, &mut $core.paging_work,
-            );
+            ).with_cache(&$core.translation_cache);
             crate::x86::access::GuestMemory::$method(&mut memory, $($argument),*)
         } else {
             crate::x86::access::GuestMemory::$method(&mut $core.image, $($argument),*)
@@ -41,7 +41,7 @@ macro_rules! guest_semantics {
         if $paged {
             let cpl=$core.context.cpl();
             let flags=unsafe { (*$core.state.get()).flags };
-            let mut memory=crate::x86::paging::access::Memory::new(&mut $core.image,$core.paging.as_ref().expect("paged helper profile"),cpl,flags,&mut $core.paging_work);
+            let mut memory=crate::x86::paging::access::Memory::new(&mut $core.image,$core.paging.as_ref().expect("paged helper profile"),cpl,flags,&mut $core.paging_work).with_cache(&$core.translation_cache);
             $operation(&mut $core.context,&mut memory,$($argument),*)
         } else {$operation(&mut $core.context,&mut $core.image,$($argument),*)}
     }};
@@ -82,6 +82,8 @@ struct Core {
     paging: Option<crate::x86::paging::State>,
     physical_controls: bool,
     paging_work: crate::x86::paging::access::AccessState,
+    translation_cache: crate::x86::paging::cache::Cache,
+    active_owner: Option<u64>,
     paging_failure: Option<crate::x86::paging::walk::Failure>,
     pdpte_load_fault: Option<(u8, u8, Fault)>,
     paging_system: Option<crate::x86::protection::SystemPagingFault>,
@@ -170,6 +172,8 @@ pub extern "C" fn core_init(code_base: u64, code_len: u32, ram_base: u64, ram_le
             paging: None,
             physical_controls: false,
             paging_work: Default::default(),
+            translation_cache: Default::default(),
+            active_owner: None,
             paging_failure: None,
             pdpte_load_fault: None,
             paging_system: None,
@@ -471,8 +475,9 @@ pub extern "C" fn core_compile(
         bridge.output.clear();
         let core = bridge.core.as_mut().unwrap();
         let limits = Limits { max_instructions, max_source_bytes, max_artifact_bytes };
+        core.reconcile_translation_changes();
         let observed = core.boundary_observed();
-        match dbt::compile_with_paging(&core.image, &core.context, core.paging.as_ref(), pc, limits, observed) {
+        match dbt::compile_with_paging_cache(&core.image, &core.context, core.paging.as_ref(), &core.translation_cache, pc, limits, observed) {
             Ok(artifact) => {
                 let owner = match core.image.register_dependencies(
                     artifact.source_ranges.iter().map(|range| (range.start, range.length)),
@@ -484,6 +489,9 @@ pub extern "C" fn core_compile(
                 if !core.translation_owners.register(owner, &core.context, observed, core.context_version) {
                     core.image.release(owner);
                     return RESOURCE;
+                }
+                if core.paging.is_some_and(|paging| paging.cr0 & (1 << 31) != 0) {
+                    core.translation_owners.record_instructions(owner, artifact.instructions);
                 }
                 bridge.info = serde_json::to_vec(&serde_json::json!({
                     "entries": artifact.entries.iter().map(|pc| format!("0x{pc:x}")).collect::<Vec<_>>(),
@@ -755,7 +763,10 @@ pub extern "C" fn core_write_memory(address: u64) -> i32 {
         } else {
             core.image.write_bytes(address, input)
         } {
-            Ok(()) => 0,
+            Ok(()) => {
+                core.memory_admin_changed();
+                0
+            }
             Err(fault) => {
                 *info = serde_json::to_vec(&fault_json(&fault)).unwrap();
                 1

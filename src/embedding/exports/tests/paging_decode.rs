@@ -111,15 +111,19 @@ fn warm_paged_decode_reads_one_hierarchy_per_unchanged_leaf_span() {
         physical_counts::take();
         decode_and_check(&expected);
         assert_eq!(physical_counts::take(), counts, "{family}");
+        decode_and_check(&expected);
+        assert_eq!(physical_counts::take(), [0; 6], "retained {family}");
     }
 }
 
 #[test]
 fn cold_paged_decode_keeps_accessed_writes_and_their_revalidation() {
     for (family, counts) in [
-        ("ia32e", [30, 240, 4, 32, 4, 32]),
-        ("legacy32", [13, 52, 2, 8, 2, 8]),
-        ("pae", [13, 104, 2, 16, 2, 16]),
+        // First byte: hierarchy + A current-word OR + triangular rereads + final peek.
+        // Later bytes reuse that admitted retained translation.
+        ("ia32e", [22, 176, 4, 32, 4, 32]),
+        ("legacy32", [9, 36, 2, 8, 2, 8]),
+        ("pae", [9, 72, 2, 16, 2, 16]),
     ] {
         let expected = fixture(family, false, true);
         physical_counts::take();
@@ -129,7 +133,7 @@ fn cold_paged_decode_keeps_accessed_writes_and_their_revalidation() {
 }
 
 #[test]
-fn paged_decode_observes_a_warm_pte_remap_between_separate_calls() {
+fn paged_decode_retains_a_guest_pte_remap_until_invlpg() {
     fixture("ia32e", true, true);
     BRIDGE.with_borrow_mut(|bridge| {
         let core = bridge.core.as_mut().unwrap();
@@ -140,6 +144,14 @@ fn paged_decode_observes_a_warm_pte_remap_between_separate_calls() {
                 .unwrap();
         }
         core.image.physical_write(0x4008, 8, 0x8027).unwrap();
+        assert_mov(0, core.paged_decode(PC).unwrap());
+    });
+    assert_eq!(
+        paging::core_paging_control(4, Segment::Ds as u32, PC, PC, RF, 0),
+        0
+    );
+    BRIDGE.with_borrow_mut(|bridge| {
+        let core = bridge.core.as_mut().unwrap();
         assert_mov(1, core.paged_decode(PC).unwrap());
         assert_eq!(core.paging.unwrap().cr2, 0xdead);
         assert_eq!(unsafe { (*core.state.get()).flags }, RF);

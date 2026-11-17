@@ -6,8 +6,9 @@ impl Core {
         &mut self,
         pc: u64,
     ) -> Result<crate::x86::instruction::Instruction, DecodeError> {
-        let paging = self.paging.as_ref().expect("paged decode profile");
+        let paging = self.paging.expect("paged decode profile");
         let context = &self.context;
+        let cache = &self.translation_cache;
         let pg0 = paging.cr0 & (1 << 31) == 0;
         let final_byte = |image: &Image, request: paging::walk::Request, physical| {
             image.physical_fetch(physical).map_err(|fault| {
@@ -36,45 +37,50 @@ impl Core {
                 class: paging::walk::AccessClass::operand(context.cpl(), false),
             };
             if pg0 {
-                // PG0 cannot write A bits, but still admits this exact required byte.
                 let translation =
-                    paging::walk::fetch_walk(&mut self.image, paging, request, |_| true)
+                    paging::walk::fetch_walk(&mut self.image, &paging, request, |_| true)
                         .map_err(DecodeError::Paging)?
                         .ok_or(DecodeError::PagingRestart)?;
                 return final_byte(&self.image, request, translation.physical);
             }
-            // Only an A write can mutate memory between these synchronous required bytes.
-            let physical = if let Some((base, physical, remaining)) = warm_span
+            if let Some((base, physical, remaining)) = warm_span
                 && linear >= base
                 && linear - base < remaining
             {
-                physical + (linear - base)
-            } else {
-                warm_span = None;
-                let mut accessed_write = false;
-                let translation =
-                    paging::walk::fetch_walk(&mut self.image, paging, request, |image| {
-                        accessed_write = true;
-                        reuse_warm = false;
-                        encoding_current(image, paging, &consumed, request.class)
-                    })
-                    .map_err(DecodeError::Paging)?
-                    .ok_or(DecodeError::PagingRestart)?;
-                // Only an A write can change encoding during this synchronous byte fetch.
-                if accessed_write
-                    && (!encoding_current(&self.image, paging, &consumed, request.class)
-                        || !paging::walk::peek(&self.image, paging, request)
-                            .is_ok_and(|fresh| fresh.physical == translation.physical))
-                {
-                    return Err(DecodeError::PagingRestart);
-                }
-                if reuse_warm {
-                    warm_span = Some((linear, translation.physical, translation.remaining));
-                }
-                translation.physical
+                let physical = physical + (linear - base);
+                let byte = final_byte(&self.image, request, physical)?;
+                consumed.push((linear, physical, byte));
+                return Ok(byte);
+            }
+            warm_span = None;
+            let mut accessed_write = false;
+            let translation = match cache
+                .lookup(&paging, request)
+                .map_err(DecodeError::Paging)?
+            {
+                Some(translation) => translation,
+                None => paging::walk::fetch_walk(&mut self.image, &paging, request, |image| {
+                    accessed_write = true;
+                    reuse_warm = false;
+                    encoding_current(image, &paging, cache, &consumed, request.class)
+                })
+                .map_err(|failure| DecodeError::Paging(cache.fault(&paging, failure)))?
+                .ok_or(DecodeError::PagingRestart)?,
             };
-            let byte = final_byte(&self.image, request, physical)?;
-            consumed.push((linear, physical, byte));
+            if accessed_write
+                && (!encoding_current(&self.image, &paging, cache, &consumed, request.class)
+                    || !cache
+                        .peek(&self.image, &paging, request)
+                        .is_ok_and(|fresh| fresh.physical == translation.physical))
+            {
+                return Err(DecodeError::PagingRestart);
+            }
+            let byte = final_byte(&self.image, request, translation.physical)?;
+            let translation = cache.fill(&paging, request, translation);
+            if reuse_warm {
+                warm_span = Some((linear, translation.physical, translation.remaining));
+            }
+            consumed.push((linear, translation.physical, byte));
             Ok(byte)
         })
     }
@@ -139,6 +145,8 @@ impl Core {
         self.paging_failure = Some(failure);
         match failure {
             Failure::Page(fault) => {
+                self.translation_cache
+                    .fault(self.paging.as_ref().expect("paged fault"), failure);
                 self.paging
                     .as_mut()
                     .expect("page fault belongs to paged execution")
@@ -153,20 +161,22 @@ impl Core {
 fn encoding_current(
     image: &Image,
     paging: &paging::State,
+    cache: &paging::cache::Cache,
     bytes: &[(u64, u64, u8)],
     class: paging::walk::AccessClass,
 ) -> bool {
     bytes.iter().all(|&(linear, physical, byte)| {
-        paging::walk::peek(
-            image,
-            paging,
-            paging::walk::Request {
-                linear,
-                access: Access::Execute,
-                class,
-            },
-        )
-        .is_ok_and(|translation| translation.physical == physical)
+        cache
+            .peek(
+                image,
+                paging,
+                paging::walk::Request {
+                    linear,
+                    access: Access::Execute,
+                    class,
+                },
+            )
+            .is_ok_and(|translation| translation.physical == physical)
             && image.physical_fetch(physical) == Ok(byte)
     })
 }
@@ -222,6 +232,19 @@ pub extern "C" fn core_paged_debug_begin(pc: u64, flags: u64, shadow: u32) -> i3
         }
         match core.paged_decode(pc) {
             Ok(instruction) if !core.image.active_changed() => {
+                core.reconcile_translation_changes();
+                if core
+                    .paging
+                    .is_some_and(|paging| paging.cr0 & (1 << 31) != 0)
+                    && core.active_owner.is_some_and(|owner| {
+                        !core
+                            .translation_owners
+                            .instruction_matches(owner, instruction)
+                    })
+                {
+                    core.invalidate_runtime_sources();
+                    return 26;
+                }
                 core.instruction_admission(instruction.operation, pc, true)
             }
             Ok(_) | Err(DecodeError::PagingRestart) => 26,
@@ -350,7 +373,7 @@ pub extern "C" fn core_import_paging() -> i32 {
             return bridge.error(message);
         }
         if previous.translation_changed(candidate) {
-            core.retire_translations();
+            core.revoke_host_translations();
         }
         if previous.numeric_controls() != candidate.numeric_controls() {
             core.context_changed();
@@ -387,6 +410,7 @@ pub extern "C" fn core_paging_control(
             });
             return super::super::layout::PROTECTION;
         }
+        let mut invalidation_target = None;
         let operation = match kind {
             0 => state.read_cr(register as u8).map(|v| (state, Some(v))),
             1 => {
@@ -446,14 +470,17 @@ pub extern "C" fn core_paging_control(
                 let Some(segment) = Segment::ALL.get(register as usize).copied() else {
                     return -1;
                 };
-                // INVLPG forms an address; it does not require canonicality or memory access.
-                if !core.context.is_long64() {
-                    if let Err(failure) =
-                        core.context
-                            .translate(value, 0, segment, Access::Read, false)
+                // Address formation has no target data access.
+                let linear = if !core.context.is_long64() {
+                    match core
+                        .context
+                        .translate(value, 0, segment, Access::Read, false)
                     {
-                        core.access_failure(failure);
-                        return SEGMENT;
+                        Ok(linear) => linear,
+                        Err(failure) => {
+                            core.access_failure(failure);
+                            return SEGMENT;
+                        }
                     }
                 } else {
                     let base = if matches!(segment, Segment::Fs | Segment::Gs) {
@@ -461,10 +488,13 @@ pub extern "C" fn core_paging_control(
                     } else {
                         0
                     };
-                    if !crate::memory::canonical48(value.wrapping_add(base)) {
+                    let linear = value.wrapping_add(base);
+                    if !crate::memory::canonical48(linear) {
                         return 0;
                     }
-                }
+                    linear
+                };
+                invalidation_target = Some(linear);
                 Ok((state, None))
             }
             5 => Ok((
@@ -517,8 +547,30 @@ pub extern "C" fn core_paging_control(
                 }
                 let context_changed = core.context != context;
                 core.context = context;
-                if kind == 4 || kind == 1 && register == 3 || state.translation_changed(candidate) {
-                    core.retire_translations();
+                let translation_changed = state.translation_changed(candidate);
+                if let Some(linear) = invalidation_target {
+                    core.translation_cache
+                        .invalidate_page(state.pcid(), linear, true);
+                } else if kind == 1 && register == 3 {
+                    let no_flush = state.cr4 & paging::CR4_PCIDE != 0
+                        && core.context.is_long64()
+                        && value & (1 << 63) != 0;
+                    if !no_flush {
+                        core.translation_cache.invalidate_pcid(candidate.pcid());
+                    }
+                } else if translation_changed {
+                    let only_pcide_enable = state.cr4 & paging::CR4_PCIDE == 0
+                        && candidate.cr4 & paging::CR4_PCIDE != 0
+                        && !state.translation_changed(paging::State {
+                            cr4: candidate.cr4 & !paging::CR4_PCIDE,
+                            ..candidate
+                        });
+                    if !only_pcide_enable {
+                        core.translation_cache.clear();
+                    }
+                }
+                if kind == 4 || kind == 1 && register == 3 || translation_changed {
+                    core.invalidate_runtime_sources();
                 } else if context_changed
                     || state.numeric_controls() != candidate.numeric_controls()
                 {

@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use crate::x86::context::ExecutionContext;
+use crate::x86::instruction::Instruction;
 
 #[derive(Debug)]
 struct Assumptions {
@@ -9,6 +10,7 @@ struct Assumptions {
     epoch: u64,
     published: bool,
     context_proven: bool,
+    instructions: Vec<Instruction>,
 }
 
 /// Compiled assumptions share the memory source owner's identity and lifetime.
@@ -36,6 +38,7 @@ impl Owners {
                 epoch,
                 published: false,
                 context_proven: false,
+                instructions: Vec::new(),
             },
         );
         true
@@ -43,6 +46,23 @@ impl Owners {
 
     pub fn contains(&self, owner: u64) -> bool {
         self.records.contains_key(&owner)
+    }
+
+    pub fn record_instructions(&mut self, owner: u64, instructions: Vec<Instruction>) -> bool {
+        let Some(record) = self.records.get_mut(&owner) else {
+            return false;
+        };
+        record.instructions = instructions;
+        true
+    }
+
+    pub fn instruction_matches(&self, owner: u64, instruction: Instruction) -> bool {
+        self.records.get(&owner).is_some_and(|record| {
+            record
+                .instructions
+                .binary_search_by_key(&instruction.pc, |i| i.pc)
+                .is_ok_and(|index| record.instructions[index] == instruction)
+        })
     }
 
     fn matches(record: &Assumptions, context: &ExecutionContext, observed: bool) -> bool {

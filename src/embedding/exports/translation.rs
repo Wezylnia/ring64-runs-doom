@@ -6,6 +6,7 @@ impl Core {
     }
 
     pub(super) fn publish_owner(&mut self, owner: u64) -> bool {
+        self.reconcile_translation_changes();
         if !self.image.owner_valid(owner) {
             return false;
         }
@@ -15,11 +16,17 @@ impl Core {
     }
 
     pub(super) fn activate_owner(&mut self, owner: u64) -> bool {
+        self.reconcile_translation_changes();
         let observed = self.boundary_observed();
-        self.translation_owners
+        let admitted = self
+            .translation_owners
             .admit(owner, &self.context, observed, || {
                 self.image.activate(owner)
-            })
+            });
+        if admitted {
+            self.active_owner = Some(owner);
+        }
+        admitted
     }
 
     pub(super) fn context_changed(&mut self) {
@@ -33,5 +40,34 @@ impl Core {
         self.image.retire_sources();
         self.translation_owners.clear();
         self.context_version = self.context_version.saturating_add(1);
+        self.active_owner = None;
+    }
+
+    pub(super) fn reconcile_translation_changes(&mut self) {
+        if self.translation_cache.take_changed() {
+            self.context_changed();
+        }
+    }
+
+    pub(super) fn invalidate_runtime_sources(&mut self) {
+        self.image.invalidate_sources();
+        self.translation_owners.clear();
+        self.active_owner = None;
+        self.context_version = self.context_version.saturating_add(1);
+    }
+
+    pub(super) fn revoke_host_translations(&mut self) {
+        self.translation_cache.clear();
+        self.paging_work.clear();
+        self.retire_translations();
+        self.translation_cache.take_changed();
+    }
+
+    pub(super) fn memory_admin_changed(&mut self) {
+        self.paging_work.clear();
+        if self.paging.is_some() {
+            self.translation_cache.clear();
+            self.reconcile_translation_changes();
+        }
     }
 }

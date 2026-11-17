@@ -4,7 +4,7 @@ impl Core {
     fn reset(&mut self) {
         // Retire proofs before replacing architectural banks. Keep Image and its
         // monotonic owner allocator: old pending handles can never name new code.
-        self.retire_translations();
+        self.revoke_host_translations();
         self.context = ExecutionContext::reset();
         self.paging = Some(crate::x86::paging::State::reset());
         self.fast_system = Default::default();

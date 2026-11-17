@@ -21,13 +21,14 @@ pub(crate) fn discover_with_context(
     entry: u64,
     limits: Limits,
 ) -> Result<Unit, CompileError> {
-    discover_with_profile(image, context, None, entry, limits)
+    discover_with_profile(image, context, None, None, entry, limits)
 }
 
 pub(crate) fn discover_with_profile(
     image: &Image,
     context: &ExecutionContext,
     paging: Option<&crate::x86::paging::State>,
+    cache: Option<&crate::x86::paging::cache::Cache>,
     entry: u64,
     limits: Limits,
 ) -> Result<Unit, CompileError> {
@@ -69,8 +70,11 @@ pub(crate) fn discover_with_profile(
                         access: Access::Execute,
                         class: crate::x86::paging::walk::AccessClass::operand(context.cpl(), false),
                     };
-                    let translated = crate::x86::paging::walk::peek(image, paging, request)
-                        .map_err(DecodeError::Paging)?;
+                    let translated = match cache {
+                        Some(cache) => cache.peek(image, paging, request),
+                        None => crate::x86::paging::walk::peek(image, paging, request),
+                    }
+                    .map_err(DecodeError::Paging)?;
                     let byte = image
                         .physical_fetch(translated.physical)
                         .map_err(DecodeError::Fetch)?;

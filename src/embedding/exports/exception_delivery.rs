@@ -234,7 +234,8 @@ pub extern "C" fn core_deliver_exception() -> i32 {
                 cpl,
                 flags,
                 &mut core.paging_work,
-            );
+            )
+            .with_cache(&core.translation_cache);
             let outcome = match event {
                 EventState::Pending(event) => {
                     event::enter_exception(&mut core.context, &mut memory, event, sp, flags)

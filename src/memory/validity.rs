@@ -239,6 +239,13 @@ impl Image {
         self.refresh_watchers();
     }
 
+    /// A runtime fence must survive until the currently executing body exits.
+    pub fn invalidate_sources(&mut self) {
+        let active = self.validity.active.is_some() || self.validity.active_invalid;
+        self.retire_sources();
+        self.validity.active_invalid = active;
+    }
+
     pub fn release(&mut self, owner: u64) {
         self.validity.owners.remove(&owner);
         if self.validity.active == Some(owner) {
@@ -262,6 +269,20 @@ impl Image {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn repeated_runtime_fences_keep_the_active_exit_until_a_new_activation() {
+        let mut image = Image::new(0x1000, vec![0x90; 8], 0x4000, vec![0; 8]).unwrap();
+        let owner = image.register_source([(0x1000, 1)]).unwrap();
+        assert!(image.activate(owner));
+        image.invalidate_sources();
+        image.invalidate_sources();
+        assert!(image.active_changed());
+        assert!(!image.owner_valid(owner));
+        let fresh = image.register_source([(0x1000, 1)]).unwrap();
+        assert!(image.activate(fresh));
+        assert!(!image.active_changed());
+    }
 
     #[test]
     fn source_union_retains_gaps_and_reclaims_released_owners() {

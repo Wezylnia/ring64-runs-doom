@@ -85,7 +85,7 @@ test('real core validates the complete normalized import atomically while CR2 re
     for (const changed of [
       { cr0: 0n },
       { cr0: before.cr0 | 0x40n },
-      { cr3: 0x1001n },
+      { cr3: 1n << 63n },
       { cr3: 1n << 52n },
       { cr4: 0n },
       { efer: 0x100n },

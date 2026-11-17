@@ -198,6 +198,8 @@ pub extern "C" fn core_init_mapped(entry: u64, metadata_len: u32) -> i32 {
             paging,
             physical_controls,
             paging_work: Default::default(),
+            translation_cache: Default::default(),
+            active_owner: None,
             paging_failure: None,
             pdpte_load_fault: None,
             paging_system: None,
@@ -241,7 +243,10 @@ pub extern "C" fn core_add_backing(metadata_len: u32) -> i32 {
             image.add_backing(id.into(), copy(input)?)
         })();
         match result {
-            Ok(()) => 0,
+            Ok(()) => {
+                bridge.core.as_mut().unwrap().memory_admin_changed();
+                0
+            }
             Err(error) => memory_error(bridge, error),
         }
     })
@@ -260,7 +265,10 @@ pub extern "C" fn core_remove_backing() -> i32 {
                 .remove_backing(name(&id)?)
         })();
         match result {
-            Ok(()) => 0,
+            Ok(()) => {
+                bridge.core.as_mut().unwrap().memory_admin_changed();
+                0
+            }
             Err(error) => memory_error(bridge, error),
         }
     })
@@ -275,7 +283,10 @@ pub extern "C" fn core_set_mappings() -> i32 {
             image.set_mappings(inputs)
         })();
         match result {
-            Ok(()) => 0,
+            Ok(()) => {
+                bridge.core.as_mut().unwrap().memory_admin_changed();
+                0
+            }
             Err(error) => memory_error(bridge, error),
         }
     })

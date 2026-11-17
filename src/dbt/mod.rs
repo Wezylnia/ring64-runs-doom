@@ -26,6 +26,8 @@ pub struct Artifact {
     pub source_bytes: usize,
     pub source_ranges: Vec<SourceRange>,
     pub read_dependencies: Vec<SourceRange>,
+    #[cfg(any(target_arch = "wasm32", test))]
+    pub(crate) instructions: Vec<crate::x86::instruction::Instruction>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -70,7 +72,32 @@ pub fn compile_with_paging(
     limits: Limits,
     observed: bool,
 ) -> Result<Artifact, CompileError> {
-    let unit = discovery::discover_with_profile(image, context, paging, entry, limits)?;
+    compile_profile(image, context, paging, None, entry, limits, observed)
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+pub(crate) fn compile_with_paging_cache(
+    image: &Image,
+    context: &ExecutionContext,
+    paging: Option<&crate::x86::paging::State>,
+    cache: &crate::x86::paging::cache::Cache,
+    entry: u64,
+    limits: Limits,
+    observed: bool,
+) -> Result<Artifact, CompileError> {
+    compile_profile(image, context, paging, Some(cache), entry, limits, observed)
+}
+
+fn compile_profile(
+    image: &Image,
+    context: &ExecutionContext,
+    paging: Option<&crate::x86::paging::State>,
+    cache: Option<&crate::x86::paging::cache::Cache>,
+    entry: u64,
+    limits: Limits,
+    observed: bool,
+) -> Result<Artifact, CompileError> {
+    let unit = discovery::discover_with_profile(image, context, paging, cache, entry, limits)?;
     let bytes = wasm::emit_profile(&unit, observed, paging.is_some());
     if bytes.len() > limits.max_artifact_bytes as usize {
         return Err(CompileError::Resource);
@@ -86,6 +113,8 @@ pub fn compile_with_paging(
         source_bytes: unit.source_bytes,
         source_ranges: unit.source_ranges,
         read_dependencies: unit.read_dependencies,
+        #[cfg(any(target_arch = "wasm32", test))]
+        instructions: unit.instructions,
         bytes,
     })
 }
