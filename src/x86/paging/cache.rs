@@ -12,6 +12,10 @@ const CAPACITY: usize = 64;
 #[path = "cache_review_tests.rs"]
 mod review_tests;
 
+#[cfg(test)]
+#[path = "cache_work_tests.rs"]
+mod work_tests;
+
 #[derive(Clone, Copy)]
 struct Entry {
     translation: Translation,
