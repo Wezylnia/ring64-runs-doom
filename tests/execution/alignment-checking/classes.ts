@@ -56,6 +56,7 @@ export const packets: Packet[] = [
     si: true,
   },
   { name: 'MMX MOVD', code: '0f6e03', at: 0x6002n, width: 4, granule: 4 },
+  { name: 'MMX PALIGNR', code: '0f3a0f03ff', at: 0x6004n, width: 8, granule: 8 },
   { name: 'MMX MOVQ', code: '0f6f03', at: 0x6004n, width: 8, granule: 8 },
   { name: 'MMX bridge CVTPI2PS', code: '0f2a03', at: 0x6004n, width: 8, granule: 8 },
   { name: 'MMX bridge CVTPS2PI', code: '0f2d03', at: 0x6004n, width: 8, granule: 8 },
@@ -163,7 +164,7 @@ export function classScenarios(compiler: WebAssembly.Module): Scenario[] {
               clock(cpu, 101n);
             });
           }
-        for (const code of ['0f2803', '660f2803', '660f6f03', '660f2d03'])
+        for (const code of ['0f2803', '660f2803', '660f6f03', '660f2d03', '660f3a0f03ff'])
           for (const ac of [false, true]) {
             const f = fixture(compiler, code);
             await using(side, f, async (cpu) => {
