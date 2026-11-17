@@ -313,6 +313,7 @@ type CoreExports = WebAssembly.Exports & {
   ): number;
   core_invpcid(segment: number, offset: bigint, kind: bigint, flags: bigint): number;
   core_processor(kind: number, eax: number, ecx: number, retired: bigint): number;
+  core_protection_key(kind: number, eax: number, ecx: number, edx: number): number;
   core_io(
     descriptor: number,
     port: number,
@@ -841,6 +842,7 @@ export class Core {
         'core_vector_store',
         'core_clear_fault',
         'core_processor',
+        'core_protection_key',
         'core_probe',
         'core_compile',
         'core_load',
@@ -1401,6 +1403,7 @@ export class Core {
       paging_control: this.#exports.core_paging_control,
       invpcid: this.#exports.core_invpcid,
       processor: this.#exports.core_processor,
+      protection_key: this.#exports.core_protection_key,
       debug_begin: this.#exports.core_debug_begin,
       external_step: this.#exports.core_external_step,
       halt: this.#exports.core_halt,

@@ -16,11 +16,11 @@ pub extern "C" fn core_processor(kind: u32, eax: u32, ecx: u32, retired: u64) ->
         }
         let raw = unsafe { &mut *core.state.get() };
         if kind == 0 {
-            for (slot, value) in raw
-                .vector_scratch
-                .chunks_exact_mut(4)
-                .zip(processor::cpuid(eax, ecx))
-            {
+            for (slot, value) in raw.vector_scratch.chunks_exact_mut(4).zip(processor::cpuid(
+                eax,
+                ecx,
+                core.paging.map_or(0, |state| state.cr4),
+            )) {
                 slot.copy_from_slice(&value.to_le_bytes());
             }
         } else {

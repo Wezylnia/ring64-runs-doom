@@ -20,6 +20,7 @@ mod numeric_state;
 mod paging;
 mod processor;
 mod protection;
+mod protection_keys;
 mod software_events;
 mod stack;
 mod state;
@@ -101,6 +102,7 @@ struct Emitter {
     paging_control: Option<u32>,
     invpcid: Option<u32>,
     processor: Option<u32>,
+    protection_key: Option<u32>,
     fast_system: Option<u32>,
     debug_begin: Option<u32>,
     external_step: Option<u32>,
@@ -321,6 +323,10 @@ pub(crate) fn emit_profile(unit: &Unit, observed: bool, paged: bool) -> Vec<u8> 
         .instructions
         .iter()
         .any(|i| matches!(i.operation, Operation::Processor(_)));
+    let has_protection_key = unit
+        .instructions
+        .iter()
+        .any(|i| matches!(i.operation, Operation::ProtectionKey(_)));
     let has_system_flags = unit
         .instructions
         .iter()
@@ -492,6 +498,12 @@ pub(crate) fn emit_profile(unit: &Unit, observed: bool, paged: bool) -> Vec<u8> 
             [ValType::I32, ValType::I32, ValType::I32, ValType::I64],
             [ValType::I32],
         );
+        next_type += 1;
+        index
+    });
+    let protection_key_type = has_protection_key.then(|| {
+        let index = next_type;
+        types.ty().function([ValType::I32; 4], [ValType::I32]);
         next_type += 1;
         index
     });
@@ -835,6 +847,12 @@ pub(crate) fn emit_profile(unit: &Unit, observed: bool, paged: bool) -> Vec<u8> 
         run_index += 1;
         function
     });
+    let protection_key = protection_key_type.map(|index| {
+        imports.import("env", "protection_key", EntityType::Function(index));
+        let function = run_index;
+        run_index += 1;
+        function
+    });
     let debug_begin = debug_begin_type.map(|index| {
         imports.import("env", "debug_begin", EntityType::Function(index));
         let function = run_index;
@@ -944,6 +962,7 @@ pub(crate) fn emit_profile(unit: &Unit, observed: bool, paged: bool) -> Vec<u8> 
         paging_control,
         invpcid,
         processor,
+        protection_key,
         fast_system,
         debug_begin,
         external_step,
@@ -1004,6 +1023,7 @@ pub(crate) fn emit_profile(unit: &Unit, observed: bool, paged: bool) -> Vec<u8> 
         emitter.gates(exit_depth);
         emitter.begin(instruction.operation, exit_depth);
         match instruction.operation {
+            Operation::ProtectionKey(operation) => emitter.protection_key(operation, exit_depth),
             Operation::Processor(operation) => {
                 emitter.processor(operation, exit_depth);
                 if operation == crate::x86::processor::Instruction::Cpuid {

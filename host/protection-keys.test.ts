@@ -314,6 +314,38 @@ test('protection-key imports preserve historical fault, IRQ, NMI, shadow and hal
   }
 });
 
+test('protection-key banks remain independent across concurrently alive CPUs', async () => {
+  for (const model of ['linear', 'ia32e-paged', 'physical'] as const) {
+    const first = await createCpu(options(model));
+    let second: Cpu | undefined;
+    try {
+      first.setProtectionKeysState({ pkru: 0xffffffff, pkrs: 0x80000000 });
+      second = await createCpu(options(model));
+      assert.deepEqual(first.readProtectionKeysState(), {
+        pkru: 0xffffffff,
+        pkrs: 0x80000000,
+      });
+      assert.deepEqual(second.readProtectionKeysState(), { pkru: 0, pkrs: 0 });
+      second.setProtectionKeysState({ pkru: 0xaaaaaaaa, pkrs: 0x55555555 });
+      first.setProtectionKeysState({ pkru: 3, pkrs: 12 });
+      assert.deepEqual(first.readProtectionKeysState(), { pkru: 3, pkrs: 12 });
+      assert.deepEqual(second.readProtectionKeysState(), {
+        pkru: 0xaaaaaaaa,
+        pkrs: 0x55555555,
+      });
+      if (model === 'physical') first.reset();
+      first.dispose();
+      assert.deepEqual(second.readProtectionKeysState(), {
+        pkru: 0xaaaaaaaa,
+        pkrs: 0x55555555,
+      });
+    } finally {
+      first.dispose();
+      second?.dispose();
+    }
+  }
+});
+
 test('running, failed and disposed CPUs reject key access before touching input', async () => {
   for (const fatal of [false, true]) {
     let cpu: Cpu | undefined;

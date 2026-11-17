@@ -807,9 +807,17 @@ pub enum PagingInstruction {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum ProtectionKeyInstruction {
+    Read = 0,
+    Write = 1,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Operation {
     Halt,
     Processor(super::processor::Instruction),
+    ProtectionKey(ProtectionKeyInstruction),
     Paging(PagingInstruction),
     FastSystem(crate::x86::fast_system::Instruction),
     DebugRegister {

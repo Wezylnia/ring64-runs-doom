@@ -405,6 +405,7 @@ test('required arithmetic and boundary helpers reject construction before core i
     'core_external_step',
     'core_halt',
     'core_processor',
+    'core_protection_key',
   ]) {
     const missing = await mockedCore(layout, 8192, undefined, name);
     missing.core?.dispose();

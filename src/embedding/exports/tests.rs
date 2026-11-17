@@ -15,6 +15,7 @@ mod far_plan_lifetime;
 mod paging_decode;
 mod processor;
 mod protection_bridge;
+mod protection_keys;
 mod reset;
 mod retained_source;
 mod software_events;

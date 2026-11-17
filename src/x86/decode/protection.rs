@@ -112,6 +112,17 @@ where
                 _ => return Err(DecodeError::Unsupported),
             },
             0x01 => {
+                if operands.mode == 3 && operands.selector == 5 && matches!(operands.rm & 7, 6 | 7)
+                {
+                    if prefixes.lock || prefixes.operand_override || prefixes.repeat.is_some() {
+                        return Err(DecodeError::UndefinedEncoding);
+                    }
+                    return Ok(Operation::ProtectionKey(if operands.rm & 7 == 6 {
+                        crate::x86::instruction::ProtectionKeyInstruction::Read
+                    } else {
+                        crate::x86::instruction::ProtectionKeyInstruction::Write
+                    }));
+                }
                 if operands.mode == 3 && operands.selector == 1 && matches!(operands.rm & 7, 2 | 3)
                 {
                     if prefixes.lock || prefixes.operand_override || prefixes.repeat.is_some() {
