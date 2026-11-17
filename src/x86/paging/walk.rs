@@ -104,17 +104,67 @@ pub enum Failure {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Rights {
+    pub user: bool,
+    pub writable: bool,
+    pub executable: bool,
+}
+
+impl Rights {
+    pub fn authorize(self, state: &State, request: Request) -> Result<(), Failure> {
+        let user_request = request.class.is_user();
+        let protection_denied = !user_request
+            && self.user
+            && if request.access == Access::Execute {
+                state.cr4 & CR4_SMEP != 0
+            } else {
+                state.cr4 & CR4_SMAP != 0
+                    && !matches!(request.class, AccessClass::Supervisor { ac: true })
+            };
+        if user_request && !self.user
+            || request.access == Access::Write
+                && !self.writable
+                && (user_request || state.cr0 & (1 << 16) != 0)
+            || request.access == Access::Execute && !self.executable
+            || protection_denied
+        {
+            Err(request.page_fault(state, true, false))
+        } else {
+            Ok(())
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Translation {
     pub physical: u64,
     pub leaf: u64,
     pub dirty: bool,
     pub remaining: u64,
     pub entry_width: u32,
+    pub linear_base: u64,
+    pub physical_base: u64,
+    pub span: u64,
+    pub rights: Rights,
+    pub global: bool,
+    pub accessed: bool,
+    pub cache_id: Option<u64>,
     entries: [u64; 4],
     count: usize,
 }
 
 impl Translation {
+    pub fn at(mut self, linear: u64) -> Self {
+        let offset = linear - self.linear_base;
+        self.physical = self.physical_base + offset;
+        self.remaining = self.span - offset;
+        self
+    }
+
+    pub fn contains(self, linear: u64) -> bool {
+        linear.wrapping_sub(self.linear_base) < self.span
+    }
+
     pub fn entries(&self) -> &[u64] {
         &self.entries[..self.count]
     }
@@ -221,6 +271,17 @@ fn walk_with<const EFFECTS: bool, const FETCH: bool>(
             dirty: false,
             remaining: (1u64 << 32) - request.linear,
             entry_width: 0,
+            linear_base: 0,
+            physical_base: 0,
+            span: 1u64 << 32,
+            rights: Rights {
+                user: true,
+                writable: true,
+                executable: true,
+            },
+            global: false,
+            accessed: false,
+            cache_id: None,
             entries: [0; 4],
             count: 0,
         }));
@@ -264,6 +325,7 @@ fn walk_paged_with<const EFFECTS: bool, const FETCH: bool, const IA32E: bool, co
     let mut user = true;
     let mut writable = true;
     let mut executable = true;
+    let mut accessed = true;
     let mut entries = [0; 4];
     let mut words = [0; 4];
     for (index, &shift) in shifts.iter().enumerate() {
@@ -318,28 +380,17 @@ fn walk_paged_with<const EFFECTS: bool, const FETCH: bool, const IA32E: bool, co
                 }
             }
         }
+        accessed &= EFFECTS || entry & ACCESSED != 0;
         user &= entry & 4 != 0;
         writable &= entry & 2 != 0;
         executable &= entry & (1 << 63) == 0;
         if leaf {
-            let user_request = request.class.is_user();
-            let protection_denied = !user_request
-                && user
-                && if request.access == Access::Execute {
-                    state.cr4 & CR4_SMEP != 0
-                } else {
-                    state.cr4 & CR4_SMAP != 0
-                        && !matches!(request.class, AccessClass::Supervisor { ac: true })
-                };
-            if user_request && !user
-                || request.access == Access::Write
-                    && !writable
-                    && (user_request || state.cr0 & (1 << 16) != 0)
-                || request.access == Access::Execute && !executable
-                || protection_denied
-            {
-                return Err(request.page_fault(state, true, false));
-            }
+            let rights = Rights {
+                user,
+                writable,
+                executable,
+            };
+            rights.authorize(state, request)?;
             let offset_mask = (1u64 << shift) - 1;
             return Ok(Some(Translation {
                 physical: (if entry_width == 4 && large {
@@ -351,6 +402,17 @@ fn walk_paged_with<const EFFECTS: bool, const FETCH: bool, const IA32E: bool, co
                 dirty: entry & DIRTY == 0,
                 remaining: (1u64 << shift) - (request.linear & offset_mask),
                 entry_width,
+                linear_base: request.linear & !offset_mask,
+                physical_base: if entry_width == 4 && large {
+                    (entry & 0xffc00000) | ((entry & 0x001fe000) << 19)
+                } else {
+                    entry & ADDRESS & !offset_mask
+                },
+                span: 1u64 << shift,
+                rights,
+                global: entry & (1 << 8) != 0,
+                accessed,
+                cache_id: None,
                 entries,
                 count: index + 1,
             }));
@@ -539,7 +601,8 @@ mod tests {
         fn trace<const EFFECTS: bool, const FETCH: bool>(
             state: &State,
             words: &[(u64, u64)],
-            expected: Translation,
+            mut expected: Translation,
+            accessed: bool,
             accesses: &[(u64, bool)],
         ) {
             let mut words: std::collections::HashMap<_, _> = words.iter().copied().collect();
@@ -562,6 +625,7 @@ mod tests {
             )
             .unwrap()
             .unwrap();
+            expected.accessed = accessed;
             assert_eq!(translated, expected);
             let expected_accesses: Vec<_> = accesses
                 .iter()
@@ -573,6 +637,7 @@ mod tests {
         // not a claim that its backing preflight/current-word OR is one memory read.
         let cases = [
             (
+                [false, true, true],
                 State {
                     cr3: 0x1000,
                     ..State::default()
@@ -597,6 +662,17 @@ mod tests {
                     entry_width: 8,
                     entries: [0x1000, 0x2000, 0x3000, 0x4008],
                     count: 4,
+                    linear_base: 0x1000,
+                    physical_base: 0xa000,
+                    span: 0x1000,
+                    rights: Rights {
+                        user: true,
+                        writable: true,
+                        executable: true,
+                    },
+                    global: false,
+                    accessed: false,
+                    cache_id: None,
                 },
                 vec![
                     (0x1000, false),
@@ -636,6 +712,7 @@ mod tests {
                 ],
             ),
             (
+                [false, true, true],
                 State {
                     cr0: 0x80000033,
                     cr2: 0,
@@ -654,6 +731,17 @@ mod tests {
                     entry_width: 8,
                     entries: [0x3000, 0x4008, 0, 0],
                     count: 2,
+                    linear_base: 0x1000,
+                    physical_base: 0xa000,
+                    span: 0x1000,
+                    rights: Rights {
+                        user: true,
+                        writable: true,
+                        executable: true,
+                    },
+                    global: false,
+                    accessed: false,
+                    cache_id: None,
                 },
                 vec![(0x3000, false), (0x4008, false)],
                 vec![
@@ -673,6 +761,7 @@ mod tests {
                 ],
             ),
             (
+                [false, true, true],
                 State {
                     cr0: 0x80000033,
                     cr2: 0,
@@ -691,6 +780,17 @@ mod tests {
                     entry_width: 4,
                     entries: [0x1000, 0x4004, 0, 0],
                     count: 2,
+                    linear_base: 0x1000,
+                    physical_base: 0xa000,
+                    span: 0x1000,
+                    rights: Rights {
+                        user: true,
+                        writable: true,
+                        executable: true,
+                    },
+                    global: false,
+                    accessed: false,
+                    cache_id: None,
                 },
                 vec![(0x1000, false), (0x4004, false)],
                 vec![
@@ -710,6 +810,7 @@ mod tests {
                 ],
             ),
             (
+                [false, false, false],
                 State {
                     cr3: 0xdead000,
                     cr4: 0x620,
@@ -726,19 +827,30 @@ mod tests {
                     entry_width: 0,
                     entries: [0; 4],
                     count: 0,
+                    linear_base: 0,
+                    physical_base: 0,
+                    span: 1u64 << 32,
+                    rights: Rights {
+                        user: true,
+                        writable: true,
+                        executable: true,
+                    },
+                    global: false,
+                    accessed: false,
+                    cache_id: None,
                 },
                 vec![],
                 vec![],
                 vec![],
             ),
         ];
-        for (state, cold, warm, geometry, reads, updates, coherent) in cases {
-            trace::<false, false>(&state, &cold, geometry, &reads);
-            trace::<true, false>(&state, &cold, geometry, &updates);
-            trace::<true, true>(&state, &cold, geometry, &coherent);
-            trace::<false, false>(&state, &warm, geometry, &reads);
-            trace::<true, false>(&state, &warm, geometry, &reads);
-            trace::<true, true>(&state, &warm, geometry, &reads);
+        for (readiness, state, cold, warm, geometry, reads, updates, coherent) in cases {
+            trace::<false, false>(&state, &cold, geometry, readiness[0], &reads);
+            trace::<true, false>(&state, &cold, geometry, readiness[1], &updates);
+            trace::<true, true>(&state, &cold, geometry, readiness[1], &coherent);
+            trace::<false, false>(&state, &warm, geometry, readiness[2], &reads);
+            trace::<true, false>(&state, &warm, geometry, readiness[2], &reads);
+            trace::<true, true>(&state, &warm, geometry, readiness[2], &reads);
         }
     }
 
