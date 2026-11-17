@@ -1,4 +1,6 @@
 use super::*;
+
+mod extended;
 use crate::embedding::layout::{ALIGNMENT, GENERAL_PROTECTION};
 use crate::x86::numeric_images::{self, ImageOp};
 
@@ -41,6 +43,9 @@ fn core_numeric_image_impl<const OBSERVED: bool, const PAGED: bool>(
             state.fault_segment = Segment::Cs as u32;
             state.x87
         };
+        if operation.is_xstate() {
+            return extended::execute::<OBSERVED, PAGED>(core, operation, offset, segment);
+        }
         if operation.is_waiting() && before.pending() != 0 {
             return core.pending_x87_reason();
         }
