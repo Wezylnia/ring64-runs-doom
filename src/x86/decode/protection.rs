@@ -113,7 +113,12 @@ where
             },
             0x01 => {
                 if operands.mode == 3 && operands.selector == 2 && operands.rm & 7 <= 1 {
-                    if prefixes.lock || prefixes.operand_override || prefixes.repeat.is_some() {
+                    // The linear profile has no CR4 owner, hence OSXSAVE is always clear.
+                    if !prefixes.paged
+                        || prefixes.lock
+                        || prefixes.operand_override
+                        || prefixes.repeat.is_some()
+                    {
                         return Err(DecodeError::UndefinedEncoding);
                     }
                     return Ok(Operation::Processor(if operands.rm & 7 == 0 {

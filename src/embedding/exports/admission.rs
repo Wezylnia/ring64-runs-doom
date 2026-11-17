@@ -1,5 +1,6 @@
 use super::*;
 use crate::x86::instruction::Operation;
+use crate::x86::processor::Instruction as Processor;
 
 impl Core {
     // These checks precede the generated instruction-begin/RF effect. Numeric
@@ -10,22 +11,23 @@ impl Core {
         pc: u64,
         reached: bool,
     ) -> i32 {
-        match operation {
+        let needs_osxsave = match operation {
             Operation::DebugRegister { register, .. }
                 if self.debug_register_admission(register) != 0 =>
             {
                 return INVALID;
             }
-            Operation::NumericImage { op, .. }
-                if op.is_xstate()
-                    && self
-                        .paging
-                        .is_none_or(|bank| bank.cr4 & crate::x86::paging::CR4_OSXSAVE == 0) =>
-            {
-                self.decode_fault = Some(crate::x86::decode::DecodeFault::UndefinedOpcode);
-                return INVALID;
-            }
-            _ => {}
+            Operation::NumericImage { op, .. } => op.is_xstate(),
+            Operation::Processor(Processor::Xgetbv | Processor::Xsetbv) => true,
+            _ => false,
+        };
+        if needs_osxsave
+            && self
+                .paging
+                .is_none_or(|bank| bank.cr4 & crate::x86::paging::CR4_OSXSAVE == 0)
+        {
+            self.decode_fault = Some(crate::x86::decode::DecodeFault::UndefinedOpcode);
+            return INVALID;
         }
         // Both callers clear diagnostics first; NE1/all-enabled needs no saved numeric PC.
         if self

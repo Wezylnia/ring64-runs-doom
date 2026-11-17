@@ -202,15 +202,15 @@ fn xcr_control_encodings_ignore_rex_register_extensions_and_require_np() {
             let context = context(mode, false);
             for paged in [false, true] {
                 let decode = |code: &[u8]| decoded(code, paged, &context).map(|i| i.operation);
-                assert_eq!(
-                    decode(&[0x0f, 1, modrm]),
+                let admission = if paged {
                     Ok(Operation::Processor(expected))
-                );
+                } else {
+                    Err(DecodeError::UndefinedEncoding)
+                };
+                assert_eq!(decode(&[0x0f, 1, modrm]), admission);
+                assert_eq!(decode(&[0x0f, 1]), Err(DecodeError::Fetch(missing(0x1002))));
                 if mode == Mode::Long64 {
-                    assert_eq!(
-                        decode(&[0x4f, 0x0f, 1, modrm]),
-                        Ok(Operation::Processor(expected))
-                    );
+                    assert_eq!(decode(&[0x4f, 0x0f, 1, modrm]), admission);
                 }
                 for prefix in [0xf0, 0x66, 0xf2, 0xf3] {
                     assert_eq!(

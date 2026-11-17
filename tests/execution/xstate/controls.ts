@@ -19,6 +19,70 @@ import {
 
 export function controlScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [
+    ...(['ia32e', 'linear'] as const).map((family) => ({
+      name: 'XSTATE disabled controls preserve RF before instruction begin in ' + family,
+      async run() {
+        const profile: Profile = { mode: 'long64', bits: 64, family };
+        for (const instruction of ['0f01d0', '0f01d1']) {
+          await using({ createCpu, compiler }, '90' + instruction + '90', profile, async (cpu) => {
+            const entry = PC + 1n;
+            if (family === 'ia32e') {
+              const p = cpu.readPagingState();
+              cpu.setPagingState({ ...p, cr4: p.cr4 | OSXSAVE });
+            }
+            // Warm the same observed translation before pointing DR0 at the middle entry.
+            cpu.setDebugState({ addresses: [0n, 0n, 0n, 0n], dr6: 0n, dr7: 0x401n });
+            cpu.setState(input(profile));
+            await run(cpu, 1);
+            const owner = cpu.inspectTranslations().find((unit) => unit.entries.includes(PC))!;
+            if (family === 'ia32e') {
+              same(owner.entries.includes(entry), true, 'enabled control has a middle entry');
+              const p = cpu.readPagingState();
+              cpu.setPagingState({ ...p, cr4: p.cr4 & ~OSXSAVE });
+            }
+            cpu.setDebugState({ addresses: [entry, 0n, 0n, 0n], dr6: 0n, dr7: 0x401n });
+            const before = { ...input(profile, entry), flags: 0x202n };
+            cpu.setState(before);
+            const hit = await cpu.run({ budget: 1n });
+            same(
+              [hit.reason, hit.debugException?.cause, hit.retired],
+              ['debug-exception', 'execution-breakpoint', 0n],
+              'RF clear exposes the execute breakpoint first',
+            );
+            const resumed = { ...before, flags: 0x10202n };
+            cpu.setState(resumed);
+            const fault = await cpu.run({ budget: 1n });
+            same(
+              [fault.reason, fault.retired, fault.remaining, fault.resources.compilations],
+              ['invalid-encoding', 0n, 1n, 0],
+              'disabled control is refused before compilation',
+            );
+            same(fault.state, resumed, 'report preserves incoming RF, RIP and register bank');
+            same(cpu.readXcr0(), 1n, 'control fault preserves XCR0');
+            const staged = await cpu.run({ budget: 1n, eventDelivery: { budget: 0n } });
+            same(
+              staged.state.event,
+              {
+                kind: 'pending',
+                exception: {
+                  vector: 6,
+                  instructionPc: entry,
+                  returnPc: entry,
+                  savedFlags: 0x10202n,
+                },
+              },
+              'selected UD carries pre-instruction flags',
+            );
+            same(staged.state.flags, 0x202n, 'selection clears live RF');
+            same(
+              cpu.inspectTranslations().some((unit) => unit.owner === owner.owner),
+              true,
+              'disabled controls retain the prefix owner',
+            );
+          });
+        }
+      },
+    })),
     {
       name: 'XSTATE discovery reflects guest CR4 and every legal XCR0, including readback after disable and re-enable',
       async run() {
