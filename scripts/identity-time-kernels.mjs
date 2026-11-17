@@ -224,7 +224,7 @@ function initial(cpu, row) {
   state.interrupts = { irq: null, nmiPending: false, nmiBlocked: false };
   return state;
 }
-function expected(row, state) {
+function expected(row, state, maximumBasicLeaf) {
   const scalar = structuredClone(state),
     r = scalar.registers;
   let tsc = (INITIAL_TSC + row.retired) & MAX,
@@ -245,7 +245,8 @@ function expected(row, state) {
       r[2] = sample >> 32n;
       if (row.op === 'rdtscp') r[1] = BigInt(AUX);
     }
-    if (row.op === 'cpuid') [r[0], r[3], r[1], r[2]] = [7n, 0x676e6952n, 0x656e6967n, 0x6e453436n];
+    if (row.op === 'cpuid')
+      [r[0], r[3], r[1], r[2]] = [maximumBasicLeaf, 0x676e6952n, 0x656e6967n, 0x6e453436n];
     if (row.op === 'aux-read') {
       r[0] = BigInt(AUX);
       r[2] = 0n;
@@ -278,6 +279,7 @@ async function transport(compiler) {
   );
   api.core_dispose();
   return {
+    maximumBasicLeaf: descriptor.xcr0 === undefined ? 7 : 13,
     stateBytes: descriptor.size,
     scalarBytes: descriptor.scalarSize,
     timeBank: descriptor.time,
@@ -310,7 +312,7 @@ export async function measureIdentityTime(side, knobs) {
         originalContext = cpu.readContext();
       for (let sample = -1; sample < knobs.samples; sample++) {
         const state = initial(cpu, row),
-          wanted = expected(row, state);
+          wanted = expected(row, state, BigInt(layout.maximumBasicLeaf));
         cpu.setState(state);
         cpu.setTimeState({ tsc: INITIAL_TSC, tscAux: AUX });
         equal(

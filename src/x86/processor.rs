@@ -22,16 +22,35 @@ pub struct TimeState {
     pub tsc_aux: u32,
 }
 
-pub fn cpuid(eax: u32, ecx: u32, cr4: u64) -> [u32; 4] {
+pub fn cpuid(eax: u32, ecx: u32, cr4: u64, xcr0: u64) -> [u32; 4] {
     match eax {
-        0 => [7, 0x676e6952, 0x656e6967, 0x6e453436],
-        1 => [0, 0, 0x00020200, 0x00002010],
+        0 => [0xd, 0x676e6952, 0x656e6967, 0x6e453436],
+        1 => [
+            0,
+            0,
+            0x04020200 | (u32::from(cr4 & paging::CR4_OSXSAVE != 0) << 27),
+            0x00002010,
+        ],
         7 if ecx == 0 => [
             0,
             0x00102480,
             0x80000008 | if cr4 & (1 << 22) != 0 { 1 << 4 } else { 0 },
             0,
         ],
+        0xd => match ecx {
+            0 => [
+                super::xstate::SUPPORTED as u32,
+                if xcr0 & (1 << 9) != 0 {
+                    super::xstate::MAX_BYTES
+                } else {
+                    super::xstate::PKRU_OFFSET
+                } as u32,
+                super::xstate::MAX_BYTES as u32,
+                0,
+            ],
+            9 => [8, super::xstate::PKRU_OFFSET as u32, 0, 0],
+            _ => [0; 4],
+        },
         0x80000000 => [0x80000001, 0, 0, 0],
         0x80000001 => [0, 0, 0, 0x08000000],
         _ => [0; 4],
@@ -101,11 +120,11 @@ mod tests {
     #[test]
     fn paging_identity_discloses_only_the_completed_translation_facilities() {
         assert_eq!(
-            cpuid(1, 0, 0),
-            [0, 0, (1 << 17) | (1 << 9), (1 << 13) | (1 << 4)]
+            cpuid(1, 0, 0, 1),
+            [0, 0, (1 << 26) | (1 << 17) | (1 << 9), (1 << 13) | (1 << 4)]
         );
         assert_eq!(
-            cpuid(7, 0, 0),
+            cpuid(7, 0, 0, 1),
             [
                 0,
                 (1 << 20) | (1 << 13) | (1 << 10) | (1 << 7),
@@ -118,12 +137,12 @@ mod tests {
     #[test]
     fn supervisor_protection_disclosure_uses_the_live_structured_subleaf() {
         assert_eq!(
-            cpuid(0, u32::MAX, 0),
-            [7, 0x676e6952, 0x656e6967, 0x6e453436]
+            cpuid(0, u32::MAX, 0, 1),
+            [0xd, 0x676e6952, 0x656e6967, 0x6e453436]
         );
-        assert_eq!(cpuid(7, 0, 0), [0, 0x00102480, 0x80000008, 0]);
+        assert_eq!(cpuid(7, 0, 0, 1), [0, 0x00102480, 0x80000008, 0]);
         for subleaf in [1, 2, 0x80000000, u32::MAX] {
-            assert_eq!(cpuid(7, subleaf, 0), [0; 4], "subleaf {subleaf:x}");
+            assert_eq!(cpuid(7, subleaf, 0, 1), [0; 4], "subleaf {subleaf:x}");
         }
     }
 
@@ -131,24 +150,44 @@ mod tests {
     fn protection_keys_identity_tracks_only_live_pke_at_the_structured_leaf() {
         for cr4 in [0, 1 << 22, 1 << 24, (1 << 22) | (1 << 24), u64::MAX] {
             let expected = 0x80000008 | if cr4 & (1 << 22) != 0 { 0x10 } else { 0 };
-            assert_eq!(cpuid(7, 0, cr4), [0, 0x102480, expected, 0]);
+            assert_eq!(cpuid(7, 0, cr4, 1), [0, 0x102480, expected, 0]);
             for subleaf in [1, 2, u32::MAX] {
-                assert_eq!(cpuid(7, subleaf, cr4), [0; 4]);
+                assert_eq!(cpuid(7, subleaf, cr4, 1), [0; 4]);
             }
-            assert_eq!(cpuid(0, 0, cr4), [7, 0x676e6952, 0x656e6967, 0x6e453436]);
+            assert_eq!(
+                cpuid(0, 0, cr4, 1),
+                [0xd, 0x676e6952, 0x656e6967, 0x6e453436]
+            );
+        }
+    }
+
+    #[test]
+    fn standard_xsave_discovery_uses_independent_osxsave_and_xcr0_authorities() {
+        for cr4 in [0, paging::CR4_OSXSAVE] {
+            for (xcr0, enabled_bytes) in [(1, 576), (3, 576), (0x201, 584), (0x203, 584)] {
+                assert_eq!(
+                    cpuid(1, 0, cr4, xcr0)[2] >> 26,
+                    if cr4 == 0 { 1 } else { 3 }
+                );
+                assert_eq!(cpuid(0xd, 0, cr4, xcr0), [0x203, enabled_bytes, 584, 0]);
+                assert_eq!(cpuid(0xd, 9, cr4, xcr0), [8, 576, 0, 0]);
+                for subleaf in [1, 2, 8, 10, 63, u32::MAX] {
+                    assert_eq!(cpuid(0xd, subleaf, cr4, xcr0), [0; 4]);
+                }
+            }
         }
     }
 
     #[test]
     fn identification_is_literal_and_ignores_unclaimed_subleaves() {
         for (leaf, expected) in [
-            (0, [7, 0x676e6952, 0x656e6967, 0x6e453436]),
-            (1, [0, 0, 0x00020200, 0x00002010]),
+            (0, [0xd, 0x676e6952, 0x656e6967, 0x6e453436]),
+            (1, [0, 0, 0x04020200, 0x00002010]),
             (0x80000000, [0x80000001, 0, 0, 0]),
             (0x80000001, [0, 0, 0, 0x08000000]),
         ] {
             for subleaf in [0, 1, 0x80000000, u32::MAX] {
-                assert_eq!(cpuid(leaf, subleaf, 0), expected, "{leaf:x}/{subleaf:x}");
+                assert_eq!(cpuid(leaf, subleaf, 0, 1), expected, "{leaf:x}/{subleaf:x}");
             }
         }
         for leaf in [
@@ -162,9 +201,9 @@ mod tests {
             0x80000008,
             u32::MAX,
         ] {
-            assert_eq!(cpuid(leaf, u32::MAX, 0), [0; 4], "{leaf:x}");
+            assert_eq!(cpuid(leaf, u32::MAX, 0, 1), [0; 4], "{leaf:x}");
         }
-        let [_, ebx, ecx, edx] = cpuid(0, 0, 0);
+        let [_, ebx, ecx, edx] = cpuid(0, 0, 0, 1);
         assert_eq!(
             [ebx, edx, ecx]
                 .into_iter()

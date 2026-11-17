@@ -48,6 +48,7 @@ pub extern "C" fn core_processor(kind: u32, eax: u32, ecx: u32, delta_or_edx: u6
                 eax,
                 ecx,
                 core.paging.map_or(0, |state| state.cr4),
+                raw.xcr0,
             )) {
                 slot.copy_from_slice(&value.to_le_bytes());
             }
