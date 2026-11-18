@@ -795,14 +795,6 @@ export class Cpu {
         ) {
           throw new Error('generated execution violated its progress contract');
         }
-        if (typeof reason !== 'string') {
-          if (remaining === before) throw new Error('committed task switch did not retire');
-          this.pruneTranslations();
-          if (deliveryBudget === undefined) return finish(reason.taskEvent);
-          eventKind = 'pending';
-          servicingEvent = true;
-          continue;
-        }
         if (reason === 'paging-restart') {
           resources.pagingRestarts = (resources.pagingRestarts ?? 0) + 1;
           if (resources.pagingRestarts >= this.#limits.maxTranslationsPerRun)
@@ -811,6 +803,14 @@ export class Cpu {
           continue;
         }
         if (reason !== 'dispatch') {
+          if (typeof reason !== 'string') {
+            if (remaining === before) throw new Error('committed task switch did not retire');
+            this.pruneTranslations();
+            if (deliveryBudget === undefined) return finish(reason.taskEvent);
+            eventKind = 'pending';
+            servicingEvent = true;
+            continue;
+          }
           if (reason === 'pending-interrupt' || reason === 'halted') {
             eventKind = this.#engine.eventKind();
             queuedInterrupts = this.#engine.hasQueuedInterrupts();

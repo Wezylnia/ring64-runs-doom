@@ -1375,10 +1375,14 @@ export class Core {
     return this.reason(this.#exports.core_probe(pc));
   }
 
-  reason(value: number): string {
+  reason(value: number): string;
+  reason(value: number, generated: true): string | { taskEvent: string };
+  reason(value: number, generated?: true): string | { taskEvent: string } {
     const reason = this.#layout.reasons[value];
-    if (!Number.isInteger(value) || reason === undefined)
+    if (!Number.isInteger(value) || reason === undefined) {
+      if (generated && value === -2) return this.completeTask('instruction');
       throw new Error('generated execution returned an invalid reason');
+    }
     return reason;
   }
 
@@ -1511,14 +1515,10 @@ export class Core {
     this.stateView().setBigUint64(this.#layout.repeatRemaining, repeatBudget, true);
     if (this.io) this.io.executing = true;
     try {
-      const status = run(
-        this.#statePointer,
-        budget,
-        stop ?? 0n,
-        stop === undefined ? 0 : 1,
-        entryIndex,
+      return this.reason(
+        run(this.#statePointer, budget, stop ?? 0n, stop === undefined ? 0 : 1, entryIndex),
+        true,
       );
-      return status === -2 ? this.completeTask('instruction') : this.reason(status);
     } finally {
       if (this.io) this.io.executing = false;
     }
