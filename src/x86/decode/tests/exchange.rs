@@ -112,12 +112,12 @@ fn compare_exchange_pair_width_selector_and_operand_mode_have_exact_deciding_poi
         bytes.extend([0x0f, 0xc7, 0x0e]);
         assert_eq!(operation(&bytes), Operation::CompareExchange8b { address });
     }
-    for bytes in [
-        &[0x48, 0x0f, 0xc7, 0x0c][..],
-        &[0x66, 0x48, 0x0f, 0xc7, 0x0c],
-        &[0x0f, 0xc7, 0x34],
-        &[0x44, 0x0f, 0xc7, 0x34],
-    ] {
+    for prefix in [&[0x48][..], &[0x66, 0x48], &[0x4c], &[0xf0, 0x48]] {
+        let mut bytes = prefix.to_vec();
+        bytes.extend([0x0f, 0xc7, 0x0e]);
+        assert_eq!(operation(&bytes), Operation::CompareExchange16b { address });
+    }
+    for bytes in [&[0x0f, 0xc7, 0x34][..], &[0x44, 0x0f, 0xc7, 0x34]] {
         assert_eq!(at(0x1000, bytes), Err(DecodeError::Unsupported));
     }
     for bytes in [
@@ -148,6 +148,7 @@ fn selected_lock_forms_require_full_encoding_then_validate_the_destination() {
         vec![0xf0, 0x0f, 0xc1, 0x03],
         vec![0xf0, 0x0f, 0xb1, 0x03],
         vec![0xf0, 0x0f, 0xc7, 0x0b],
+        vec![0xf0, 0x48, 0x0f, 0xc7, 0x0b],
     ];
     for bytes in legal {
         for length in 1..bytes.len() {
@@ -300,6 +301,7 @@ fn exchange_required_bytes_and_length_limit_preserve_exact_boundaries() {
         vec![0x0f, 0xc1, 0x84, 0x24, 1, 2, 3, 4],
         vec![0x0f, 0xb1, 0x84, 0x24, 1, 2, 3, 4],
         vec![0x0f, 0xc7, 0x8c, 0x24, 1, 2, 3, 4],
+        vec![0x4f, 0x0f, 0xc7, 0x8c, 0x24, 1, 2, 3, 4],
     ] {
         for lock in [false, true] {
             let mut bytes = vec![];

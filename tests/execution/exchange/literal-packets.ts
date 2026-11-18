@@ -356,9 +356,9 @@ export function literalPackets(compiler: WebAssembly.Module): Scenario[] {
             const before = input(0x1000n, {}, 0xcd7n);
             cpu.setState(before);
             const reason =
-              code === 'f00fba2c24'
+              code === 'f00fba2c24' || code === '66480fc70c'
                 ? 'fetch-fault'
-                : code === '0fc734' || code === '66480fc70c'
+                : code === '0fc734'
                   ? 'unsupported'
                   : 'invalid-encoding';
             const result = await cpu.run({ budget: 1n, repeatBudget: 0n });

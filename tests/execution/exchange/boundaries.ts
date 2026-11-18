@@ -342,7 +342,6 @@ export function boundaryScenarios(compiler: WebAssembly.Module): Scenario[] {
           'f0f090',
           'f2f08703',
           'f0f38703',
-          '480fc70c',
           '0fc734',
           'f00fc734',
           'f08903',
@@ -358,6 +357,7 @@ export function boundaryScenarios(compiler: WebAssembly.Module): Scenario[] {
           '0fc1842478563412',
           '0fb1842478563412',
           '0fc78c2478563412',
+          '480fc78c2478563412',
           '0fba2c2400',
           'f784247856341278563412',
         ])

@@ -54,7 +54,8 @@ fn lockable(operation: Operation) -> bool {
             dst: Location::Memory(_),
             ..
         }
-        | Operation::CompareExchange8b { .. } => true,
+        | Operation::CompareExchange8b { .. }
+        | Operation::CompareExchange16b { .. } => true,
         Operation::Bit {
             kind,
             dst: Location::Memory(_),
@@ -753,11 +754,11 @@ where
             if operands.mode == 3 {
                 return Err(DecodeError::Invalid);
             }
-            if width == Width::W64 {
-                return Err(DecodeError::Unsupported);
-            }
-            Ok(Operation::CompareExchange8b {
-                address: operands.address(cursor, prefixes)?,
+            let address = operands.address(cursor, prefixes)?;
+            Ok(if width == Width::W64 {
+                Operation::CompareExchange16b { address }
+            } else {
+                Operation::CompareExchange8b { address }
             })
         }
         0xaf => {
