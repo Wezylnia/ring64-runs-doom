@@ -213,9 +213,9 @@ fn participates`,
     edit(
       'src/embedding/exports/translation.rs',
       `        self.translation_owners
-            .cancel_pending(|owner| self.image.release(owner));`,
+            .cancel_pending(fetch_changed, |owner| self.image.release(owner));`,
       `        if self.context_version != u64::MAX {
-            self.translation_owners.cancel_pending(|owner| self.image.release(owner));
+            self.translation_owners.cancel_pending(fetch_changed, |owner| self.image.release(owner));
         }`,
     ),
   ),

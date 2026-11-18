@@ -58,16 +58,16 @@ const mutants = [
     name: 'installed-owner-keyed-by-epoch',
     kind: 'rust-owner',
     file: adapter,
-    old: '        self.translation_owners\n            .admit(owner, &self.context, observed, || {',
+    old: '        let admitted = self\n            .translation_owners',
     replacement:
-      '        self.context_version == 0 && self.translation_owners\n            .admit(owner, &self.context, observed, || {',
+      '        let admitted = self.context_version == 0 && self\n            .translation_owners',
     filter: 'context_reuse_keeps_a_published_owner_alive_but_refuses_the_wrong_context',
   },
   {
     name: 'pending-aba-not-cancelled',
     kind: 'rust-owner',
     file: adapter,
-    old: '        self.translation_owners\n            .cancel_pending(|owner| self.image.release(owner));',
+    old: '        self.translation_owners\n            .cancel_pending(fetch_changed, |owner| self.image.release(owner));',
     replacement: '        let _ = &self.translation_owners;',
     filter: 'context_reuse_pending_aba_is_cancelled_even_when_epoch_saturates',
   },
@@ -89,8 +89,8 @@ const mutants = [
     extra: [
       {
         file: owners,
-        old: '        if !record.published\n            || record.observed != observed',
-        replacement: '        if false\n            || record.observed != observed',
+        old: '        if !record.published || record.observed != observed',
+        replacement: '        if record.observed != observed',
       },
     ],
     filter: 'context_reuse_pending_aba_is_cancelled_even_when_epoch_saturates',
@@ -233,12 +233,12 @@ const mutants = [
     extra: [
       {
         file: owners,
-        old: '    pub fn cancel_pending(&mut self, mut release: impl FnMut(u64)) {',
+        old: '    pub fn cancel_pending(&mut self, fetch_changed: bool, mut release: impl FnMut(u64)) {',
         replacement: `    pub fn cancel_pending_without_proof_clear(&mut self, mut release: impl FnMut(u64)) {
         self.records.retain(|&owner, record| if record.published { true } else { release(owner); false });
     }
 
-    pub fn cancel_pending(&mut self, mut release: impl FnMut(u64)) {`,
+    pub fn cancel_pending(&mut self, fetch_changed: bool, mut release: impl FnMut(u64)) {`,
       },
     ],
     filter: 'guest FS_BASE WRMSR ends the old native path',
@@ -247,17 +247,17 @@ const mutants = [
     name: 'primed-proof-bypasses-live-profile',
     kind: 'rust-owner',
     file: owners,
-    old: '            || record.observed != observed\n            || !record.context_proven',
+    old: '        if !record.published || record.observed != observed',
     replacement:
-      '            || !record.context_proven && record.observed != observed\n            || !record.context_proven',
+      '        if !record.published || record.admission != Admission::Current && record.observed != observed',
     filter: 'context_proof_requires_full_match_and_successful_source_admission',
   },
   {
     name: 'primed-proof-skips-image-activation',
     kind: 'rust-owner',
     file: owners,
-    old: '            || !activate()',
-    replacement: '            || !record.context_proven && !activate()',
+    old: '        if !activate(fetch)',
+    replacement: '        if record.admission != Admission::Current && !activate(fetch)',
     filter: 'context_proof_does_not_override_image_alias_death_release_or_paging_fences',
   },
 ];
