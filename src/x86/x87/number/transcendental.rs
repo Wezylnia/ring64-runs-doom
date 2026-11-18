@@ -1,6 +1,8 @@
 use super::*;
 
 mod finite;
+#[cfg(test)]
+mod tests;
 
 const ONE: u128 = 0x3fff_8000_0000_0000_0000;
 // Largest binary80 magnitude within the FYL2XP1 interval 1 − sqrt(2)/2.
