@@ -162,14 +162,14 @@ where
                 };
             }
             0xf0 => {
-                if prefixes.lock || prefixes.repeat.is_some() {
+                if prefixes.lock || prefixes.repeat == Some(0xf2) {
                     return Err(DecodeError::Unsupported);
                 }
                 prefixes.lock = true;
                 prefixes.rex = Rex::default();
             }
             0xf2 | 0xf3 => {
-                if prefixes.lock {
+                if prefixes.lock && byte == 0xf2 {
                     return Err(DecodeError::Unsupported);
                 }
                 prefixes.repeat = Some(byte);

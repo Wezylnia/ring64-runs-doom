@@ -41,7 +41,7 @@ export function decodeScenarios(compiler: WebAssembly.Module): Scenario[] {
           ['0fae30', 'invalid-encoding'],
           ['660fae', 'unsupported'],
           ['f20fae', 'unsupported'],
-          ['f30fae', 'unsupported'],
+          ['f30faee0', 'unsupported'],
           ['660f53', 'unsupported'],
           ['f20f52', 'unsupported'],
           ['f30f2e', 'unsupported'],
@@ -81,6 +81,7 @@ export function decodeScenarios(compiler: WebAssembly.Module): Scenario[] {
           '660f16842400000000',
           '0fae942400000000',
           '0fae2400',
+          'f30faec0',
         ])
           for (let length = 1; length < full.length / 2; length++)
             for (const budget of [1n, 2n]) {

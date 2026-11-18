@@ -20,6 +20,9 @@ where
     let mandatory = prefixes
         .repeat
         .or(prefixes.operand_override.then_some(0x66));
+    if opcode == 0xae && mandatory == Some(0xf3) {
+        return Some(segment_base(prefixes, cursor));
+    }
     if opcode != 0x18
         && !matches!(
             (opcode, mandatory),
@@ -100,6 +103,36 @@ where
             store: true,
         }))
     })())
+}
+
+pub(super) fn segment_base<F>(
+    prefixes: Prefixes,
+    cursor: &mut Cursor<F>,
+) -> Result<Operation, DecodeError>
+where
+    F: FnMut(u64) -> Result<u8, DecodeError>,
+{
+    let operands = ModRm::read(cursor, prefixes.rex)?;
+    if operands.selector > 3 {
+        return Err(DecodeError::Unsupported);
+    }
+    if operands.mode != 3 {
+        operands.address(cursor, prefixes)?;
+        return Err(DecodeError::Invalid);
+    }
+    if prefixes.lock || !prefixes.long64 || !prefixes.paged {
+        return Err(DecodeError::UndefinedEncoding);
+    }
+    Ok(Operation::SegmentBase {
+        segment: if operands.selector & 1 == 0 {
+            Segment::Fs
+        } else {
+            Segment::Gs
+        },
+        register: operands.rm,
+        width: prefixes.rex.width(),
+        write: operands.selector >= 2,
+    })
 }
 
 fn ae<F>(prefixes: Prefixes, cursor: &mut Cursor<F>) -> Result<Operation, DecodeError>

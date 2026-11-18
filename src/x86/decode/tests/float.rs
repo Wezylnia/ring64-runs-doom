@@ -247,7 +247,7 @@ fn mxcsr_groups_preserve_deciding_class_and_complete_valid_tails_before_lock_rej
             Err(DecodeError::Fetch(missing(0x1003)))
         );
     }
-    for prefix in [0x66, 0xf2, 0xf3] {
+    for prefix in [0x66, 0xf2] {
         assert_eq!(
             at(0x1000, &[prefix, 0x0f, 0xae]),
             Err(DecodeError::Unsupported)
@@ -259,7 +259,7 @@ fn mxcsr_groups_preserve_deciding_class_and_complete_valid_tails_before_lock_rej
         &[0xf3, 0x0f, 0xc2, 0x84, 0x24, 0, 0, 0, 0, 0xff],
         &[0xf0, 0xf3, 0x0f, 0x58, 0x84, 0x24, 0, 0, 0, 0],
     ] {
-        // Mixed LOCK/repeat stops at the deciding prefix rather than fetching a tail.
+        // The mixed prefix is unsupported as soon as the floating opcode is known.
         if full.starts_with(&[0xf0, 0xf3]) {
             assert_eq!(at(0x1000, full), Err(DecodeError::Unsupported));
             continue;

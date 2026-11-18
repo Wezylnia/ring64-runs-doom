@@ -16,6 +16,13 @@ pub(super) fn refine<F>(
 where
     F: FnMut(u64) -> Result<u8, DecodeError>,
 {
+    if prefixes.lock && prefixes.repeat.is_some() {
+        // Only the selected F3 0F AE forms have defined LOCK faults in this profile.
+        if opcode == 0x0f && cursor.byte()? == 0xae {
+            return super::streaming::segment_base(prefixes, cursor);
+        }
+        return Err(DecodeError::Unsupported);
+    }
     if opcode == 0xf4 {
         return if prefixes.lock {
             Err(DecodeError::UndefinedEncoding)

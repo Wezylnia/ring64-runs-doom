@@ -17,7 +17,7 @@ export function decodingScenarios(compiler: WebAssembly.Module): Scenario[] {
           ['f20f6f', 'unsupported'],
           ['660f730c', 'unsupported'],
           ['660f3881', 'unsupported'],
-          ['f0f3', 'unsupported'],
+          ['f0f30f6f', 'unsupported'],
           ['f0f0', 'unsupported'],
         ] as const)
           for (const budget of [1n, 2n])
@@ -40,6 +40,7 @@ export function decodingScenarios(compiler: WebAssembly.Module): Scenario[] {
       async run() {
         for (const full of [
           'f30f1000',
+          'f0f30faec0',
           '660f3a0f842400000000ff',
           '660f708424000000001b',
           '660fc4842400000000ff',

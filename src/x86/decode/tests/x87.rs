@@ -351,8 +351,8 @@ fn required_x87_address_tails_precede_lock_rejection_but_unselected_forms_stop_a
             assert!(at(0x1000, full).is_ok());
         }
     }
-    for prefix in [&[0xf3, 0xf0][..], &[0xf0, 0xf2]] {
-        assert_eq!(at(0x1000, prefix), Err(DecodeError::Unsupported));
+    for code in [&[0xf3, 0xf0, 0xd9][..], &[0xf0, 0xf2]] {
+        assert_eq!(at(0x1000, code), Err(DecodeError::Unsupported));
     }
     for code in [
         [0xdc, 0xd0],

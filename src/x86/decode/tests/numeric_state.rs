@@ -55,7 +55,7 @@ fn mmx_register_only_forms_reject_memory_before_address_tails() {
     ] {
         assert_eq!(at(0x1000, code), Err(DecodeError::Invalid), "{code:02x?}");
     }
-    for prefix in [0x66, 0xf2, 0xf3] {
+    for prefix in [0x66, 0xf2] {
         assert_eq!(
             at(0x1000, &[prefix, 0x0f, 0xae, 0x00]),
             Err(DecodeError::Unsupported)
