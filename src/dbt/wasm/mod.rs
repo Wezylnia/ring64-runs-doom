@@ -1,4 +1,5 @@
 mod bits;
+mod bmi;
 mod boundary;
 mod compound_stack;
 mod control;
@@ -1236,6 +1237,12 @@ pub(crate) fn emit_profile(unit: &Unit, observed: bool, paged: bool) -> Vec<u8> 
                 src,
                 width,
             } => emitter.scan(reverse, dst, src, width, instruction.next_pc, exit_depth),
+            Operation::Bmi {
+                kind,
+                dst,
+                src,
+                width,
+            } => emitter.bmi(kind, dst, src, width, instruction.next_pc, exit_depth),
             Operation::Bswap { dst, width } => emitter.bswap(dst, width),
             Operation::Setcc { dst, condition } => {
                 emitter.setcc(dst, condition, instruction.next_pc, exit_depth);

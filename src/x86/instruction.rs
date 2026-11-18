@@ -210,6 +210,16 @@ impl Bit {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Bmi {
+    AndNot(RegisterView),
+    Extract(RegisterView),
+    Isolate,
+    Mask,
+    Reset,
+    TrailingZeros,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BitIndex {
     Register(RegisterView),
     Immediate(u8),
@@ -1031,6 +1041,12 @@ pub enum Operation {
     },
     Scan {
         reverse: bool,
+        dst: RegisterView,
+        src: Location,
+        width: Width,
+    },
+    Bmi {
+        kind: Bmi,
         dst: RegisterView,
         src: Location,
         width: Width,
