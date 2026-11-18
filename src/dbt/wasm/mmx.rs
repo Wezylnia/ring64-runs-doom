@@ -6,6 +6,8 @@ use crate::x86::x87::State as X87State;
 use std::mem::offset_of;
 use wasm_encoder::{BlockType, Instruction as Op, MemArg, ValType};
 
+const PUNPCKLDQ: Kind = Kind::Binary(VectorBinary::UnpackLow(Width::W32));
+
 const X87: usize = offset_of!(RunState, x87);
 const CONTROL: usize = X87 + offset_of!(X87State, control_word);
 const STATUS: usize = X87 + offset_of!(X87State, status_word);
@@ -24,10 +26,11 @@ pub(super) fn direct(operation: MmxOp) -> bool {
 }
 
 pub(super) fn vector_temps(operation: MmxOp) -> bool {
-    matches!(
-        operation.kind,
-        Kind::Binary(_) | Kind::Shift(_) | Kind::Ssse3(_)
-    )
+    match operation.kind {
+        Kind::Binary(_) => operation.kind != PUNPCKLDQ,
+        Kind::Shift(_) | Kind::Ssse3(_) => true,
+        _ => false,
+    }
 }
 
 fn raw(bank: u8) -> usize {
@@ -131,7 +134,7 @@ impl Emitter {
             self.load_value(address, width, next_pc, false, exit_depth);
         }
         match operation.kind {
-            Kind::Move => {
+            Kind::Move | PUNPCKLDQ => {
                 self.mmx_source(operation);
                 self.op(Op::LocalSet(RESULT));
             }
@@ -234,9 +237,15 @@ impl Emitter {
             }
             _ => unreachable!("numeric MMX conversions use the exact helper"),
         }
+        // PUNPCKLDQ retains the low destination dword and replaces its high dword.
+        let store = if operation.kind == PUNPCKLDQ {
+            Op::I64Store32(memory(raw(operation.dst) + 4))
+        } else {
+            Op::I64Store(memory(raw(operation.dst)))
+        };
         self.op(Op::LocalGet(0))
             .op(Op::LocalGet(RESULT))
-            .op(Op::I64Store(memory(raw(operation.dst))))
+            .op(store)
             .op(Op::LocalGet(0))
             .op(Op::I32Const(0xffff))
             .op(Op::I32Store16(memory(raw(operation.dst) + 8)));
