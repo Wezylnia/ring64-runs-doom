@@ -207,7 +207,7 @@ impl Core {
         };
         if old.cr3 != candidate.cr3 {
             self.translation_cache.invalidate_pcid(candidate.pcid());
-            self.invalidate_runtime_sources();
+            self.guest_root_changed();
         } else {
             self.context_changed();
         }
