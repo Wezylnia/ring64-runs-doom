@@ -10,8 +10,7 @@ const LOG2_E: u128 = 0x3fff_7154_7652_b82f_e177_7d0f_fda0_d23a;
 // Generate nearest binary128 1/d by integer long division at compile time.
 // The largest denominator, 25!, fits in 84 bits.
 const fn reciprocal(d: u128) -> u128 {
-    let shift = (d - 1).ilog2(); // overridden for one by the caller
-    let exponent = shift + 1;
+    let exponent = u128::BITS - (d - 1).leading_zeros();
     let mut remainder = (1 << exponent) - d;
     let mut significand = 1;
     let mut bits = 0;
@@ -149,3 +148,6 @@ pub(super) fn evaluate(kind: Kind, x: u128, y: u128, cw: u16) -> Result {
         _ => unreachable!(),
     }
 }
+
+#[cfg(test)]
+mod tests;
