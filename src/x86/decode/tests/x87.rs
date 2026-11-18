@@ -49,17 +49,12 @@ fn standalone_wait_needs_no_following_opcode_and_keeps_its_own_retirement_bounda
 
 #[test]
 fn fnsetpm_is_a_nonwaiting_state_preserving_x87_encoding() {
-    let selected = x87(&[0xdb, 0xe4]);
-    assert_eq!(selected.address, None);
-    assert_eq!(selected.op.format, Format::None);
-    assert_eq!(selected.op.encoding, 0x3e4);
-    assert_eq!(selected.op.memory_bytes(), 0);
-    assert!(!selected.op.is_waiting());
-    assert!(!selected.op.updates_environment());
+    let selected = Operation::X87CompatibilityNop;
+    assert_eq!(operation(&[0xdb, 0xe4]), selected);
     assert!(x87(&[0xd9, 0xd0]).op.is_waiting());
     assert!(x87(&[0xd9, 0xd0]).op.updates_environment());
     for prefix in [0x66, 0x67, 0x64, 0x4f, 0xf2, 0xf3] {
-        assert_eq!(x87(&[prefix, 0xdb, 0xe4]), selected);
+        assert_eq!(operation(&[prefix, 0xdb, 0xe4]), selected);
     }
     assert_eq!(at(0x1000, &[0x9b, 0xdb, 0xe4]).unwrap().next_pc, 0x1001);
     assert_eq!(

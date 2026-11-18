@@ -44,7 +44,7 @@ impl Family {
 pub fn family(operation: Operation) -> Option<Family> {
     Some(match operation {
         Operation::X87(i) if i.op.kind == x87::Kind::Wait => Family::Wait,
-        Operation::X87(_) => Family::X87,
+        Operation::X87(_) | Operation::X87CompatibilityNop => Family::X87,
         Operation::NumericImage { op, .. } if op.is_xstate() => Family::XstateImage,
         Operation::NumericImage { op, .. } => {
             if matches!(
@@ -205,6 +205,7 @@ mod tests {
     fn decoded_forms_follow_all_32_independent_enable_truth_tables() {
         for (bytes, expected_family, expected) in [
             (&[0xd9, 0xe8][..], Family::X87, [24, 0, 8]),
+            (&[0xdb, 0xe4][..], Family::X87, [24, 0, 8]),
             (&[0x9b][..], Family::Wait, [8, 0, 24]),
             (&[0x0f, 0xef, 0xc0][..], Family::Mmx, [8, 16, 8]),
             (&[0x66, 0x0f, 0xef, 0xc0][..], Family::Simd, [4, 24, 4]),

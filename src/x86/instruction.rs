@@ -1130,6 +1130,7 @@ pub enum Operation {
         count_width: Width,
         target: u64,
     },
+    X87CompatibilityNop,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

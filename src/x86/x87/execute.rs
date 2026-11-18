@@ -106,7 +106,7 @@ pub(super) fn eval(state: &mut State, op: Op, source: u128, flags: u64) -> Effec
             out.store = !out.ax;
             return out;
         }
-        Wait | Nop | SetProtectedModeNop => return out,
+        Wait | Nop => return out,
         Free => {
             state.set_tag(other, 3);
             return out;

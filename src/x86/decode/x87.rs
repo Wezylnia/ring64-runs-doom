@@ -24,6 +24,9 @@ where
         return super::numeric_image::legacy(opcode, &operands, prefixes, cursor);
     }
     let modrm = (operands.mode << 6) | (operands.selector << 3) | (operands.rm & 7);
+    if opcode == 0xdb && modrm == 0xe4 {
+        return Ok(Operation::X87CompatibilityNop);
+    }
     let mut op = if operands.mode == 3 {
         register(opcode, modrm)?
     } else {
@@ -188,12 +191,8 @@ fn register(opcode: u8, modrm: u8) -> Result<Op, DecodeError> {
                 _ => return Err(DecodeError::Unsupported),
             };
         }
-        0xdb if (0xe2..=0xe4).contains(&modrm) => {
-            op.kind = match modrm {
-                0xe2 => Clear,
-                0xe3 => Init,
-                _ => SetProtectedModeNop,
-            };
+        0xdb if matches!(modrm, 0xe2 | 0xe3) => {
+            op.kind = if modrm == 0xe2 { Clear } else { Init };
             op.format = Format::None;
             op.index = 0;
         }

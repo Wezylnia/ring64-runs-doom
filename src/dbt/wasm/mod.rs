@@ -1151,7 +1151,7 @@ pub(crate) fn emit_profile(unit: &Unit, observed: bool, paged: bool) -> Vec<u8> 
                 emitter.clflush(address, instruction.next_pc, exit_depth)
             }
             Operation::Io { input, port, width } => emitter.io(input, port, width, exit_depth),
-            Operation::Nop => {}
+            Operation::Nop | Operation::X87CompatibilityNop => {}
             Operation::Mmx { op, address } => {
                 emitter.mmx(op, address, instruction.next_pc, exit_depth)
             }

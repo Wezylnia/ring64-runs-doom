@@ -30,7 +30,11 @@ fn packet(code: &[u8], entry: u64, budget: u64, outcome: Outcome<'_>) -> Value {
 
 #[test]
 fn x87_helpers_are_imported_only_for_units_that_execute_x87() {
-    for (code, expected) in [(&[0x90][..], false), (&[0x9b][..], true)] {
+    for (code, expected) in [
+        (&[0x90][..], false),
+        (&[0xdb, 0xe4][..], false),
+        (&[0x9b][..], true),
+    ] {
         let artifact = compiled_fixture(0x1000, code, 0x1000);
         let imports = wasmparser::Parser::new(0)
             .parse_all(&artifact.bytes)
