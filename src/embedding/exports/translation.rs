@@ -73,6 +73,13 @@ impl Core {
         }
     }
 
+    pub(super) fn guest_root_changed(&mut self) {
+        self.image.fence_active();
+        self.active_owner = None;
+        self.translation_cache.take_changed();
+        self.cancel_pending(true);
+    }
+
     pub(super) fn invalidate_runtime_sources(&mut self) {
         self.image.invalidate_sources();
         self.translation_owners.clear();

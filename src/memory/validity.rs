@@ -230,6 +230,14 @@ impl Image {
         self.validity.active_invalid
     }
 
+    /// Stop the active generated body while retaining published source subscriptions.
+    #[cfg(any(target_arch = "wasm32", test))]
+    pub(crate) fn fence_active(&mut self) {
+        if self.validity.active.take().is_some() {
+            self.validity.active_invalid = true;
+        }
+    }
+
     pub fn retire_sources(&mut self) {
         self.validity.owners.clear();
         self.validity.active = None;

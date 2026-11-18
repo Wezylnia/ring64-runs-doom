@@ -219,11 +219,63 @@ fn paged_owner() -> u64 {
 }
 
 #[test]
+fn changed_guest_root_fences_active_work_but_preserves_valid_root_bound_owners() {
+    use super::super::paging::core_paging_control;
+    for epoch in [0, u64::MAX] {
+        paged_fixture();
+        BRIDGE.with_borrow_mut(|bridge| {
+            let core = bridge.core.as_mut().unwrap();
+            core.context_version = epoch;
+            // Root B initially uses the same lower tables and physical code as A.
+            core.image.physical_write(0x5000, 8, 0x2027).unwrap();
+        });
+        let a = paged_owner();
+        assert_eq!(mapped::core_activate(a), 1);
+        assert_eq!(core_compile(0x400000, 8, 128, 65536), 0);
+        let pending = BRIDGE.with_borrow(|bridge| {
+            let info: serde_json::Value = serde_json::from_slice(&bridge.info).unwrap();
+            u64::from_str_radix(info["owner"].as_str().unwrap().trim_start_matches("0x"), 16)
+                .unwrap()
+        });
+        assert_eq!(core_paging_control(1, 3, 0x5000, 0x400000, 2, 0), 0);
+        assert_eq!(mapped::core_validity(a), 1);
+        assert_eq!(mapped::core_validity(pending), 0);
+        BRIDGE.with_borrow_mut(|bridge| {
+            let core = bridge.core.as_mut().unwrap();
+            assert!(core.image.active_changed());
+            core.context_changed();
+        });
+        assert_eq!(mapped::core_publish(a), 0, "dormant code belongs to A");
+        assert_eq!(
+            mapped::core_activate(a),
+            0,
+            "same bytes and context cannot admit A under B"
+        );
+        let b = paged_owner();
+        assert_ne!(a, b);
+        assert_eq!(mapped::core_activate(b), 1);
+        assert_eq!(core_paging_control(1, 3, 0x1000, 0x400000, 2, 0), 0);
+        assert_eq!(
+            mapped::core_publish(pending),
+            0,
+            "ABA cannot revive unpublished work"
+        );
+        mapped::core_release(b);
+        BRIDGE.with_borrow(|bridge| assert!(bridge.core.as_ref().unwrap().image.active_changed()));
+        assert_eq!(
+            mapped::core_activate(a),
+            1,
+            "A's observational proof admits its own code"
+        );
+        BRIDGE.with_borrow(|bridge| assert!(!bridge.core.as_ref().unwrap().image.active_changed()));
+    }
+}
+
+#[test]
 fn context_reuse_keeps_exact_paging_fences_and_dynamic_nonfences() {
     use super::super::paging::{core_import_paging, core_paging_control};
     for (kind, register, value, destructive) in [
         (1, 3, 0x1000, true),
-        (1, 3, 0x5000, true),
         (1, 0, 0x80010033, true),
         (3, 0xc0000080, 0xd00, true),
         (4, Segment::Ds as u32, 0x400000, true),

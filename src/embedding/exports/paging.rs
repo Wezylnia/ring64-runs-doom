@@ -613,7 +613,13 @@ pub extern "C" fn core_paging_control(
                         core.translation_cache.clear();
                     }
                 }
-                if kind == 4 || kind == 1 && register == 3 || translation_changed {
+                if kind == 1
+                    && register == 3
+                    && state.cr0 & (1 << 31) != 0
+                    && state.cr3 != candidate.cr3
+                {
+                    core.guest_root_changed();
+                } else if kind == 4 || kind == 1 && register == 3 || translation_changed {
                     core.invalidate_runtime_sources();
                 } else if context_changed
                     || state.numeric_controls() != candidate.numeric_controls()
