@@ -703,7 +703,10 @@ where
     if let Some(result) = super::vector::refine(opcode, prefixes, cursor) {
         return result.map(Operation::Vector);
     }
-    if prefixes.repeat.is_some() {
+    // On the current non-BMI1 profile the TZCNT encoding executes as BSF.
+    if let Some(repeat) = prefixes.repeat
+        && (opcode != 0xbc || repeat != 0xf3)
+    {
         return Err(DecodeError::Unsupported);
     }
     let rex = prefixes.rex;

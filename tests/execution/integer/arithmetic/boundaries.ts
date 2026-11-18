@@ -41,6 +41,7 @@ export function arithmeticBoundaryScenarios(core: WebAssembly.Module): Scenario[
           '0fbab48b0100000000',
           '0fbabc8b0100000000',
           '660fbc848b01000000',
+          'f30fbc848b01000000',
           '480fbd848b01000000',
           '664f0fc8',
         ];
@@ -75,7 +76,7 @@ export function arithmeticBoundaryScenarios(core: WebAssembly.Module): Scenario[
     {
       name: 'integer arithmetic excluded selectors stop before tails while shared FF prefix decoding requires its selector',
       run: async () => {
-        const unsupported = ['66ff3c', '660fc8', '66470fc8', 'f30fbc', 'f30fbd', 'f201', 'f301'];
+        const unsupported = ['66ff3c', '660fc8', '66470fc8', 'f30fbd', 'f201', 'f301'];
         for (const opcode of ['c0', 'c1', 'd0', 'd1', 'd2', 'd3'])
           unsupported.push('6644' + opcode + modrm(6, 4, 0));
         for (let selector = 2; selector < 8; selector++)

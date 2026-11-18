@@ -759,11 +759,33 @@ fn bit_family_exclusions_stop_at_the_deciding_prefix_or_selector() {
             }
         }
     }
-    for bytes in [&[0xf3, 0x0f, 0xbc][..], &[0xf3, 0x0f, 0xbd][..]] {
+    for bytes in [&[0xf2, 0x0f, 0xbc][..], &[0xf3, 0x0f, 0xbd][..]] {
         assert_eq!(at(0x1000, bytes), Err(DecodeError::Unsupported));
     }
     assert!(matches!(
         at(0x1000, &[0xf0, 0x0f, 0xab]),
         Err(DecodeError::Fetch(_))
     ));
+}
+
+#[test]
+fn without_bmi1_f3_0f_bc_uses_the_existing_bsf_operands() {
+    assert_eq!(crate::x86::processor::cpuid(7, 0, 0, 1)[1] & (1 << 3), 0);
+    for bare in [
+        &[0x0f, 0xbc, 0xc8][..],
+        &[0x66, 0x0f, 0xbc, 0x03],
+        &[0x48, 0x0f, 0xbc, 0xcf],
+        &[0x64, 0x67, 0x4f, 0x0f, 0xbc, 0x84, 0xec, 1, 2, 3, 4],
+    ] {
+        let prefixed = [&[0xf3][..], bare].concat();
+        let expected = operation(bare);
+        assert!(matches!(expected, Operation::Scan { reverse: false, .. }));
+        assert_eq!(operation(&prefixed), expected);
+        for len in 0..prefixed.len() {
+            assert_eq!(
+                at(0x1000, &prefixed[..len]),
+                Err(DecodeError::Fetch(missing(0x1000 + len as u64)))
+            );
+        }
+    }
 }
