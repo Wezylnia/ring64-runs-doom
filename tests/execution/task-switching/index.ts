@@ -1,3 +1,11 @@
+import { deferredTaskDebugScenario } from './deferred-debug.js';
+import { taskDebugEntryScenario } from './debug-entry.js';
+import { taskDeliveryRetryScenario } from './delivery-retry.js';
+import { invalidTaskSelectorScenario } from './qualify.js';
+import { taskRetryScenario } from './retry.js';
+import { taskDebugScenario } from './debug.js';
+import { gateSourceScenario } from './sources.js';
+import { taskPagingScenarios } from './paging.js';
 import {
   AFTER_EXIT,
   ENTRY_B,
@@ -25,6 +33,14 @@ import {
 
 export function taskSwitchingScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [
+    taskRetryScenario(compiler),
+    taskDeliveryRetryScenario(compiler),
+    invalidTaskSelectorScenario(compiler),
+    taskDebugScenario(compiler),
+    taskDebugEntryScenario(compiler),
+    deferredTaskDebugScenario(compiler),
+    gateSourceScenario(compiler),
+    ...taskPagingScenarios(compiler),
     {
       name: 'protected hardware tasks execute the complete Bochs nested repair guest',
       async run() {
