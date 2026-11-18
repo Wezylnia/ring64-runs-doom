@@ -72,12 +72,14 @@ mod reset;
 mod software_events;
 mod streaming;
 mod system_flags;
+mod task_switch;
 mod translation;
 mod vector;
 mod x87;
 mod x87_state;
 
 struct Core {
+    task_work: Option<task_switch::Work>,
     io_present: bool,
     io_configured: bool,
     io_effect: bool,
@@ -168,6 +170,7 @@ pub extern "C" fn core_init(code_base: u64, code_len: u32, ram_base: u64, ram_le
             ..RunState::default()
         }));
         bridge.core = Some(Core {
+            task_work: None,
             io_present: false,
             io_configured: false,
             io_effect: false,
@@ -344,6 +347,7 @@ pub extern "C" fn core_import_state() -> i32 {
         let core = bridge.core.as_mut().unwrap();
         // generated execution is suspended for every export call. no reference to
         // this foreign-mutable buffer survives the call back into generated wasm.
+        core.task_work = None;
         unsafe {
             let target = &mut *core.state.get();
             target.import(state);

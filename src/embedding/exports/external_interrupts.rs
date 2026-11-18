@@ -43,7 +43,7 @@ pub extern "C" fn core_shutdown_can_wake() -> i32 {
     BRIDGE.with_borrow(|bridge| i32::from(shutdown_can_wake(bridge.core.as_ref().unwrap())))
 }
 
-fn step(core: &mut Core, pc: u64, flags: u64, shadow: u32, shutdown: bool) -> i32 {
+pub(super) fn step(core: &mut Core, pc: u64, flags: u64, shadow: u32, shutdown: bool) -> i32 {
     if flags & !crate::x86::flags::IMPORTED_MASK != 0
         || flags & 2 == 0
         || !crate::x86::flags::valid_interruptibility(flags, shadow)

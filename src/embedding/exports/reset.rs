@@ -10,6 +10,7 @@ impl Core {
         self.fast_system = Default::default();
         unsafe { *self.state.get() = RunState::reset() };
         self.io_effect = false;
+        self.task_work = None;
         self.paging_work.clear();
         self.paging_failure = None;
         self.pdpte_load_fault = None;

@@ -401,6 +401,7 @@ pub extern "C" fn core_import_paging() -> i32 {
         }
         core.paging = Some(candidate);
         core.paging_work.clear();
+        core.task_work = None;
         core.alignment_check = None;
         0
     })

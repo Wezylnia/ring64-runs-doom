@@ -9,6 +9,10 @@ use crate::x86::protection_keys::State as ProtectionKeysState;
 use crate::x86::state::State;
 use crate::x86::x87::State as X87State;
 
+// Private returns from a compiled unit or its cold task-switch continuation.
+pub const TASK_CAPTURED: i32 = -2;
+pub const TASK_EVENT_BASE: i32 = -64;
+
 pub const DISPATCH: i32 = 0;
 pub const BUDGET: i32 = 1;
 pub const STOP: i32 = 2;

@@ -98,6 +98,7 @@ pub extern "C" fn core_set_context() -> i32 {
                 super::super::layout::debug::Continuation::default();
             (*core.state.get()).interrupts.nmi_blocked = 0;
         };
+        core.task_work = None;
         core.debug_exception = None;
         core.fault = None;
         core.alignment_fault = None;
