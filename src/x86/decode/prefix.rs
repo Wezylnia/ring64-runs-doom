@@ -17,7 +17,6 @@ pub(super) struct Prefixes {
     pub(super) address_override: bool,
     pub(super) segment_override: Option<Segment>,
     pub(super) repeat: Option<u8>,
-    pub(super) multiple_repeats: bool,
     pub(super) lock: bool,
     pub(super) long64: bool,
     pub(super) mode: Mode,
@@ -113,7 +112,7 @@ impl Rex {
 pub(super) fn read<F>(
     cursor: &mut Cursor<F>,
     context: &ExecutionContext,
-) -> Result<(Prefixes, u8), DecodeError>
+) -> Result<(Prefixes, u8, bool), DecodeError>
 where
     F: FnMut(u64) -> Result<u8, DecodeError>,
 {
@@ -124,13 +123,13 @@ where
         address_override: false,
         segment_override: None,
         repeat: None,
-        multiple_repeats: false,
         lock: false,
         long64: context.is_long64(),
         mode: context.mode(),
         paged: false,
         default32: context.code32(),
     };
+    let mut multiple_repeats = false;
     loop {
         let byte = cursor.byte()?;
         match byte {
@@ -164,7 +163,7 @@ where
                 };
             }
             0xf0 => {
-                if prefixes.lock || prefixes.multiple_repeats && prefixes.repeat == Some(0xf2) {
+                if prefixes.lock || multiple_repeats && prefixes.repeat == Some(0xf2) {
                     return Err(DecodeError::Unsupported);
                 }
                 prefixes.lock = true;
@@ -175,12 +174,12 @@ where
                     if prefixes.lock && (previous == 0xf2 || byte == 0xf2) {
                         return Err(DecodeError::Unsupported);
                     }
-                    prefixes.multiple_repeats = true;
+                    multiple_repeats = true;
                 }
                 prefixes.repeat = Some(byte);
                 prefixes.rex = Rex::default();
             }
-            _ => return Ok((prefixes, byte)),
+            _ => return Ok((prefixes, byte, multiple_repeats)),
         }
     }
 }

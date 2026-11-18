@@ -97,9 +97,9 @@ where
     F: FnMut(u64) -> Result<u8, DecodeError>,
 {
     let mut cursor = cursor::Cursor::new(pc, context.is_long64(), read);
-    let (mut prefixes, opcode) = prefix::read(&mut cursor, context)?;
+    let (mut prefixes, opcode, multiple_repeats) = prefix::read(&mut cursor, context)?;
     prefixes.paged = paged;
-    let operation = opcode::refine(opcode, prefixes, &mut cursor)?;
+    let operation = opcode::refine(opcode, prefixes, multiple_repeats, &mut cursor)?;
     Ok(Instruction {
         pc,
         next_pc: cursor.next_pc(),

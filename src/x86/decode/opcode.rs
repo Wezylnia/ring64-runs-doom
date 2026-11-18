@@ -11,13 +11,14 @@ use super::{DecodeError, cursor::Cursor, operand::ModRm, prefix::Prefixes};
 pub(super) fn refine<F>(
     opcode: u8,
     prefixes: Prefixes,
+    multiple_repeats: bool,
     cursor: &mut Cursor<F>,
 ) -> Result<Operation, DecodeError>
 where
     F: FnMut(u64) -> Result<u8, DecodeError>,
 {
     if prefixes.lock && prefixes.repeat.is_some() {
-        return mixed_lock(opcode, prefixes, cursor);
+        return mixed_lock(opcode, prefixes, multiple_repeats, cursor);
     }
     if opcode == 0xf4 {
         return if prefixes.lock {
@@ -37,12 +38,13 @@ where
 fn mixed_lock<F>(
     opcode: u8,
     prefixes: Prefixes,
+    multiple_repeats: bool,
     cursor: &mut Cursor<F>,
 ) -> Result<Operation, DecodeError>
 where
     F: FnMut(u64) -> Result<u8, DecodeError>,
 {
-    if opcode == 0x90 && prefixes.repeat == Some(0xf3) && !prefixes.multiple_repeats {
+    if opcode == 0x90 && prefixes.repeat == Some(0xf3) && !multiple_repeats {
         return Err(DecodeError::Invalid);
     }
     if opcode != 0x0f {
@@ -53,7 +55,7 @@ where
         return super::streaming::segment_base(prefixes, cursor);
     }
     // preserve multi-selector frontiers outside the existing fsgsbase path.
-    if prefixes.multiple_repeats {
+    if multiple_repeats {
         return Err(DecodeError::Unsupported);
     }
     if opcode == 0xbc && prefixes.repeat == Some(0xf3) {
