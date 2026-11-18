@@ -2,7 +2,8 @@ use super::{at, missing, operation};
 use crate::x86::context::{ExecutionContext, Segment};
 use crate::x86::decode::{DecodeError, decode_with_context};
 use crate::x86::instruction::{
-    Address, AddressBase, Alu, Bit, Location, MemoryAluOperands, Operation, RegisterView, Width,
+    Address, AddressBase, AddressIndex, Alu, Bit, Location, MemoryAluOperands, Operation,
+    RegisterView, Width,
 };
 
 #[test]
@@ -117,6 +118,21 @@ fn compare_exchange_pair_width_selector_and_operand_mode_have_exact_deciding_poi
         bytes.extend([0x0f, 0xc7, 0x0e]);
         assert_eq!(operation(&bytes), Operation::CompareExchange16b { address });
     }
+    assert_eq!(
+        operation(&[0x67, 0x65, 0x4f, 0x0f, 0xc7, 0x4c, 0x8c, 0xf0]),
+        Operation::CompareExchange16b {
+            address: Address {
+                base: AddressBase::Register(12),
+                index: Some(AddressIndex {
+                    register: 9,
+                    scale: 4
+                }),
+                displacement: -16,
+                segment: Segment::Gs,
+                size: Width::W32,
+            },
+        }
+    );
     for bytes in [&[0x0f, 0xc7, 0x34][..], &[0x44, 0x0f, 0xc7, 0x34]] {
         assert_eq!(at(0x1000, bytes), Err(DecodeError::Unsupported));
     }
