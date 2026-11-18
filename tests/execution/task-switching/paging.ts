@@ -1,6 +1,8 @@
 import { preserveNumeric } from '../far-control/fixture.js';
 import {
+  CALL,
   ENTRY_B,
+  GDT,
   PD_A,
   TSS_B,
   dword,
@@ -12,13 +14,32 @@ import {
   type Scenario,
 } from './fixture.js';
 
+async function withTaskTransfers(
+  compiler: WebAssembly.Module,
+  check: Parameters<typeof withGuest>[1],
+) {
+  for (const jump of [false, true]) {
+    await withGuest(compiler, async (cpu, ports) => {
+      await toCaller(cpu);
+      if (jump) cpu.writePhysicalMemory(CALL, Uint8Array.of(0xea));
+      await check(cpu, ports);
+      const switched = cpu.readContext().tr.selector === 0x20;
+      equal(
+        cpu.readPhysicalMemory(GDT + 0x1dn, 1)[0],
+        jump && switched ? 0x89 : 0x8b,
+        'outgoing busy',
+      );
+      equal(cpu.readPhysicalMemory(GDT + 0x25n, 1)[0], switched ? 0x8b : 0x89, 'incoming busy');
+    });
+  }
+}
+
 export function taskPagingScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [
     {
       name: '32-bit task switch with PG clear retains live CR3 and preserves upper and numeric banks',
       async run() {
-        await withGuest(compiler, async (cpu) => {
-          await toCaller(cpu);
+        await withTaskTransfers(compiler, async (cpu) => {
           cpu.setPagingState({ ...cpu.readPagingState(), cr0: 0x33n });
           write32(cpu, TSS_B + 84n, 0x10);
           const unchangedNumeric = preserveNumeric(cpu);
@@ -26,7 +47,7 @@ export function taskPagingScenarios(compiler: WebAssembly.Module): Scenario[] {
           const registers = state.registers.map((low, i) => (BigInt(i + 1) << 40n) | low);
           cpu.setState({ ...state, registers });
           const switched = await cpu.run({ budget: 1n });
-          equal(switched.reason, 'budget', 'completed CALL with paging disabled');
+          equal(switched.reason, 'budget', 'completed transfer with paging disabled');
           equal(switched.retired, 1n, 'one committed transfer');
           equal(switched.state.rip, ENTRY_B, 'B.EIP');
           equal(cpu.readPagingState().cr3, PD_A, 'PG0 retains outgoing PDBR');
@@ -50,8 +71,7 @@ export function taskPagingScenarios(compiler: WebAssembly.Module): Scenario[] {
       name: '32-bit tasks reload a changed valid PAE quartet, refuse reserved PDPTEs and retain an unchanged root',
       async run() {
         for (const target of ['changed', 'unchanged', 'reserved'] as const)
-          await withGuest(compiler, async (cpu) => {
-            await toCaller(cpu);
+          await withTaskTransfers(compiler, async (cpu) => {
             // First 2 MiB identity-mapped except linear 0x80000. Both tasks share the TSS/GDT pages.
             for (const [pdpt, pd, pt, physical, immediate] of [
               [0x28000, 0x29000, 0x2b000, 0x2d000, 0x11223344],
@@ -87,6 +107,8 @@ export function taskPagingScenarios(compiler: WebAssembly.Module): Scenario[] {
                 'protection-fault',
                 'changed PAE root rejects reserved bit',
               );
+              equal(transferred.retired, 0n, 'reserved root refused before changing tasks');
+              equal(cpu.readContext().tr.selector, 0x18, 'A still current');
               equal(transferred.protectionFault?.vector, 13, 'reserved PDPTE #GP');
               equal(transferred.protectionFault?.errorCode, 0, 'PDPTE fault has zero error');
               equal(cpu.readPagingState().cr3, 0x28000n, 'old valid root retained');
