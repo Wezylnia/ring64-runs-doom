@@ -1,6 +1,7 @@
 import { muslLogExpScenario } from './log-exp-musl.js';
 import { logExpScenarios } from './log-exp.js';
 import { muslFpatanScenarios } from './fpatan-musl.js';
+import { fpatanScenarios } from './fpatan.js';
 import { fisttpScenarios } from './fisttp.js';
 import type { Scenario } from './fixture.js';
 import { literalScenarios } from './literals.js';
@@ -16,6 +17,7 @@ export function x87Scenarios(compiler: WebAssembly.Module): Scenario[] {
     muslLogExpScenario(compiler),
     ...logExpScenarios(compiler),
     ...muslFpatanScenarios(compiler),
+    ...fpatanScenarios(compiler),
     ...fisttpScenarios(compiler),
     ...literalScenarios(compiler),
     ...specialScenarios(compiler),
