@@ -1,4 +1,4 @@
-use super::{Emitter, FLAGS, LHS, RESULT, RHS, VALUE};
+use super::{ADDRESS, Emitter, FLAGS, GPR, LHS, RESULT, RHS, STORE_STATUS, VALUE, vector::memory};
 use crate::x86::instruction::{Address, Alu, Location, RegisterView, Width};
 use wasm_encoder::{BlockType, Instruction as Op};
 
@@ -121,5 +121,73 @@ impl Emitter {
             .op(Op::I64And)
             .op(Op::LocalSet(FLAGS))
             .op(Op::End);
+    }
+
+    pub(super) fn compare_exchange16b(&mut self, address: Address, next_pc: u64, exit_depth: u32) {
+        let read = self
+            .block16_for_write
+            .expect("16-byte read-for-write import");
+        let store = self.vector_store.expect("16-byte store import");
+        self.stores = true;
+        self.address(address, next_pc);
+        self.op(Op::LocalTee(ADDRESS))
+            .op(Op::I32Const(address.segment as i32))
+            .op(Op::Call(read))
+            .op(Op::LocalTee(STORE_STATUS))
+            .op(Op::I32Eqz)
+            .op(Op::If(BlockType::Empty));
+        self.vector_failure(exit_depth + 1);
+
+        // Keep both old halves across the mandatory store. A miss writes the
+        // unchanged scratch, even when publishing it faults or invalidates code.
+        self.op(Op::End)
+            .op(Op::LocalGet(STORE_STATUS))
+            .op(Op::I64Load(memory(0)))
+            .op(Op::LocalTee(LHS))
+            .op(Op::LocalGet(GPR))
+            .op(Op::I64Eq)
+            .op(Op::LocalGet(STORE_STATUS))
+            .op(Op::I64Load(memory(8)))
+            .op(Op::LocalTee(RHS))
+            .op(Op::LocalGet(GPR + 2))
+            .op(Op::I64Eq)
+            .op(Op::I32And)
+            .op(Op::If(BlockType::Result(wasm_encoder::ValType::I64)))
+            .op(Op::LocalGet(STORE_STATUS))
+            .op(Op::LocalGet(GPR + 3))
+            .op(Op::I64Store(memory(0)))
+            .op(Op::LocalGet(STORE_STATUS))
+            .op(Op::LocalGet(GPR + 1))
+            .op(Op::I64Store(memory(8)))
+            .op(Op::I64Const(0x40))
+            .op(Op::Else)
+            .op(Op::I64Const(0))
+            .op(Op::End)
+            .op(Op::LocalSet(RESULT))
+            .op(Op::LocalGet(ADDRESS))
+            .op(Op::I32Const(16))
+            .op(Op::I32Const(address.segment as i32))
+            .op(Op::I32Const(16))
+            .op(Op::LocalGet(STORE_STATUS))
+            .op(Op::Call(store))
+            .op(Op::LocalTee(STORE_STATUS))
+            .op(Op::I32Eqz)
+            .op(Op::If(BlockType::Empty));
+        self.vector_failure(exit_depth + 1);
+        self.op(Op::End)
+            .op(Op::LocalGet(RESULT))
+            .op(Op::I64Eqz)
+            .op(Op::If(BlockType::Empty))
+            .op(Op::LocalGet(LHS))
+            .op(Op::LocalSet(GPR))
+            .op(Op::LocalGet(RHS))
+            .op(Op::LocalSet(GPR + 2))
+            .op(Op::End)
+            .op(Op::LocalGet(FLAGS))
+            .op(Op::I64Const(!0x40))
+            .op(Op::I64And)
+            .op(Op::LocalGet(RESULT))
+            .op(Op::I64Or)
+            .op(Op::LocalSet(FLAGS));
     }
 }

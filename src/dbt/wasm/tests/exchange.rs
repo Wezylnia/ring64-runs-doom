@@ -572,3 +572,69 @@ fn code_writing_exchanges_publish_whole_instruction_before_dispatch() {
     }
     run_cases(cases);
 }
+
+#[test]
+fn cmpxchg16b_keeps_live_inputs_and_publishes_only_after_complete_writeback() {
+    let mut cases = Vec::new();
+    for hit in [false, true] {
+        for (read_failed, store_status) in [(true, 0), (false, 0), (false, 2)] {
+            let low = if hit { 0x6000 } else { 0x6010 };
+            let high = if hit { 5 } else { 6 };
+            let loaded = format!("{high:x}{low:016x}");
+            let success = store_status != 0;
+            let writes = if success && !hit {
+                vec![(0, low), (2, high)]
+            } else {
+                vec![(2, 5)]
+            };
+            let mut packet = case(
+                vec![
+                    Instruction {
+                        pc: 0x1000,
+                        next_pc: 0x1005,
+                        operation: Operation::Mov {
+                            dst: RegisterView::low(2),
+                            src: DataOperand::Immediate(5),
+                            width: Width::W32,
+                        },
+                    },
+                    Instruction {
+                        pc: 0x1005,
+                        next_pc: 0x1009,
+                        operation: Operation::CompareExchange16b { address: at(0) },
+                    },
+                    Instruction {
+                        pc: 0x1009,
+                        next_pc: 0x100a,
+                        operation: Operation::Nop,
+                    },
+                ],
+                &[(0, 0x6000), (2, 0xabcd), (1, 0x19), (3, 0x17)],
+                0xcd7,
+                0x1000,
+                3,
+                (
+                    &writes,
+                    if success && !hit { 0xc97 } else { 0xcd7 },
+                    if success { 0x1009 } else { 0x1005 },
+                    if success { DISPATCH } else { DATA } as u32,
+                    if success { 1 } else { 2 },
+                ),
+            );
+            let mut accesses = vec![json!({
+                "kind":"block16_for_write", "args":["6000",2],
+                "result":if read_failed {Value::Null} else {json!(loaded)}
+            })];
+            if !read_failed {
+                let payload = if hit { "190000000000000017" } else { &loaded };
+                accesses.push(json!({"kind":"vector_store", "args":["6000",16,2,16,payload], "result":store_status}));
+            }
+            if !success {
+                accesses.push(json!({"kind":"access_reason", "args":[], "result":DATA}));
+            }
+            packet["accesses"] = json!(accesses);
+            cases.push(packet);
+        }
+    }
+    run_cases(cases);
+}

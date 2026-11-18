@@ -82,6 +82,7 @@ struct Emitter {
     vector_registers: [Option<u32>; 16],
     vector_written: u16,
     vector_temporaries: Option<[u32; 3]>,
+    block16_for_write: Option<u32>,
     vector_load: Option<u32>,
     vector_store: Option<u32>,
     vector_access_reason: Option<u32>,
@@ -238,7 +239,19 @@ pub(crate) fn emit_profile(unit: &Unit, observed: bool, paged: bool) -> Vec<u8> 
         next_type += 1;
         index
     });
-    let vector_store_type = vector_banks.stores.then(|| {
+    let wide_compare = unit
+        .instructions
+        .iter()
+        .any(|i| matches!(i.operation, Operation::CompareExchange16b { .. }));
+    let block16_for_write_type = wide_compare.then(|| {
+        let index = next_type;
+        types
+            .ty()
+            .function([ValType::I64, ValType::I32], [ValType::I32]);
+        next_type += 1;
+        index
+    });
+    let vector_store_type = (vector_banks.stores || wide_compare).then(|| {
         let index = next_type;
         types.ty().function(
             [
@@ -713,6 +726,12 @@ pub(crate) fn emit_profile(unit: &Unit, observed: bool, paged: bool) -> Vec<u8> 
         run_index += 1;
         function
     });
+    let block16_for_write = block16_for_write_type.map(|index| {
+        imports.import("env", "block16_for_write", EntityType::Function(index));
+        let function = run_index;
+        run_index += 1;
+        function
+    });
     let vector_store = vector_store_type.map(|index| {
         imports.import("env", "vector_store", EntityType::Function(index));
         let function = run_index;
@@ -879,7 +898,7 @@ pub(crate) fn emit_profile(unit: &Unit, observed: bool, paged: bool) -> Vec<u8> 
         run_index += 1;
         function
     });
-    let vector_access_reason = if vector_banks.loads || vector_banks.stores || store_mxcsr_used {
+    let vector_access_reason = if vector_banks.loads || vector_store.is_some() || store_mxcsr_used {
         Some(access_reason.unwrap_or_else(|| {
             imports.import("env", "access_reason", EntityType::Function(2));
             let function = run_index;
@@ -943,6 +962,7 @@ pub(crate) fn emit_profile(unit: &Unit, observed: bool, paged: bool) -> Vec<u8> 
         vector_written: vector_banks.written,
         vector_temporaries,
         vector_load,
+        block16_for_write,
         vector_store,
         vector_access_reason,
         float,
@@ -1117,6 +1137,9 @@ pub(crate) fn emit_profile(unit: &Unit, observed: bool, paged: bool) -> Vec<u8> 
             }
             Operation::CompareExchange8b { address } => {
                 emitter.compare_exchange8b(address, instruction.next_pc, exit_depth)
+            }
+            Operation::CompareExchange16b { address } => {
+                emitter.compare_exchange16b(address, instruction.next_pc, exit_depth)
             }
             Operation::Direction { set } => emitter.direction(set),
             Operation::String {

@@ -946,6 +946,9 @@ pub enum Operation {
     CompareExchange8b {
         address: Address,
     },
+    CompareExchange16b {
+        address: Address,
+    },
     Direction {
         set: bool,
     },
