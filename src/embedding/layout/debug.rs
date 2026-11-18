@@ -32,12 +32,17 @@ impl DebugSource {
             {
                 Source::Execute(slots as u8)
             }
-            2 if slots == 0
-                && self.single_step == 0
-                && self.completed == 0
-                && self.has_origin == 0 =>
+            kind @ (2 | 4)
+                if slots == 0
+                    && self.single_step == 0
+                    && self.completed == 0
+                    && self.has_origin == 0 =>
             {
-                Source::GeneralDetect
+                if kind == 4 {
+                    Source::TaskSwitch
+                } else {
+                    Source::GeneralDetect
+                }
             }
             3 if (1..=15).contains(&slots) && self.single_step <= 1 && self.completed <= 1 => {
                 Source::Data {
@@ -57,6 +62,10 @@ impl DebugSource {
             Some(Source::Execute(slots)) => Self {
                 kind: 1,
                 slots: slots.into(),
+                ..Self::default()
+            },
+            Some(Source::TaskSwitch) => Self {
+                kind: 4,
                 ..Self::default()
             },
             Some(Source::GeneralDetect) => Self {

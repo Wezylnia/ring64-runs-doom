@@ -10,6 +10,7 @@ export interface DebugContinuation {
 export type DebugSource =
   | { class: 'fault'; cause: 'execution-breakpoint'; breakpoints: number }
   | { class: 'fault'; cause: 'general-detect' }
+  | { class: 'trap'; cause: 'task-switch' }
   | {
       class: 'trap';
       cause: 'data-breakpoint';
@@ -89,6 +90,16 @@ export function captureDebugSource(input: DebugSource): DebugSource {
     return cause === 'general-detect'
       ? { class: kind, cause }
       : { class: kind, cause, breakpoints: slots(input.breakpoints) };
+  }
+  if (kind === 'trap' && cause === 'task-switch') {
+    if (
+      'breakpoints' in input ||
+      'singleStep' in input ||
+      'instructionCompleted' in input ||
+      'deferredOriginPc' in input
+    )
+      throw new TypeError('incompatible debug source fields');
+    return { class: kind, cause };
   }
   if (kind === 'trap' && cause === 'data-breakpoint') {
     const breakpoints = slots(input.breakpoints),
@@ -174,6 +185,7 @@ export function readDebugSource(
   const mask = view.getUint32(base + s.slots, true);
   if (kind === 1) return { class: 'fault', cause: 'execution-breakpoint', breakpoints: mask };
   if (kind === 2) return { class: 'fault', cause: 'general-detect' };
+  if (kind === 4) return { class: 'trap', cause: 'task-switch' };
   if (kind !== 3) throw new Error('invalid debug source tag');
   return {
     class: 'trap',
@@ -193,13 +205,15 @@ export function writeDebugSource(
 ): void {
   new Uint8Array(view.buffer, view.byteOffset, view.byteLength).fill(0);
   if (!input) return;
-  view.setUint32(
-    s.kind,
-    input.cause === 'execution-breakpoint' ? 1 : input.cause === 'general-detect' ? 2 : 3,
-    true,
-  );
+  const tag = {
+    'execution-breakpoint': 1,
+    'general-detect': 2,
+    'data-breakpoint': 3,
+    'task-switch': 4,
+  };
+  view.setUint32(s.kind, tag[input.cause], true);
   if ('breakpoints' in input) view.setUint32(s.slots, input.breakpoints, true);
-  if (input.class === 'trap') {
+  if (input.cause === 'data-breakpoint') {
     view.setUint32(s.singleStep, Number(input.singleStep), true);
     view.setUint32(s.completed, Number(input.instructionCompleted), true);
     if (input.deferredOriginPc !== undefined) {

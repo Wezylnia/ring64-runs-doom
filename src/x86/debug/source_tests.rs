@@ -20,3 +20,34 @@ fn execute_and_general_detect_are_distinct_saved_images_and_secondary_drops_debu
         (13, 0x10002, None)
     );
 }
+
+#[test]
+fn task_switch_clears_local_enables_and_selects_bt_at_the_incoming_pc() {
+    let mut dr = State {
+        dr7: 0x20ff_07ff,
+        ..State::default()
+    };
+    dr.switch_task();
+    assert_eq!(dr.dr7, 0x20ff_07aa);
+    let before = dr.dr6;
+    dr.select_source(Some(Source::TaskSwitch));
+    assert_eq!(dr.dr6, (before & !15) | (1 << 15));
+
+    let mut context = ExecutionContext::default();
+    context.set_mode_and_cpl(crate::x86::context::Mode::Protected, 0);
+    for flags in [2, 0x10102] {
+        let trap = Selection::new(0x2345, 0x2345, false, flags, Some(Source::TaskSwitch));
+        assert_eq!(trap.resume_flags, flags);
+        let mut event = ExceptionEvent::fault(1, 0x2345, flags, &context, None);
+        event.debug = trap.source;
+        event.saved_flags = trap.resume_flags;
+        assert!(event.validate(0x2345, flags, &context).is_ok());
+        assert!(
+            event
+                .validate(0x2345, flags, &ExecutionContext::default())
+                .is_err()
+        );
+        event.instruction_pc -= 1;
+        assert!(event.validate(0x2345, flags, &context).is_err());
+    }
+}

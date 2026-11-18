@@ -111,7 +111,7 @@ export function fastSystemReviewBoundaryScenarios(compiler: WebAssembly.Module):
             check(second.state.event.kind === 'pending', 'DB selected before NMI');
             equal(second.state.event.exception.vector, 1, 'historical source');
             const debug = second.state.event.exception.debug;
-            check(debug?.class === 'trap', 'completed data trap');
+            check(debug?.cause === 'data-breakpoint', 'completed data trap');
             equal(debug.deferredOriginPc, source - 4n, 'oldest history retained');
             equal(second.state.interrupts.nmiPending, true, 'NMI remains queued behind DB');
             equal(cpu.readContext().segments.gs.base, 0x402000n, 'one repaired swap');

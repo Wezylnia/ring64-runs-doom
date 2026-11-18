@@ -94,7 +94,13 @@ export interface StateSnapshot extends State {
 export interface DebugException {
   vector: 1;
   class: 'trap' | 'fault';
-  cause: 'single-step' | 'execution-breakpoint' | 'general-detect' | 'data-breakpoint' | 'combined';
+  cause:
+    | 'single-step'
+    | 'execution-breakpoint'
+    | 'general-detect'
+    | 'data-breakpoint'
+    | 'combined'
+    | 'task-switch';
   breakpoints?: number;
   singleStep?: boolean;
   deferredOriginPc?: bigint;

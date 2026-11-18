@@ -126,7 +126,8 @@ export function reviewCaptureScenarios(compiler: WebAssembly.Module): Scenario[]
           cpu.setState(partial);
           const imported = cpu.readState();
           check(
-            imported.event.kind === 'pending' && imported.event.exception.debug?.class === 'trap',
+            imported.event.kind === 'pending' &&
+              imported.event.exception.debug?.cause === 'data-breakpoint',
             'equal PC imported as trap, despite current NOP bytes',
           );
           equal(

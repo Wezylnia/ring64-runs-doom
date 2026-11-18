@@ -80,7 +80,7 @@ export function boundaryScenarios(compiler: WebAssembly.Module, make: Factory): 
                   'old deferred data cause survives inactive DR7',
                 );
                 const debug = result.state.event.exception.debug;
-                check(debug?.class === 'trap', 'deferred source is a completion trap');
+                check(debug?.cause === 'data-breakpoint', 'deferred source is a completion trap');
                 equal(debug.deferredOriginPc, source - 0x10n, 'old source origin preserved');
                 equal(
                   result.state.interrupts.nmiPending,

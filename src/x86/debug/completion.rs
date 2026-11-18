@@ -29,7 +29,7 @@ impl Selection {
     // FLAGS have already been projected into the current architectural context.
     pub fn new(pc: u64, resume: u64, completed: bool, flags: u64, source: Option<Source>) -> Self {
         let force_rf = matches!(source, Some(Source::GeneralDetect))
-            || !completed && !matches!(source, Some(Source::Execute(_)));
+            || !completed && !matches!(source, Some(Source::Execute(_) | Source::TaskSwitch));
         Self {
             instruction_pc: pc,
             resume_pc: resume,

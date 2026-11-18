@@ -187,7 +187,7 @@ export function fastSystemBoundaryScenarios(compiler: WebAssembly.Module): Scena
               check(result.state.event.kind === 'pending', 'selected historical DB');
               equal(result.state.event.exception.vector, 1, 'DB');
               const debug = result.state.event.exception.debug;
-              check(debug?.class === 'trap', 'typed data completion');
+              check(debug?.cause === 'data-breakpoint', 'typed data completion');
               equal(debug.breakpoints, 1, 'historical slot survives inactive DR7');
               equal(debug.deferredOriginPc, PC - 0x10n, 'oldest origin');
               equal(

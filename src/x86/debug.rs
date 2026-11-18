@@ -72,10 +72,17 @@ impl State {
             | if single_step { 1 << 14 } else { 0 }
             | if general_detect { 1 << 13 } else { 0 };
     }
+    pub fn switch_task(&mut self) {
+        self.dr7 &= !0x55;
+    }
     pub fn select_source(&mut self, source: Option<Source>) {
         let (slots, step, gd) = match source {
             Some(Source::Execute(slots)) => (slots, false, false),
             Some(Source::GeneralDetect) => (0, false, true),
+            Some(Source::TaskSwitch) => {
+                self.dr6 |= 1 << 15;
+                (0, false, false)
+            }
             Some(Source::Data {
                 slots, single_step, ..
             }) => (slots, single_step, false),
@@ -112,6 +119,7 @@ impl State {
 pub enum Source {
     Execute(u8),
     GeneralDetect,
+    TaskSwitch,
     Data {
         slots: u8,
         single_step: bool,
@@ -141,6 +149,9 @@ impl Source {
                     && live & super::flags::RF == 0
                     && event.saved_flags & super::flags::RF != 0
             }
+            Self::TaskSwitch => {
+                event.instruction_pc == event.return_pc && event.saved_flags == live
+            }
             Self::Data {
                 slots, completed, ..
             } => {
@@ -161,6 +172,9 @@ impl Source {
         }
     }
     pub fn validate_shadow(self, shadow: u32) -> Result<(), &'static str> {
+        if self == Self::TaskSwitch && shadow != 0 {
+            return Err("task-switch debug trap requires an uninhibited boundary");
+        }
         if shadow == 2
             && matches!(
                 self,
@@ -186,6 +200,7 @@ impl Source {
                 serde_json::json!({"class":"fault", "cause":"execution-breakpoint", "breakpoints":slots})
             }
             Self::GeneralDetect => serde_json::json!({"class":"fault", "cause":"general-detect"}),
+            Self::TaskSwitch => serde_json::json!({"class":"trap", "cause":"task-switch"}),
             Self::Data {
                 slots,
                 single_step,
