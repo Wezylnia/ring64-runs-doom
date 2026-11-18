@@ -148,3 +148,37 @@ fn directed_rounding_cannot_jump_two_lower_ulps_across_a_binade() {
     let exact = finish(Quad::from_bits(QUAD_ONE), 0, false, 0x037f);
     assert_eq!((exact.value, exact.post, exact.up), (power, 0, false));
 }
+
+#[test]
+fn integer_log_products_match_exact_quad_at_ties_and_exponent_limits() {
+    for (x, exponent) in [
+        (1, -16445),
+        (normal(-1, UNIT), -1),
+        (normal(3, UNIT), 3),
+        (normal(16383, UNIT), 16383),
+    ] {
+        for y in [
+            1,
+            normal(-16382, UNIT + 1),
+            normal(0, UNIT + 1),
+            normal(16383, u64::MAX),
+        ] {
+            for sign in [0, SIGN] {
+                let y = y | sign;
+                let (my, ey) = parts(y);
+                let product = (my * Quad::from_i128(exponent).value).value;
+                for masks in [0x037f, 0x0367] {
+                    for rc in 0..4 {
+                        let cw = masks | (rc << 10);
+                        let got = evaluate(MulLog2, x, y, cw);
+                        let expected = finish(product, ey, false, cw);
+                        assert_eq!(
+                            (got.value, got.post, got.up),
+                            (expected.value, expected.post, expected.up)
+                        );
+                    }
+                }
+            }
+        }
+    }
+}

@@ -134,11 +134,15 @@ pub(super) fn evaluate(kind: Kind, x: u128, y: u128, cw: u16) -> Result {
             finish(((mx * my).value * ratio).value, ex + ey, true, cw)
         }
         Kind::MulLog2 => {
-            let (my, ey) = parts(y);
             if mx.to_bits() == QUAD_ONE {
-                // The integer exponent times a 64-bit significand is exact in Quad.
-                return finish((my * Quad::from_i128(ex.into()).value).value, ey, false, cw);
+                // log2(x) is integral. Its magnitude times a raw80 significand
+                // fits in 79 bits, including for a subnormal power of two.
+                let mut product = num(y);
+                product.negative ^= ex < 0;
+                product.sig *= u128::from(ex.unsigned_abs());
+                return round_num(product, 64, Format::F80, cw);
             }
+            let (my, ey) = parts(y);
             // m in [0.75, 1.5), so m−1 is exact even next to 1 and the
             // integer exponent never cancels a fraction close to ±1.
             let (m, e) = if mx.to_bits() >= QUAD_ONE + (1 << 111) {
