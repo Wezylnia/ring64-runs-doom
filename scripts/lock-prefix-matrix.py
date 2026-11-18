@@ -25,9 +25,9 @@ def cases():
     yield case("control-cli", "fa")
     yield case("control-nop-15", "66" * 14 + "90")
     yield case("control-nop-16", "66" * 15 + "90")
-    yield case("control-fetch-unmapped", "0f1fc0", 1, "u")
-    yield case("control-fetch-nx", "0f1fc0", 1, "n")
-    yield case("control-fetch-rx", "0f1fc0", 1)
+    yield case("control-fetch-unmapped", "0f1f00", 1, "u")
+    yield case("control-fetch-nx", "0f1f00", 1, "n")
+    yield case("control-fetch-rx", "0f1f00", 1)
     yield case("control-data-guard", "f30f5807", data="g")
 
     for prefix, width in (("f0f2", "d"), ("f2f0", "d"), ("f0f3", "s"), ("f3f0", "s")):
@@ -82,12 +82,12 @@ def control_failures(rows, translated):
         "control-addsd-memory": {"result": "ret", "xmm0": "40140000000000004014000000000000"},
         "control-ud2": {"result": "SIGILL", "pc_delta": 0},
         "control-nop-15": {"result": "ret"},
+        "control-fetch-rx": {"result": "ret"},
     }
     if not translated:
         expected["control-ud2"].update(trap=6, err=0)
         expected["control-cli"] = {"trap": 13, "err": 0, "pc_delta": 0}
         expected["control-nop-16"] = {"trap": 13, "err": 0, "pc_delta": 0}
-        expected["control-fetch-rx"] = {"result": "ret"}
         expected["control-fetch-unmapped"] = {
             "trap": 14, "err": 20, "pc_delta": 0, "fault_addr_delta": 1, "si_addr_delta": 1,
         }
