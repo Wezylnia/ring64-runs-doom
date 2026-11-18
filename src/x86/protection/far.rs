@@ -116,30 +116,29 @@ pub fn execute_observing(
         None
     } else {
         let (loaded, raw) = lookup_raw(context, image, selector)?;
-        if descriptor.kind != FarKind::Return
-            && loaded.descriptor.system()
-            && matches!(loaded.descriptor.access & 15, 4 | 12)
-        {
-            return gates::execute(
-                context,
-                image,
-                descriptor.kind,
-                operands,
-                loaded,
-                raw,
-                &mut observe,
-            );
-        }
-        if descriptor.kind == FarKind::Call
-            && context.mode() == Mode::Protected
-            && loaded.descriptor.system()
-            && matches!(loaded.descriptor.access & 15, 9 | 11)
-        {
-            return Err(FarFailure::Task(super::task::switch32::Start::direct(
-                selector,
-                raw,
-                operands.next_pc,
-            )));
+        if loaded.descriptor.system() {
+            let kind = loaded.descriptor.access & 15;
+            if descriptor.kind != FarKind::Return && matches!(kind, 4 | 12) {
+                return gates::execute(
+                    context,
+                    image,
+                    descriptor.kind,
+                    operands,
+                    loaded,
+                    raw,
+                    &mut observe,
+                );
+            }
+            if descriptor.kind == FarKind::Call
+                && context.mode() == Mode::Protected
+                && matches!(kind, 9 | 11)
+            {
+                return Err(FarFailure::Task(super::task::switch32::Start::direct(
+                    selector,
+                    raw,
+                    operands.next_pc,
+                )));
+            }
         }
         Some(admit_code(context, descriptor.kind, selector, loaded)?)
     };
