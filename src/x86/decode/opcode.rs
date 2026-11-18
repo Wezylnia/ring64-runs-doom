@@ -711,12 +711,20 @@ where
     if prefixes.lock
         && !matches!(
             opcode,
-            0xa3 | 0xab | 0xb3 | 0xbb | 0xba | 0xb0 | 0xb1 | 0xc0 | 0xc1 | 0xc7
+            0x1f | 0xa3 | 0xab | 0xb3 | 0xbb | 0xba | 0xb0 | 0xb1 | 0xc0 | 0xc1 | 0xc7
         )
     {
         return Err(DecodeError::Unsupported);
     }
     match opcode {
+        0x1f => {
+            let operands = ModRm::read(cursor, rex)?;
+            if operands.selector != 0 {
+                return Err(DecodeError::Unsupported);
+            }
+            operands.location(cursor, prefixes, width)?;
+            Ok(Operation::Nop)
+        }
         0xb0 | 0xb1 | 0xc0 | 0xc1 => {
             let width = byte_or_wide(opcode, width);
             let operands = ModRm::read(cursor, rex)?;

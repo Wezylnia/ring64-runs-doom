@@ -62,6 +62,50 @@ fn operation(bytes: &[u8]) -> Operation {
 }
 
 #[test]
+fn multibyte_nop_consumes_its_operand_before_lock_or_length_faults() {
+    for bytes in [
+        &[0x0f, 0x1f, 0xc0][..],
+        &[0x4f, 0x0f, 0x1f, 0xc7],
+        &[0x64, 0x67, 0x0f, 0x1f, 0x44, 0x25, 0x7f],
+        &[0x66, 0x0f, 0x1f, 0x84, 0x00, 1, 2, 3, 4],
+        &[0x0f, 0x1f, 0x05, 1, 2, 3, 4],
+    ] {
+        assert_eq!(operation(bytes), Operation::Nop);
+        let locked = [&[0xf0][..], bytes].concat();
+        assert_eq!(at(0x1000, &locked), Err(DecodeError::Invalid));
+        for encoding in [bytes, &locked] {
+            for len in 0..encoding.len() {
+                assert_eq!(
+                    at(0x1000, &encoding[..len]),
+                    Err(DecodeError::Fetch(missing(0x1000 + len as u64))),
+                );
+            }
+        }
+    }
+    let mut longest = [0x66; 15];
+    longest[7..].copy_from_slice(&[0x0f, 0x1f, 0x84, 0, 0, 0, 0, 0]);
+    assert_eq!(operation(&longest), Operation::Nop);
+    let overlong_locked = [&[0xf0][..], &longest].concat();
+    assert_eq!(
+        at(0x1000, &overlong_locked),
+        Err(DecodeError::InstructionLength)
+    );
+
+    for selector in 1..=7 {
+        assert_eq!(
+            at(0x1000, &[0x0f, 0x1f, selector << 3 | 4]),
+            Err(DecodeError::Unsupported)
+        );
+    }
+    for repeat in [0xf2, 0xf3] {
+        assert_eq!(
+            at(0x1000, &[repeat, 0x0f, 0x1f]),
+            Err(DecodeError::Unsupported)
+        );
+    }
+}
+
+#[test]
 fn ud2_has_a_selected_exception_frontier_without_admitting_unknown_opcodes() {
     for bytes in [&[0x0f, 0x0b][..], &[0xf0, 0x0f, 0x0b], &[0x66, 0x0f, 0x0b]] {
         assert_eq!(at(0x1000, bytes), Err(DecodeError::Undefined));

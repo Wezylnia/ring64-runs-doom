@@ -26,6 +26,31 @@ fn decoded(pc: u64, bytes: &[u8], context: &ExecutionContext) -> Instruction {
 }
 
 #[test]
+fn multibyte_nop_uses_the_active_address_size_in_legacy_modes() {
+    for ctx in [
+        context("protected", false),
+        context("protected", true),
+        context("virtual8086", false),
+        context("compatibility", true),
+    ] {
+        // mod=10/rm=4 means [SI+disp16] or [SIB+disp32].
+        for alternate in [false, true] {
+            let mut bytes = Vec::new();
+            if alternate {
+                bytes.push(0x67);
+            }
+            bytes.extend([0x0f, 0x1f, 0x84, 0x24, 0x55]);
+            if ctx.code32() != alternate {
+                bytes.extend([0, 0, 0]);
+            }
+            let instruction = decoded(0x1000, &bytes, &ctx);
+            assert_eq!(instruction.operation, Operation::Nop);
+            assert_eq!(instruction.next_pc, 0x1000 + bytes.len() as u64);
+        }
+    }
+}
+
+#[test]
 fn mode_selects_legacy_inc_instead_of_rex_and_preserves_real_width_defaults() {
     let bytes = [0x40, 0xb8, 0x78, 0x56, 0x34, 0x12];
     let legacy = decoded(0x1000, &bytes, &context("protected", true));
