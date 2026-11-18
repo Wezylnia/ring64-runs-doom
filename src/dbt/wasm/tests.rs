@@ -2,6 +2,8 @@ mod addressing;
 mod arithmetic_bits;
 mod bits;
 mod bmi;
+#[cfg(target_arch = "x86_64")]
+mod bmi_native;
 mod code_validity;
 mod compound_stack;
 mod conditions;
