@@ -170,3 +170,6 @@ pub(in crate::x86::x87) fn atan2(x: u128, y: u128, cw: u16) -> Result {
     result.pre = pre;
     result
 }
+
+#[cfg(test)]
+mod tests;
