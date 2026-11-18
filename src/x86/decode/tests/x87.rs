@@ -48,6 +48,37 @@ fn standalone_wait_needs_no_following_opcode_and_keeps_its_own_retirement_bounda
 }
 
 #[test]
+fn logarithm_and_exponential_words_capture_only_their_implicit_operands() {
+    for (modrm, kind, binary) in [
+        (0xf0, Kind::Exp2MinusOne, false),
+        (0xf1, Kind::MulLog2, true),
+        (0xf9, Kind::MulLog2PlusOne, true),
+    ] {
+        let op = Op {
+            kind,
+            format: if binary {
+                Format::Register
+            } else {
+                Format::None
+            },
+            index: u8::from(binary),
+            dest_index: binary,
+            pop: u8::from(binary),
+            encoding: 0x100 + u16::from(modrm),
+            ..Op::default()
+        };
+        assert_eq!(x87(&[0xd9, modrm]).op, op);
+        assert_eq!(x87(&[0x66, 0x4f, 0xd9, modrm]).op, op);
+        assert_eq!(op.memory_bytes(), 0);
+        assert!(op.is_waiting());
+        assert!(Op::try_decode(op.encode() ^ (1 << 10)).is_none());
+        assert!(Op::try_decode(op.encode() ^ (1 << 13)).is_none());
+        assert!(Op::try_decode(op.encode() ^ (1 << 14)).is_none());
+        assert_eq!(at(0x1000, &[0xf0, 0xd9, modrm]), Err(DecodeError::Invalid));
+    }
+}
+
+#[test]
 fn selected_register_directions_pop_counts_and_indices_are_not_rex_extended() {
     use Kind::*;
     for (opcode, base, kind, destination_index, pop) in [
@@ -130,7 +161,7 @@ fn every_esc_selector_admits_exactly_the_documented_selection_and_rejects_lock()
             let selected = match opcode {
                 0xd8 => true,
                 0xd9 => {
-                    matches!(modrm, 0xc0..=0xd0 | 0xe0 | 0xe1 | 0xe4 | 0xe5 | 0xe8..=0xee | 0xf4..=0xf8 | 0xfa | 0xfc | 0xfd)
+                    matches!(modrm, 0xc0..=0xd0 | 0xe0 | 0xe1 | 0xe4 | 0xe5 | 0xe8..=0xee | 0xf0 | 0xf1 | 0xf4..=0xfa | 0xfc | 0xfd)
                 }
                 0xda => matches!(modrm, 0xc0..=0xdf | 0xe9),
                 0xdb => matches!(modrm, 0xc0..=0xdf | 0xe2 | 0xe3 | 0xe8..=0xf7),
@@ -183,7 +214,7 @@ fn every_esc_selector_admits_exactly_the_documented_selection_and_rejects_lock()
             }
         }
     }
-    assert_eq!((registers, memory), (337, 60));
+    assert_eq!((registers, memory), (340, 60));
 }
 
 #[test]
@@ -364,11 +395,8 @@ fn required_x87_address_tails_precede_lock_rejection_but_unselected_forms_stop_a
         [0xdb, 0xe0],
         [0xdb, 0xe1],
         [0xdb, 0xe4],
-        [0xd9, 0xf0],
-        [0xd9, 0xf1],
         [0xd9, 0xf2],
         [0xd9, 0xf3],
-        [0xd9, 0xf9],
         [0xd9, 0xfb],
         [0xd9, 0xfe],
         [0xd9, 0xff],

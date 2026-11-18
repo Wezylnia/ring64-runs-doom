@@ -166,6 +166,18 @@ fn register(opcode: u8, modrm: u8) -> Result<Op, DecodeError> {
                     Constant
                 }
                 0xf4 => Extract,
+                0xf0 => Exp2MinusOne,
+                0xf1 | 0xf9 => {
+                    op.format = Format::Register;
+                    op.index = 1;
+                    op.dest_index = true;
+                    op.pop = 1;
+                    if modrm == 0xf1 {
+                        MulLog2
+                    } else {
+                        MulLog2PlusOne
+                    }
+                }
                 0xf5 => RemainderNearest,
                 0xf8 => Remainder,
                 0xfd => Scale,

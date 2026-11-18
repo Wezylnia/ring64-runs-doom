@@ -42,7 +42,10 @@ export function boundaryScenarios(compiler: WebAssembly.Module): Scenario[] {
           ['d9f4', 'x87-exception', 0],
           ['df23', 'x87-exception', 10],
           ['df33', 'x87-exception', 10],
-          ['d9f9', 'unsupported', 0],
+          ['d9f0', 'x87-exception', 0],
+          ['d9f1', 'x87-exception', 0],
+          ['d9f9', 'x87-exception', 0],
+          ['d9f3', 'unsupported', 0],
           ['f0d9e8', 'invalid-encoding', 0],
           ['db2d', 'fetch-fault', 1],
         ] as const) {
