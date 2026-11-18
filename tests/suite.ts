@@ -34,6 +34,7 @@ import { legacyPagingScenarios } from './execution/legacy-paging/index.js';
 import { pagingScenarios } from './execution/paging/index.js';
 import { fastSystemScenarios } from './execution/fast-system/index.js';
 import { contextReuseScenarios } from './execution/context-reuse/index.js';
+import { cr3CodeReuseScenarios } from './execution/cr3-code-reuse/index.js';
 import { identityTimeScenarios } from './execution/identity-time/index.js';
 import { supervisorAccessScenarios } from './execution/supervisor-access/index.js';
 import { alignmentCheckingScenarios } from './execution/alignment-checking/index.js';
@@ -81,6 +82,7 @@ export async function runScenarios(
     ...legacyPagingScenarios(core),
     ...fastSystemScenarios(core),
     ...contextReuseScenarios(core),
+    ...cr3CodeReuseScenarios(core),
     ...numericControlScenarios(core),
     ...identityTimeScenarios(core),
     ...supervisorAccessScenarios(core),
