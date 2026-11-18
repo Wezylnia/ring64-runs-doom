@@ -133,6 +133,9 @@ pub enum Kind {
     Scale,
     Extract,
     StoreTruncated,
+    Exp2MinusOne,
+    MulLog2,
+    MulLog2PlusOne,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 #[repr(u8)]
@@ -211,6 +214,9 @@ impl Op {
             Scale,
             Extract,
             StoreTruncated,
+            Exp2MinusOne,
+            MulLog2,
+            MulLog2PlusOne,
         ];
         let formats = [
             Format::None,
@@ -246,6 +252,9 @@ impl Op {
         }
         if self.format != Register && self.kind != Constant && self.index != 0 {
             return false;
+        }
+        if matches!(self.kind, MulLog2 | MulLog2PlusOne) {
+            return self.format == Register && self.index == 1 && self.dest_index && self.pop == 1;
         }
         let arithmetic = matches!(self.kind, Add | Mul | Sub | SubReverse | Div | DivReverse);
         if self.dest_index && !(arithmetic && self.format == Register) {

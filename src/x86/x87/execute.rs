@@ -331,7 +331,9 @@ pub(super) fn eval(state: &mut State, op: Op, source: u128, flags: u64) -> Effec
         pops(state, op.pop);
         return out;
     }
-    let r = if matches!(op.kind, Sqrt | Round) {
+    let r = if matches!(op.kind, Exp2MinusOne | MulLog2 | MulLog2PlusOne) {
+        number::transcendental(op.kind, a, b, cw)
+    } else if matches!(op.kind, Sqrt | Round) {
         number::unary(op.kind, a, cw)
     } else {
         let (lhs, rhs) = if op.dest_index { (b, a) } else { (a, b) };
