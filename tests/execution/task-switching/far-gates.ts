@@ -102,6 +102,21 @@ export function farTaskGateScenarios(compiler: WebAssembly.Module): Scenario[] {
       },
     },
     {
+      name: 'far task selector, privilege and presence checks precede use of the outgoing TR',
+      async run() {
+        await refused({ source: 'direct', transfer: 'jump', noTr: true }, [13, 0x20]);
+        await refused(
+          { source: 'direct', transfer: 'jump', noTr: true, cpl: 0, tssAccess: 0x09 },
+          [11, 0x20],
+        );
+        for (const source of ['gdt', 'ldt'] as const) {
+          await refused({ source, transfer: 'call', target: 0x0f, noTr: true }, [13, 0x0c]);
+          await refused({ source, transfer: 'jump', tssAccess: 0x09, noTr: true }, [11, 0x20]);
+          await refused({ source, transfer: 'jump', noTr: true }, [10, 0]);
+        }
+      },
+    },
+    {
       name: 'fixed IA32e and private-linear profiles keep their legacy far task frontiers',
       async run() {
         for (const source of ['direct', 'gdt', 'ldt'] as const) {

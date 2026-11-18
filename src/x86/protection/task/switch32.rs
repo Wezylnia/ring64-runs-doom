@@ -145,9 +145,15 @@ pub fn prepare(
         Start::Gate { ext, .. } => ext,
         _ => 0,
     };
+    let check_outgoing_format = || -> Result<(), Error> {
+        if cached_task(context, 0, ext)?.attributes & 15 == 3 {
+            return Err(Error::Unsupported);
+        }
+        Ok(())
+    };
     // A far task gate's selector controls access. The inner TSS selector's
     // RPL and its descriptor's DPL do not restrict entry through the gate.
-    let (target_selector, direct_descriptor) = match start {
+    let (selector, direct_descriptor) = match start {
         Start::Far {
             selector,
             descriptor: raw,
@@ -161,26 +167,22 @@ pub fn prepare(
                 if !outer.present() {
                     return Err(fault(selector, 0, 11, ProtectionPhase::Descriptor).into());
                 }
-                (Some((raw >> 16) as u16), None)
+                ((raw >> 16) as u16, None)
             } else {
-                (Some(selector), Some(raw))
+                (selector, Some(raw))
             }
         }
-        Start::Gate { selector, .. } => (Some(selector), None),
-        Start::NestedReturn { .. } => (None, None),
-    };
-    let old = cached_task(context, 0, ext)?;
-    if old.attributes & 15 == 3 {
-        return Err(Error::Unsupported);
-    }
-    let returning = target_selector.is_none();
-    let selector = match target_selector {
-        Some(selector) => selector,
-        None => {
-            cached_task(context, 1, ext)?;
-            read_field(context, image, old, 0, 2)? as u16
+        Start::Gate { selector, .. } => {
+            check_outgoing_format()?;
+            (selector, None)
+        }
+        Start::NestedReturn { .. } => {
+            check_outgoing_format()?;
+            let old = cached_task(context, 1, ext)?;
+            (read_field(context, image, old, 0, 2)? as u16, None)
         }
     };
+    let returning = matches!(start, Start::NestedReturn { .. });
     let nested = matches!(
         start,
         Start::Gate { .. }
@@ -213,7 +215,11 @@ pub fn prepare(
     if descriptor.limit < 0x67 {
         return Err(fault(selector, ext, 10, ProtectionPhase::Descriptor).into());
     }
-    cached_task(context, 0x67, ext)?;
+    // Far CALL/JMP qualify the selected TSS before the switch uses the old TR.
+    if matches!(start, Start::Far { .. }) {
+        check_outgoing_format()?;
+    }
+    let old = cached_task(context, 0x67, ext)?;
     let task = TaskRegister {
         selector,
         valid: true,
