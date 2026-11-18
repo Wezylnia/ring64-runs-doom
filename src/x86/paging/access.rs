@@ -249,6 +249,20 @@ impl<'a> Memory<'a> {
         }
     }
 
+    fn read_rmw_into(
+        &self,
+        address: u64,
+        width: u32,
+        intent: Intent,
+        output: &mut [u8],
+    ) -> Result<(), AccessFailure> {
+        let prepared =
+            self.prepare_aligned(address, width, Access::Write, true, self.class, intent)?;
+        self.read_prepared(&prepared, output);
+        self.storage.borrow_mut().work.pending.push(prepared);
+        Ok(())
+    }
+
     fn read_at(
         &self,
         address: u64,
@@ -429,6 +443,13 @@ impl GuestMemory for Memory<'_> {
     fn read_for_write(&self, address: u64, width: u32) -> Result<u64, AccessFailure> {
         self.read_for_write_aligned(address, width, Intent::Exempt)
     }
+    fn read_block16_for_write_aligned(
+        &self,
+        address: u64,
+        output: &mut [u8; 16],
+    ) -> Result<(), AccessFailure> {
+        self.read_rmw_into(address, 16, Intent::Exempt, output)
+    }
     fn read_vector(&self, address: u64, width: u32) -> Result<[u8; 16], AccessFailure> {
         self.read_at(address, width, self.class, Intent::Exempt)
     }
@@ -494,11 +515,8 @@ impl GuestMemory for Memory<'_> {
         width: u32,
         intent: Intent,
     ) -> Result<u64, AccessFailure> {
-        let prepared =
-            self.prepare_aligned(address, width, Access::Write, true, self.class, intent)?;
         let mut bytes = [0; 8];
-        self.read_prepared(&prepared, &mut bytes);
-        self.storage.borrow_mut().work.pending.push(prepared);
+        self.read_rmw_into(address, width, intent, &mut bytes)?;
         Ok(u64::from_le_bytes(bytes))
     }
     fn read_vector_aligned(

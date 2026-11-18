@@ -14,6 +14,13 @@ pub trait GuestMemory {
     fn fetch(&self, address: u64) -> Result<u8, AccessFailure>;
     fn read(&self, address: u64, width: u32) -> Result<u64, AccessFailure>;
     fn read_for_write(&self, address: u64, width: u32) -> Result<u64, AccessFailure>;
+    /// The caller has checked mandatory 16-byte alignment on the guest linear address.
+    /// Capture the entire RMW operand before changing the output or publishing a write.
+    fn read_block16_for_write_aligned(
+        &self,
+        address: u64,
+        output: &mut [u8; 16],
+    ) -> Result<(), AccessFailure>;
     fn read_vector(&self, address: u64, width: u32) -> Result<[u8; 16], AccessFailure>;
     fn read_fields(
         &self,
@@ -176,6 +183,13 @@ impl GuestMemory for Image {
     }
     fn read_for_write(&self, address: u64, width: u32) -> Result<u64, AccessFailure> {
         Image::read_for_write(self, address, width).map_err(AccessFailure::Linear)
+    }
+    fn read_block16_for_write_aligned(
+        &self,
+        address: u64,
+        output: &mut [u8; 16],
+    ) -> Result<(), AccessFailure> {
+        Image::read_block16_for_write(self, address, output).map_err(AccessFailure::Linear)
     }
     fn read_vector(&self, address: u64, width: u32) -> Result<[u8; 16], AccessFailure> {
         Image::read_vector(self, address, width).map_err(AccessFailure::Linear)

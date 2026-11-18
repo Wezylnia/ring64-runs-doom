@@ -162,14 +162,28 @@ impl Image {
 
     pub fn read_vector(&self, address: u64, width: u32) -> Result<[u8; 16], Fault> {
         assert!(matches!(width, 2 | 4 | 8 | 10 | 16));
-        let mut index = self.preflight::<false>(address, width, Access::Read, false, false)?;
+        let first = self.preflight::<false>(address, width, Access::Read, false, false)?;
+        Ok(self.vector_after_preflight(address, width, first))
+    }
+
+    pub(crate) fn read_block16_for_write(
+        &self,
+        address: u64,
+        output: &mut [u8; 16],
+    ) -> Result<(), Fault> {
+        let first = self.preflight::<false>(address, 16, Access::Write, true, false)?;
+        *output = self.vector_after_preflight(address, 16, first);
+        Ok(())
+    }
+
+    fn vector_after_preflight(&self, address: u64, width: u32, mut index: usize) -> [u8; 16] {
         let mapping = &self.mappings[index];
         let relative = address - mapping.base;
         if u64::from(width) <= u64::from(mapping.length) - relative {
             let offset = mapping.offset as usize + relative as usize;
             let source = &self.backings[mapping.backing].bytes[offset..];
             if width == 16 {
-                return Ok(source[..16].try_into().unwrap());
+                return source[..16].try_into().unwrap();
             }
             let mut output = [0; 16];
             match width {
@@ -179,7 +193,7 @@ impl Image {
                 10 => output[..10].copy_from_slice(&source[..10]),
                 _ => unreachable!(),
             }
-            return Ok(output);
+            return output;
         }
         let mut output = [0; 16];
         let mut cursor = address;
@@ -197,7 +211,7 @@ impl Image {
                 index += 1;
             }
         }
-        Ok(output)
+        output
     }
 
     pub fn write_bytes(&mut self, address: u64, bytes: &[u8]) -> Result<(), Fault> {

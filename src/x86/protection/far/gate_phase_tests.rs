@@ -53,6 +53,13 @@ impl GuestMemory for Probe {
     fn read_for_write(&self, address: u64, width: u32) -> Result<u64, AccessFailure> {
         GuestMemory::read_for_write(&self.image, address, width)
     }
+    fn read_block16_for_write_aligned(
+        &self,
+        address: u64,
+        output: &mut [u8; 16],
+    ) -> Result<(), AccessFailure> {
+        GuestMemory::read_block16_for_write_aligned(&self.image, address, output)
+    }
     fn read_vector(&self, address: u64, width: u32) -> Result<[u8; 16], AccessFailure> {
         self.traffic
             .borrow_mut()

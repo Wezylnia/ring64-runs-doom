@@ -719,6 +719,50 @@ fn rmw_retains_its_leaf_and_payload_may_clear_the_planned_dirty_bit() {
 }
 
 #[test]
+fn a_16_byte_rmw_writes_through_the_captured_translation() {
+    let (mut image, state) = fixture(0, true, false);
+    let mut work = AccessState::default();
+    let initial = std::array::from_fn(|index| index as u8);
+    image.physical_write_bytes(0x9000, &initial).unwrap();
+    let mut output = [0xa5; 16];
+    Memory::new(&mut image, &state, 3, 0, &mut work, &Keys::ZERO)
+        .read_block16_for_write_aligned(0x1000, &mut output)
+        .unwrap();
+    assert_eq!(output, initial);
+    assert_eq!(image.physical_read(0x4008, 8), Ok(0x9027));
+    image.physical_write(0x4008, 8, 0xb027).unwrap();
+    Memory::new(&mut image, &state, 3, 0, &mut work, &Keys::ZERO)
+        .write_bytes_aligned(0x1000, &[0x89; 16], Intent::Exempt)
+        .unwrap();
+    assert!(work.pending.is_empty());
+    assert_eq!(image.physical_read(0x4008, 8), Ok(0xb067));
+    assert_eq!(image.physical_read_bytes(0x9000, 16).unwrap(), [0x89; 16]);
+    assert_eq!(image.physical_read_bytes(0xb000, 16).unwrap(), [0; 16]);
+}
+
+#[test]
+fn a_16_byte_rmw_dirty_refusal_keeps_the_captured_payload_intact() {
+    let (mut image, state) = fixture(0, true, true);
+    let mut work = AccessState::default();
+    let initial = [0x32; 16];
+    image.physical_write_bytes(0x7000, &initial).unwrap();
+    let mut output = [0xa5; 16];
+    let mut memory = Memory::new(&mut image, &state, 3, 0, &mut work, &Keys::ZERO);
+    memory
+        .read_block16_for_write_aligned(0x7000, &mut output)
+        .unwrap();
+    assert_eq!(output, initial);
+    assert!(matches!(
+        memory.write_bytes_aligned(0x7000, &[0xfd; 16], Intent::Exempt),
+        Err(AccessFailure::Paging(Failure::Physical(f))) if f.linear == 0x7000 && f.access == Access::Write
+        && f.phase == PhysicalPhase::DirtyWrite && f.physical.failing == 0x4038
+    ));
+    assert!(work.pending.is_empty());
+    assert_eq!(image.physical_read(0x4038, 8), Ok(0x7027));
+    assert_eq!(image.physical_read_bytes(0x7000, 16).unwrap(), initial);
+}
+
+#[test]
 fn sparse_nominal_probe_dirties_only_a_participating_page() {
     let (mut image, state) = fixture(0xb027, true, false);
     let mut work = AccessState::default();

@@ -1,6 +1,59 @@
 use super::{Access, Cause, Fault, Image};
 
 #[test]
+fn a_16_byte_rmw_admits_both_permissions_before_copying_any_bytes() {
+    use crate::memory::{MappingInput, MemoryLimits, Permissions};
+
+    for (read, write) in [(false, true), (true, false), (true, true)] {
+        let mapping = |base, offset, length, read, write| MappingInput {
+            base,
+            backing: "ram".into(),
+            offset,
+            length,
+            permissions: Permissions {
+                read,
+                write,
+                execute: false,
+            },
+        };
+        let image = Image::mapped(
+            vec![("ram".into(), (0..32).collect())],
+            vec![
+                mapping(0x4000, 16, 9, true, true),
+                mapping(0x4009, 0, 7, read, write),
+            ],
+            MemoryLimits {
+                max_backing_bytes: 32,
+                max_backings: 1,
+                max_mappings: 2,
+            },
+        )
+        .unwrap();
+        let mut output = [0xa5; 16];
+        let result = image.read_block16_for_write(0x4000, &mut output);
+        if read && write {
+            assert_eq!(result, Ok(()));
+            assert_eq!(
+                output,
+                [16, 17, 18, 19, 20, 21, 22, 23, 24, 0, 1, 2, 3, 4, 5, 6]
+            );
+        } else {
+            assert_eq!(
+                result,
+                Err(Fault {
+                    address: 0x4000,
+                    width: 16,
+                    access: Access::Write,
+                    cause: Cause::Permission,
+                    failing: 0x4009
+                })
+            );
+            assert_eq!(output, [0xa5; 16]);
+        }
+    }
+}
+
+#[test]
 fn write_intent_reads_return_only_the_selected_scalar_without_changing_guards() {
     let bytes = vec![
         0xa0, 0xa1, 0xa2, 0xa3, 0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11, 0xac, 0xad, 0xae,
