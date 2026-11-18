@@ -1,8 +1,8 @@
 use super::*;
 use crate::memory::{Access, Cause};
-use crate::x86::context::Mode;
+use crate::x86::context::{Mode, Segment};
 use crate::x86::instruction::{
-    Address, AddressBase, Operation, PagingInstruction as Paging, Width,
+    Address, AddressBase, Location, Operation, PagingInstruction as Paging, RegisterView, Width,
 };
 
 fn decoded(
@@ -154,4 +154,59 @@ fn clts_is_an_operand_free_paged_control_with_lock_and_repeat_frontiers() {
         decoded(&[0xf3, 0x0f, 0x06], true, &context),
         Err(DecodeError::Unsupported)
     );
+}
+
+#[test]
+fn lmsw_group_fetches_only_the_admitted_register_or_memory_encoding() {
+    let context = ExecutionContext::default();
+    let register = [0x66, 0x4d, 0x0f, 0x01, 0xf7];
+    let memory = [0xf3, 0x48, 0x0f, 0x01, 0x35, 1, 2, 3, 4];
+    for (bytes, source) in [
+        (&register[..], Location::Register(RegisterView::low(15))),
+        (
+            &memory[..],
+            Location::Memory(Address {
+                base: AddressBase::NextPc,
+                index: None,
+                displacement: 0x04030201,
+                size: Width::W64,
+                segment: Segment::Ds,
+            }),
+        ),
+    ] {
+        let instruction = decoded(bytes, true, &context).unwrap();
+        assert_eq!(instruction.next_pc, 0x1000 + bytes.len() as u64);
+        assert_eq!(
+            instruction.operation,
+            Operation::Paging(Paging::LoadMachineStatusWord(source))
+        );
+        assert_eq!(
+            decoded(bytes, false, &context),
+            Err(DecodeError::Unsupported)
+        );
+    }
+    for end in 4..memory.len() {
+        assert!(
+            matches!(decoded(&memory[..end], true, &context), Err(DecodeError::Fetch(f)) if
+                f.address == 0x1000 + end as u64)
+        );
+    }
+    for bytes in [&[0xf0, 0xf3, 0x0f, 0x01][..], &[0xf2, 0xf0, 0x0f, 0x01]] {
+        assert_eq!(
+            decoded(bytes, true, &context),
+            Err(DecodeError::Unsupported)
+        );
+    }
+    assert_eq!(
+        decoded(&[0xf0, 0x0f, 0x01, 0xf0], true, &context),
+        Err(DecodeError::Invalid)
+    );
+    assert_eq!(
+        decoded(&[0xf0, 0x0f, 0x01, 0x34], false, &context),
+        Err(DecodeError::Unsupported)
+    );
+    assert!(matches!(
+        decoded(&[0xf0, 0x0f, 0x01, 0x34], true, &context),
+        Err(DecodeError::Fetch(fault)) if fault.address == 0x1004
+    ));
 }

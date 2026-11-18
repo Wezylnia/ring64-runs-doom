@@ -859,6 +859,7 @@ impl FarInstruction {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PagingInstruction {
     ClearTaskSwitched,
+    LoadMachineStatusWord(Location),
     ControlRegister {
         register: u8,
         gpr: u8,

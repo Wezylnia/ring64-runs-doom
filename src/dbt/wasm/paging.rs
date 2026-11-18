@@ -1,6 +1,6 @@
 use super::{Emitter, GPR, REASON, VALUE};
 use crate::embedding::layout::{DISPATCH, RunState};
-use crate::x86::instruction::{PagingInstruction, RegisterView, Width};
+use crate::x86::instruction::{Location, PagingInstruction, RegisterView, Width};
 use wasm_encoder::{Instruction as Op, MemArg};
 
 impl Emitter {
@@ -23,6 +23,17 @@ impl Emitter {
                         .op(Op::I32Const(0))
                         .op(Op::I64Const(0));
                 }
+                PagingInstruction::LoadMachineStatusWord(operand) => match operand {
+                    Location::Register(register) => {
+                        self.op(Op::I32Const(6)).op(Op::I32Const(0));
+                        self.data_register(register, Width::W16);
+                    }
+                    Location::Memory(address) => {
+                        self.op(Op::I32Const(7))
+                            .op(Op::I32Const(address.segment as i32));
+                        self.address(address, next);
+                    }
+                },
                 PagingInstruction::ControlRegister {
                     register,
                     gpr,
@@ -92,6 +103,7 @@ impl Emitter {
                 }
                 PagingInstruction::InvalidatePage(_)
                 | PagingInstruction::InvalidatePcid { .. }
+                | PagingInstruction::LoadMachineStatusWord(_)
                 | PagingInstruction::ClearTaskSwitched => {
                     unreachable!()
                 }

@@ -178,6 +178,94 @@ fn pg0_decode_keeps_actual_physical_execute_permission_checks() {
 }
 
 #[test]
+fn lmsw_memory_checks_privilege_and_the_full_word_before_publishing_cr0() {
+    use crate::x86::context::Mode;
+    use crate::x86::protection::ProtectionPhase;
+
+    fixture("pae", true, true);
+    let (before, context) = BRIDGE.with_borrow_mut(|bridge| {
+        let core = bridge.core.as_mut().unwrap();
+        core.image.physical_write(0x3010, 8, 0).unwrap();
+        core.image.physical_write(0x9fff, 1, 0xf4).unwrap();
+        core.context.set_mode_and_cpl(Mode::Protected, 3);
+        let debug = unsafe { &mut (*core.state.get()).debug.registers };
+        debug.write(0, 0x2000);
+        debug.write(7, 0x0003_0001);
+        (core.paging.unwrap(), core.context.clone())
+    });
+    let lmsw = || paging::core_paging_control(7, Segment::Ds as u32, 0x1fff, PC, RF, 0);
+    physical_counts::take();
+    assert_eq!(lmsw(), crate::embedding::layout::PROTECTION);
+    assert_eq!(physical_counts::take(), [0; 6], "no explicit read at CPL3");
+    BRIDGE.with_borrow_mut(|bridge| {
+        let core = bridge.core.as_mut().unwrap();
+        assert_eq!(core.paging, Some(before));
+        assert_eq!(core.context, context);
+        let fault = core.protection_fault.take().unwrap();
+        assert_eq!(
+            (fault.vector, fault.error_code, fault.phase),
+            (13, 0, ProtectionPhase::Privilege)
+        );
+        core.context.set_mode_and_cpl(Mode::Protected, 0);
+    });
+    assert_eq!(lmsw(), 24);
+    BRIDGE.with_borrow_mut(|bridge| {
+        let core = bridge.core.as_mut().unwrap();
+        assert_eq!(core.paging.unwrap().cr0, before.cr0);
+        assert_eq!(core.paging.unwrap().cr2, 0x2000);
+        assert_eq!(core.debug_candidate, 0);
+        assert!(
+            matches!(core.paging_failure.take(), Some(Failure::Page(fault)) if
+            fault.address == 0x2000 && fault.error_code == 0 && fault.access == Access::Read)
+        );
+        core.image.physical_write(0x3010, 8, 0x8007).unwrap();
+        core.image.physical_write(0x8000, 1, 0xff).unwrap();
+    });
+    assert_eq!(lmsw(), 0);
+    BRIDGE.with_borrow(|bridge| {
+        let core = bridge.core.as_ref().unwrap();
+        let after = core.paging.unwrap();
+        assert_eq!(after.cr0, 0x80000035);
+        assert_eq!(after.cr2, 0x2000);
+        assert_eq!(after.pdpte, before.pdpte, "poisoned PAE root stays dormant");
+        assert_eq!(core.debug_candidate, 1, "watchpoint covers the second byte");
+        assert_eq!(
+            core.image.physical_read(0x3010, 8),
+            Ok(0x8027),
+            "read sets A only"
+        );
+    });
+}
+
+#[test]
+fn lmsw_register_writes_only_numeric_bits_and_a_sticky_pe() {
+    use crate::x86::context::Mode;
+
+    fixture("pg0", true, true);
+    let initial_context = BRIDGE.with_borrow_mut(|bridge| {
+        let core = bridge.core.as_mut().unwrap();
+        core.paging.as_mut().unwrap().cr0 = 0x6004003e;
+        core.context.set_mode_and_cpl(Mode::Real, 0);
+        core.context.clone()
+    });
+    assert_eq!(paging::core_paging_control(6, 0, 0xfff1, PC, RF, 0), 0);
+    BRIDGE.with_borrow(|bridge| {
+        let core = bridge.core.as_ref().unwrap();
+        let mut expected = initial_context;
+        expected.set_mode_and_cpl(Mode::Protected, 0);
+        assert_eq!(core.context, expected);
+        assert_eq!(core.paging.unwrap().cr0, 0x60040031);
+    });
+    assert_eq!(paging::core_paging_control(6, 0, 0xfffa, PC, RF, 0), 0);
+    BRIDGE.with_borrow(|bridge| {
+        let core = bridge.core.as_ref().unwrap();
+        assert_eq!(core.context.mode(), Mode::Protected);
+        assert_eq!(core.paging.unwrap().cr0, 0x6004003b);
+        assert_eq!(core.paging.unwrap().cr3, 0xdead000);
+    });
+}
+
+#[test]
 fn warm_decode_keeps_each_later_byte_physical_execute_admission() {
     use crate::memory::{MappingInput, MemoryLimits, Permissions};
     for (family, physical) in [("ia32e", 0x9000), ("pg0", 0x1000)] {

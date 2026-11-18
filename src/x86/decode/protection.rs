@@ -183,6 +183,13 @@ where
                 if prefixes.paged && operands.selector == 7 {
                     return super::paging::invlpg(operands, prefixes, cursor);
                 }
+                if prefixes.paged && operands.selector == 6 {
+                    return Ok(Operation::Paging(
+                        crate::x86::instruction::PagingInstruction::LoadMachineStatusWord(
+                            operands.location(cursor, prefixes, Width::W16)?,
+                        ),
+                    ));
+                }
                 if operands.mode == 3 || operands.selector > 3 {
                     return Err(DecodeError::Unsupported);
                 }

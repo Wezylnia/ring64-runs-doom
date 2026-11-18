@@ -413,10 +413,11 @@ pub extern "C" fn core_paging_control(
     register: u32,
     value: u64,
     _pc: u64,
-    _flags: u64,
+    flags: u64,
     retired: u64,
 ) -> i32 {
     use crate::x86::protection::{ProtectionFault, ProtectionPhase};
+    use crate::x86::{access::GuestMemory, alignment::Intent};
     use paging::ControlFailure;
     BRIDGE.with_borrow_mut(|bridge| {
         let core = bridge.core.as_mut().unwrap();
@@ -548,6 +549,35 @@ pub extern "C" fn core_paging_control(
                 },
                 None,
             )),
+            6 => Ok((state.with_machine_status(value as u16), None)),
+            7 => {
+                let Some(segment) = Segment::ALL.get(register as usize).copied() else {
+                    return -1;
+                };
+                let Some(address) = core.segment_address(value, 2, segment, Access::Read, false)
+                else {
+                    return core.memory_failure_reason();
+                };
+                let read = paging::access::Memory::new(
+                    &mut core.image,
+                    &state,
+                    core.context.cpl(),
+                    flags,
+                    &mut core.paging_work,
+                    unsafe { &(*core.state.get()).protection_keys },
+                )
+                .with_cache(&core.translation_cache)
+                .read_aligned(address, 2, Intent::Natural(2));
+                let value = match read {
+                    Ok(value) => value,
+                    Err(failure) => {
+                        core.access_failure(failure);
+                        return core.memory_failure_reason();
+                    }
+                };
+                core.debug_operand(address, 2, Access::Read);
+                Ok((state.with_machine_status(value as u16), None))
+            }
             _ => return -1,
         };
         match operation {

@@ -455,6 +455,14 @@ impl State {
         }
     }
 
+    pub(crate) fn with_machine_status(self, source: u16) -> Self {
+        Self {
+            // Replace MP, EM and TS. LMSW can set PE, but cannot clear it.
+            cr0: (self.cr0 & !0xe) | u64::from(source & 0xf),
+            ..self
+        }
+    }
+
     pub fn numeric_controls(self) -> u8 {
         ((self.cr0 >> 1) & 7) as u8 | (((self.cr4 >> 9) & 3) as u8) << 3
     }
