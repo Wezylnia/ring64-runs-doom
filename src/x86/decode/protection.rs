@@ -13,11 +13,15 @@ where
     if !matches!(opcode, 0x8c | 0x8e | 0xc4 | 0xc5) {
         return None;
     }
-    if prefixes.long64 && matches!(opcode, 0xc4 | 0xc5) {
+    if prefixes.long64 && opcode == 0xc5 {
         return Some(Err(DecodeError::Unsupported));
     }
     Some((|| {
-        let operands = ModRm::read(cursor, prefixes.rex)?;
+        let byte = cursor.byte()?;
+        if opcode == 0xc4 && (prefixes.long64 || byte >> 6 == 3) {
+            return super::bmi::vex(byte, prefixes, cursor);
+        }
+        let operands = ModRm::from_byte(byte, prefixes.rex);
         let (kind, width, register) = match opcode {
             0x8c | 0x8e => {
                 let segment = match operands.selector {

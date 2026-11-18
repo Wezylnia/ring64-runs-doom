@@ -703,7 +703,6 @@ where
     if let Some(result) = super::vector::refine(opcode, prefixes, cursor) {
         return result.map(Operation::Vector);
     }
-    // On the current non-BMI1 profile the TZCNT encoding executes as BSF.
     if let Some(repeat) = prefixes.repeat
         && (opcode != 0xbc || repeat != 0xf3)
     {
@@ -804,10 +803,20 @@ where
         }
         0xbc | 0xbd => {
             let operands = ModRm::read(cursor, rex)?;
+            let dst = rex.view(operands.register, width);
+            let src = operands.location(cursor, prefixes, width)?;
+            if prefixes.repeat == Some(0xf3) {
+                return Ok(Operation::Bmi {
+                    kind: crate::x86::instruction::Bmi::TrailingZeros,
+                    dst,
+                    src,
+                    width,
+                });
+            }
             Ok(Operation::Scan {
                 reverse: opcode == 0xbd,
-                dst: rex.view(operands.register, width),
-                src: operands.location(cursor, prefixes, width)?,
+                dst,
+                src,
                 width,
             })
         }

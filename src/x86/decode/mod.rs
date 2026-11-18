@@ -3,6 +3,7 @@ use crate::x86::context::{ExecutionContext, SegmentFault};
 
 use super::instruction::Instruction;
 
+mod bmi;
 mod cursor;
 mod far;
 mod float;

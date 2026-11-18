@@ -209,7 +209,7 @@ export async function using(
 const words = new Map<bigint, readonly bigint[]>([
   [0n, [0xdn, 0x676e6952n, 0x656e6967n, 0x6e453436n]],
   [1n, [0n, 0n, 0x04020201n, 0x00002010n]],
-  [7n, [0n, 0x00102480n, 0x80000008n, 0n]],
+  [7n, [0n, 0x00102488n, 0x80000008n, 0n]],
   [0x80000000n, [0x80000001n, 0n, 0n, 0n]],
   [0x80000001n, [0n, 0n, 0n, 0x08000000n]],
 ]);

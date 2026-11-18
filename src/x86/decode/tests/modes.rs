@@ -3,7 +3,7 @@ use super::*;
 use crate::x86::context::{ExecutionContext, Segment};
 use crate::x86::instruction::{Operand as StackOperand, Unary};
 
-fn context(mode: &str, code32: bool) -> ExecutionContext {
+pub(super) fn context(mode: &str, code32: bool) -> ExecutionContext {
     let mut segments = serde_json::Map::new();
     for name in ["cs", "ss", "ds", "es", "fs", "gs"] {
         segments.insert(name.into(), serde_json::json!({
@@ -567,7 +567,11 @@ fn mode_collisions_never_admit_another_modes_opcode_or_require_unneeded_bytes() 
     for opcode in [0x60, 0x61] {
         assert_eq!(at(0x1000, &[opcode]), Err(DecodeError::Invalid));
     }
-    for opcode in [0x62, 0xc4, 0xc5] {
+    for opcode in [0x62, 0xc5] {
         assert_eq!(at(0x1000, &[opcode]), Err(DecodeError::Unsupported));
     }
+    assert_eq!(
+        at(0x1000, &[0xc4]),
+        Err(DecodeError::Fetch(missing(0x1001)))
+    );
 }

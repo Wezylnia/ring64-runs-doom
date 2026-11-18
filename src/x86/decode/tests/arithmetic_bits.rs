@@ -769,8 +769,8 @@ fn bit_family_exclusions_stop_at_the_deciding_prefix_or_selector() {
 }
 
 #[test]
-fn without_bmi1_f3_0f_bc_uses_the_existing_bsf_operands() {
-    assert_eq!(crate::x86::processor::cpuid(7, 0, 0, 1)[1] & (1 << 3), 0);
+fn with_bmi1_f3_0f_bc_selects_tzcnt_with_the_existing_bsf_operands() {
+    assert_ne!(crate::x86::processor::cpuid(7, 0, 0, 1)[1] & (1 << 3), 0);
     for bare in [
         &[0x0f, 0xbc, 0xc8][..],
         &[0x66, 0x0f, 0xbc, 0x03],
@@ -778,9 +778,24 @@ fn without_bmi1_f3_0f_bc_uses_the_existing_bsf_operands() {
         &[0x64, 0x67, 0x4f, 0x0f, 0xbc, 0x84, 0xec, 1, 2, 3, 4],
     ] {
         let prefixed = [&[0xf3][..], bare].concat();
-        let expected = operation(bare);
-        assert!(matches!(expected, Operation::Scan { reverse: false, .. }));
-        assert_eq!(operation(&prefixed), expected);
+        let Operation::Scan {
+            reverse: false,
+            dst,
+            src,
+            width,
+        } = operation(bare)
+        else {
+            panic!("ordinary BSF expected for {bare:02x?}");
+        };
+        assert_eq!(
+            operation(&prefixed),
+            Operation::Bmi {
+                kind: crate::x86::instruction::Bmi::TrailingZeros,
+                dst,
+                src,
+                width,
+            }
+        );
         for len in 0..prefixed.len() {
             assert_eq!(
                 at(0x1000, &prefixed[..len]),

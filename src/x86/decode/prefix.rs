@@ -11,6 +11,8 @@ pub(super) struct Rex {
 #[derive(Clone, Copy)]
 pub(super) struct Prefixes {
     pub(super) rex: Rex,
+    // Type 13 VEX forbids a preceding REX even when another prefix cancelled its register bits.
+    pub(super) had_rex: bool,
     pub(super) operand_override: bool,
     pub(super) address_override: bool,
     pub(super) segment_override: Option<Segment>,
@@ -75,6 +77,13 @@ impl Prefixes {
 }
 
 impl Rex {
+    pub(super) fn from_vex(encoded_rxb: u8, encoded_operands: u8) -> Self {
+        Self {
+            bits: (!encoded_rxb >> 5) | ((encoded_operands >> 7) << 3),
+            present: true,
+        }
+    }
+
     pub(super) fn width(self) -> Width {
         if self.bits & 8 == 0 {
             Width::W32
@@ -109,6 +118,7 @@ where
 {
     let mut prefixes = Prefixes {
         rex: Rex::default(),
+        had_rex: false,
         operand_override: false,
         address_override: false,
         segment_override: None,
@@ -145,6 +155,7 @@ where
                 prefixes.rex = Rex::default();
             }
             0x40..=0x4f if prefixes.long64 => {
+                prefixes.had_rex = true;
                 prefixes.rex = Rex {
                     bits: byte & 15,
                     present: true,
