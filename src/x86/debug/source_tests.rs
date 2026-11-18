@@ -30,13 +30,15 @@ fn task_switch_clears_local_enables_and_selects_bt_at_the_incoming_pc() {
     dr.switch_task();
     assert_eq!(dr.dr7, 0x20ff_07aa);
     let before = dr.dr6;
-    dr.select_source(Some(Source::TaskSwitch));
+    dr.select_source(Some(Source::TaskSwitch(0)));
     assert_eq!(dr.dr6, (before & !15) | (1 << 15));
 
+    dr.select_source(Some(Source::TaskSwitch(5)));
+    assert_eq!(dr.dr6, (before & !15) | (1 << 15) | 5);
     let mut context = ExecutionContext::default();
     context.set_mode_and_cpl(crate::x86::context::Mode::Protected, 0);
     for flags in [2, 0x10102] {
-        let trap = Selection::new(0x2345, 0x2345, false, flags, Some(Source::TaskSwitch));
+        let trap = Selection::new(0x2345, 0x2345, false, flags, Some(Source::TaskSwitch(0)));
         assert_eq!(trap.resume_flags, flags);
         let mut event = ExceptionEvent::fault(1, 0x2345, flags, &context, None);
         event.debug = trap.source;

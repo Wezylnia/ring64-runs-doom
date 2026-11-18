@@ -24,26 +24,11 @@ impl DebugSource {
             return Err("invalid debug source transport");
         }
         let slots = self.slots;
+        let simple = self.single_step == 0 && self.completed == 0 && self.has_origin == 0;
         let source = match self.kind {
-            1 if (1..=15).contains(&slots)
-                && self.single_step == 0
-                && self.completed == 0
-                && self.has_origin == 0 =>
-            {
-                Source::Execute(slots as u8)
-            }
-            kind @ (2 | 4)
-                if slots == 0
-                    && self.single_step == 0
-                    && self.completed == 0
-                    && self.has_origin == 0 =>
-            {
-                if kind == 4 {
-                    Source::TaskSwitch
-                } else {
-                    Source::GeneralDetect
-                }
-            }
+            1 if simple && (1..=15).contains(&slots) => Source::Execute(slots as u8),
+            2 if simple && slots == 0 => Source::GeneralDetect,
+            4 if simple && slots <= 15 => Source::TaskSwitch(slots as u8),
             3 if (1..=15).contains(&slots) && self.single_step <= 1 && self.completed <= 1 => {
                 Source::Data {
                     slots: slots as u8,
@@ -64,8 +49,9 @@ impl DebugSource {
                 slots: slots.into(),
                 ..Self::default()
             },
-            Some(Source::TaskSwitch) => Self {
+            Some(Source::TaskSwitch(slots)) => Self {
                 kind: 4,
+                slots: slots.into(),
                 ..Self::default()
             },
             Some(Source::GeneralDetect) => Self {

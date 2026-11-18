@@ -197,7 +197,9 @@ impl ExceptionEvent {
             if self.vector != 1 || self.error_code.is_some() {
                 return Err("debug source requires vector one without an error slot");
             }
-            if source == super::debug::Source::TaskSwitch && context.mode() != Mode::Protected {
+            if matches!(source, super::debug::Source::TaskSwitch(_))
+                && context.mode() != Mode::Protected
+            {
                 return Err("task-switch debug source requires protected mode");
             }
             source.validate(self, architectural)?;

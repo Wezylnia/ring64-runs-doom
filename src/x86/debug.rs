@@ -79,9 +79,9 @@ impl State {
         let (slots, step, gd) = match source {
             Some(Source::Execute(slots)) => (slots, false, false),
             Some(Source::GeneralDetect) => (0, false, true),
-            Some(Source::TaskSwitch) => {
+            Some(Source::TaskSwitch(slots)) => {
                 self.dr6 |= 1 << 15;
-                (0, false, false)
+                (slots, false, false)
             }
             Some(Source::Data {
                 slots, single_step, ..
@@ -119,7 +119,7 @@ impl State {
 pub enum Source {
     Execute(u8),
     GeneralDetect,
-    TaskSwitch,
+    TaskSwitch(u8),
     Data {
         slots: u8,
         single_step: bool,
@@ -149,8 +149,8 @@ impl Source {
                     && live & super::flags::RF == 0
                     && event.saved_flags & super::flags::RF != 0
             }
-            Self::TaskSwitch => {
-                event.instruction_pc == event.return_pc && event.saved_flags == live
+            Self::TaskSwitch(slots) => {
+                slots <= 15 && event.instruction_pc == event.return_pc && event.saved_flags == live
             }
             Self::Data {
                 slots, completed, ..
@@ -172,7 +172,7 @@ impl Source {
         }
     }
     pub fn validate_shadow(self, shadow: u32) -> Result<(), &'static str> {
-        if self == Self::TaskSwitch && shadow != 0 {
+        if matches!(self, Self::TaskSwitch(_)) && shadow != 0 {
             return Err("task-switch debug trap requires an uninhibited boundary");
         }
         if shadow == 2
@@ -200,7 +200,10 @@ impl Source {
                 serde_json::json!({"class":"fault", "cause":"execution-breakpoint", "breakpoints":slots})
             }
             Self::GeneralDetect => serde_json::json!({"class":"fault", "cause":"general-detect"}),
-            Self::TaskSwitch => serde_json::json!({"class":"trap", "cause":"task-switch"}),
+            Self::TaskSwitch(0) => serde_json::json!({"class":"trap", "cause":"task-switch"}),
+            Self::TaskSwitch(slots) => {
+                serde_json::json!({"class":"trap", "cause":"task-switch", "breakpoints":slots})
+            }
             Self::Data {
                 slots,
                 single_step,

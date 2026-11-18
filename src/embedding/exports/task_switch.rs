@@ -270,7 +270,7 @@ impl Core {
                 pc,
                 false,
                 flags,
-                Some(crate::x86::debug::Source::TaskSwitch),
+                Some(crate::x86::debug::Source::TaskSwitch(slots)),
             );
             return self.task_result(origin, reason, true);
         }

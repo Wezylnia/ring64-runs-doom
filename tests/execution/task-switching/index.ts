@@ -1,3 +1,4 @@
+import { taskDebugCoincidenceScenario } from './debug-coincidence.js';
 import { deferredTaskDebugScenario } from './deferred-debug.js';
 import { taskDebugEntryScenario } from './debug-entry.js';
 import { taskEntryFaultScenarios } from './entry-faults.js';
@@ -38,6 +39,7 @@ export function taskSwitchingScenarios(compiler: WebAssembly.Module): Scenario[]
     taskDeliveryRetryScenario(compiler),
     invalidTaskSelectorScenario(compiler),
     taskDebugScenario(compiler),
+    taskDebugCoincidenceScenario(compiler),
     taskDebugEntryScenario(compiler),
     ...taskEntryFaultScenarios(compiler),
     deferredTaskDebugScenario(compiler),

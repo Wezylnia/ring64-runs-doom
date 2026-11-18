@@ -78,12 +78,16 @@ test('debug layout keeps the bank import prefix separate from captured source an
   }
 });
 
-test('task-switch debug source round-trips without breakpoint or step state', () => {
+test('task-switch debug source round-trips coincident watchpoints', () => {
   const layout = DEBUG_LAYOUT.layout.source;
   const view = new DataView(new ArrayBuffer(layout.bytes));
   const source = captureDebugSource({ class: 'trap', cause: 'task-switch' });
   writeDebugSource(view, layout, source);
   assert.equal(view.getUint32(layout.kind, true), 4);
   assert.deepEqual(readDebugSource(view, layout), source);
-  assert.throws(() => captureDebugSource({ ...source, breakpoints: 1 } as never), TypeError);
+  const both = captureDebugSource({ class: 'trap', cause: 'task-switch', breakpoints: 5 });
+  writeDebugSource(view, layout, both);
+  assert.deepEqual(readDebugSource(view, layout), both);
+  for (const invalid of [{ breakpoints: 0 }, { breakpoints: 16 }, { singleStep: true }])
+    assert.throws(() => captureDebugSource({ ...source, ...invalid } as never), TypeError);
 });

@@ -10,7 +10,7 @@ export interface DebugContinuation {
 export type DebugSource =
   | { class: 'fault'; cause: 'execution-breakpoint'; breakpoints: number }
   | { class: 'fault'; cause: 'general-detect' }
-  | { class: 'trap'; cause: 'task-switch' }
+  | { class: 'trap'; cause: 'task-switch'; breakpoints?: number }
   | {
       class: 'trap';
       cause: 'data-breakpoint';
@@ -92,14 +92,11 @@ export function captureDebugSource(input: DebugSource): DebugSource {
       : { class: kind, cause, breakpoints: slots(input.breakpoints) };
   }
   if (kind === 'trap' && cause === 'task-switch') {
-    if (
-      'breakpoints' in input ||
-      'singleStep' in input ||
-      'instructionCompleted' in input ||
-      'deferredOriginPc' in input
-    )
+    if ('singleStep' in input || 'instructionCompleted' in input || 'deferredOriginPc' in input)
       throw new TypeError('incompatible debug source fields');
-    return { class: kind, cause };
+    return 'breakpoints' in input
+      ? { class: kind, cause, breakpoints: slots(input.breakpoints) }
+      : { class: kind, cause };
   }
   if (kind === 'trap' && cause === 'data-breakpoint') {
     const breakpoints = slots(input.breakpoints),
@@ -185,7 +182,10 @@ export function readDebugSource(
   const mask = view.getUint32(base + s.slots, true);
   if (kind === 1) return { class: 'fault', cause: 'execution-breakpoint', breakpoints: mask };
   if (kind === 2) return { class: 'fault', cause: 'general-detect' };
-  if (kind === 4) return { class: 'trap', cause: 'task-switch' };
+  if (kind === 4)
+    return mask
+      ? { class: 'trap', cause: 'task-switch', breakpoints: mask }
+      : { class: 'trap', cause: 'task-switch' };
   if (kind !== 3) throw new Error('invalid debug source tag');
   return {
     class: 'trap',
