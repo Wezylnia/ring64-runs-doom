@@ -3,6 +3,7 @@ use crate::x86::context::{ExecutionContext, Mode, Segment};
 pub const EFER_MSR: u32 = 0xc0000080;
 pub const CR4_TSD: u64 = 1 << 2;
 pub const CR4_PGE: u64 = 1 << 7;
+pub const CR4_FSGSBASE: u64 = 1 << 16;
 pub const CR4_OSXSAVE: u64 = 1 << 18;
 pub const CR4_PCIDE: u64 = 1 << 17;
 pub const CR4_SMEP: u64 = 1 << 20;
@@ -102,7 +103,14 @@ impl State {
             || pg && !pe
             || self.cr0 & 0x60000000 == 0x20000000
             || self.cr3 & !CR3_RAW != 0
-            || self.cr4 & !(0x63c | CR4_PROTECTION | CR4_TRANSLATION | CR4_KEYS | CR4_OSXSAVE) != 0
+            || self.cr4
+                & !(0x63c
+                    | CR4_PROTECTION
+                    | CR4_TRANSLATION
+                    | CR4_KEYS
+                    | CR4_FSGSBASE
+                    | CR4_OSXSAVE)
+                != 0
             || self.efer & !0xd01 != 0
             || (self.efer & 0x400 != 0) != lma
             || lma && self.cr4 & 0x20 == 0
@@ -239,7 +247,14 @@ impl State {
                 {
                     return Err(GeneralProtection);
                 }
-                if value & !(0x63c | CR4_PROTECTION | CR4_TRANSLATION | CR4_KEYS | CR4_OSXSAVE) != 0
+                if value
+                    & !(0x63c
+                        | CR4_PROTECTION
+                        | CR4_TRANSLATION
+                        | CR4_KEYS
+                        | CR4_FSGSBASE
+                        | CR4_OSXSAVE)
+                    != 0
                 {
                     return Err(Unsupported);
                 }
@@ -311,6 +326,7 @@ impl State {
                     | CR4_PROTECTION
                     | CR4_TRANSLATION
                     | CR4_KEYS
+                    | CR4_FSGSBASE
                     | CR4_OSXSAVE)
                 != CR4_FIXED & !CR4_NUMERIC
             || self.efer & !(EFER_NXE | EFER_SCE) != EFER_FIXED
@@ -393,6 +409,7 @@ impl State {
                         | CR4_PROTECTION
                         | CR4_TRANSLATION
                         | CR4_KEYS
+                        | CR4_FSGSBASE
                         | CR4_OSXSAVE)
                     != CR4_FIXED & !CR4_NUMERIC
                 {
@@ -446,13 +463,13 @@ impl State {
         (
             self.cr0 & !(CR0_NUMERIC | CR0_AM),
             self.cr3,
-            self.cr4 & !(CR4_NUMERIC | CR4_TSD | CR4_KEYS | CR4_OSXSAVE),
+            self.cr4 & !(CR4_NUMERIC | CR4_TSD | CR4_KEYS | CR4_FSGSBASE | CR4_OSXSAVE),
             self.efer & EFER_NXE,
             self.pdpte,
         ) != (
             other.cr0 & !(CR0_NUMERIC | CR0_AM),
             other.cr3,
-            other.cr4 & !(CR4_NUMERIC | CR4_TSD | CR4_KEYS | CR4_OSXSAVE),
+            other.cr4 & !(CR4_NUMERIC | CR4_TSD | CR4_KEYS | CR4_FSGSBASE | CR4_OSXSAVE),
             other.efer & EFER_NXE,
             other.pdpte,
         )
@@ -537,9 +554,57 @@ mod tests {
             }));
         }
         assert_eq!(
-            fixed.prepare_cr_write(4, fixed.cr4 | (1 << 16), Mode::Long64),
+            fixed.prepare_cr_write(4, fixed.cr4 | (1 << 14), Mode::Long64),
             Err(Unsupported)
         );
+    }
+
+    #[test]
+    fn enabling_segment_base_instructions_preserves_page_translation_state() {
+        let fixed = State::default();
+        let bit = 1 << 16;
+        assert_eq!(State::reset().cr4 & bit, 0);
+        assert_eq!(fixed.cr4 & bit, 0);
+        let enabled = State {
+            cr4: fixed.cr4 | bit,
+            ..fixed
+        };
+        assert_eq!(enabled.validate(), Ok(()));
+        assert_eq!(
+            fixed.prepare_cr_write(4, enabled.cr4, Mode::Long64),
+            Ok(enabled)
+        );
+        assert_eq!(
+            enabled.prepare_cr_write(4, fixed.cr4, Mode::Compatibility),
+            Ok(fixed)
+        );
+        for (old, mode) in [
+            (fixed, Mode::Long64),
+            (State::reset(), Mode::Real),
+            (
+                State {
+                    efer: 0,
+                    pdpte: Some([0x2001, 0, 0, 0]),
+                    ..fixed
+                },
+                Mode::Protected,
+            ),
+        ] {
+            let enabled = State {
+                cr4: old.cr4 | bit,
+                ..old
+            };
+            assert_eq!(enabled.validate_physical(mode), Ok(()));
+            assert_eq!(
+                old.prepare_physical_cr_write(4, enabled.cr4, mode),
+                Ok(enabled)
+            );
+            assert_eq!(enabled.prepare_physical_cr_write(4, old.cr4, mode), Ok(old));
+            assert!(!old.translation_changed(enabled));
+            assert!(!enabled.translation_changed(old));
+            assert!(!old.needs_pdpte_reload(enabled, 4));
+            assert!(!enabled.needs_pdpte_reload(old, 4));
+        }
     }
 
     #[test]
@@ -1054,7 +1119,7 @@ mod tests {
             cr3: 0x3000,
             ..state
         };
-        for bit in [0, 16, 19, 23, 25, 27, 28, 32] {
+        for bit in [0, 14, 19, 23, 25, 27, 28, 32] {
             assert_eq!(
                 aligned.prepare_cr_write(4, 0x628 | (1 << bit), Mode::Long64),
                 Err(Unsupported),
