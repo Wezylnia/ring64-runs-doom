@@ -540,6 +540,18 @@ pub(crate) fn emit_profile(unit: &Unit, observed: bool, paged: bool) -> Vec<u8> 
         next_type += 1;
         index
     });
+    let write_segment_base_type = unit
+        .instructions
+        .iter()
+        .any(|i| matches!(i.operation, Operation::SegmentBase { write: true, .. }))
+        .then(|| {
+            let index = next_type;
+            types
+                .ty()
+                .function([ValType::I32, ValType::I64], [ValType::I32]);
+            next_type += 1;
+            index
+        });
     let debug_begin_type = observed.then(|| {
         let index = next_type;
         types
@@ -862,6 +874,12 @@ pub(crate) fn emit_profile(unit: &Unit, observed: bool, paged: bool) -> Vec<u8> 
         run_index += 1;
         function
     });
+    let write_segment_base = write_segment_base_type.map(|index| {
+        imports.import("env", "write_segment_base", EntityType::Function(index));
+        let function = run_index;
+        run_index += 1;
+        function
+    });
     let processor = processor_type.map(|index| {
         imports.import("env", "processor", EntityType::Function(index));
         let function = run_index;
@@ -1062,6 +1080,28 @@ pub(crate) fn emit_profile(unit: &Unit, observed: bool, paged: bool) -> Vec<u8> 
             Operation::FastSystem(operation) => {
                 emitter.fast_system(operation, instruction.next_pc, exit_depth);
                 continue;
+            }
+            Operation::SegmentBase {
+                segment,
+                register,
+                width,
+                write,
+            } => {
+                if write {
+                    emitter.op(Op::I32Const(segment as i32));
+                    emitter.register(register, width);
+                    emitter
+                        .op(Op::Call(
+                            write_segment_base.expect("segment base write import"),
+                        ))
+                        .op(Op::LocalTee(REASON))
+                        .op(Op::BrIf(exit_depth));
+                } else {
+                    let base = emitter.context.segment_base(segment) & width.mask();
+                    emitter
+                        .op(Op::I64Const(base as i64))
+                        .op(Op::LocalSet(GPR + u32::from(register)));
+                }
             }
             Operation::Paging(operation) => {
                 emitter.paging_control(operation, instruction.next_pc, exit_depth);

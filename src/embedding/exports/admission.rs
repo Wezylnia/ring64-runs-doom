@@ -11,21 +11,20 @@ impl Core {
         pc: u64,
         reached: bool,
     ) -> i32 {
-        let needs_osxsave = match operation {
+        let required_cr4 = match operation {
             Operation::DebugRegister { register, .. }
                 if self.debug_register_admission(register) != 0 =>
             {
                 return INVALID;
             }
-            Operation::NumericImage { op, .. } => op.is_xstate(),
-            Operation::Processor(Processor::Xgetbv | Processor::Xsetbv) => true,
-            _ => false,
+            Operation::SegmentBase { .. } => crate::x86::paging::CR4_FSGSBASE,
+            Operation::NumericImage { op, .. } if op.is_xstate() => crate::x86::paging::CR4_OSXSAVE,
+            Operation::Processor(Processor::Xgetbv | Processor::Xsetbv) => {
+                crate::x86::paging::CR4_OSXSAVE
+            }
+            _ => 0,
         };
-        if needs_osxsave
-            && self
-                .paging
-                .is_none_or(|bank| bank.cr4 & crate::x86::paging::CR4_OSXSAVE == 0)
-        {
+        if required_cr4 != 0 && self.paging.is_none_or(|bank| bank.cr4 & required_cr4 == 0) {
             self.decode_fault = Some(crate::x86::decode::DecodeFault::UndefinedOpcode);
             return INVALID;
         }

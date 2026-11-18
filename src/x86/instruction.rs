@@ -890,6 +890,12 @@ pub enum Operation {
     ProtectionKey(ProtectionKeyInstruction),
     Paging(PagingInstruction),
     FastSystem(crate::x86::fast_system::Instruction),
+    SegmentBase {
+        segment: Segment,
+        register: u8,
+        width: Width,
+        write: bool,
+    },
     DebugRegister {
         register: u8,
         gpr: u8,

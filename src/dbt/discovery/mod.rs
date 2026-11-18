@@ -148,6 +148,7 @@ pub(crate) fn discover_with_profile(
             | Operation::Return { .. }
             | Operation::Far(_)
             | Operation::FastSystem(_)
+            | Operation::SegmentBase { write: true, .. }
             | Operation::Halt => {}
             Operation::SoftwareEvent(event) => {
                 if event.kind == crate::x86::instruction::SoftwareEventKind::Into {
