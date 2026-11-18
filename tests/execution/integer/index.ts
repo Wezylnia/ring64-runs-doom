@@ -6,6 +6,7 @@ import { integerArithmeticScenarios } from './arithmetic/index.js';
 import { multiplyAndDivideScenarios } from './multiply/index.js';
 import { compilerBitmapScenarios } from './compiler-bitmap.js';
 import { nopScenarios } from './nop.js';
+import { bmi1Scenarios } from './bmi1/index.js';
 
 export function integerScenarios(core: WebAssembly.Module) {
   return [
@@ -17,5 +18,6 @@ export function integerScenarios(core: WebAssembly.Module) {
     ...multiplyAndDivideScenarios(core),
     ...compilerBitmapScenarios(core),
     ...nopScenarios(core),
+    ...bmi1Scenarios(core),
   ];
 }
