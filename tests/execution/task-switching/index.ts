@@ -1,5 +1,6 @@
 import { deferredTaskDebugScenario } from './deferred-debug.js';
 import { taskDebugEntryScenario } from './debug-entry.js';
+import { taskEntryFaultScenarios } from './entry-faults.js';
 import { taskDeliveryRetryScenario } from './delivery-retry.js';
 import { invalidTaskSelectorScenario } from './qualify.js';
 import { taskRetryScenario } from './retry.js';
@@ -38,6 +39,7 @@ export function taskSwitchingScenarios(compiler: WebAssembly.Module): Scenario[]
     invalidTaskSelectorScenario(compiler),
     taskDebugScenario(compiler),
     taskDebugEntryScenario(compiler),
+    ...taskEntryFaultScenarios(compiler),
     deferredTaskDebugScenario(compiler),
     gateSourceScenario(compiler),
     ...taskPagingScenarios(compiler),

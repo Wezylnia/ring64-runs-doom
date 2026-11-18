@@ -100,7 +100,7 @@ impl Core {
         }
     }
 
-    fn task_exception(&self, reason: i32) -> Option<ExceptionEvent> {
+    fn task_exception(&self, reason: i32, origin: Origin) -> Option<ExceptionEvent> {
         let state = unsafe { &*self.state.get() };
         let fault = |vector, code| {
             ExceptionEvent::fault(vector, state.rip, state.flags, &self.context, Some(code))
@@ -119,7 +119,7 @@ impl Core {
             PROTECTION | SEGMENT | DATA => {
                 self.protection_fault.map(|p| fault(p.vector, p.error_code))
             }
-            ALIGNMENT_CHECK => Some(fault(17, 0)),
+            ALIGNMENT_CHECK => Some(fault(17, u16::from(matches!(origin, Origin::Delivery(_))))),
             SYSTEM_MEMORY => self
                 .system_memory_fault
                 .and_then(|p| protection::system_fault(&self.context, p))
@@ -139,12 +139,15 @@ impl Core {
     }
 
     fn task_result(&mut self, origin: Origin, reason: i32, committed: bool) -> i32 {
-        let Some(fault) = self.task_exception(reason) else {
+        let Some(mut fault) = self.task_exception(reason, origin) else {
             return reason;
         };
         let next = match origin {
             Origin::Instruction { .. } if !committed => return reason,
             Origin::Delivery(old) if reason != DEBUG_EXCEPTION => {
+                if !committed && let EventState::Pending(event) = old {
+                    fault.instruction_pc = event.instruction_pc;
+                }
                 exception::entry_secondary(old, fault)
             }
             _ => EventState::Pending(fault),
@@ -258,6 +261,10 @@ impl Core {
             state.debug.registers.enter();
         }
         if incoming.trap {
+            let slots = match origin {
+                Origin::Instruction { slots, .. } => slots,
+                Origin::Delivery(_) => 0,
+            };
             let reason = self.select_debug(
                 pc,
                 pc,
