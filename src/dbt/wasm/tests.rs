@@ -1,6 +1,7 @@
 mod addressing;
 mod arithmetic_bits;
 mod bits;
+mod bmi;
 mod code_validity;
 mod compound_stack;
 mod conditions;
