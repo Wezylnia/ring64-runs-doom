@@ -70,7 +70,7 @@ fn fixture() -> (ExecutionContext, Image) {
 }
 
 fn direct() -> Start {
-    Start::direct(B, tss(B_BASE, 0x89, 0x67), 0x3210)
+    Start::far(FarKind::Call, B, tss(B_BASE, 0x89, 0x67), 0x3210)
 }
 
 fn error_of(result: Result<Prepared, Error>) -> Error {
@@ -149,7 +149,7 @@ fn rejected_targets_leave_the_source_task_and_images_intact() {
         let err = error_of(prepare(
             &ctx,
             &mem,
-            Start::direct(selector, desc, 0x80),
+            Start::far(FarKind::Call, selector, desc, 0x80),
             &[0; 16],
             2,
         ));
@@ -162,7 +162,7 @@ fn rejected_targets_leave_the_source_task_and_images_intact() {
         error_of(prepare(
             &ctx,
             &mem,
-            Start::direct(B, tss(B_BASE, 0x81, 43), 4),
+            Start::far(FarKind::Call, B, tss(B_BASE, 0x81, 43), 4),
             &[0; 16],
             2
         )),

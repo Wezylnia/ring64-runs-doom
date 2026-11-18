@@ -213,39 +213,58 @@ fn outer_return_skips_unread_parameters_and_restores_target_width_pointer() {
 }
 
 #[test]
-fn indirect_task_call_captures_the_pointer_and_raw_descriptor_before_any_stack_access() {
+fn indirect_task_transfers_capture_the_full_pointer_and_outer_descriptor_without_stack_access() {
+    use crate::x86::context::LdtRegister;
+    use crate::x86::protection::task::switch32::Start;
     let mut context = context("protected", 0);
+    context.set_ldtr(LdtRegister {
+        selector: 0x18,
+        valid: true,
+        base: 0x1200,
+        limit: 0xf,
+        attributes: 0x82,
+    });
     let before = context.clone();
     let mut image = image();
-    let raw = 0x0000_8900_8000_0067;
-    image.write(0x1008, 8, raw).unwrap();
-    image
-        .write_bytes(0x1100, &[0xef, 0xbe, 0xad, 0xde, 8, 0])
-        .unwrap();
-    let mut reads = Vec::new();
-    let result = execute_observing(
-        &mut context,
-        &mut image,
-        FarDescriptor {
-            kind: FarKind::Call,
-            width: Width::W32,
-            memory: true,
-        },
-        FarOperands {
-            offset: 0x1100,
-            selector: 0,
-            input_sp: 0,
-            next_pc: 0x4321,
-            segment: Segment::Ds,
-        },
-        |address, width, access| reads.push((address, width, access)),
-    );
-    assert_eq!(
-        result,
-        Err(FarFailure::Task(
-            super::super::task::switch32::Start::direct(8, raw, 0x4321)
-        ))
-    );
-    assert_eq!(reads, [(0x1100, 6, Access::Read)]);
-    assert_eq!(context, before);
+    // The LDT gate refers outside the GDT; the far operand owner only captures it.
+    for (selector, address, raw) in [
+        (8u16, 0x1008, 0x8900_8000_0067),
+        (15, 0x1208, 0xe500_00f3_0000),
+    ] {
+        image.write(address, 8, raw).unwrap();
+        for kind in [FarKind::Call, FarKind::Jump] {
+            for width in [Width::W16, Width::W32] {
+                let mut pointer = vec![0xef; usize::from(width.bytes())];
+                pointer.extend_from_slice(&selector.to_le_bytes());
+                image.write_bytes(0x1100, &pointer).unwrap();
+                let mut reads = Vec::new();
+                let result = execute_observing(
+                    &mut context,
+                    &mut image,
+                    FarDescriptor {
+                        kind,
+                        width,
+                        memory: true,
+                    },
+                    FarOperands {
+                        offset: 0x1100,
+                        selector: 0,
+                        input_sp: 0,
+                        next_pc: 0x4321,
+                        segment: Segment::Ds,
+                    },
+                    |address, width, access| reads.push((address, width, access)),
+                );
+                assert_eq!(
+                    result,
+                    Err(FarFailure::Task(Start::far(kind, selector, raw, 0x4321)))
+                );
+                assert_eq!(
+                    reads,
+                    [(0x1100, u32::from(width.bytes()) + 2, Access::Read)]
+                );
+                assert_eq!(context, before);
+            }
+        }
+    }
 }

@@ -129,11 +129,12 @@ pub fn execute_observing(
                     &mut observe,
                 );
             }
-            if descriptor.kind == FarKind::Call
+            if descriptor.kind != FarKind::Return
                 && context.mode() == Mode::Protected
-                && matches!(kind, 9 | 11)
+                && matches!(kind, 5 | 9 | 11)
             {
-                return Err(FarFailure::Task(super::task::switch32::Start::direct(
+                return Err(FarFailure::Task(super::task::switch32::Start::far(
+                    descriptor.kind,
                     selector,
                     raw,
                     operands.next_pc,

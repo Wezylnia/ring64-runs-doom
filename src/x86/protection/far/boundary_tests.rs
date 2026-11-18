@@ -136,15 +136,22 @@ fn system_target_frontier_and_selected_gate_presence_skip_unselected_tails() {
                 (0x2000, 8),
                 0x4000,
             );
-            let frontier = if mode == "protected" {
-                [1, 3, 5, 9, 11].contains(&ty)
-            } else {
-                false
-            };
             let gate = ty == 12 || mode == "protected" && ty == 4;
             if gate {
                 descriptor_failure(result, 11, 8);
-            } else if frontier {
+            } else if mode == "protected" && matches!(ty, 5 | 9 | 11) {
+                assert_eq!(
+                    result,
+                    Err(FarFailure::Task(
+                        crate::x86::protection::task::switch32::Start::far(
+                            FarKind::Jump,
+                            8,
+                            u64::from(ty) << 40,
+                            0x1234
+                        )
+                    ))
+                );
+            } else if mode == "protected" && matches!(ty, 1 | 3) {
                 assert_eq!(result, Err(FarFailure::Unsupported));
             } else {
                 descriptor_failure(result, 13, 8);

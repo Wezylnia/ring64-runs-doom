@@ -1,9 +1,10 @@
-//! Nested protected-mode task switches with 32-bit TSS images.
+//! Protected-mode task switches with 32-bit TSS images.
 use super::super::access::Lookup;
 use super::super::*;
 use super::{Descriptor, TaskRegister, cached_task};
 use crate::x86::context::{LdtRegister, LoadedSegment, SegmentAttributes};
 use crate::x86::flags;
+use crate::x86::instruction::FarKind;
 
 mod fields;
 mod incoming;
@@ -21,7 +22,8 @@ const TSS_SEGMENTS: [Segment; 6] = [
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Start {
-    Direct {
+    Far {
+        kind: FarKind,
         selector: u16,
         descriptor: u64,
         next_pc: u32,
@@ -39,8 +41,10 @@ pub enum Start {
 }
 
 impl Start {
-    pub fn direct(selector: u16, descriptor: u64, next_pc: u64) -> Self {
-        Self::Direct {
+    pub fn far(kind: FarKind, selector: u16, descriptor: u64, next_pc: u64) -> Self {
+        debug_assert_ne!(kind, FarKind::Return);
+        Self::Far {
+            kind,
             selector,
             descriptor,
             next_pc: next_pc as u32,
@@ -141,31 +145,62 @@ pub fn prepare(
         Start::Gate { ext, .. } => ext,
         _ => 0,
     };
+    // A far task gate's selector controls access. The inner TSS selector's
+    // RPL and its descriptor's DPL do not restrict entry through the gate.
+    let (target_selector, direct_descriptor) = match start {
+        Start::Far {
+            selector,
+            descriptor: raw,
+            ..
+        } => {
+            let outer = Descriptor::decode(raw);
+            if outer.system() && outer.access & 15 == 5 {
+                if outer.dpl() < context.cpl().max((selector & 3) as u8) {
+                    return Err(fault(selector, 0, 13, ProtectionPhase::Descriptor).into());
+                }
+                if !outer.present() {
+                    return Err(fault(selector, 0, 11, ProtectionPhase::Descriptor).into());
+                }
+                (Some((raw >> 16) as u16), None)
+            } else {
+                (Some(selector), Some(raw))
+            }
+        }
+        Start::Gate { selector, .. } => (Some(selector), None),
+        Start::NestedReturn { .. } => (None, None),
+    };
     let old = cached_task(context, 0, ext)?;
     if old.attributes & 15 == 3 {
         return Err(Error::Unsupported);
     }
-    let returning = matches!(start, Start::NestedReturn { .. });
-    let selector = match start {
-        Start::Direct { selector, .. } | Start::Gate { selector, .. } => selector,
-        Start::NestedReturn { .. } => {
+    let returning = target_selector.is_none();
+    let selector = match target_selector {
+        Some(selector) => selector,
+        None => {
             cached_task(context, 1, ext)?;
             read_field(context, image, old, 0, 2)? as u16
         }
     };
+    let nested = matches!(
+        start,
+        Start::Gate { .. }
+            | Start::Far {
+                kind: FarKind::Call,
+                ..
+            }
+    );
     let invalid = if returning { 10 } else { 13 };
     let lookup = lookup_gdt(context, selector, ext, invalid)?;
-    let raw = match start {
-        Start::Direct { descriptor, .. } => descriptor,
-        _ => lookup.read(context, image, 0)?,
+    let raw = match direct_descriptor {
+        Some(raw) => raw,
+        None => lookup.read(context, image, 0)?,
     };
     let descriptor = Descriptor::decode(raw);
     let kind = descriptor.access & 15;
     let required = if returning { 11 } else { 9 };
     if !descriptor.system()
         || kind != required && kind != required - 8
-        || matches!(start, Start::Direct { .. })
-            && descriptor.dpl() < context.cpl().max((selector & 3) as u8)
+        || direct_descriptor.is_some() && descriptor.dpl() < context.cpl().max((selector & 3) as u8)
     {
         return Err(fault(selector, ext, invalid, ProtectionPhase::Descriptor).into());
     }
@@ -210,7 +245,7 @@ pub fn prepare(
             error_code,
             ..
         } => (saved_pc, saved_flags, error_code),
-        Start::Direct { next_pc, .. } => (next_pc, flags as u32, None),
+        Start::Far { next_pc, .. } => (next_pc, flags as u32, None),
         Start::NestedReturn { next_pc } => (next_pc, flags as u32 & !NT, None),
     };
     let mut writes = Vec::with_capacity(18);
@@ -226,7 +261,7 @@ pub fn prepare(
     for (index, segment) in TSS_SEGMENTS.into_iter().enumerate() {
         save(72 + 4 * index as u32, u32::from(context.selector(segment)))?;
     }
-    if returning {
+    if !nested {
         let lookup = lookup_gdt(context, old.selector, ext, 10)?;
         let access = Descriptor::decode(lookup.read(context, image, 0)?).access;
         writes.push(Write::Busy(lookup.prepare_busy_byte(
@@ -244,6 +279,8 @@ pub fn prepare(
             2,
             u32::from(old.selector),
         )?);
+    }
+    if !returning {
         writes.push(Write::Busy(lookup.prepare_busy_byte(
             context,
             image,
@@ -260,9 +297,7 @@ pub fn prepare(
         incoming: Incoming {
             registers: incoming_regs,
             eip,
-            flags: (loaded_flags & flags::IMPORTED_MASK as u32)
-                | 2
-                | if returning { 0 } else { NT },
+            flags: (loaded_flags & flags::IMPORTED_MASK as u32) | 2 | if nested { NT } else { 0 },
             trap,
             ext,
             error_code,
