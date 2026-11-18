@@ -35,16 +35,19 @@ impl ModRm {
     where
         F: FnMut(u64) -> Result<u8, DecodeError>,
     {
-        let byte = cursor.byte()?;
+        Ok(Self::from_byte(cursor.byte()?, rex))
+    }
+
+    pub(super) fn from_byte(byte: u8, rex: Rex) -> Self {
         let selector = (byte >> 3) & 7;
         let rm_low = byte & 7;
-        Ok(Self {
+        Self {
             mode: byte >> 6,
             selector,
             register: selector | rex.reg_extension(),
             rm: rm_low | rex.base_extension(),
             rm_low,
-        })
+        }
     }
 
     pub(super) fn address<F>(
