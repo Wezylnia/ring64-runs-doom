@@ -4,6 +4,8 @@ mod execute;
 #[cfg(test)]
 mod fisttp_tests;
 #[cfg(all(test, target_arch = "x86_64", target_os = "linux"))]
+mod fpatan_native;
+#[cfg(all(test, target_arch = "x86_64", target_os = "linux"))]
 mod log_exp_native;
 mod number;
 #[cfg(test)]

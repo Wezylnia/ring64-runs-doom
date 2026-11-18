@@ -10,9 +10,9 @@ const SIGN: u128 = 1 << 79;
 const INF: u128 = 0x7fff8000000000000000;
 
 #[repr(align(16))]
-struct Area([u8; 512]);
+pub(super) struct Area(pub(super) [u8; 512]);
 
-fn hardware(kind: Kind, state: &State) -> Area {
+pub(super) fn hardware(kind: Kind, state: &State) -> Area {
     let mut input = Area([0; 512]);
     input.0[..2].copy_from_slice(&state.control_word.to_le_bytes());
     input.0[2..4].copy_from_slice(&state.status_word.to_le_bytes());
@@ -42,6 +42,7 @@ fn hardware(kind: Kind, state: &State) -> Area {
         Kind::Exp2MinusOne => instruction!("f2xm1"),
         Kind::MulLog2 => instruction!("fyl2x"),
         Kind::MulLog2PlusOne => instruction!("fyl2xp1"),
+        Kind::Atan2 => instruction!("fpatan"),
         _ => unreachable!(),
     }
     output
@@ -49,7 +50,7 @@ fn hardware(kind: Kind, state: &State) -> Area {
 
 // Distance on a single sign's finite binary80 grid. The integer bit is explicit;
 // the largest subnormal and smallest normal must also be adjacent.
-fn rank(raw: u128) -> u128 {
+pub(super) fn rank(raw: u128) -> u128 {
     let exponent = (raw >> 64) & 0x7fff;
     (exponent.saturating_sub(1) << 63) + (raw & u128::from(u64::MAX))
 }
