@@ -251,24 +251,45 @@ impl ExceptionEvent {
     }
 
     fn secondary(self, vector: u8, error_code: u16, page_fault_address: Option<u64>) -> EventState {
-        if self.vector == 8 {
-            return EventState::Shutdown;
-        }
-        let double_fault = vector != 17
-            && (self.vector == 14 || vector != 14 && matches!(self.vector, 0 | 10..=13));
-        EventState::Pending(Self {
-            numeric: None,
-            debug: None,
-            vector: if double_fault { 8 } else { vector },
-            error_code: Some(if double_fault { 0 } else { error_code }),
-            page_fault_address: if double_fault {
-                None
-            } else {
-                page_fault_address
+        entry_secondary(
+            EventState::Pending(self),
+            Self {
+                numeric: None,
+                debug: None,
+                vector,
+                error_code: Some(error_code),
+                page_fault_address,
+                saved_flags: self.saved_flags | flags::RF,
+                ..self
             },
-            saved_flags: self.saved_flags | flags::RF,
-            ..self
+        )
+    }
+}
+
+/// Classify an entry fault using the accepted source while retaining the
+/// processor image at the point of failure, which can belong to a new task.
+pub fn entry_secondary(source: EventState, fault: ExceptionEvent) -> EventState {
+    let previous = match source {
+        EventState::Pending(exception) => exception.vector,
+        EventState::PendingInterrupt(_) => return EventState::Pending(fault),
+        _ => unreachable!("entry requires an accepted event"),
+    };
+    if previous == 8 {
+        return EventState::Shutdown;
+    }
+    if fault.vector != 17
+        && (previous == 14 || fault.vector != 14 && matches!(previous, 0 | 10..=13))
+    {
+        EventState::Pending(ExceptionEvent {
+            vector: 8,
+            error_code: Some(0),
+            page_fault_address: None,
+            debug: None,
+            numeric: None,
+            ..fault
         })
+    } else {
+        EventState::Pending(fault)
     }
 }
 
@@ -723,6 +744,25 @@ mod tests {
                 assert!(next.validate(0x1010, 0x302, &context).is_ok());
             }
         }
+    }
+
+    #[test]
+    fn entry_escalation_uses_the_faulting_tasks_register_image() {
+        let context = ExecutionContext::default();
+        let first = |vector| {
+            EventState::Pending(ExceptionEvent::fault(vector, 0xa000, 2, &context, Some(0)))
+        };
+        let ts = ExceptionEvent::fault(10, 0xb000, 0x4202, &context, Some(0x38));
+        let pf = ExceptionEvent::page_fault(0xb000, 0x4202, &context, 0, 0xb123);
+        assert_eq!(entry_secondary(first(6), pf), EventState::Pending(pf));
+        let df = ExceptionEvent {
+            vector: 8,
+            error_code: Some(0),
+            ..ts
+        };
+        assert_eq!(entry_secondary(first(13), ts), EventState::Pending(df));
+        assert_eq!(entry_secondary(first(14), pf), EventState::Pending(df));
+        assert_eq!(entry_secondary(first(8), ts), EventState::Shutdown);
     }
 
     #[test]
