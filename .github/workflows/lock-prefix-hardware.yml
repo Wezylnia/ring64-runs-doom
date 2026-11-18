@@ -1,0 +1,35 @@
+name: LOCK prefix hardware
+
+on:
+  push:
+    branches: [lock-prefix-hardware]
+    paths:
+      - .github/workflows/lock-prefix-hardware.yml
+      - scripts/lock-prefix-matrix.py
+      - scripts/lock-prefix-probe.c
+
+permissions:
+  contents: read
+
+jobs:
+  measure:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, macos-15-intel]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - shell: bash
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror scripts/lock-prefix-probe.c -o "$RUNNER_TEMP/lock-prefix-probe"
+          python3 scripts/lock-prefix-matrix.py "$RUNNER_TEMP/lock-prefix-probe" > lock-prefix-results.json
+          python3 -c 'import json; print(json.load(open("lock-prefix-results.json"))["identity"])'
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: lock-prefix-${{ matrix.runner }}
+          path: lock-prefix-results.json
