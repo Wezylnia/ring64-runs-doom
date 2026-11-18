@@ -69,7 +69,14 @@ fn parts(raw: u128) -> (Quad, i32) {
 fn finish(value: Quad, scale: i32, irrational: bool, cw: u16) -> Result {
     // All working values here are normal, including when the final result
     // underflows or overflows raw80. One final conversion owns RC and wrapping.
-    let bits = value.to_bits();
+    let mut bits = value.to_bits();
+    // Across a power of two, an outward step on the upper grid spans two
+    // ulps on the lower grid. If our 2^-96 relative error could have crossed
+    // that boundary, round from the last Quad below it. This monotone plateau
+    // spans at most 2^-95 of the power and leaves exact products untouched.
+    if irrational && bits & FRACTION <= 1 << (112 - 95) {
+        bits = (bits & !FRACTION) - 1;
+    }
     let sig = (bits & FRACTION) | (1 << 112);
     let exponent = ((bits >> 112) & 0x7fff) as i32 - 0x3fff;
     round_num(

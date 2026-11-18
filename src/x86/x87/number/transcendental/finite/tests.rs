@@ -61,9 +61,16 @@ fn subnormal_rounding_and_unmasked_result_exponents_use_full_scale() {
             assert_eq!((tiny.post, tiny.up), (48, up));
         }
     }
-    let tiny = evaluate(MulLog2PlusOne, 1, 1, 0x37f & !16);
-    assert_eq!(tiny.value, normal(-2 * 16445 + 24576, LOG2_E_DOWN + 1));
-    assert_eq!(tiny.post, 48);
+    for sign in [0, SIGN] {
+        let masked = evaluate(MulLog2PlusOne, sign | 1, 1, 0x037f);
+        assert_eq!((masked.value, masked.post), (sign, 48));
+        let wrapped = evaluate(MulLog2PlusOne, sign | 1, 1, 0x036f);
+        assert_eq!(
+            wrapped.value,
+            sign | normal(-2 * 16445 + 24576, LOG2_E_DOWN + 1)
+        );
+        assert_eq!(wrapped.post, 48);
+    }
 
     let huge = evaluate(
         MulLog2,
@@ -117,4 +124,27 @@ fn adjacent_arguments_preserve_order_across_the_three_reductions() {
         assert!(evaluate(MulLog2, near_one[0], one, cw).value & SIGN != 0);
         assert!(evaluate(MulLog2, near_one[2], one, cw).value & SIGN == 0);
     }
+}
+
+#[test]
+fn directed_rounding_cannot_jump_two_lower_ulps_across_a_binade() {
+    let power = normal(0, UNIT);
+    // A true result immediately below one may approximate just above it.
+    // Returning 1+2^-63 would be two units of its 2^-64 grid.
+    for fraction in [0, 1, 1 << (112 - 96), 1 << (112 - 95)] {
+        let value = Quad::from_bits(QUAD_ONE | fraction);
+        let positive = finish(value, 0, true, 0x0b7f);
+        let negative = finish(-value, 0, true, 0x077f);
+        assert_eq!(
+            (positive.value, positive.post, positive.up),
+            (power, 32, true)
+        );
+        assert_eq!(
+            (negative.value, negative.post, negative.up),
+            (SIGN | power, 32, true)
+        );
+    }
+    // Exact rational products on the boundary are exempt.
+    let exact = finish(Quad::from_bits(QUAD_ONE), 0, false, 0x037f);
+    assert_eq!((exact.value, exact.post, exact.up), (power, 0, false));
 }
