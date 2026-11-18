@@ -254,6 +254,7 @@ fn far_failure(failure: far::FarFailure) -> EventFailure {
         far::FarFailure::Protection(failure) => EventFailure::Protection(failure),
         far::FarFailure::SystemMemory(failure) => EventFailure::SystemMemory(failure),
         far::FarFailure::SystemPaging(failure) => EventFailure::SystemPaging(failure),
+        far::FarFailure::Task(_) => unreachable!("code and stack lookups cannot initiate a task switch"),
         far::FarFailure::Unsupported => EventFailure::Unsupported,
     }
 }

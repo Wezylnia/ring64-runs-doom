@@ -211,3 +211,41 @@ fn outer_return_skips_unread_parameters_and_restores_target_width_pointer() {
     assert_eq!(context.selector(Segment::Ds), 0);
     assert!(!context.segment(Segment::Ds).usable);
 }
+
+#[test]
+fn indirect_task_call_captures_the_pointer_and_raw_descriptor_before_any_stack_access() {
+    let mut context = context("protected", 0);
+    let before = context.clone();
+    let mut image = image();
+    let raw = 0x0000_8900_8000_0067;
+    image.write(0x1008, 8, raw).unwrap();
+    image
+        .write_bytes(0x1100, &[0xef, 0xbe, 0xad, 0xde, 8, 0])
+        .unwrap();
+    let mut reads = Vec::new();
+    let result = execute_observing(
+        &mut context,
+        &mut image,
+        FarDescriptor {
+            kind: FarKind::Call,
+            width: Width::W32,
+            memory: true,
+        },
+        FarOperands {
+            offset: 0x1100,
+            selector: 0,
+            input_sp: 0,
+            next_pc: 0x4321,
+            segment: Segment::Ds,
+        },
+        |address, width, access| reads.push((address, width, access)),
+    );
+    assert_eq!(
+        result,
+        Err(FarFailure::Task(
+            super::super::task::switch32::Start::direct(8, raw, 0x4321)
+        ))
+    );
+    assert_eq!(reads, [(0x1100, 6, Access::Read)]);
+    assert_eq!(context, before);
+}

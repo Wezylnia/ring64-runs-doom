@@ -95,6 +95,7 @@ fn core_far_control_impl<const OBSERVED: bool, const PAGED: bool>(
             core.paging_work.clear();
         }
         let outcome = match result {
+            Err(FarFailure::Task(start)) => return core.capture_task(start, candidate, false),
             Err(FarFailure::SystemPaging(fault)) => return core.system_paging_failure(fault),
             Ok(outcome) => outcome,
             Err(FarFailure::Operand { segment, failure }) => {

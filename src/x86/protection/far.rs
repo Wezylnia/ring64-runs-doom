@@ -37,6 +37,7 @@ pub enum FarFailure {
     Protection(super::ProtectionFault),
     SystemMemory(super::SystemMemoryFault),
     SystemPaging(super::SystemPagingFault),
+    Task(super::task::switch32::Start),
     Unsupported,
 }
 
@@ -128,6 +129,17 @@ pub fn execute_observing(
                 raw,
                 &mut observe,
             );
+        }
+        if descriptor.kind == FarKind::Call
+            && context.mode() == Mode::Protected
+            && loaded.descriptor.system()
+            && matches!(loaded.descriptor.access & 15, 9 | 11)
+        {
+            return Err(FarFailure::Task(super::task::switch32::Start::direct(
+                selector,
+                raw,
+                operands.next_pc,
+            )));
         }
         Some(admit_code(context, descriptor.kind, selector, loaded)?)
     };
