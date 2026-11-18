@@ -134,6 +134,43 @@ fn core_vector_load_impl<const OBSERVED: bool, const PAGED: bool>(
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn core_block16_for_write(offset: u64, segment: u32) -> u32 {
+    block16_for_write::<false>(offset, segment)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn core_paged_block16_for_write(offset: u64, segment: u32) -> u32 {
+    block16_for_write::<true>(offset, segment)
+}
+
+fn block16_for_write<const PAGED: bool>(offset: u64, segment: u32) -> u32 {
+    BRIDGE.with_borrow_mut(|bridge| {
+        let core = bridge.core.as_mut().unwrap();
+        let Some(address) = core.vector_address(offset, 16, segment, 16, Access::Write) else {
+            return 0;
+        };
+        let mut bytes = [0; 16];
+        match guest_access!(
+            core,
+            PAGED,
+            read_block16_for_write_aligned(address, &mut bytes)
+        ) {
+            Ok(()) => unsafe {
+                // Both comparison outcomes publish an observed write to this
+                // entire span. It covers both write and read/write breakpoints.
+                let state = &mut *core.state.get();
+                state.vector_scratch = bytes;
+                state.vector_scratch.as_ptr() as u32
+            },
+            Err(fault) => {
+                core.access_failure(fault);
+                0
+            }
+        }
+    })
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn core_vector_store(
     offset: u64,
     width: u32,

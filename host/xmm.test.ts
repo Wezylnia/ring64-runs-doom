@@ -254,6 +254,39 @@ test('XMM layout rejects incompatible extents and cleans up the initialized core
   }
 });
 
+test('an older Core can run without the 16-byte helper until a generated unit imports it', async () => {
+  const fixture = await mockedCore(layout, 8192, undefined, 'core_block16_for_write');
+  assert.ok(fixture.core);
+  try {
+    // Each module exports one imported () -> () function as run.
+    const name = (s: string) => [s.length, ...new TextEncoder().encode(s)];
+    const section = (id: number, bytes: number[]) => [id, bytes.length, ...bytes];
+    const unit = (helper: string) =>
+      new WebAssembly.Module(
+        Uint8Array.from([
+          0,
+          97,
+          115,
+          109,
+          1,
+          0,
+          0,
+          0,
+          ...section(1, [1, 0x60, 0, 0]),
+          ...section(2, [1, ...name('env'), ...name(helper), 0, 0]),
+          ...section(7, [1, ...name('run'), 0, 0]),
+        ]),
+      );
+    assert.equal(typeof fixture.core.instantiate(unit('access_reason')), 'function');
+    assert.throws(
+      () => fixture.core!.instantiate(unit('block16_for_write')),
+      WebAssembly.LinkError,
+    );
+  } finally {
+    fixture.core.dispose();
+  }
+});
+
 test('scalar boundary transport uses existing padding and returns detached snapshots', async () => {
   const fixture = await mockedCore();
   assert.ok(fixture.core);

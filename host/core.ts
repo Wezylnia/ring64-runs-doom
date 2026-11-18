@@ -428,6 +428,7 @@ type CoreExports = WebAssembly.Exports & {
   ): number;
   core_load_mxcsr(offset: bigint, segment: number): number;
   core_store_mxcsr(offset: bigint, segment: number): number;
+  core_block16_for_write(offset: bigint, segment: number): number;
   core_vector_load(offset: bigint, width: number, segment: number, alignment: number): number;
   core_vector_store(
     offset: bigint,
@@ -1461,6 +1462,9 @@ export class Core {
       segmented_store: operands.core_segmented_store,
       segmented_access_failed: this.#exports.core_segmented_access_failed,
       access_reason: this.#exports.core_access_reason,
+      block16_for_write: this.isPaged
+        ? this.#exports.core_paged_block16_for_write!
+        : this.#exports.core_block16_for_write,
       vector_load: operands.core_vector_load,
       vector_store: operands.core_vector_store,
       float: this.#exports.core_float,
