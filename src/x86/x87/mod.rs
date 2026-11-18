@@ -141,6 +141,7 @@ pub enum Kind {
     MulLog2,
     MulLog2PlusOne,
     Atan2,
+    SetProtectedModeNop,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 #[repr(u8)]
@@ -223,6 +224,7 @@ impl Op {
             MulLog2,
             MulLog2PlusOne,
             Atan2,
+            SetProtectedModeNop,
         ];
         let formats = [
             Format::None,
@@ -301,13 +303,18 @@ impl Op {
             ConditionalMove | Exchange | Free => self.format == Register && self.pop == 0,
             StoreStatus => matches!(self.format, None | Ax) && self.pop == 0,
             Constant => self.format == None && self.index < 7 && self.pop == 0,
+            SetProtectedModeNop => self.format == None && self.pop == 0 && self.encoding == 0x3e4,
             _ => self.format == None && self.pop == 0,
         }
     }
     pub fn is_waiting(self) -> bool {
         !matches!(
             self.kind,
-            Kind::StoreControl | Kind::StoreStatus | Kind::Clear | Kind::Init
+            Kind::StoreControl
+                | Kind::StoreStatus
+                | Kind::Clear
+                | Kind::Init
+                | Kind::SetProtectedModeNop
         )
     }
     pub fn memory_bytes(self) -> u32 {
@@ -359,6 +366,7 @@ impl Op {
                 | Kind::Clear
                 | Kind::Init
                 | Kind::Wait
+                | Kind::SetProtectedModeNop
         )
     }
 }

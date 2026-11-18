@@ -137,6 +137,36 @@ fn x87_pending_detector_precedes_operand_access_and_diagnostics_do_not_erase_pen
 }
 
 #[test]
+fn fnsetpm_keeps_x87_state_even_when_ordinary_fnop_observes_pending() {
+    initialize(0x1000, &[0xf4]);
+    let setpm = operation(Kind::SetProtectedModeNop, Format::None, 0x3e4);
+    assert!(Op::try_decode(setpm.encode() ^ (1 << 19)).is_none());
+    for pending in [false, true] {
+        let mut before = X87State {
+            control_word: 0x037f - u16::from(pending),
+            status_word: 0x3a00 | if pending { 0x8081 } else { 0 },
+            instruction_pointer: 0x1234,
+            data_pointer: 0x5678,
+            opcode: 0x456,
+            ..X87State::default()
+        };
+        before.set_raw(7, 0x3fff_8100_0000_0000_0001);
+        before.set_tag(7, 0);
+        install(before);
+        assert_eq!(invoke(setpm, u64::MAX, 0x2000, 2, 0), 0);
+        assert_eq!(snapshot(), before);
+        assert_eq!(
+            invoke(operation(Kind::Nop, Format::None, 0x1d0), 0, 0x2002, 2, 0),
+            if pending { X87_EXCEPTION } else { 0 }
+        );
+        if !pending {
+            before.instruction_pointer = 0x2002;
+        }
+        assert_eq!(snapshot(), before);
+    }
+}
+
+#[test]
 fn x87_failed_full_span_accesses_precede_stack_status_and_preserve_every_byte() {
     for failing in 0..10 {
         for store in [false, true] {

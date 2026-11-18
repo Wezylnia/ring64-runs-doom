@@ -48,6 +48,39 @@ fn standalone_wait_needs_no_following_opcode_and_keeps_its_own_retirement_bounda
 }
 
 #[test]
+fn fnsetpm_is_a_nonwaiting_state_preserving_x87_encoding() {
+    let selected = x87(&[0xdb, 0xe4]);
+    assert_eq!(selected.address, None);
+    assert_eq!(selected.op.format, Format::None);
+    assert_eq!(selected.op.encoding, 0x3e4);
+    assert_eq!(selected.op.memory_bytes(), 0);
+    assert!(!selected.op.is_waiting());
+    assert!(!selected.op.updates_environment());
+    assert!(x87(&[0xd9, 0xd0]).op.is_waiting());
+    assert!(x87(&[0xd9, 0xd0]).op.updates_environment());
+    for prefix in [0x66, 0x67, 0x64, 0x4f, 0xf2, 0xf3] {
+        assert_eq!(x87(&[prefix, 0xdb, 0xe4]), selected);
+    }
+    assert_eq!(at(0x1000, &[0x9b, 0xdb, 0xe4]).unwrap().next_pc, 0x1001);
+    assert_eq!(
+        at(0x1000, &[0xf0, 0xdb]),
+        Err(DecodeError::Fetch(missing(0x1002)))
+    );
+    assert_eq!(at(0x1000, &[0xf0, 0xdb, 0xe4]), Err(DecodeError::Invalid));
+    for code in [&[0xf0, 0xf2, 0xdb][..], &[0xf3, 0xf0, 0xdb], &[0xdb, 0x24]] {
+        assert_eq!(at(0x1000, code), Err(DecodeError::Unsupported));
+    }
+    let mut longest = vec![0x66; 13];
+    longest.extend([0xdb, 0xe4]);
+    assert_eq!(at(0x1000, &longest).unwrap().encoded_len(), 15);
+    longest.insert(0, 0x66);
+    assert_eq!(
+        at(0x1000, &longest[..15]),
+        Err(DecodeError::InstructionLength)
+    );
+}
+
+#[test]
 fn transcendental_words_capture_only_their_implicit_operands() {
     for (modrm, kind, binary) in [
         (0xf0, Kind::Exp2MinusOne, false),
@@ -422,7 +455,7 @@ fn required_x87_address_tails_precede_lock_rejection_but_unselected_forms_stop_a
         [0xdf, 0xc0],
         [0xdb, 0xe0],
         [0xdb, 0xe1],
-        [0xdb, 0xe4],
+        [0xdb, 0xe5],
         [0xd9, 0xf2],
         [0xd9, 0xfb],
         [0xd9, 0xfe],

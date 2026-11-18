@@ -188,8 +188,12 @@ fn register(opcode: u8, modrm: u8) -> Result<Op, DecodeError> {
                 _ => return Err(DecodeError::Unsupported),
             };
         }
-        0xdb if matches!(modrm, 0xe2 | 0xe3) => {
-            op.kind = if modrm == 0xe2 { Clear } else { Init };
+        0xdb if (0xe2..=0xe4).contains(&modrm) => {
+            op.kind = match modrm {
+                0xe2 => Clear,
+                0xe3 => Init,
+                _ => SetProtectedModeNop,
+            };
             op.format = Format::None;
             op.index = 0;
         }
