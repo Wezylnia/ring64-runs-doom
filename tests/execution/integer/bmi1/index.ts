@@ -1,6 +1,8 @@
 import { CODE, createFixture, initial, equal, type Scenario } from '../../../support/fixture.js';
 import { same } from '../../far-control/fixture.js';
 import { bitmapScenario } from './bitmap.js';
+import { boundaryScenarios } from './boundaries.js';
+import { decodeScenarios } from './decode.js';
 
 const FORMS = [
   ['andn', 'c44230f2ed', 'c442b0f2ed'],
@@ -54,6 +56,8 @@ function reference(op: Op, width: number, input: bigint, control: bigint) {
 export function bmi1Scenarios(compiler: WebAssembly.Module): Scenario[] {
   return [
     bitmapScenario(compiler),
+    ...boundaryScenarios(compiler),
+    ...decodeScenarios(compiler),
     {
       name: 'BMI1 scalar results, defined flags and input aliases agree with independent bit positions at 32 and 64 bits',
       async run() {
