@@ -91,6 +91,16 @@ impl Default for LoadedSegment {
     }
 }
 
+impl LoadedSegment {
+    /// Interim hidden cache after loading the visible selectors of a 32-bit TSS.
+    pub(crate) fn unqualified_task() -> Self {
+        Self {
+            usable: false,
+            ..Self::default()
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SegmentAttributes {
     pub dpl: u8,

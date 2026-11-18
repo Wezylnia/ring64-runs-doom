@@ -590,3 +590,43 @@ fn target_limit_is_a_point_check_and_raw_offsets_are_not_truncated() {
             .is_err()
     );
 }
+
+#[test]
+fn only_the_committed_unqualified_task_bank_allows_unusable_cs_on_restore() {
+    let mut context = ExecutionContext::default();
+    context.set_mode_and_cpl(Mode::Protected, 0);
+    context.set_tr(TaskRegister {
+        selector: 0x18,
+        valid: true,
+        base: 0x5000,
+        limit: 0x67,
+        attributes: 0x8b,
+    });
+    for segment in Segment::ALL {
+        context.set_segment(
+            segment,
+            0x10,
+            LoadedSegment::unqualified_task(),
+            SegmentAttributes::default(),
+        );
+    }
+    let snapshot = context.to_json();
+    assert_eq!(
+        ExecutionContext::from_json_profile(&snapshot, true),
+        Ok(context)
+    );
+    assert!(ExecutionContext::from_json(&snapshot).is_err());
+    for (key, value) in [
+        ("valid", serde_json::json!(false)),
+        ("attributes", serde_json::json!(0x89)),
+        ("limit", serde_json::json!(0x66)),
+        ("selector", serde_json::json!(0x1c)),
+    ] {
+        let mut other = snapshot.clone();
+        other["tr"][key] = value;
+        assert!(ExecutionContext::from_json_profile(&other, true).is_err());
+    }
+    let mut other = snapshot;
+    other["segments"]["es"]["present"] = true.into();
+    assert!(ExecutionContext::from_json_profile(&other, true).is_err());
+}

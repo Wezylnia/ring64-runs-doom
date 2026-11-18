@@ -194,6 +194,23 @@ function defaults(cache: LoadedSegment, selector: number, cpl: number): SegmentS
   };
 }
 
+function unqualifiedTaskSegment(segment: SegmentSnapshot): boolean {
+  return (
+    !segment.usable &&
+    segment.base === 0n &&
+    segment.limit === 0xffffffff &&
+    segment.default32 &&
+    segment.type === 'read-write' &&
+    segment.dpl === 0 &&
+    !segment.present &&
+    !segment.conforming &&
+    !segment.accessed &&
+    !segment.long &&
+    !segment.granularity &&
+    !segment.available
+  );
+}
+
 export function captureContext(
   context: ExecutionContext,
   physical = false,
@@ -274,6 +291,9 @@ export function captureContext(
       }
     }
   }
+  const tr = hasTr
+    ? captureSystemCache(source.tr, mode, raw)
+    : { selector: 0, valid: false, base: 0n, limit: 0, attributes: 0 };
   if (mode === 'virtual8086') {
     for (const name of SEGMENTS) {
       const segment = segments[name];
@@ -291,16 +311,24 @@ export function captureContext(
   } else if (mode !== 'long64') {
     const cs = segments.cs;
     const ss = segments.ss;
-    if (
-      !cs.usable ||
-      !(
-        ['code', 'readable-code'].includes(cs.type) ||
+    const validCs = cs.usable
+      ? ['code', 'readable-code'].includes(cs.type) ||
         (mode === 'real' && cs.type === 'read-write') ||
         (raw &&
           cpl === 0 &&
           (mode === 'protected' || mode === 'compatibility') &&
           cs.type === 'read-write')
-      ) ||
+      : raw &&
+        mode === 'protected' &&
+        tr.valid &&
+        tr.selector >= 8 &&
+        (tr.selector & 4) === 0 &&
+        (tr.attributes & 0x9f) === 0x8b &&
+        tr.limit >= 0x67 &&
+        (cs.selector & 3) === cpl &&
+        SEGMENTS.every((name) => unqualifiedTaskSegment(segments[name]));
+    if (
+      !validCs ||
       (!(raw || (full && mode === 'compatibility')) &&
         (!ss.usable || !['read-write', 'expand-down-read-write'].includes(ss.type)))
     )
@@ -315,9 +343,7 @@ export function captureContext(
     ldtr: full
       ? captureSystemCache(source.ldtr, mode, raw)
       : { selector: 0, valid: false, base: 0n, limit: 0, attributes: 0 },
-    tr: hasTr
-      ? captureSystemCache(source.tr, mode, raw)
-      : { selector: 0, valid: false, base: 0n, limit: 0, attributes: 0 },
+    tr,
   };
 }
 

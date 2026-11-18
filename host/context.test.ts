@@ -372,3 +372,47 @@ test('physical full IA32e checkpoints retain noncanonical raw FS GS and roots un
     TypeError,
   );
 });
+
+test('physical protected task checkpoints accept only a complete unqualified segment bank', () => {
+  const snapshot = protectedSnapshot();
+  snapshot.tr = { selector: 0x20, valid: true, attributes: 0x8b, base: 0x4000n, limit: 0x67 };
+  for (const segment of Object.values(snapshot.segments)) {
+    Object.assign(segment, {
+      ...data(),
+      usable: false,
+      dpl: 0,
+      present: false,
+      conforming: false,
+      accessed: false,
+      long: false,
+      granularity: false,
+      available: false,
+    });
+  }
+  assert.deepEqual(captureContext(snapshot, true), snapshot);
+  assert.throws(() => captureContext(snapshot), TypeError);
+  for (const alter of [
+    (s: typeof snapshot) => {
+      s.segments.gs.accessed = true;
+    },
+    (s: typeof snapshot) => {
+      s.segments.ds.usable = true;
+    },
+    (s: typeof snapshot) => {
+      s.segments.cs.selector |= 3;
+    },
+    (s: typeof snapshot) => {
+      s.tr.attributes = 0x89;
+    },
+    (s: typeof snapshot) => {
+      s.tr.limit--;
+    },
+    (s: typeof snapshot) => {
+      s.tr.selector |= 4;
+    },
+  ]) {
+    const other = structuredClone(snapshot);
+    alter(other);
+    assert.throws(() => captureContext(other, true), TypeError);
+  }
+});

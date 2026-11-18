@@ -292,10 +292,7 @@ impl Prepared {
             context.set_segment(
                 segment,
                 selector,
-                LoadedSegment {
-                    usable: false,
-                    ..LoadedSegment::default()
-                },
+                LoadedSegment::unqualified_task(),
                 SegmentAttributes::default(),
             );
         }

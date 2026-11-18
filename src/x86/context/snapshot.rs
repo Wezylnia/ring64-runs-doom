@@ -200,20 +200,39 @@ impl ExecutionContext {
                     return Err(INVALID);
                 }
             }
-        } else if mode != Mode::Long64
-            && (!cs.usable
-                || !(cs.kind.is_code()
+        } else if mode != Mode::Long64 {
+            let valid_cs = if cs.usable {
+                cs.kind.is_code()
                     || mode == Mode::Real && cs.kind == SegmentType::ReadWrite
                     || raw
                         && context.cpl == 0
                         && matches!(mode, Mode::Protected | Mode::Compatibility)
-                        && cs.kind == SegmentType::ReadWrite)
+                        && cs.kind == SegmentType::ReadWrite
+            } else {
+                raw && context.has_unqualified_task_segments()
+            };
+            if !valid_cs
                 || !(raw || full && mode == Mode::Compatibility)
-                    && (!ss.usable || !ss.kind.writable()))
-        {
-            return Err(INVALID);
+                    && (!ss.usable || !ss.kind.writable())
+            {
+                return Err(INVALID);
+            }
         }
         Ok(context)
+    }
+
+    // CS is the first segment qualified after LDTR. If it is still unusable,
+    // every hidden segment cache must have the exact value installed at commit.
+    fn has_unqualified_task_segments(&self) -> bool {
+        self.mode == Mode::Protected
+            && self.tr.valid
+            && self.tr.selector >= 8
+            && self.tr.selector & 4 == 0
+            && self.tr.attributes & 0x9f == 0x8b
+            && self.tr.limit >= 0x67
+            && self.cpl == (self.selector(Segment::Cs) & 3) as u8
+            && self.segments == [LoadedSegment::unqualified_task(); 6]
+            && self.attributes == [SegmentAttributes::default(); 6]
     }
 
     pub fn to_json(&self) -> Value {
