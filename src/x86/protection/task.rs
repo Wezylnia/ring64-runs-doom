@@ -40,12 +40,12 @@ pub(super) fn load(
             return Err(fault(13, ProtectionPhase::Descriptor));
         }
     }
-    let write = lookup.prepare_busy(context, image, width, descriptor.access)?;
+    let access = descriptor.access | 2;
+    let write = lookup.prepare_busy_byte(context, image, width, access)?;
     image
         .prepare_publication()
         .map_err(|failure| write.failure(failure))?;
     write.commit(image);
-    let access = descriptor.access | 2;
     Ok(context.set_tr(TaskRegister {
         selector,
         valid: true,

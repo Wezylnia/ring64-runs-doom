@@ -181,7 +181,7 @@ impl Lookup {
         })
     }
 
-    pub fn prepare_busy(
+    pub fn prepare_busy_byte(
         self,
         context: &ExecutionContext,
         image: &impl GuestMemory,
@@ -197,7 +197,7 @@ impl Lookup {
             address,
             width,
             offset: 5,
-            byte: access_byte | 2,
+            byte: access_byte,
             phase: SystemPhase::BusyWrite,
         })
     }
