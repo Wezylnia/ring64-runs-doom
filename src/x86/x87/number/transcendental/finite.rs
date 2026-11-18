@@ -9,7 +9,7 @@ const LOG2_E: u128 = 0x3fff_7154_7652_b82f_e177_7d0f_fda0_d23a;
 
 // Generate nearest binary128 1/d by integer long division at compile time.
 // The largest denominator, 25!, fits in 84 bits.
-const fn reciprocal(d: u128) -> u128 {
+pub(super) const fn reciprocal(d: u128) -> u128 {
     let exponent = u128::BITS - (d - 1).leading_zeros();
     let mut remainder = (1 << exponent) - d;
     let mut significand = 1;
@@ -48,7 +48,7 @@ const fn coefficients<const N: usize>(factorial: bool) -> [u128; N] {
 const EXP: [u128; 25] = coefficients(true); // 1/(i+1)!
 const LOG: [u128; 21] = coefficients(false); // 1/(2i+1)
 
-fn polynomial(x: Quad, coefficients: &[u128]) -> Quad {
+pub(super) fn polynomial(x: Quad, coefficients: &[u128]) -> Quad {
     let (highest, lower) = coefficients.split_last().unwrap();
     lower.iter().rev().fold(Quad::from_bits(*highest), |p, &c| {
         p.mul_add(x, Quad::from_bits(c)).value
@@ -66,7 +66,7 @@ fn parts(raw: u128) -> (Quad, i32) {
     )
 }
 
-fn finish(value: Quad, scale: i32, irrational: bool, cw: u16) -> Result {
+pub(super) fn finish(value: Quad, scale: i32, irrational: bool, cw: u16) -> Result {
     // All working values here are normal, including when the final result
     // underflows or overflows raw80. One final conversion owns RC and wrapping.
     let mut bits = value.to_bits();

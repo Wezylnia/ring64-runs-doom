@@ -16,6 +16,74 @@ fn stacked(values: &[u128]) -> State {
     }
     s
 }
+
+const FPATAN: Op = Op {
+    kind: Kind::Atan2,
+    format: Format::Register,
+    index: 1,
+    dest_index: true,
+    pop: 1,
+    condition: 0,
+    encoding: 0x1f3,
+};
+
+#[test]
+fn fpatan_writes_the_second_operand_and_pops_before_pending_precision() {
+    let mut state = State {
+        control_word: 0x035f,
+        status_word: 0x4500,
+        ..State::default()
+    };
+    state.top_to(7);
+    let x = 0xbfff_8000_0000_0000_0000;
+    state.put(7, x);
+    state.put(0, one());
+    state.put(1, 0x3ffd_dec0_1122_3344_5566);
+    let before = state;
+
+    assert_eq!(eval(&mut state, FPATAN, 0, 0x8d7).flags, 0x8d7);
+    assert_eq!(state.top(), 0);
+    assert_eq!(state.raw(0), 0x4000_96cb_e3f9_990e_91a8);
+    assert_eq!(state.raw(7), x);
+    assert_eq!(state.tag(7), 3);
+    assert_eq!(state.tag(0), 0);
+    assert_eq!(&state.registers[1..7], &before.registers[1..7]);
+    assert_eq!(state.status_word & 0xc5ff, 0xc5a0);
+    assert_eq!(state.pending(), 32);
+}
+
+#[test]
+fn fpatan_checks_both_operand_tags_before_publishing_a_result() {
+    for empty in [0, 1] {
+        for masked in [false, true] {
+            let mut state = stacked(&[one(), one(), 0xbfff_8000_0000_0000_0001]);
+            state.control_word = 0x037e | u16::from(masked);
+            state.status_word = 0x4720;
+            state.set_tag(empty, 3);
+            let before = state;
+
+            eval(&mut state, FPATAN, 0, 0);
+            assert_eq!(
+                state.status_word & 0xc7ff,
+                if masked { 0x4561 } else { 0xc5e1 }
+            );
+            assert_eq!(state.top(), if masked { 1 } else { 0 });
+            assert_eq!(state.tag(0), if masked { 3 } else { before.tag(0) });
+            assert_eq!(state.tag(1), if masked { 2 } else { before.tag(1) });
+            assert_eq!(
+                state.raw(1),
+                if masked {
+                    0xffff_c000_0000_0000_0000
+                } else {
+                    before.raw(1)
+                }
+            );
+            assert_eq!(state.raw(0), before.raw(0));
+            assert_eq!(&state.registers[2..], &before.registers[2..]);
+        }
+    }
+}
+
 #[test]
 fn integer_load_keeps_all_64_significand_bits_at_pc24() {
     let mut s = State {

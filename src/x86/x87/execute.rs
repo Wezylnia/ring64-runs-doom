@@ -331,18 +331,19 @@ pub(super) fn eval(state: &mut State, op: Op, source: u128, flags: u64) -> Effec
         pops(state, op.pop);
         return out;
     }
-    let r = if matches!(op.kind, Exp2MinusOne | MulLog2 | MulLog2PlusOne) {
-        number::transcendental(op.kind, a, b, cw)
-    } else if matches!(op.kind, Sqrt | Round) {
-        number::unary(op.kind, a, cw)
-    } else {
-        let (lhs, rhs) = if op.dest_index { (b, a) } else { (a, b) };
-        let extra = if number::memory_denormal(source, op.format) {
-            2
-        } else {
-            0
-        };
-        number::binary(op.kind, lhs, rhs, cw, extra)
+    let r = match op.kind {
+        Exp2MinusOne | MulLog2 | MulLog2PlusOne => number::transcendental(op.kind, a, b, cw),
+        Atan2 => number::atan2(a, b, cw),
+        Sqrt | Round => number::unary(op.kind, a, cw),
+        _ => {
+            let (lhs, rhs) = if op.dest_index { (b, a) } else { (a, b) };
+            let extra = if number::memory_denormal(source, op.format) {
+                2
+            } else {
+                0
+            };
+            number::binary(op.kind, lhs, rhs, cw, extra)
+        }
     };
     status(state, r);
     if r.suppress || r.pre & !cw & 63 != 0 {

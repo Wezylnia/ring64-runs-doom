@@ -48,10 +48,11 @@ fn standalone_wait_needs_no_following_opcode_and_keeps_its_own_retirement_bounda
 }
 
 #[test]
-fn logarithm_and_exponential_words_capture_only_their_implicit_operands() {
+fn transcendental_words_capture_only_their_implicit_operands() {
     for (modrm, kind, binary) in [
         (0xf0, Kind::Exp2MinusOne, false),
         (0xf1, Kind::MulLog2, true),
+        (0xf3, Kind::Atan2, true),
         (0xf9, Kind::MulLog2PlusOne, true),
     ] {
         let op = Op {
@@ -76,6 +77,33 @@ fn logarithm_and_exponential_words_capture_only_their_implicit_operands() {
         assert!(Op::try_decode(op.encode() ^ (1 << 14)).is_none());
         assert_eq!(at(0x1000, &[0xf0, 0xd9, modrm]), Err(DecodeError::Invalid));
     }
+}
+
+#[test]
+fn fpatan_keeps_required_selector_fetch_and_legacy_prefix_boundaries() {
+    let instruction = x87(&[0xd9, 0xf3]);
+    assert_eq!(instruction.address, None);
+    for prefix in [0xf2, 0xf3, 0x67, 0x64, 0x4f] {
+        assert_eq!(x87(&[prefix, 0xd9, 0xf3]), instruction);
+    }
+    for code in [&[0xd9][..], &[0xf0, 0xd9]] {
+        assert_eq!(
+            at(0x1000, code),
+            Err(DecodeError::Fetch(missing(0x1000 + code.len() as u64)))
+        );
+    }
+    for code in [&[0xf0, 0xf3, 0xd9][..], &[0xf3, 0xf0, 0xd9], &[0xf0, 0xf0]] {
+        assert_eq!(at(0x1000, code), Err(DecodeError::Unsupported));
+    }
+    let mut longest = vec![0x66; 13];
+    longest.extend([0xd9, 0xf3]);
+    assert_eq!(x87(&longest), instruction);
+    longest.insert(0, 0x66);
+    assert_eq!(
+        at(0x1000, &longest[..15]),
+        Err(DecodeError::InstructionLength)
+    );
+    assert_eq!(at(0x1000, &longest), Err(DecodeError::InstructionLength));
 }
 
 #[test]
@@ -161,7 +189,7 @@ fn every_esc_selector_admits_exactly_the_documented_selection_and_rejects_lock()
             let selected = match opcode {
                 0xd8 => true,
                 0xd9 => {
-                    matches!(modrm, 0xc0..=0xd0 | 0xe0 | 0xe1 | 0xe4 | 0xe5 | 0xe8..=0xee | 0xf0 | 0xf1 | 0xf4..=0xfa | 0xfc | 0xfd)
+                    matches!(modrm, 0xc0..=0xd0 | 0xe0 | 0xe1 | 0xe4 | 0xe5 | 0xe8..=0xee | 0xf0 | 0xf1 | 0xf3..=0xfa | 0xfc | 0xfd)
                 }
                 0xda => matches!(modrm, 0xc0..=0xdf | 0xe9),
                 0xdb => matches!(modrm, 0xc0..=0xdf | 0xe2 | 0xe3 | 0xe8..=0xf7),
@@ -214,7 +242,7 @@ fn every_esc_selector_admits_exactly_the_documented_selection_and_rejects_lock()
             }
         }
     }
-    assert_eq!((registers, memory), (340, 60));
+    assert_eq!((registers, memory), (341, 60));
 }
 
 #[test]
@@ -396,7 +424,6 @@ fn required_x87_address_tails_precede_lock_rejection_but_unselected_forms_stop_a
         [0xdb, 0xe1],
         [0xdb, 0xe4],
         [0xd9, 0xf2],
-        [0xd9, 0xf3],
         [0xd9, 0xfb],
         [0xd9, 0xfe],
         [0xd9, 0xff],

@@ -138,6 +138,7 @@ pub enum Kind {
     Exp2MinusOne,
     MulLog2,
     MulLog2PlusOne,
+    Atan2,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 #[repr(u8)]
@@ -219,6 +220,7 @@ impl Op {
             Exp2MinusOne,
             MulLog2,
             MulLog2PlusOne,
+            Atan2,
         ];
         let formats = [
             Format::None,
@@ -255,7 +257,7 @@ impl Op {
         if self.format != Register && self.kind != Constant && self.index != 0 {
             return false;
         }
-        if matches!(self.kind, MulLog2 | MulLog2PlusOne) {
+        if matches!(self.kind, MulLog2 | MulLog2PlusOne | Atan2) {
             return self.format == Register && self.index == 1 && self.dest_index && self.pop == 1;
         }
         let arithmetic = matches!(self.kind, Add | Mul | Sub | SubReverse | Div | DivReverse);

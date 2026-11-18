@@ -167,15 +167,15 @@ fn register(opcode: u8, modrm: u8) -> Result<Op, DecodeError> {
                 }
                 0xf4 => Extract,
                 0xf0 => Exp2MinusOne,
-                0xf1 | 0xf9 => {
+                0xf1 | 0xf3 | 0xf9 => {
                     op.format = Format::Register;
                     op.index = 1;
                     op.dest_index = true;
                     op.pop = 1;
-                    if modrm == 0xf1 {
-                        MulLog2
-                    } else {
-                        MulLog2PlusOne
+                    match modrm {
+                        0xf1 => MulLog2,
+                        0xf3 => Atan2,
+                        _ => MulLog2PlusOne,
                     }
                 }
                 0xf5 => RemainderNearest,

@@ -3,7 +3,7 @@ mod transcendental;
 use super::{Format, Kind};
 pub(super) use special::{extract, remainder, scale};
 use std::cmp::Ordering;
-pub(super) use transcendental::transcendental;
+pub(super) use transcendental::{atan2, transcendental};
 pub(super) const SIGN: u128 = 1 << 79;
 pub(super) const QUIET: u128 = 1 << 62;
 pub(super) const INDEFINITE: u128 = 0xffffc000000000000000;
