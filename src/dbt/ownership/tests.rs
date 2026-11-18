@@ -7,7 +7,7 @@ fn context_reuse_assumptions_distinguish_every_normalized_context_field() {
     let mut owners = Owners::default();
     assert!(owners.register(1, &original, false, 17));
     assert!(!owners.eligible(1, &original, false));
-    assert!(owners.publish(1, &original, false, 17));
+    assert!(owners.publish(1, &original, false, 17, None));
     assert!(owners.eligible(1, &original, false));
     assert!(!owners.eligible(1, &original, true));
     for mode in [
@@ -113,27 +113,27 @@ fn context_reuse_publication_is_stricter_than_installed_eligibility() {
     let mut owners = Owners::default();
     assert!(owners.register(1, &context, false, 8));
     assert!(
-        !owners.publish(1, &context, false, 9),
+        !owners.publish(1, &context, false, 9, None),
         "pending epoch cannot change"
     );
-    assert!(!owners.publish(1, &context, true, 8));
+    assert!(!owners.publish(1, &context, true, 8, None));
     assert!(!owners.eligible(1, &context, false));
-    assert!(owners.publish(1, &context, false, 8));
+    assert!(owners.publish(1, &context, false, 8, None));
     assert!(owners.eligible(1, &context, false));
     assert!(
-        owners.publish(1, &context, false, u64::MAX),
+        owners.publish(1, &context, false, u64::MAX, None),
         "published identity ignores epoch"
     );
     assert!(owners.register(2, &context, false, 8));
     let mut released = Vec::new();
-    owners.cancel_pending(|id| released.push(id));
+    owners.cancel_pending(false, |id| released.push(id));
     assert_eq!(released, [2]);
     assert!(owners.contains(1));
     assert!(!owners.contains(2));
-    assert!(!owners.publish(2, &context, false, 8));
+    assert!(!owners.publish(2, &context, false, 8, None));
     owners.release(1);
     assert!(!owners.eligible(1, &context, false));
-    assert!(!owners.publish(1, &context, false, 8));
+    assert!(!owners.publish(1, &context, false, 8, None));
     owners.clear();
     assert!(owners.records.is_empty());
 }

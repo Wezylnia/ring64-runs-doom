@@ -1,5 +1,8 @@
 mod fetch_proof;
 use fetch_proof::FetchPage;
+#[cfg(any(target_arch = "wasm32", test))]
+pub(crate) use fetch_proof::FetchProof;
+
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use crate::memory::{Access, Image, canonical48};
@@ -215,6 +218,10 @@ pub(crate) fn discover_with_profile(
         source_bytes: source.len(),
         source_ranges,
         read_dependencies: ranges(&read_dependencies),
+        #[cfg(any(target_arch = "wasm32", test))]
+        fetch_proof: FetchProof {
+            pages: fetch_pages.into_values().collect(),
+        },
     })
 }
 

@@ -35,3 +35,48 @@ impl FetchPage {
         &self.entries[..usize::from(self.entry_count)]
     }
 }
+
+#[cfg(any(target_arch = "wasm32", test))]
+#[derive(Debug, Default)]
+pub(crate) struct FetchProof {
+    pub(super) pages: Box<[FetchPage]>,
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+impl FetchProof {
+    /// The caller separately verifies the full execution context, root and
+    /// physical source owner. A speculative check must never perform a fetch.
+    pub(crate) fn matches(
+        &self,
+        image: &crate::memory::Image,
+        state: &crate::x86::paging::State,
+        cache: &crate::x86::paging::cache::Cache,
+        cpl: u8,
+    ) -> bool {
+        use crate::memory::Access;
+        use crate::x86::{
+            paging::walk::{AccessClass, Request},
+            protection_keys,
+        };
+
+        state.cr0 & (1 << 31) != 0
+            && !self.pages.is_empty()
+            && self.pages.iter().all(|page| {
+                let request = Request {
+                    linear: page.linear,
+                    access: Access::Execute,
+                    class: AccessClass::operand(cpl, false),
+                };
+                cache
+                    .peek(image, state, request, &protection_keys::State::ZERO)
+                    .is_ok_and(|current| {
+                        current.physical == page.physical
+                            && current.entry_width == page.entry_width
+                            && current.entries() == page.entries()
+                    })
+            })
+    }
+}
+
+#[cfg(test)]
+mod tests;

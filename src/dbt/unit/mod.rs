@@ -8,4 +8,6 @@ pub(crate) struct Unit {
     pub source_bytes: usize,
     pub source_ranges: Vec<SourceRange>,
     pub read_dependencies: Vec<SourceRange>,
+    #[cfg(any(target_arch = "wasm32", test))]
+    pub(crate) fetch_proof: crate::dbt::FetchProof,
 }

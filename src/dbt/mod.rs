@@ -1,5 +1,7 @@
 mod discovery;
 #[cfg(any(target_arch = "wasm32", test))]
+pub(crate) use discovery::FetchProof;
+#[cfg(any(target_arch = "wasm32", test))]
 mod ownership;
 #[cfg(any(target_arch = "wasm32", test))]
 pub(crate) use ownership::Owners;
@@ -26,6 +28,8 @@ pub struct Artifact {
     pub source_bytes: usize,
     pub source_ranges: Vec<SourceRange>,
     pub read_dependencies: Vec<SourceRange>,
+    #[cfg(any(target_arch = "wasm32", test))]
+    pub(crate) fetch_proof: crate::dbt::FetchProof,
     #[cfg(any(target_arch = "wasm32", test))]
     pub(crate) instructions: Vec<crate::x86::instruction::Instruction>,
 }
@@ -113,6 +117,8 @@ fn compile_profile(
         source_bytes: unit.source_bytes,
         source_ranges: unit.source_ranges,
         read_dependencies: unit.read_dependencies,
+        #[cfg(any(target_arch = "wasm32", test))]
+        fetch_proof: unit.fetch_proof,
         #[cfg(any(target_arch = "wasm32", test))]
         instructions: unit.instructions,
         bytes,

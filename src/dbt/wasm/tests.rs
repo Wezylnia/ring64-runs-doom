@@ -46,6 +46,7 @@ fn unit(instructions: Vec<Instruction>) -> Unit {
         source_bytes: instructions.len(),
         source_ranges: vec![],
         read_dependencies: vec![],
+        fetch_proof: Default::default(),
         block_count: 1,
         instructions,
     }

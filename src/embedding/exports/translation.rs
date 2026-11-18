@@ -11,8 +11,13 @@ impl Core {
             return false;
         }
         let observed = self.boundary_observed();
-        self.translation_owners
-            .publish(owner, &self.context, observed, self.context_version)
+        self.translation_owners.publish(
+            owner,
+            &self.context,
+            observed,
+            self.context_version,
+            self.paging.as_ref(),
+        )
     }
 
     pub(super) fn activate_owner(&mut self, owner: u64) -> bool {
@@ -23,7 +28,19 @@ impl Core {
         let observed = self.boundary_observed();
         let admitted = self
             .translation_owners
-            .admit(owner, &self.context, observed, || {
+            .admit(owner, &self.context, observed, |fetch| {
+                if let Some(binding) = fetch
+                    && !self.paging.as_ref().is_some_and(|state| {
+                        binding.matches(
+                            &self.image,
+                            state,
+                            &self.translation_cache,
+                            self.context.cpl(),
+                        )
+                    })
+                {
+                    return false;
+                }
                 self.image.activate(owner)
             });
         if admitted && paged_model {
@@ -33,9 +50,13 @@ impl Core {
     }
 
     pub(super) fn context_changed(&mut self) {
+        self.cancel_pending(false);
+    }
+
+    fn cancel_pending(&mut self, fetch_changed: bool) {
         // Pending owners are cancelled even when the externally reported epoch saturates.
         self.translation_owners
-            .cancel_pending(|owner| self.image.release(owner));
+            .cancel_pending(fetch_changed, |owner| self.image.release(owner));
         self.context_version = self.context_version.saturating_add(1);
     }
 
@@ -48,7 +69,7 @@ impl Core {
 
     pub(super) fn reconcile_translation_changes(&mut self) {
         if self.translation_cache.take_changed() {
-            self.context_changed();
+            self.cancel_pending(self.paging.is_some_and(|state| state.cr0 & (1 << 31) != 0));
         }
     }
 

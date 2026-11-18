@@ -498,8 +498,8 @@ pub extern "C" fn core_compile(
                     core.image.release(owner);
                     return RESOURCE;
                 }
-                if core.paging.is_some_and(|paging| paging.cr0 & (1 << 31) != 0) {
-                    core.translation_owners.record_instructions(owner, artifact.instructions);
+                if let Some(state) = core.paging.as_ref().filter(|state| state.cr0 & (1 << 31) != 0) {
+                    core.translation_owners.record_paged(owner, state, artifact.fetch_proof, artifact.instructions);
                 }
                 bridge.info = serde_json::to_vec(&serde_json::json!({
                     "entries": artifact.entries.iter().map(|pc| format!("0x{pc:x}")).collect::<Vec<_>>(),
