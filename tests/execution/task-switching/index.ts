@@ -4,6 +4,7 @@ import { taskDebugEntryScenario } from './debug-entry.js';
 import { taskEntryFaultScenarios } from './entry-faults.js';
 import { taskDeliveryRetryScenario } from './delivery-retry.js';
 import { invalidTaskSelectorScenario } from './qualify.js';
+import { roundRobinScenarios } from './round-robin.js';
 import { taskRetryScenario } from './retry.js';
 import { taskDebugScenario } from './debug.js';
 import { gateSourceScenario } from './sources.js';
@@ -35,6 +36,7 @@ import {
 
 export function taskSwitchingScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [
+    ...roundRobinScenarios(compiler),
     taskRetryScenario(compiler),
     taskDeliveryRetryScenario(compiler),
     invalidTaskSelectorScenario(compiler),
