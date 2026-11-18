@@ -8,6 +8,7 @@ use crate::x86::instruction::{
 
 mod addressing;
 mod arithmetic_bits;
+mod bmi;
 mod conditions;
 mod exchange;
 mod far;
