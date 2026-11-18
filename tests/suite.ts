@@ -32,6 +32,7 @@ import { accessFaultScenarios } from './execution/access-faults/index.js';
 import { hardwareDebugScenarios } from './execution/hardware-debug/index.js';
 import { legacyPagingScenarios } from './execution/legacy-paging/index.js';
 import { pagingScenarios } from './execution/paging/index.js';
+import { fsgsbaseScenarios } from './execution/fsgsbase/index.js';
 import { fastSystemScenarios } from './execution/fast-system/index.js';
 import { contextReuseScenarios } from './execution/context-reuse/index.js';
 import { cr3CodeReuseScenarios } from './execution/cr3-code-reuse/index.js';
@@ -81,6 +82,7 @@ export async function runScenarios(
     ...pagingScenarios(core),
     ...legacyPagingScenarios(core),
     ...fastSystemScenarios(core),
+    ...fsgsbaseScenarios(core),
     ...contextReuseScenarios(core),
     ...cr3CodeReuseScenarios(core),
     ...numericControlScenarios(core),
