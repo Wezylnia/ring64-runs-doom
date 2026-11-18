@@ -1,3 +1,4 @@
+import { fsincosScenarios } from './fsincos.js';
 import { muslLogExpScenario } from './log-exp-musl.js';
 import { logExpScenarios } from './log-exp.js';
 import { muslFpatanScenarios } from './fpatan-musl.js';
@@ -15,6 +16,7 @@ import { specialImageScenarios } from './special-images.js';
 
 export function x87Scenarios(compiler: WebAssembly.Module): Scenario[] {
   return [
+    ...fsincosScenarios(compiler),
     muslLogExpScenario(compiler),
     ...logExpScenarios(compiler),
     ...muslFpatanScenarios(compiler),
