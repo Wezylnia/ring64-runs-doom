@@ -367,6 +367,41 @@ fn flags_comparisons_do_not_report_denormal_operands() {
     assert_eq!(s.status_word & 0xbaff, 0x8082);
 }
 #[test]
+fn round_to_integer_preserves_signed_zero_and_carry_into_bit_63() {
+    let half = 0x3ffe_8000_0000_0000_0000;
+    let upper_tie = 0x403d_ffff_ffff_ffff_ffff; // 2^63 - 1/2
+    let upper = 0x403e_8000_0000_0000_0000;
+    for (input, lower, higher, tie_up) in [
+        (half, 0, one(), false),
+        (upper_tie, upper_tie - 1, upper, true),
+    ] {
+        for sign in [0, number::SIGN] {
+            for rc in 0..4 {
+                let up = match rc {
+                    0 => tie_up,
+                    1 => sign != 0,
+                    2 => sign == 0,
+                    _ => false,
+                };
+                let mut s = State {
+                    control_word: 0x005f | (rc << 10), // PC24, unmasked precision
+                    status_word: (7 << 11) | 0x200,
+                    ..State::default()
+                };
+                s.put(7, sign | input);
+                eval(&mut s, op(Kind::Round, Format::None), 0, 2);
+                let magnitude = if up { higher } else { lower };
+                assert_eq!(s.raw(7), sign | magnitude);
+                assert_eq!(s.tag(7), u16::from(magnitude == 0));
+                assert_eq!(
+                    s.status_word,
+                    (7 << 11) | 0x80a0 | if up { 0x200 } else { 0 }
+                );
+            }
+        }
+    }
+}
+#[test]
 fn integer_stores_round_before_signed_range_checks_without_denormal_flag() {
     for (format, min, positive_over) in [
         (Format::I16, 0xc00e8000000000000000, 0x400e8000000000000000),

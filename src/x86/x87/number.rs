@@ -509,19 +509,18 @@ pub(super) fn unary(kind: Kind, raw: u128, cw: u16) -> Result {
         } else {
             quantize(n.sig, -n.scale, n.negative, rc(cw))
         };
-        let mut r = round_num(
-            Num {
-                negative: n.negative,
-                sig: q,
-                scale: 0,
-            },
-            64,
-            Format::F80,
-            cw,
-        );
-        r.post = if inexact { 32 } else { 0 };
-        r.up = up;
-        r
+        // A fractional binary80 value rounds to an integer of at most 2^63.
+        // Its normalized significand is exact, including a carry from a tie.
+        let (sig, exponent) = normalized(Num {
+            sig: q,
+            scale: 0,
+            ..n
+        });
+        Result {
+            post: if inexact { 32 } else { 0 },
+            up,
+            ..Result::raw(pack(n.negative, sig, exponent, 64, Format::F80, q != 0))
+        }
     };
     r.pre = pre;
     r
