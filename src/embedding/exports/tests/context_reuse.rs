@@ -223,12 +223,15 @@ fn changed_guest_root_fences_active_work_but_preserves_valid_root_bound_owners()
     use super::super::paging::core_paging_control;
     for epoch in [0, u64::MAX] {
         paged_fixture();
+        assert_eq!(core_paging_control(1, 4, 0x6a8, 0x400000, 2, 0), 0); // PGE
         BRIDGE.with_borrow_mut(|bridge| {
             let core = bridge.core.as_mut().unwrap();
             core.context_version = epoch;
             // Root B initially uses the same lower tables and physical code as A.
             core.image.physical_write(0x5000, 8, 0x2027).unwrap();
+            core.image.physical_write(0x4000, 8, 0x9167).unwrap(); // global executable page
         });
+        assert_eq!(core_probe(0x400000), 0); // same effective translation and walk survive in B
         let a = paged_owner();
         assert_eq!(mapped::core_activate(a), 1);
         assert_eq!(core_compile(0x400000, 8, 128, 65536), 0);
@@ -245,12 +248,12 @@ fn changed_guest_root_fences_active_work_but_preserves_valid_root_bound_owners()
             assert!(core.image.active_changed());
             core.context_changed();
         });
-        assert_eq!(mapped::core_publish(a), 0, "dormant code belongs to A");
         assert_eq!(
             mapped::core_activate(a),
             0,
             "same bytes and context cannot admit A under B"
         );
+        assert_eq!(mapped::core_publish(a), 0, "dormant code belongs to A");
         let b = paged_owner();
         assert_ne!(a, b);
         assert_eq!(mapped::core_activate(b), 1);
@@ -323,6 +326,19 @@ fn context_reuse_keeps_exact_paging_fences_and_dynamic_nonfences() {
             );
         }
     }
+    paged_fixture();
+    let owner = paged_owner();
+    BRIDGE.with_borrow_mut(|bridge| {
+        bridge.input =
+            br#"{"cr0":"0x80000033","cr2":"0xdead","cr3":"0x5000","cr4":"0x628","efer":"0x500"}"#
+                .to_vec();
+    });
+    assert_eq!(core_import_paging(), 0);
+    assert_eq!(
+        mapped::core_validity(owner),
+        0,
+        "host root replacement retires compiled owners"
+    );
 }
 
 #[test]
