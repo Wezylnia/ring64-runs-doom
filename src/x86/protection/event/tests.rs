@@ -435,3 +435,32 @@ fn bad_target_precedes_private_frame_permission_and_late_denial_preserves_access
         assert_eq!(captured(&image, 0x30f4, 12), vec![0xa5; 12]);
     }
 }
+
+#[test]
+fn idt_task_gate_captures_the_accepted_exception_without_probing_a_stack_frame() {
+    let mut context = context("protected", 0);
+    context.set_idtr(TableRegister {
+        base: 0x2000,
+        limit: 0x7f,
+    });
+    let mut bytes = vec![0; 8];
+    bytes[2] = 0x28;
+    bytes[5] = 0x85;
+    let mut image = image(bytes, vec![mapping(0x2050, 0, 8, true, false)]);
+    let exception = ExceptionEvent::fault(10, 0x3456, 0x202, &context, Some(0x38));
+    let before = context.clone();
+    let result = enter_exception(&mut context, &mut image, exception, 0, 0x202);
+    assert_eq!(
+        result,
+        Err(EventFailure::Task(
+            super::super::task::switch32::Start::gate(
+                0x28,
+                0x3456,
+                exception.saved_flags,
+                1,
+                Some(0x38)
+            )
+        ))
+    );
+    assert_eq!(context, before);
+}

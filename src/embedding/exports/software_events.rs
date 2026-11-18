@@ -71,6 +71,9 @@ fn core_software_event_impl<const OBSERVED: bool, const PAGED: bool>(
                 next_pc,
             },
         ) {
+            Err(EventFailure::Task(start)) => {
+                return core.capture_task(start, 0, operation.kind == SoftwareEventKind::Int1);
+            }
             Err(EventFailure::SystemPaging(fault)) => return core.system_paging_failure(fault),
             Ok(outcome) => outcome,
             Err(EventFailure::Operand { segment, failure }) => {

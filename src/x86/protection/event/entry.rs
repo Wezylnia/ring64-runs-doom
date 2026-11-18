@@ -177,8 +177,19 @@ fn enter(
     if access & 0x80 == 0 {
         return Err(fault(11, idt_error, ProtectionPhase::Descriptor, None));
     }
+    let selector = u16::from_le_bytes(bytes[2..4].try_into().unwrap());
     if kind == 5 {
-        return Err(EventFailure::Unsupported);
+        return Err(if context.mode() == Mode::Protected {
+            EventFailure::Task(super::super::task::switch32::Start::gate(
+                selector,
+                inputs.next_pc,
+                saved_flags,
+                ext,
+                error_code.map(u32::from),
+            ))
+        } else {
+            EventFailure::Unsupported
+        });
     }
     if matches!(source, Source::Exception(_) | Source::Interrupt(_))
         && context.mode() == Mode::Virtual8086
@@ -186,7 +197,6 @@ fn enter(
     {
         return Err(EventFailure::Unsupported);
     }
-    let selector = u16::from_le_bytes(bytes[2..4].try_into().unwrap());
     let code = code(context, image, selector, ext, idt_error)?;
     let d = code.descriptor;
     let cpl = if d.conforming() {

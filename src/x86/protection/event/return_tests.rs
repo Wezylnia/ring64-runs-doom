@@ -208,7 +208,12 @@ fn protected_iretd_vm_return_consumes_nine_slots_and_rebuilds_six_fixed_real_cac
 #[test]
 fn iret_nt_and_v86_iopl_admission_precede_frame_reads() {
     for (mode, cpl, flags, expected) in [
-        ("protected", 0, 0x4002, EventFailure::Unsupported),
+        (
+            "protected",
+            0,
+            0x4002,
+            EventFailure::Task(super::super::task::switch32::Start::nested_return(0)),
+        ),
         (
             "compatibility",
             0,

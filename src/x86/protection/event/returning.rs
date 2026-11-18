@@ -19,7 +19,9 @@ pub(super) fn execute(
         return Err(if ia32e(context) {
             fault(13, 0, ProtectionPhase::Privilege, None)
         } else {
-            EventFailure::Unsupported
+            EventFailure::Task(super::super::task::switch32::Start::nested_return(
+                inputs.next_pc,
+            ))
         });
     }
     let mut reader = Reader::new(context, image, inputs.sp, descriptor.width);
@@ -254,7 +256,7 @@ fn far_failure(failure: far::FarFailure) -> EventFailure {
         far::FarFailure::Protection(failure) => EventFailure::Protection(failure),
         far::FarFailure::SystemMemory(failure) => EventFailure::SystemMemory(failure),
         far::FarFailure::SystemPaging(failure) => EventFailure::SystemPaging(failure),
-        far::FarFailure::Task(_) => unreachable!("code and stack lookups cannot initiate a task switch"),
+        far::FarFailure::Task(start) => EventFailure::Task(start),
         far::FarFailure::Unsupported => EventFailure::Unsupported,
     }
 }

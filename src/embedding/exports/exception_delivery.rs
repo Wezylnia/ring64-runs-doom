@@ -265,6 +265,9 @@ pub extern "C" fn core_deliver_exception() -> i32 {
                 .map_or(failure, EventFailure::Protection)
         });
         match outcome {
+            Err(EventFailure::Task(start)) => {
+                core.switch_task(start, task_switch::Origin::Delivery(event))
+            }
             Ok(outcome) => {
                 unsafe {
                     let state = &mut *core.state.get();

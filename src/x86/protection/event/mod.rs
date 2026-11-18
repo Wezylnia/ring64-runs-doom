@@ -51,6 +51,7 @@ pub enum EventFailure {
     Protection(ProtectionFault),
     SystemMemory(SystemMemoryFault),
     SystemPaging(super::SystemPagingFault),
+    Task(super::task::switch32::Start),
     Unsupported,
 }
 
@@ -62,7 +63,7 @@ impl EventFailure {
             Self::Operand { segment, failure } => super::access_fault(context, segment, failure),
             Self::SystemMemory(fault) => super::system_fault(context, fault),
             Self::SystemPaging(_) => None,
-            Self::Unsupported => None,
+            Self::Unsupported | Self::Task(_) => None,
         }
     }
 }
