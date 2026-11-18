@@ -97,7 +97,7 @@ impl Lookup {
         })
     }
 
-    fn access_failure(self, failure: AccessFailure, phase: SystemPhase) -> Failure {
+    pub(super) fn access_failure(self, failure: AccessFailure, phase: SystemPhase) -> Failure {
         match failure {
             AccessFailure::Linear(f) => self.fault(
                 u128::from(f.address),
@@ -118,7 +118,7 @@ impl Lookup {
         }
     }
 
-    fn address(
+    pub(super) fn address(
         self,
         context: &ExecutionContext,
         slice: u32,

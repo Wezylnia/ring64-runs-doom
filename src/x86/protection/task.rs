@@ -1,3 +1,5 @@
+pub mod switch32;
+
 use super::access::{Lookup, ia32e};
 use super::descriptor::Descriptor;
 use super::*;

@@ -15,7 +15,7 @@ pub mod event;
 pub mod far;
 pub mod io;
 mod reload;
-mod task;
+pub mod task;
 
 #[cfg(test)]
 mod paging_tests;
@@ -93,6 +93,7 @@ pub enum SystemPhase {
     BusyWrite,
     GateRead,
     TssRead,
+    TssWrite,
 }
 
 impl SystemPhase {
@@ -103,6 +104,7 @@ impl SystemPhase {
             Self::BusyWrite => "descriptor-busy-write",
             Self::GateRead => "gate-read",
             Self::TssRead => "tss-read",
+            Self::TssWrite => "tss-write",
         }
     }
 }
