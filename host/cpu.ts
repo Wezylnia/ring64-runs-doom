@@ -610,6 +610,26 @@ export class Cpu {
       // Idle-only intake keeps queues stable except at explicit acceptance boundaries.
       let eventKind = this.#engine.eventKind();
       let queuedInterrupts = this.#engine.hasQueuedInterrupts();
+      if (this.#engine.taskRetry) {
+        if (remaining === 0n) return finish('budget');
+        if (stop !== undefined && this.#engine.current().rip === stop) return finish('stop');
+        this.#engine.prepareEntry();
+        const at = performance.now();
+        const resumed = this.#engine.resumeTask();
+        timings.executionMs += performance.now() - at;
+        this.pruneTranslations();
+        eventKind = this.#engine.eventKind();
+        queuedInterrupts = this.#engine.hasQueuedInterrupts();
+        if (typeof resumed !== 'string') {
+          if (deliveryBudget === undefined) return finish(resumed.taskEvent);
+        } else if (
+          resumed !== 'dispatch' &&
+          !(resumed === 'pending-interrupt' && deliveryBudget !== undefined)
+        ) {
+          return finish(resumed);
+        }
+        servicingEvent = eventKind === 'pending' || eventKind === 'pending-interrupt';
+      }
       execution: for (;;) {
         if (
           eventKind === 'shutdown' &&
@@ -774,6 +794,14 @@ export class Cpu {
           (reason === 'repeat-budget' && (remainingRepeatBudget !== 0n || remaining === 0n))
         ) {
           throw new Error('generated execution violated its progress contract');
+        }
+        if (typeof reason !== 'string') {
+          if (remaining === before) throw new Error('committed task switch did not retire');
+          this.pruneTranslations();
+          if (deliveryBudget === undefined) return finish(reason.taskEvent);
+          eventKind = 'pending';
+          servicingEvent = true;
+          continue;
         }
         if (reason === 'paging-restart') {
           resources.pagingRestarts = (resources.pagingRestarts ?? 0) + 1;

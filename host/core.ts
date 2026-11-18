@@ -86,6 +86,8 @@ export interface Interruptibility {
 }
 
 export interface StateSnapshot extends State {
+  /** Private memory repair must finish on the CPU that captured this state. */
+  taskSwitchIncomplete?: true;
   interruptibility: Interruptibility;
   event: EventState;
   interrupts: InterruptState;
@@ -176,7 +178,7 @@ type SystemMemoryReference =
       phase: 'descriptor-read' | 'descriptor-accessed-write' | 'descriptor-busy-write';
     }
   | { table: 'ivt' | 'idt'; vector: number; phase: 'gate-read' }
-  | { table: 'tss'; selector: number; phase: 'tss-read' };
+  | { table: 'tss'; selector: number; phase: 'tss-read' | 'tss-write' };
 export type SystemMemoryFault = SystemMemoryAccess & SystemMemoryReference;
 
 export interface PageFault {
@@ -399,6 +401,7 @@ type CoreExports = WebAssembly.Exports & {
   ): number;
   core_configure_delivery(enabled: number): number;
   core_stage_exception(reason: number): number;
+  core_complete_task(): number;
   core_deliver_exception(): number;
   core_request_interrupt(vector: number): number;
   core_request_nmi(): number;
@@ -483,6 +486,8 @@ export function byteLength(value: unknown, name: string): asserts value is numbe
 }
 
 export function captureState(state: State): StateSnapshot {
+  if ('taskSwitchIncomplete' in state)
+    throw new TypeError('incomplete task switch requires its original CPU');
   const source = state.registers;
   if (!Array.isArray(source) || source.length !== 16)
     throw new TypeError('state requires sixteen registers');
@@ -637,6 +642,11 @@ const PAGED_OBSERVED_HELPERS = {
 } as const;
 
 export class Core {
+  #taskRetry: 'instruction' | 'delivery' | undefined;
+
+  get taskRetry() {
+    return this.#taskRetry;
+  }
   readonly #exports: CoreExports;
   readonly #layout: Layout;
   readonly #statePointer: number;
@@ -1006,6 +1016,7 @@ export class Core {
     );
     return {
       ...(debugContinuation ? { debugContinuation } : {}),
+      ...(this.#taskRetry ? { taskSwitchIncomplete: true as const } : {}),
       registers: Array.from({ length: 16 }, (_, i) =>
         view.getBigUint64(this.#layout.registers + i * 8, true),
       ),
@@ -1100,6 +1111,7 @@ export class Core {
       );
     if (this.#exports.core_import_state() !== 0)
       throw new TypeError(this.info<{ error: string }>().error);
+    this.#taskRetry = undefined;
   }
 
   readDebugState(): DebugState {
@@ -1136,6 +1148,7 @@ export class Core {
     writeInput(this.#exports, capturePagingState(state));
     if (this.#exports.core_import_paging() !== 0)
       throw new TypeError(this.info<{ error: string }>().error);
+    this.#taskRetry = undefined;
   }
   readFastSystemState(): FastSystemState {
     if (!this.isPaged) throw new TypeError('method requires ia32e-paged memory');
@@ -1297,7 +1310,45 @@ export class Core {
     return status === 1;
   }
   deliverException(): string {
-    return this.reason(this.#exports.core_deliver_exception());
+    const status = this.#exports.core_deliver_exception();
+    return status < 0 ? this.taskPrivateStatus(status, 'delivery') : this.reason(status);
+  }
+
+  private taskPrivateStatus(status: number, source: 'instruction' | 'delivery'): string {
+    if (status === -128 - this.#layout.reasons.indexOf('physical-memory-fault')) {
+      this.#taskRetry = source;
+      return 'physical-memory-fault';
+    }
+    throw new Error('invalid private task switch status');
+  }
+
+  private completeTask(source: 'instruction' | 'delivery'): string | { taskEvent: string } {
+    const status = this.#exports.core_complete_task();
+    this.#taskRetry = undefined;
+    if (status >= 0) return this.reason(status);
+    if (status <= -64 && status > -128 && source === 'instruction') {
+      const report = this.reason(-64 - status);
+      if (
+        ![
+          'protection-fault',
+          'page-fault',
+          'segment-fault',
+          'debug-exception',
+          'alignment-check',
+          'system-memory-fault',
+          'data-fault',
+        ].includes(report) ||
+        this.eventKind() !== 'pending'
+      )
+        throw new Error('invalid incoming task exception');
+      return { taskEvent: report };
+    }
+    return this.taskPrivateStatus(status, source);
+  }
+
+  resumeTask(): string | { taskEvent: string } {
+    if (!this.#taskRetry) throw new Error('no task switch to resume');
+    return this.completeTask(this.#taskRetry);
   }
   requestInterrupt(vector: number): boolean {
     const result = this.#exports.core_request_interrupt(vector);
@@ -1456,13 +1507,18 @@ export class Core {
     budget: bigint,
     stop: bigint | undefined,
     repeatBudget: bigint,
-  ): string {
+  ): string | { taskEvent: string } {
     this.stateView().setBigUint64(this.#layout.repeatRemaining, repeatBudget, true);
     if (this.io) this.io.executing = true;
     try {
-      return this.reason(
-        run(this.#statePointer, budget, stop ?? 0n, stop === undefined ? 0 : 1, entryIndex),
+      const status = run(
+        this.#statePointer,
+        budget,
+        stop ?? 0n,
+        stop === undefined ? 0 : 1,
+        entryIndex,
       );
+      return status === -2 ? this.completeTask('instruction') : this.reason(status);
     } finally {
       if (this.io) this.io.executing = false;
     }
@@ -1500,6 +1556,7 @@ export class Core {
     const status = this.#exports.core_set_context();
     if (status === 1) throw new TypeError(this.info<{ error: string }>().error);
     if (status !== 0) throw new Error('invalid context mutation status');
+    this.#taskRetry = undefined;
   }
 
   contextVersion(): bigint {
@@ -1771,6 +1828,7 @@ export class Core {
   reset(): void {
     if (!this.physicalControls) throw new TypeError('reset requires physical memory');
     if (this.#exports.core_reset() !== 0) throw new TypeError(this.info<{ error: string }>().error);
+    this.#taskRetry = undefined;
   }
 
   dispose(): void {
