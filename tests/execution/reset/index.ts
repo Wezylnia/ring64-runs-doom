@@ -6,7 +6,9 @@ import { boundaryScenarios } from './boundaries.js';
 import { transitionScenarios } from './transitions.js';
 import { controlScenarios } from './controls.js';
 import { lifecycleScenarios } from './lifecycle.js';
+import { legacyLinuxScenarios } from './legacy-linux.js';
 export const resetScenarios = (compiler: WebAssembly.Module) => [
+  ...legacyLinuxScenarios(compiler),
   ...transitionScenarios(compiler),
   ...lifecycleScenarios(compiler),
   ...controlScenarios(compiler),
