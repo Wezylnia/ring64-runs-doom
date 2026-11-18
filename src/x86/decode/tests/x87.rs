@@ -82,6 +82,7 @@ fn transcendental_words_capture_only_their_implicit_operands() {
         (0xf1, Kind::MulLog2, true),
         (0xf3, Kind::Atan2, true),
         (0xf9, Kind::MulLog2PlusOne, true),
+        (0xfb, Kind::SinCos, false),
     ] {
         let op = Op {
             kind,
@@ -108,30 +109,46 @@ fn transcendental_words_capture_only_their_implicit_operands() {
 }
 
 #[test]
-fn fpatan_keeps_required_selector_fetch_and_legacy_prefix_boundaries() {
-    let instruction = x87(&[0xd9, 0xf3]);
+fn fsincos_word_requires_its_fixed_register_encoding() {
+    let instruction = x87(&[0xd9, 0xfb]);
     assert_eq!(instruction.address, None);
-    for prefix in [0xf2, 0xf3, 0x67, 0x64, 0x4f] {
-        assert_eq!(x87(&[prefix, 0xd9, 0xf3]), instruction);
-    }
-    for code in [&[0xd9][..], &[0xf0, 0xd9]] {
-        assert_eq!(
-            at(0x1000, code),
-            Err(DecodeError::Fetch(missing(0x1000 + code.len() as u64)))
+    assert!(instruction.op.updates_environment());
+    let word = instruction.op.encode();
+    for bit in [6, 10, 13, 14, 16, 19, 29, 30] {
+        assert!(
+            Op::try_decode(word ^ (1 << bit)).is_none(),
+            "FSINCOS word field at bit {bit}"
         );
     }
-    for code in [&[0xf0, 0xf3, 0xd9][..], &[0xf3, 0xf0, 0xd9], &[0xf0, 0xf0]] {
-        assert_eq!(at(0x1000, code), Err(DecodeError::Unsupported));
+}
+
+#[test]
+fn x87_angles_keep_required_selector_fetch_and_legacy_prefix_boundaries() {
+    for selector in [0xf3, 0xfb] {
+        let instruction = x87(&[0xd9, selector]);
+        assert_eq!(instruction.address, None);
+        for prefix in [0xf2, 0xf3, 0x67, 0x64, 0x4f] {
+            assert_eq!(x87(&[prefix, 0xd9, selector]), instruction);
+        }
+        for code in [&[0xd9][..], &[0xf0, 0xd9]] {
+            assert_eq!(
+                at(0x1000, code),
+                Err(DecodeError::Fetch(missing(0x1000 + code.len() as u64)))
+            );
+        }
+        for code in [&[0xf0, 0xf3, 0xd9][..], &[0xf3, 0xf0, 0xd9], &[0xf0, 0xf0]] {
+            assert_eq!(at(0x1000, code), Err(DecodeError::Unsupported));
+        }
+        let mut longest = vec![0x66; 13];
+        longest.extend([0xd9, selector]);
+        assert_eq!(x87(&longest), instruction);
+        longest.insert(0, 0x66);
+        assert_eq!(
+            at(0x1000, &longest[..15]),
+            Err(DecodeError::InstructionLength)
+        );
+        assert_eq!(at(0x1000, &longest), Err(DecodeError::InstructionLength));
     }
-    let mut longest = vec![0x66; 13];
-    longest.extend([0xd9, 0xf3]);
-    assert_eq!(x87(&longest), instruction);
-    longest.insert(0, 0x66);
-    assert_eq!(
-        at(0x1000, &longest[..15]),
-        Err(DecodeError::InstructionLength)
-    );
-    assert_eq!(at(0x1000, &longest), Err(DecodeError::InstructionLength));
 }
 
 #[test]
@@ -217,7 +234,7 @@ fn every_esc_selector_admits_exactly_the_documented_selection_and_rejects_lock()
             let selected = match opcode {
                 0xd8 => true,
                 0xd9 => {
-                    matches!(modrm, 0xc0..=0xd0 | 0xe0 | 0xe1 | 0xe4 | 0xe5 | 0xe8..=0xee | 0xf0 | 0xf1 | 0xf3..=0xfa | 0xfc | 0xfd)
+                    matches!(modrm, 0xc0..=0xd0 | 0xe0 | 0xe1 | 0xe4 | 0xe5 | 0xe8..=0xee | 0xf0 | 0xf1 | 0xf3..=0xfd)
                 }
                 0xda => matches!(modrm, 0xc0..=0xdf | 0xe9),
                 0xdb => matches!(modrm, 0xc0..=0xdf | 0xe2..=0xe4 | 0xe8..=0xf7),
@@ -270,7 +287,7 @@ fn every_esc_selector_admits_exactly_the_documented_selection_and_rejects_lock()
             }
         }
     }
-    assert_eq!((registers, memory), (342, 60));
+    assert_eq!((registers, memory), (343, 60));
 }
 
 #[test]
@@ -452,7 +469,6 @@ fn required_x87_address_tails_precede_lock_rejection_but_unselected_forms_stop_a
         [0xdb, 0xe1],
         [0xdb, 0xe5],
         [0xd9, 0xf2],
-        [0xd9, 0xfb],
         [0xd9, 0xfe],
         [0xd9, 0xff],
     ] {

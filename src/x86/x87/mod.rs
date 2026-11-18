@@ -141,6 +141,7 @@ pub enum Kind {
     MulLog2,
     MulLog2PlusOne,
     Atan2,
+    SinCos,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 #[repr(u8)]
@@ -223,6 +224,7 @@ impl Op {
             MulLog2,
             MulLog2PlusOne,
             Atan2,
+            SinCos,
         ];
         let formats = [
             Format::None,
@@ -299,6 +301,7 @@ impl Op {
             }
             CompareFlags | CompareUnorderedFlags => self.format == Register && self.pop <= 1,
             ConditionalMove | Exchange | Free => self.format == Register && self.pop == 0,
+            SinCos => self.format == None && self.pop == 0 && self.encoding == 0x1fb,
             StoreStatus => matches!(self.format, None | Ax) && self.pop == 0,
             Constant => self.format == None && self.index < 7 && self.pop == 0,
             _ => self.format == None && self.pop == 0,

@@ -187,6 +187,7 @@ fn register(opcode: u8, modrm: u8) -> Result<Op, DecodeError> {
                 0xf6 => DecTop,
                 0xf7 => IncTop,
                 0xfa => Sqrt,
+                0xfb => SinCos,
                 0xfc => Round,
                 _ => return Err(DecodeError::Unsupported),
             };

@@ -17,6 +17,29 @@ fn push(state: &mut State, value: u128) {
     state.top_to(p);
     state.put(p, value)
 }
+#[inline(never)]
+fn sincos(state: &mut State, top: usize, raw: u128) {
+    state.status_word &= !0x400;
+    let empty = state.tag(top) == 3;
+    if empty || state.tag((top + 7) & 7) != 3 {
+        if !stack_fault(state, !empty) {
+            state.put(top, INDEFINITE);
+            push(state, INDEFINITE);
+        }
+        return;
+    }
+    if number::sincos_out_of_range(raw) {
+        state.status_word = (state.status_word & !0x200) | 0x400;
+        return;
+    }
+    let (sine, cosine) = number::sincos(raw, state.control_word);
+    status(state, sine);
+    if sine.pre & !state.control_word & 63 == 0 {
+        state.put(top, sine.value);
+        push(state, cosine);
+    }
+}
+
 fn predicate(c: u8, flags: u64) -> bool {
     let cf = flags & 1 != 0;
     let zf = flags & 64 != 0;
@@ -170,6 +193,10 @@ pub(super) fn eval(state: &mut State, op: Op, source: u128, flags: u64) -> Effec
             if predicate(op.condition, flags) {
                 state.put(top, b)
             }
+            return out;
+        }
+        SinCos => {
+            sincos(state, top, a);
             return out;
         }
         _ => {}

@@ -8,7 +8,7 @@ const LN_2: u128 = 0x3ffe_62e4_2fef_a39e_f357_93c7_6730_07e6;
 const LOG2_E: u128 = 0x3fff_7154_7652_b82f_e177_7d0f_fda0_d23a;
 
 // Generate nearest binary128 1/d by integer long division at compile time.
-// The largest denominator, 25!, fits in 84 bits.
+// Callers use factorials through 28!, which fits in 98 bits.
 pub(super) const fn reciprocal(d: u128) -> u128 {
     let exponent = u128::BITS - (d - 1).leading_zeros();
     let mut remainder = (1 << exponent) - d;

@@ -102,6 +102,7 @@ fn x87_pending_detector_precedes_operand_access_and_diagnostics_do_not_erase_pen
         operation(Kind::RemainderNearest, Format::None, 0x1f5),
         operation(Kind::Scale, Format::None, 0x1fd),
         operation(Kind::Extract, Format::None, 0x1f4),
+        operation(Kind::SinCos, Format::None, 0x1fb),
     ] {
         assert_eq!(
             invoke(load, 0x800000000000, 0x2000, 0x8d7, 0x12345678),

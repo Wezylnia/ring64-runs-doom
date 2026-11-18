@@ -2,10 +2,12 @@ use super::*;
 
 mod atan;
 mod finite;
+mod sincos;
 #[cfg(test)]
 mod tests;
 
 pub(in crate::x86::x87) use atan::atan2;
+pub(in crate::x86::x87) use sincos::{sincos, sincos_out_of_range};
 
 const ONE: u128 = 0x3fff_8000_0000_0000_0000;
 // Largest binary80 magnitude within the FYL2XP1 interval 1 − sqrt(2)/2.

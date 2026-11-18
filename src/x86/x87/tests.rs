@@ -84,6 +84,96 @@ fn fpatan_checks_both_operand_tags_before_publishing_a_result() {
     }
 }
 
+fn fsincos_op() -> Op {
+    let code = [0xd9, 0xfb];
+    let instruction = crate::x86::decode::decode(0, |pc| Ok(code[pc as usize])).unwrap();
+    let crate::x86::instruction::Operation::X87(insn) = instruction.operation else {
+        panic!("expected FSINCOS");
+    };
+    insn.op
+}
+
+#[test]
+fn fsincos_publishes_cosine_and_sine_before_pending_precision() {
+    let op = fsincos_op();
+    for (angle, sine, cosine, c1) in [
+        (
+            0x3ffd_8000_0000_0000_0000,
+            0x3ffc_fd57_76a7_98ab_b5d4,
+            0x3ffe_f80a_a4fb_ef75_0ba8,
+            0,
+        ),
+        (
+            0x3ffb_8000_0000_0000_0000,
+            0x3ffa_ffd5_5777_6a76_d5a6,
+            0x3ffe_ff80_0aaa_4fa6_9a65,
+            0x200,
+        ),
+    ] {
+        let mut state = stacked(&[angle, one(), one() + 1]);
+        state.status_word = 0x4704;
+        state.control_word = 0x005f;
+        let before = state;
+
+        let result = eval(&mut state, op, 0, 0x8d7);
+        assert_eq!(result.flags, 0x8d7);
+        assert!(!result.store && !result.ax);
+        assert_eq!(state.top(), 7);
+        assert_eq!((state.raw(7), state.tag(7)), (cosine, 0));
+        assert_eq!((state.raw(0), state.tag(0)), (sine, 0));
+        assert_eq!(state.pending(), 0x20);
+        assert_eq!(state.status_word & !0x3800, 0xc1a4 | c1);
+        assert_eq!(state.control_word, before.control_word);
+        assert_eq!(&state.registers[1..7], &before.registers[1..7]);
+        assert_eq!(state.tag_word & 0x3ffc, before.tag_word & 0x3ffc);
+    }
+}
+
+#[test]
+fn fsincos_classifies_the_range_only_after_both_stack_checks() {
+    let op = fsincos_op();
+    let outside = 0x403e_8000_0000_0000_0000;
+    let indefinite = 0xffff_c000_0000_0000_0000;
+    for sign in [0, 1 << 79] {
+        for (source_empty, occupied, masked) in [
+            (false, false, true),
+            (false, true, true),
+            (false, true, false),
+            (true, true, true),
+            (true, true, false),
+        ] {
+            let mut state = stacked(&[outside | sign, one()]);
+            state.control_word = 0x037e | u16::from(masked);
+            state.status_word = 0x4720;
+            if occupied {
+                state.put(7, one() + 1);
+            }
+            if source_empty {
+                state.set_tag(0, 3);
+            }
+            let before = state;
+            eval(&mut state, op, 0, 0);
+
+            let stack = source_empty || occupied;
+            let pushed = stack && masked;
+            assert_eq!(state.top(), if pushed { 7 } else { 0 });
+            if pushed {
+                assert_eq!((state.raw(0), state.tag(0)), (indefinite, 2));
+                assert_eq!((state.raw(7), state.tag(7)), (indefinite, 2));
+            } else {
+                assert_eq!(state.registers, before.registers);
+                assert_eq!(state.tag_word, before.tag_word);
+            }
+            let status = if stack {
+                0x4161 | if source_empty { 0 } else { 0x200 } | if masked { 0 } else { 0x8080 }
+            } else {
+                0x4520
+            };
+            assert_eq!(state.status_word & !0x3800, status);
+        }
+    }
+}
+
 #[test]
 fn integer_load_keeps_all_64_significand_bits_at_pc24() {
     let mut s = State {

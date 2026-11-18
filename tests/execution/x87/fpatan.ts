@@ -305,7 +305,7 @@ export function fpatanScenarios(compiler: WebAssembly.Module): Scenario[] {
               ['f3f0d9', 'unsupported', undefined],
               ['f0f0', 'unsupported', undefined],
               ['d9f2', 'unsupported', undefined],
-              ['d9fb', 'unsupported', undefined],
+              ['d9fe', 'unsupported', undefined],
               ['66'.repeat(13) + 'd9f3', 'device-not-available', 7],
               ['66'.repeat(14) + 'd9', 'invalid-encoding', 13],
             ] as const) {
