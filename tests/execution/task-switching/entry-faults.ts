@@ -1,13 +1,16 @@
 import {
   CALL,
+  ENTRY_B,
   ENTRY_C,
   GDT,
   PD_A,
+  TSS_A,
   TSS_B,
   TSS_C,
   check,
   dword,
   equal,
+  same,
   toCaller,
   withGuest,
   write32,
@@ -80,6 +83,84 @@ export function taskEntryFaultScenarios(compiler: WebAssembly.Module): Scenario[
           equal(fault.instructionPc, CALL, 'completed single-step producer');
           equal(fault.returnPc, CALL + 1n, 'old task resumes after NOP');
           equal(fault.savedFlags, state.flags | 0x10100n, 'original TF plus saved RF');
+        });
+      },
+    },
+    {
+      name: 'late task selector faults promote #GP to #DF in C and shut down in B during #DF entry',
+      async run() {
+        await withGuest(compiler, async (cpu) => {
+          await toCaller(cpu);
+          const ctx = cpu.readContext();
+          const idt = 0x77000n;
+          const gate = cpu.readPhysicalMemory(ctx.idtr.base + 80n, 8);
+          cpu.writePhysicalMemory(idt + 13n * 8n, gate); // #GP selects C
+          gate[2] = 0x20;
+          cpu.writePhysicalMemory(idt + 8n * 8n, gate); // #DF selects B
+          cpu.setContext({ ...ctx, idtr: { base: idt, limit: 14 * 8 - 1 } });
+          write32(cpu, TSS_C + 36n, 0x47);
+          write32(cpu, TSS_C + 84n, 0x38); // B already has this invalid DS.
+          cpu.setState({
+            ...cpu.readState(),
+            flags: 0x202n,
+            event: {
+              kind: 'pending',
+              exception: {
+                vector: 13,
+                instructionPc: CALL,
+                returnPc: CALL,
+                savedFlags: 0x10202n,
+                errorCode: 0x30,
+              },
+            },
+          });
+          const clock = cpu.readTimeState().tsc;
+          const allowance = { budget: 1n, eventDelivery: { budget: 1n } };
+          const first = await cpu.run(allowance);
+          equal(first.reason, 'event-budget', 'one #GP task entry attempted');
+          equal(first.deliveryAttempts, 1n, '#GP consumed once');
+          equal(first.retired, 0n, 'no guest instruction retired');
+          equal(cpu.readContext().tr.selector, 0x28, 'C is current');
+          equal(first.state.rip, ENTRY_C, 'C entry PC');
+          equal(first.state.flags, 0x4047n, 'nested C flags');
+          same(
+            first.state.event,
+            {
+              kind: 'pending',
+              exception: {
+                vector: 8,
+                instructionPc: ENTRY_C,
+                returnPc: ENTRY_C,
+                savedFlags: 0x14047n,
+                errorCode: 0,
+              },
+            },
+            'double fault belongs to C',
+          );
+          equal(dword(cpu, TSS_A + 32n), Number(CALL), 'A saved the source PC');
+          equal(dword(cpu, TSS_A + 36n), 0x10202, 'A saved the source fault flags');
+          equal(dword(cpu, TSS_C), 0x18, 'C links to A');
+
+          write32(cpu, TSS_A + 32n, 0xaabbccdd);
+          const second = await cpu.run(allowance);
+          equal(second.reason, 'shutdown', '#TS during #DF entry');
+          equal(second.deliveryAttempts, 1n, 'only the pending #DF attempted');
+          equal(second.retired, 0n, 'no handler instruction retired');
+          equal(cpu.readContext().tr.selector, 0x20, 'B is current at shutdown');
+          equal(second.state.rip, ENTRY_B, 'B entry PC');
+          same(second.state.event, { kind: 'shutdown' }, 'no further pending exception');
+          equal(dword(cpu, TSS_B), 0x28, 'B links to C');
+          equal(dword(cpu, TSS_C + 32n), Number(ENTRY_C), 'C saved its own entry PC');
+          equal(dword(cpu, TSS_C + 36n), 0x14047, 'C saved the #DF flags');
+          equal(dword(cpu, TSS_A + 32n), 0xaabbccdd, 'A save was not replayed');
+
+          write32(cpu, TSS_B, 0x55667788);
+          const stopped = await cpu.run(allowance);
+          equal(stopped.reason, 'shutdown', 'shutdown persists');
+          equal(stopped.deliveryAttempts, 0n, 'shutdown consumes no delivery');
+          equal(stopped.retired, 0n, 'shutdown consumes no instruction');
+          equal(dword(cpu, TSS_B), 0x55667788, 'B backlink was not replayed');
+          equal(cpu.readTimeState().tsc, clock, 'fault deliveries consumed no guest ticks');
         });
       },
     },
