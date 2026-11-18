@@ -1,4 +1,5 @@
 import { muslLogExpScenario } from './log-exp-musl.js';
+import { logExpScenarios } from './log-exp.js';
 import { fisttpScenarios } from './fisttp.js';
 import type { Scenario } from './fixture.js';
 import { literalScenarios } from './literals.js';
@@ -12,6 +13,7 @@ import { specialImageScenarios } from './special-images.js';
 export function x87Scenarios(compiler: WebAssembly.Module): Scenario[] {
   return [
     muslLogExpScenario(compiler),
+    ...logExpScenarios(compiler),
     ...fisttpScenarios(compiler),
     ...literalScenarios(compiler),
     ...specialScenarios(compiler),
