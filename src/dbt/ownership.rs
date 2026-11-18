@@ -17,6 +17,7 @@ impl FetchBinding {
         self.cr3 == state.cr3 && self.pdpte == state.pdpte
     }
 
+    #[inline(never)]
     pub fn matches(
         &self,
         image: &Image,
