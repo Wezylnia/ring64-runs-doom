@@ -80,3 +80,32 @@ fn mixed_lock_preserves_deciding_bytes_for_unselected_or_illegal_forms() {
         );
     }
 }
+
+#[test]
+fn pause_and_tzcnt_require_only_their_own_bytes_before_lock_faults() {
+    for pair in [[0xf0, 0xf3], [0xf3, 0xf0]] {
+        for tail in [
+            &[0x90][..],
+            &[0x0f, 0xbc, 0xc1],
+            &[0x0f, 0xbc, 0x84, 0x24, 1, 2, 3, 4],
+        ] {
+            let bytes = [&pair[..], tail].concat();
+            for len in 1..bytes.len() {
+                assert_eq!(
+                    at(0x1000, &bytes[..len]),
+                    Err(DecodeError::Fetch(missing(0x1000 + len as u64))),
+                    "{bytes:02x?}/{len}"
+                );
+            }
+            assert_eq!(at(0x1000, &bytes), Err(DecodeError::Invalid));
+        }
+    }
+    for bytes in [
+        &[0xf0, 0xf2, 0x90][..],
+        &[0xf0, 0xf2, 0x0f, 0xbc],
+        &[0xf0, 0xf3, 0x0f, 0xbd],
+        &[0xf0, 0x0f, 0xbc],
+    ] {
+        assert_eq!(at(0x1000, bytes), Err(DecodeError::Unsupported));
+    }
+}

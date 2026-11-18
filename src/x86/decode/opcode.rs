@@ -42,6 +42,9 @@ fn mixed_lock<F>(
 where
     F: FnMut(u64) -> Result<u8, DecodeError>,
 {
+    if opcode == 0x90 && prefixes.repeat == Some(0xf3) && !prefixes.multiple_repeats {
+        return Err(DecodeError::Invalid);
+    }
     if opcode != 0x0f {
         return Err(DecodeError::Unsupported);
     }
@@ -53,7 +56,11 @@ where
     if prefixes.multiple_repeats {
         return Err(DecodeError::Unsupported);
     }
-    simd(opcode, prefixes, cursor).ok_or(DecodeError::Unsupported)??;
+    if opcode == 0xbc && prefixes.repeat == Some(0xf3) {
+        scan(opcode, prefixes, cursor)?;
+    } else {
+        simd(opcode, prefixes, cursor).ok_or(DecodeError::Unsupported)??;
+    }
     Err(DecodeError::Invalid)
 }
 
@@ -681,6 +688,30 @@ fn selector_kind(selector: u8) -> Option<Alu> {
     }
 }
 
+fn scan<F>(opcode: u8, prefixes: Prefixes, cursor: &mut Cursor<F>) -> Result<Operation, DecodeError>
+where
+    F: FnMut(u64) -> Result<u8, DecodeError>,
+{
+    let width = prefixes.width();
+    let operands = ModRm::read(cursor, prefixes.rex)?;
+    let dst = prefixes.rex.view(operands.register, width);
+    let src = operands.location(cursor, prefixes, width)?;
+    if prefixes.repeat == Some(0xf3) {
+        return Ok(Operation::Bmi {
+            kind: crate::x86::instruction::Bmi::TrailingZeros,
+            dst,
+            src,
+            width,
+        });
+    }
+    Ok(Operation::Scan {
+        reverse: opcode == 0xbd,
+        dst,
+        src,
+        width,
+    })
+}
+
 fn two_byte<F>(
     opcode: u8,
     prefixes: Prefixes,
@@ -839,25 +870,7 @@ where
                 width,
             })
         }
-        0xbc | 0xbd => {
-            let operands = ModRm::read(cursor, rex)?;
-            let dst = rex.view(operands.register, width);
-            let src = operands.location(cursor, prefixes, width)?;
-            if prefixes.repeat == Some(0xf3) {
-                return Ok(Operation::Bmi {
-                    kind: crate::x86::instruction::Bmi::TrailingZeros,
-                    dst,
-                    src,
-                    width,
-                });
-            }
-            Ok(Operation::Scan {
-                reverse: opcode == 0xbd,
-                dst,
-                src,
-                width,
-            })
-        }
+        0xbc | 0xbd => scan(opcode, prefixes, cursor),
         0xc8..=0xcf => {
             if width == Width::W16 {
                 return Err(DecodeError::Unsupported);

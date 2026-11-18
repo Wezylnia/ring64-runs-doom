@@ -367,7 +367,8 @@ export function hintScenarios(compiler: WebAssembly.Module): Scenario[] {
           ['f00faebc23ffffffff', 'invalid-encoding'],
           ['f00fe78423ffffffff', 'invalid-encoding'],
           ['f0660ff7c1', 'invalid-encoding'],
-          ['f0f390', 'unsupported'],
+          ['f0f390', 'invalid-encoding'],
+          ['f3f090', 'invalid-encoding'],
         ] as const)
           await using(compiler, code, LONG, async (cpu) => {
             const before = input(),

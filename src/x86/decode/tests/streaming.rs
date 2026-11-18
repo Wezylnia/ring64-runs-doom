@@ -168,9 +168,7 @@ fn streaming_fetch_boundaries_and_prefix_policy_keep_their_deciding_bytes() {
             Err(DecodeError::Fetch(missing(0x1000 + length as u64)))
         );
     }
-    for code in [&[0xf0, 0xf0][..], &[0xf0, 0xf3, 0x90], &[0xf3, 0xf0, 0x90]] {
-        assert_eq!(at(0x1000, code), Err(DecodeError::Unsupported));
-    }
+    assert_eq!(at(0x1000, &[0xf0, 0xf0]), Err(DecodeError::Unsupported));
     let mut exact = vec![0x66; 13];
     exact.extend([0xf3, 0x90]);
     assert_eq!(operation(&exact), Operation::Nop);
