@@ -113,6 +113,69 @@ fn stale_global_denial_evicts_originating_other_pcid_before_fresh_root_retry() {
 }
 
 #[test]
+fn a_local_large_page_fill_signals_when_it_shadows_a_smaller_global() {
+    let (mut image, mut origin, read) = fixture();
+    origin.cr4 |= (1 << 7) | (1 << 17);
+    origin.cr3 = 0x1001;
+    image.physical_write(0x4008, 8, 0xa127).unwrap();
+    let cache = Cache::default();
+    cache.fill(
+        &origin,
+        read,
+        walk::walk(&mut image, &origin, read, &Keys::ZERO).unwrap(),
+    );
+    assert!(!cache.take_changed());
+    let current = State {
+        cr3: 0x5002,
+        ..origin
+    };
+    for address in [0x7000, 0x7008] {
+        image.physical_write(address, 8, 0xa7).unwrap();
+    }
+    assert_eq!(
+        cache
+            .observe(&current, read, &Keys::ZERO)
+            .unwrap()
+            .unwrap()
+            .physical,
+        0xa234
+    );
+    // Both reads install into free slots. Only the second large leaf covers
+    // the global code page, which remains available to the original PCID.
+    for (linear, shadows) in [(0x20_2234, false), (0x2234, true)] {
+        let adjacent = Request { linear, ..read };
+        assert!(
+            cache
+                .lookup(&current, adjacent, &Keys::ZERO)
+                .unwrap()
+                .is_none()
+        );
+        let walked = walk::walk(&mut image, &current, adjacent, &Keys::ZERO).unwrap();
+        image
+            .physical_check_access(walked.physical, 1, Access::Read, false)
+            .unwrap();
+        cache.fill(&current, adjacent, walked);
+        assert_eq!(cache.take_changed(), shadows);
+    }
+    assert_eq!(
+        cache
+            .observe(&current, read, &Keys::ZERO)
+            .unwrap()
+            .unwrap()
+            .physical,
+        0x1234
+    );
+    assert_eq!(
+        cache
+            .observe(&origin, read, &Keys::ZERO)
+            .unwrap()
+            .unwrap()
+            .physical,
+        0xa234
+    );
+}
+
+#[test]
 fn captured_dirty_feedback_cannot_mark_a_new_fill_with_the_same_leaf_slot() {
     let (mut image, state, read) = fixture();
     let cache = Cache::with_capacity(1);

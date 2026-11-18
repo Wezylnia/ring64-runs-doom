@@ -200,13 +200,16 @@ impl Cache {
         let global = translation.global && state.cr4 & (1 << 7) != 0;
         let family = family(state);
         for slot in &mut entries.slots {
-            if slot.is_some_and(|e| {
-                e.family == family
-                    && e.global == global
-                    && (global || e.pcid == pcid)
-                    && overlaps(e.translation, translation)
-            }) {
-                *slot = None;
+            if let Some(entry) = slot
+                && entry.family == family
+                && (entry.global || !global && entry.pcid == pcid)
+                && overlaps(entry.translation, translation)
+            {
+                // Local entries shadow overlapping globals for this PCID.
+                // Other PCIDs can still use the global translation.
+                if entry.global == global {
+                    *slot = None;
+                }
                 self.changed.set(true);
             }
         }
