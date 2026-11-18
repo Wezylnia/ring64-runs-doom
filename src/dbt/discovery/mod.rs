@@ -1,3 +1,5 @@
+mod fetch_proof;
+use fetch_proof::FetchPage;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use crate::memory::{Access, Image, canonical48};
@@ -37,7 +39,8 @@ pub(crate) fn discover_with_profile(
     let mut instructions = BTreeMap::new();
     let mut source = BTreeSet::new();
     let mut linear_source = BTreeSet::new();
-    let mut read_dependencies = BTreeSet::new();
+    let mut fetch_pages = BTreeMap::new();
+    let mut instruction_pages = Vec::new();
     let identity_source = context.is_long64() && paging.is_none();
     while let Some(pc) = pending.pop_front() {
         if instructions.len() >= limits.max_instructions as usize {
@@ -47,7 +50,7 @@ pub(crate) fn discover_with_profile(
             continue;
         }
         let mut fetched = Vec::new();
-        let mut table_bytes = Vec::new();
+        instruction_pages.clear();
         let Ok(instruction) =
             crate::x86::decode::decode_with_profile(pc, context, paging.is_some(), |offset| {
                 // Long64 CS offsets are linear; fetch already checks the full byte span.
@@ -90,9 +93,7 @@ pub(crate) fn discover_with_profile(
                         .physical_fetch(translated.physical)
                         .map_err(DecodeError::Fetch)?;
                     fetched.push(translated.physical);
-                    for entry in translated.entries() {
-                        table_bytes.extend(*entry..*entry + u64::from(translated.entry_width));
-                    }
+                    FetchPage::record(&mut instruction_pages, linear, &translated);
                     return Ok(byte);
                 }
                 let byte = image.fetch(linear).map_err(DecodeError::Fetch)?;
@@ -114,7 +115,11 @@ pub(crate) fn discover_with_profile(
         }
         source.extend(bytes);
         linear_source.extend(fetched);
-        read_dependencies.extend(table_bytes);
+        for page in instruction_pages.drain(..) {
+            // Both the image and the effective translation view are immutable during discovery.
+            let previous = fetch_pages.entry(page.linear).or_insert(page);
+            debug_assert_eq!(*previous, page);
+        }
         match instruction.operation {
             Operation::Jump { target } => {
                 if !context.is_long64() || canonical48(target) {
@@ -194,6 +199,12 @@ pub(crate) fn discover_with_profile(
             });
         }
     }
+    let mut read_dependencies = BTreeSet::new();
+    for page in fetch_pages.values() {
+        for &entry in page.entries() {
+            read_dependencies.extend(entry..entry + u64::from(page.entry_width));
+        }
+    }
     Ok(Unit {
         context: context.clone(),
         block_count: leaders
@@ -230,7 +241,7 @@ mod tests {
     use crate::memory::{MappingInput, MemoryLimits, Permissions};
     use serde_json::json;
 
-    fn context(cs_base: u32) -> ExecutionContext {
+    pub(super) fn context(cs_base: u32) -> ExecutionContext {
         let mut segments = serde_json::Map::new();
         for name in ["cs", "ss", "ds", "es", "fs", "gs"] {
             segments.insert(
