@@ -9,6 +9,8 @@ import {
   type Family,
   type Scenario,
 } from './fixture.js';
+import { sourceScenarios } from './sources.js';
+import { bindingScenarios } from './bindings.js';
 import {
   GDT,
   IRET_B,
@@ -73,6 +75,8 @@ export function cr3CodeReuseScenarios(compiler: WebAssembly.Module): Scenario[] 
     ...(['non-PAE', 'PAE', 'IA32e'] as const).map((family) => alternating(compiler, family, 2)),
     alternating(compiler, 'IA32e', 1),
     alternating(compiler, 'IA32e', 2, true),
+    ...sourceScenarios(compiler),
+    ...bindingScenarios(compiler),
     {
       name: 'CR3 code reuse retains nested CALL and IRET owners across different roots and task registers',
       async run() {
