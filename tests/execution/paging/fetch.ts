@@ -1,5 +1,6 @@
 import { createCpu, type Cpu } from '../../../host/index.js';
-import { LIMITS } from '../../support/fixture.js';
+import { LIMITS, exit, hex } from '../../support/fixture.js';
+import { preserveNumeric } from '../far-control/fixture.js';
 import {
   BANK,
   PC,
@@ -70,6 +71,137 @@ async function aliasCpu(
 
 export function pagingFetchScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [
+    {
+      name: 'mixed LOCK fetches selected syntax up to the page and instruction length boundaries before #UD',
+      async run() {
+        const end = PC + 0x1000n;
+        const cr2 = 0xdeadn;
+        await usingPaged(
+          compiler,
+          { bank: { ...BANK, cr0: BANK.cr0 | 8n, efer: 0xd00n } },
+          async (cpu) => {
+            const numeric = preserveNumeric(cpu);
+            const cases: [string, 6 | 13 | 14 | undefined][] = [];
+            for (const full of [
+              'f2f00f708424000000001b',
+              'f0f20f58c1',
+              'f3f00fc284240000000001',
+              'f0f30fbc842400000000',
+            ]) {
+              for (let length = 1; length < full.length / 2; length++) {
+                cases.push([full.slice(0, length * 2), 14]);
+              }
+              cases.push([full, 6]);
+            }
+            cases.push(
+              ['67'.repeat(10) + 'f2f00f58c1', 6],
+              ['67'.repeat(11) + 'f2f00f58', 13],
+              ['f2f00fd604', 6],
+              ['f0f390', 6],
+              ['f2f3f00faec0', 6],
+              ['f3f3f00faec0', 6],
+              ['f0f2f30faec0', undefined],
+              ['f2f00fae', undefined],
+              ['f3f00faee4', undefined],
+              ['f3f00f18', undefined],
+              ['f3f00fa2', undefined],
+              ['f2f00fc1', undefined],
+              ['f0f3a4', undefined],
+              ['f0f0', undefined],
+            );
+            for (const [code, vector] of cases) {
+              const bytes = hex(code);
+              const pc = end - BigInt(bytes.length);
+              const before = initial(pc, { 4: 0x800000000000n }, 0x10202n);
+              cpu.writePhysicalMemory(0xa000n - BigInt(bytes.length), bytes);
+              cpu.setPagingState({ ...cpu.readPagingState(), cr2 });
+              cpu.setState(before);
+              const options = { budget: 1n, repeatBudget: 7n };
+              const report = await cpu.run(options);
+              const reason =
+                vector === 14 ? 'page-fault' : vector ? 'invalid-encoding' : 'unsupported';
+              exit(report, reason, 1n, 0n, before);
+              same(
+                report.pageFault,
+                vector === 14
+                  ? {
+                      vector: 14,
+                      instructionPc: pc,
+                      access: 'execute',
+                      address: end,
+                      errorCode: 16,
+                    }
+                  : undefined,
+                `report fault for ${code}`,
+              );
+              equal(cpu.readPagingState().cr2, vector === 14 ? end : cr2, `CR2 for ${code}`);
+              equal(report.resources.compilations, 0, `no generated artifact for ${code}`);
+
+              const staged = await cpu.run({ ...options, eventDelivery: { budget: 0n } });
+              equal(staged.reason, vector ? 'event-budget' : reason, `delivery for ${code}`);
+              same(
+                staged.state.event,
+                vector
+                  ? {
+                      kind: 'pending',
+                      exception: {
+                        vector,
+                        instructionPc: pc,
+                        returnPc: pc,
+                        savedFlags: before.flags,
+                        ...(vector === 14 ? { errorCode: 16, pageFaultAddress: end } : {}),
+                        ...(vector === 13 ? { errorCode: 0 } : {}),
+                      },
+                    }
+                  : { kind: 'ready' },
+                `staged event for ${code}`,
+              );
+              equal(staged.retired, 0n, `no retirement for ${code}`);
+              equal(staged.remainingRepeatBudget, 7n, `preserved repeat budget for ${code}`);
+              equal(staged.resources.compilations, 0, `no delivery artifact for ${code}`);
+              numeric();
+            }
+          },
+        );
+      },
+    },
+    {
+      name: 'reused native predecessor retires once before a reached mixed LOCK fault',
+      async run() {
+        await usingPaged(compiler, { code: '90f3f00f58c1' }, async (cpu) => {
+          const before = initial(PC, {}, 0x10202n);
+          cpu.setState(before);
+          const stopped = await cpu.run({ budget: 0n, eventDelivery: { budget: 0n } });
+          exit(stopped, 'budget', 0n, 0n, before);
+          equal(stopped.resources.compilations, 0, 'zero budget makes no artifact');
+          const cold = await cpu.run({ budget: 1n });
+          equal(cold.reason, 'budget', 'fault frontier is beyond the budget');
+          equal(cold.retired, 1n, 'cold predecessor retired');
+          equal(cold.resources.compilations, 1, 'predecessor compiled');
+          cpu.setState(before);
+          const warm = await cpu.run({ budget: 2n, eventDelivery: { budget: 0n } });
+          equal(warm.reason, 'event-budget', 'fault staged after the cached predecessor');
+          equal(warm.retired, 1n, 'only predecessor retired');
+          equal(warm.state.rip, PC + 1n, 'fault restart follows predecessor');
+          same(
+            warm.state.event,
+            {
+              kind: 'pending',
+              exception: {
+                vector: 6,
+                instructionPc: PC + 1n,
+                returnPc: PC + 1n,
+                savedFlags: 0x10202n,
+              },
+            },
+            'reached #UD',
+          );
+          equal(warm.resources.cacheHits, 1, 'reused predecessor artifact');
+          equal(warm.resources.nativeEntries, 1, 'fault encoding never entered');
+          equal(warm.resources.compilations, 0, 'fault encoding never compiled');
+        });
+      },
+    },
     {
       name: 'paging required code faults precede exhausted compile allowance while execute debug precedes code walks',
       async run() {
