@@ -455,6 +455,7 @@ impl State {
         }
     }
 
+    #[cfg(any(target_arch = "wasm32", test))]
     pub(crate) fn with_machine_status(self, source: u16) -> Self {
         Self {
             // Replace MP, EM and TS. LMSW can set PE, but cannot clear it.
