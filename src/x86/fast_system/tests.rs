@@ -795,6 +795,24 @@ fn zero_and_wrapping_star_selectors_are_real_loaded_caches_not_descriptor_loads(
 }
 
 #[test]
+fn fsgsbase_writer_checks_mode_and_enable_before_a_wide_target() {
+    let invalid = 1 << 47;
+    for (mode, control, expected) in [
+        (Mode::Compatibility, paging::CR4_FSGSBASE, Undefined),
+        (Mode::Long64, 0, Undefined),
+        (Mode::Long64, paging::CR4_FSGSBASE, Target),
+    ] {
+        let mut current = context(mode, 3);
+        let before = current.clone();
+        assert_eq!(
+            write_segment_base(&mut current, control, Segment::Fs, invalid),
+            Err(expected)
+        );
+        assert_eq!(current, before);
+    }
+}
+
+#[test]
 fn swapgs_exchanges_the_actual_loaded_base_and_round_trips_without_other_effects() {
     let context = context(Mode::Long64, 0);
     let scalar = scalar();
