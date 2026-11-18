@@ -407,6 +407,45 @@ pub extern "C" fn core_import_paging() -> i32 {
     })
 }
 
+#[cold]
+#[inline(never)]
+fn read_machine_status_word(
+    core: &mut Core,
+    paging: &paging::State,
+    segment: u32,
+    offset: u64,
+    flags: u64,
+) -> Result<u16, i32> {
+    use crate::x86::{access::GuestMemory, alignment::Intent};
+
+    let Some(segment) = Segment::ALL.get(segment as usize).copied() else {
+        return Err(-1);
+    };
+    let Some(address) = core.segment_address(offset, 2, segment, Access::Read, false) else {
+        return Err(core.memory_failure_reason());
+    };
+    let read = paging::access::Memory::new(
+        &mut core.image,
+        paging,
+        core.context.cpl(),
+        flags,
+        &mut core.paging_work,
+        unsafe { &(*core.state.get()).protection_keys },
+    )
+    .with_cache(&core.translation_cache)
+    .read_aligned(address, 2, Intent::Natural(2));
+    match read {
+        Ok(source) => {
+            core.debug_operand(address, 2, Access::Read);
+            Ok(source as u16)
+        }
+        Err(failure) => {
+            core.access_failure(failure);
+            Err(core.memory_failure_reason())
+        }
+    }
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn core_paging_control(
     kind: u32,
@@ -417,7 +456,6 @@ pub extern "C" fn core_paging_control(
     retired: u64,
 ) -> i32 {
     use crate::x86::protection::{ProtectionFault, ProtectionPhase};
-    use crate::x86::{access::GuestMemory, alignment::Intent};
     use paging::ControlFailure;
     BRIDGE.with_borrow_mut(|bridge| {
         let core = bridge.core.as_mut().unwrap();
@@ -550,34 +588,10 @@ pub extern "C" fn core_paging_control(
                 None,
             )),
             6 => Ok((state.with_machine_status(value as u16), None)),
-            7 => {
-                let Some(segment) = Segment::ALL.get(register as usize).copied() else {
-                    return -1;
-                };
-                let Some(address) = core.segment_address(value, 2, segment, Access::Read, false)
-                else {
-                    return core.memory_failure_reason();
-                };
-                let read = paging::access::Memory::new(
-                    &mut core.image,
-                    &state,
-                    core.context.cpl(),
-                    flags,
-                    &mut core.paging_work,
-                    unsafe { &(*core.state.get()).protection_keys },
-                )
-                .with_cache(&core.translation_cache)
-                .read_aligned(address, 2, Intent::Natural(2));
-                let value = match read {
-                    Ok(value) => value,
-                    Err(failure) => {
-                        core.access_failure(failure);
-                        return core.memory_failure_reason();
-                    }
-                };
-                core.debug_operand(address, 2, Access::Read);
-                Ok((state.with_machine_status(value as u16), None))
-            }
+            7 => match read_machine_status_word(core, &state, register, value, flags) {
+                Ok(source) => Ok((state.with_machine_status(source), None)),
+                Err(reason) => return reason,
+            },
             _ => return -1,
         };
         match operation {
