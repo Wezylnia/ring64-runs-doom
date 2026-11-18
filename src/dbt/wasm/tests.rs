@@ -11,6 +11,8 @@ mod counts;
 mod data_widths;
 mod df;
 mod exchange;
+#[cfg(target_arch = "x86_64")]
+mod exchange_native;
 mod external_interrupts;
 mod far;
 mod float;
