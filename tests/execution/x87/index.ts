@@ -1,3 +1,4 @@
+import { freePascalSinCosScenarios } from './fsincos-fpc.js';
 import { fsincosScenarios } from './fsincos.js';
 import { muslLogExpScenario } from './log-exp-musl.js';
 import { logExpScenarios } from './log-exp.js';
@@ -16,6 +17,7 @@ import { specialImageScenarios } from './special-images.js';
 
 export function x87Scenarios(compiler: WebAssembly.Module): Scenario[] {
   return [
+    ...freePascalSinCosScenarios(compiler),
     ...fsincosScenarios(compiler),
     muslLogExpScenario(compiler),
     ...logExpScenarios(compiler),
