@@ -208,14 +208,52 @@ fn paged_fixture() {
     assert_eq!(mapped::core_init_mapped(0x400000, length), 0);
 }
 
-fn paged_owner() -> u64 {
+fn paged_pending() -> u64 {
     assert_eq!(core_compile(0x400000, 8, 128, 65536), 0);
-    let owner = BRIDGE.with_borrow(|bridge| {
+    BRIDGE.with_borrow(|bridge| {
         let info: serde_json::Value = serde_json::from_slice(&bridge.info).unwrap();
         u64::from_str_radix(info["owner"].as_str().unwrap().trim_start_matches("0x"), 16).unwrap()
-    });
+    })
+}
+
+fn paged_owner() -> u64 {
+    let owner = paged_pending();
     assert_eq!(mapped::core_publish(owner), 1);
     owner
+}
+
+#[test]
+fn fsgsbase_only_changed_writes_cancel_pending_and_suspend_the_published_context() {
+    use super::super::fast_system::core_write_segment_base;
+    use crate::embedding::layout::PROTECTION;
+    for epoch in [0, u64::MAX] {
+        paged_fixture();
+        BRIDGE.with_borrow_mut(|bridge| bridge.core.as_mut().unwrap().context_version = epoch);
+        let installed = paged_owner();
+        assert_eq!(mapped::core_activate(installed), 1);
+        let pending = paged_pending();
+        let gs = Segment::Gs as u32;
+        let noncanonical = 1 << 47;
+        for invalid_segment in [Segment::Cs as u32, u32::MAX] {
+            assert_eq!(core_write_segment_base(invalid_segment, 0), -1);
+        }
+        assert_eq!(core_write_segment_base(gs, noncanonical), INVALID);
+        assert_eq!(
+            paging::core_paging_control(1, 4, 0x10628, 0x400000, 2, 0),
+            0
+        );
+        assert_eq!(core_write_segment_base(gs, noncanonical), PROTECTION);
+        assert_eq!(core_write_segment_base(gs, 0), 0);
+        assert_eq!(context::core_context_version(), epoch);
+        assert_eq!(mapped::core_validity(pending), 1);
+        assert_eq!(core_write_segment_base(gs, 0xffff_8000_0000_0000), 0);
+        assert_eq!(mapped::core_validity(pending), 0);
+        assert_eq!(mapped::core_validity(installed), 1);
+        assert_eq!(mapped::core_activate(installed), 0);
+        assert_eq!(core_write_segment_base(gs, 0), 0);
+        assert_eq!(mapped::core_publish(pending), 0);
+        assert_eq!(mapped::core_activate(installed), 1);
+    }
 }
 
 #[test]
@@ -234,12 +272,7 @@ fn changed_guest_root_fences_active_work_but_preserves_valid_root_bound_owners()
         assert_eq!(core_probe(0x400000), 0); // same effective translation and walk survive in B
         let a = paged_owner();
         assert_eq!(mapped::core_activate(a), 1);
-        assert_eq!(core_compile(0x400000, 8, 128, 65536), 0);
-        let pending = BRIDGE.with_borrow(|bridge| {
-            let info: serde_json::Value = serde_json::from_slice(&bridge.info).unwrap();
-            u64::from_str_radix(info["owner"].as_str().unwrap().trim_start_matches("0x"), 16)
-                .unwrap()
-        });
+        let pending = paged_pending();
         assert_eq!(core_paging_control(1, 3, 0x5000, 0x400000, 2, 0), 0);
         assert_eq!(mapped::core_validity(a), 1);
         assert_eq!(mapped::core_validity(pending), 0);

@@ -329,6 +329,12 @@ impl ExecutionContext {
             self.segment(segment).base
         }
     }
+    pub(crate) fn set_segment_base(&mut self, segment: Segment, base: u64) -> bool {
+        let current = &mut self.segments[segment as usize].base;
+        let changed = *current != base;
+        *current = base;
+        changed
+    }
     pub fn code_limit(&self) -> u64 {
         if self.is_long64() {
             u64::MAX

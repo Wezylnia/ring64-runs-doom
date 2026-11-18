@@ -302,6 +302,7 @@ type CoreExports = WebAssembly.Exports & {
   core_import_paging(): number;
   core_fast_system_state(): number;
   core_import_fast_system(): number;
+  core_write_segment_base?(segment: number, base: bigint): number;
   core_fast_system(
     kind: number,
     wide: number,
@@ -1497,6 +1498,8 @@ export class Core {
     };
     if (this.isPaged) {
       env.fast_system = this.#exports.core_fast_system;
+      if (this.#exports.core_write_segment_base)
+        env.write_segment_base = this.#exports.core_write_segment_base;
       for (const [name, key] of Object.entries({
         ...PAGED_HELPERS,
         ...(observed ? PAGED_OBSERVED_HELPERS : {}),

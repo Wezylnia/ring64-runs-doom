@@ -128,8 +128,12 @@ impl State {
                     0xc0000082 => bank.lstar = value,
                     0x175 => bank.sysenter_esp = value,
                     0x176 => bank.sysenter_eip = value,
-                    0xc0000100 => set_base(&mut context, Segment::Fs, value),
-                    0xc0000101 => set_base(&mut context, Segment::Gs, value),
+                    0xc0000100 => {
+                        context.set_segment_base(Segment::Fs, value);
+                    }
+                    0xc0000101 => {
+                        context.set_segment_base(Segment::Gs, value);
+                    }
                     _ => bank.kernel_gs_base = value,
                 }
             }
@@ -158,15 +162,22 @@ fn admit_msr(context: &ExecutionContext, physical: bool) -> Result<(), ControlFa
     }
 }
 
-fn set_base(context: &mut ExecutionContext, segment: Segment, base: u64) {
-    let mut cache = context.segment(segment);
-    cache.base = base;
-    context.set_segment(
-        segment,
-        context.selector(segment),
-        cache,
-        context.attributes(segment),
-    );
+pub fn write_segment_base(
+    context: &mut ExecutionContext,
+    cr4: u64,
+    segment: Segment,
+    base: u64,
+) -> Result<bool, Failure> {
+    if !context.is_long64()
+        || cr4 & paging::CR4_FSGSBASE == 0
+        || !matches!(segment, Segment::Fs | Segment::Gs)
+    {
+        return Err(Failure::Undefined);
+    }
+    if !canonical48(base) {
+        return Err(Failure::Target);
+    }
+    Ok(context.set_segment_base(segment, base))
 }
 
 fn install(context: &mut ExecutionContext, cs: u16, ss: u16, wide: bool, cpl: u8) {
@@ -307,7 +318,9 @@ pub fn prepare(
         }
         Swapgs => {
             prepared.bank.kernel_gs_base = context.segment(Segment::Gs).base;
-            set_base(&mut prepared.context, Segment::Gs, bank.kernel_gs_base);
+            prepared
+                .context
+                .set_segment_base(Segment::Gs, bank.kernel_gs_base);
         }
     }
     Ok(prepared)

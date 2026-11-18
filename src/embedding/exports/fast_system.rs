@@ -81,6 +81,28 @@ fn failure(core: &mut Core, failure: Failure) -> i32 {
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn core_write_segment_base(segment: u32, base: u64) -> i32 {
+    let Some(&segment @ (Segment::Fs | Segment::Gs)) = Segment::ALL.get(segment as usize) else {
+        return -1;
+    };
+    BRIDGE.with_borrow_mut(|bridge| {
+        let core = bridge.core.as_mut().unwrap();
+        let cr4 = core.paging.map_or(0, |state| state.cr4);
+        match fast_system::write_segment_base(&mut core.context, cr4, segment, base) {
+            Ok(true) => {
+                // Paged completion redispatches before a successor specialized for the old base.
+                core.image.fence_active();
+                core.active_owner = None;
+                core.context_changed();
+            }
+            Ok(false) => {}
+            Err(error) => return failure(core, error),
+        }
+        0
+    })
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn core_fast_system(
     kind: u32,
     wide: u32,
