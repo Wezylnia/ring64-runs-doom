@@ -17,7 +17,8 @@ export function decodingScenarios(compiler: WebAssembly.Module): Scenario[] {
           ['f20f6f', 'unsupported'],
           ['660f730c', 'unsupported'],
           ['660f3881', 'unsupported'],
-          ['f0f30f6f', 'unsupported'],
+          ['f0f30f6f00', 'invalid-encoding'],
+          ['f3f00f6fc1', 'invalid-encoding'],
           ['f0f0', 'unsupported'],
         ] as const)
           for (const budget of [1n, 2n])

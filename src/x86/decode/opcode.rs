@@ -17,11 +17,7 @@ where
     F: FnMut(u64) -> Result<u8, DecodeError>,
 {
     if prefixes.lock && prefixes.repeat.is_some() {
-        // Only the selected F3 0F AE forms have defined LOCK faults in this profile.
-        if opcode == 0x0f && cursor.byte()? == 0xae {
-            return super::streaming::segment_base(prefixes, cursor);
-        }
-        return Err(DecodeError::Unsupported);
+        return mixed_lock(opcode, prefixes, cursor);
     }
     if opcode == 0xf4 {
         return if prefixes.lock {
@@ -36,6 +32,46 @@ where
     } else {
         Ok(operation)
     }
+}
+
+fn mixed_lock<F>(
+    opcode: u8,
+    prefixes: Prefixes,
+    cursor: &mut Cursor<F>,
+) -> Result<Operation, DecodeError>
+where
+    F: FnMut(u64) -> Result<u8, DecodeError>,
+{
+    if opcode != 0x0f {
+        return Err(DecodeError::Unsupported);
+    }
+    let opcode = cursor.byte()?;
+    if opcode == 0xae && prefixes.repeat == Some(0xf3) {
+        return super::streaming::segment_base(prefixes, cursor);
+    }
+    // preserve multi-selector frontiers outside the existing fsgsbase path.
+    if prefixes.multiple_repeats {
+        return Err(DecodeError::Unsupported);
+    }
+    simd(opcode, prefixes, cursor).ok_or(DecodeError::Unsupported)??;
+    Err(DecodeError::Invalid)
+}
+
+fn simd<F>(
+    opcode: u8,
+    prefixes: Prefixes,
+    cursor: &mut Cursor<F>,
+) -> Option<Result<Operation, DecodeError>>
+where
+    F: FnMut(u64) -> Result<u8, DecodeError>,
+{
+    if let Some(result) = super::mmx::refine(opcode, prefixes, cursor) {
+        return Some(result);
+    }
+    if let Some(result) = super::float::refine(opcode, prefixes, cursor) {
+        return Some(result);
+    }
+    super::vector::refine(opcode, prefixes, cursor).map(|result| result.map(Operation::Vector))
 }
 
 fn lockable(operation: Operation) -> bool {
@@ -702,14 +738,8 @@ where
     if let Some(result) = super::streaming::refine(opcode, prefixes, cursor) {
         return result;
     }
-    if let Some(result) = super::mmx::refine(opcode, prefixes, cursor) {
+    if let Some(result) = simd(opcode, prefixes, cursor) {
         return result;
-    }
-    if let Some(result) = super::float::refine(opcode, prefixes, cursor) {
-        return result;
-    }
-    if let Some(result) = super::vector::refine(opcode, prefixes, cursor) {
-        return result.map(Operation::Vector);
     }
     if let Some(repeat) = prefixes.repeat
         && (opcode != 0xbc || repeat != 0xf3)

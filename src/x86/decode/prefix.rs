@@ -17,6 +17,7 @@ pub(super) struct Prefixes {
     pub(super) address_override: bool,
     pub(super) segment_override: Option<Segment>,
     pub(super) repeat: Option<u8>,
+    pub(super) multiple_repeats: bool,
     pub(super) lock: bool,
     pub(super) long64: bool,
     pub(super) mode: Mode,
@@ -123,6 +124,7 @@ where
         address_override: false,
         segment_override: None,
         repeat: None,
+        multiple_repeats: false,
         lock: false,
         long64: context.is_long64(),
         mode: context.mode(),
@@ -162,15 +164,18 @@ where
                 };
             }
             0xf0 => {
-                if prefixes.lock || prefixes.repeat == Some(0xf2) {
+                if prefixes.lock || prefixes.multiple_repeats && prefixes.repeat == Some(0xf2) {
                     return Err(DecodeError::Unsupported);
                 }
                 prefixes.lock = true;
                 prefixes.rex = Rex::default();
             }
             0xf2 | 0xf3 => {
-                if prefixes.lock && byte == 0xf2 {
-                    return Err(DecodeError::Unsupported);
+                if let Some(previous) = prefixes.repeat {
+                    if prefixes.lock && (previous == 0xf2 || byte == 0xf2) {
+                        return Err(DecodeError::Unsupported);
+                    }
+                    prefixes.multiple_repeats = true;
                 }
                 prefixes.repeat = Some(byte);
                 prefixes.rex = Rex::default();

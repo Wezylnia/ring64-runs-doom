@@ -50,8 +50,10 @@ export function decodeScenarios(compiler: WebAssembly.Module): Scenario[] {
           ['f20f53', 'unsupported'],
           ['f20f5b', 'unsupported'],
           ['f2660f5b', 'unsupported'],
-          ['f0f30f58', 'unsupported'],
-          ['f0f20f58', 'unsupported'],
+          ['f0f30f5800', 'invalid-encoding'],
+          ['f3f00f58c1', 'invalid-encoding'],
+          ['f0f20f58c1', 'invalid-encoding'],
+          ['f2f00f5800', 'invalid-encoding'],
         ] as const)
           for (const budget of [1n, 2n])
             await using(compiler, code, LONG, async (cpu) => {
@@ -78,6 +80,8 @@ export function decodeScenarios(compiler: WebAssembly.Module): Scenario[] {
           'f3480f2a842400000000',
           'f2480f2c842400000000',
           'f00fc2842400000000ff',
+          'f0f30f5800',
+          'f2f00f5800',
           '660f16842400000000',
           '0fae942400000000',
           '0fae2400',

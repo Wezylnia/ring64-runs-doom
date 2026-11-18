@@ -536,8 +536,4 @@ fn vector_legality_stops_at_deciding_classes_and_fetches_complete_valid_tails() 
     assert!(at(0x1000, &exact).is_ok());
     exact.insert(0, 0x66);
     assert_eq!(at(0x1000, &exact), Err(DecodeError::InstructionLength));
-    assert_eq!(
-        at(0x1000, &[0xf0, 0xf3, 0x0f, 0x6f]),
-        Err(DecodeError::Unsupported)
-    );
 }

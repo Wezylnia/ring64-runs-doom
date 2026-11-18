@@ -257,13 +257,7 @@ fn mxcsr_groups_preserve_deciding_class_and_complete_valid_tails_before_lock_rej
         &[0x0f, 0xae, 0x94, 0x24, 0, 0, 0, 0][..],
         &[0xf0, 0x0f, 0xae, 0x94, 0x24, 0, 0, 0, 0],
         &[0xf3, 0x0f, 0xc2, 0x84, 0x24, 0, 0, 0, 0, 0xff],
-        &[0xf0, 0xf3, 0x0f, 0x58, 0x84, 0x24, 0, 0, 0, 0],
     ] {
-        // The mixed prefix is unsupported as soon as the floating opcode is known.
-        if full.starts_with(&[0xf0, 0xf3]) {
-            assert_eq!(at(0x1000, full), Err(DecodeError::Unsupported));
-            continue;
-        }
         for length in 1..full.len() {
             assert_eq!(
                 at(0x1000, &full[..length]),

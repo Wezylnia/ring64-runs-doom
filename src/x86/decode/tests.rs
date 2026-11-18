@@ -17,6 +17,7 @@ mod float;
 mod integer_memory;
 mod io;
 mod logical;
+mod mixed_lock;
 mod modes;
 mod multiply_divide;
 mod near_control;

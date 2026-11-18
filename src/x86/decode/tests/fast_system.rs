@@ -201,12 +201,7 @@ fn segment_base_classifies_lock_and_reserved_memory_only_after_required_fetches(
         }
     }
     for prefix in [&[0xf0, 0xf3][..], &[0xf3, 0xf0]] {
-        for neighbor in [
-            &[0xcd][..],
-            &[0x0f, 0x58],
-            &[0x0f, 0x38],
-            &[0x0f, 0xae, 0x24],
-        ] {
+        for neighbor in [&[0xcd][..], &[0x0f, 0x38], &[0x0f, 0xae, 0x24]] {
             let bytes = [prefix, neighbor].concat();
             assert_eq!(
                 decoded(&bytes, true, &context),
