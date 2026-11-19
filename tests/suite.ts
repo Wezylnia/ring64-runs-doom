@@ -8,7 +8,7 @@ import { memoryScenarios } from './execution/memory.js';
 import { mappedMemoryScenarios } from './execution/mapped-memory/index.js';
 import { controlScenarios } from './execution/control.js';
 import { translationsScenarios } from './execution/translations.js';
-import { embeddingScenarios } from './embedding/scenarios.js';
+import { embeddingScenarios } from '../sdk/tests/api/scenarios.js';
 import { modeScenarios } from './execution/modes/index.js';
 import { stringScenarios } from './execution/strings/index.js';
 import { nearControlScenarios } from './execution/near-control/index.js';

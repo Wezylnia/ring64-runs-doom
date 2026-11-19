@@ -160,7 +160,7 @@ const mutants = [
     old: '    return entries.get(pc) ?? EMPTY;',
     replacement:
       '    const found = entries.get(pc) ?? EMPTY;\n    for (const entry of found) this.touch(entry.artifact);\n    return found;',
-    testFile: 'host/cpu/translations.test.ts',
+    testFile: 'sdk/tests/unit/cpu/translations.test.ts',
     filter:
       'same-PC context candidates retain every owner and middle alias without changing recency',
   },
@@ -170,7 +170,7 @@ const mutants = [
     file: 'sdk/src/cpu/translations.ts',
     old: 'this.#artifacts.size >= this.maxArtifacts',
     replacement: 'this.#artifacts.size >= this.maxArtifacts * 2',
-    testFile: 'host/cpu/translations.test.ts',
+    testFile: 'sdk/tests/unit/cpu/translations.test.ts',
     filter: 'count-limited eviction',
   },
   {
@@ -179,7 +179,7 @@ const mutants = [
     file: 'sdk/src/cpu/translations.ts',
     old: 'this.#bytes + artifact.metadata.byteLength > this.maxBytes',
     replacement: 'this.#bytes + artifact.metadata.byteLength > this.maxBytes * 2',
-    testFile: 'host/cpu/translations.test.ts',
+    testFile: 'sdk/tests/unit/cpu/translations.test.ts',
     filter: 'byte pressure can evict multiple artifacts',
   },
   {
@@ -303,7 +303,7 @@ if (reuse && (await realpath(work)) === (await realpath(root)))
   throw Error('work aliases main checkout');
 await mkdir(work, { recursive: reuse });
 await mkdir(evidence);
-for (const directory of ['src', 'sdk', 'host', 'tests']) {
+for (const directory of ['src', 'sdk', 'tests']) {
   await rm(join(work, directory), { recursive: true, force: true });
   await cp(join(root, directory), join(work, directory), { recursive: true });
 }
@@ -330,7 +330,7 @@ async function projection(base, directories, names) {
 }
 async function identity(base) {
   const runtime = await projection(base, ['src', 'sdk/src'], ['Cargo.toml', 'Cargo.lock']);
-  const oracles = await projection(base, ['host', 'tests'], ['package.json', 'tsconfig.json']);
+  const oracles = await projection(base, ['sdk/tests', 'tests'], ['package.json', 'tsconfig.json']);
   return { sha256: hash(JSON.stringify([runtime.sha256, oracles.sha256])), runtime, oracles };
 }
 const candidate = await identity(work);
@@ -646,7 +646,7 @@ try {
     target: env.CARGO_TARGET_DIR,
     evidence,
     sourceIdentityScope:
-      'runtime: src/** + sdk/src/** + Cargo.toml/Cargo.lock; oracles: host/** + tests/** + package.json/tsconfig.json',
+      'runtime: src/** + sdk/src/** + Cargo.toml/Cargo.lock; oracles: sdk/tests/** + tests/** + package.json/tsconfig.json',
     candidate,
     parentStillMatches: currentParent.sha256 === candidate.sha256,
     restoredSourceMatches: restored.sha256 === candidate.sha256,

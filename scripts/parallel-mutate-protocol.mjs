@@ -2,7 +2,9 @@ import process from 'node:process';
 
 const nodeTest = (...args) => [process.execPath, '--import', 'tsx', '--test', ...args];
 const protocolTest = (name) =>
-  nodeTest(`--test-name-pattern=${name}`, 'host/parallel/protocol.test.ts');
+  nodeTest(`--test-name-pattern=${name}`, 'sdk/tests/integration/parallel/protocol.test.ts');
+const controlTest = (name) =>
+  nodeTest(`--test-name-pattern=${name}`, 'sdk/tests/unit/parallel/control.test.ts');
 const leaseCheck = 'this.phase === phase && this.load(cpu, SLOT.invalidations) === invalidation';
 const portValidation = 'sdk/src/machine.ts';
 
@@ -21,7 +23,7 @@ export const protocolMutations = [
     path: 'sdk/src/parallel/control.ts',
     from: leaseCheck,
     to: leaseCheck.replace('=== phase', '>= phase'),
-    check: protocolTest('a phase close between publishing and rechecking a lease prevents entry'),
+    check: controlTest('a phase close between publishing and rechecking a lease prevents entry'),
     failure: /true !== false/,
     build: 'none',
   },
@@ -30,7 +32,7 @@ export const protocolMutations = [
     path: 'sdk/src/parallel/control.ts',
     from: leaseCheck,
     to: 'this.phase === phase',
-    check: protocolTest(
+    check: controlTest(
       'a reopened phase cannot admit a worker before its exact invalidation arrives',
     ),
     failure: /true !== false/,
