@@ -9,6 +9,7 @@ export type {
   InterruptState,
 } from './state/execution/events.js';
 export type {
+  CompilerSource,
   DebugException,
   Fault,
   AlignmentFault,

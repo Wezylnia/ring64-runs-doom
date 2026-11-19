@@ -82,6 +82,9 @@ import {
   type X87Layout,
 } from '../state/numeric/x87.js';
 
+// The standard Module declaration is structural. The intersection excludes primitives.
+export type CompilerSource = Uint8Array | (WebAssembly.Module & object);
+
 export interface DebugException {
   vector: 1;
   class: 'trap' | 'fault';
@@ -672,7 +675,7 @@ export class Core {
   }
 
   static async create(
-    compiler: Uint8Array | WebAssembly.Module,
+    compiler: CompilerSource,
     memory: InitialMemory,
     context?: ExecutionContext,
     ioBinding?: IoBinding,
@@ -684,10 +687,13 @@ export class Core {
     const fastSystem = isPaged
       ? captureFastSystemState(memory.fastSystem ?? zeroFastSystemState())
       : undefined;
-    const module =
-      compiler instanceof WebAssembly.Module
-        ? compiler
-        : await WebAssembly.compile(new Uint8Array(compiler));
+    let module: WebAssembly.Module;
+    if (compiler instanceof WebAssembly.Module) module = compiler;
+    else {
+      if (!(compiler instanceof Uint8Array))
+        throw new TypeError('compiler must be bytes or a WebAssembly.Module');
+      module = await WebAssembly.compile(new Uint8Array(compiler));
+    }
     const io = new IoBridge(ioBinding);
     try {
       const instance = await WebAssembly.instantiate(module, { io: io.imports });

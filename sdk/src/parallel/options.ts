@@ -1,6 +1,7 @@
 import { captureContext, type ExecutionContext } from '../state/system/context.js';
 import { copyMemoryInput, unsigned64 } from '../embedding/input.js';
 import type { Limits } from '../cpu/cpu.js';
+import type { CompilerSource } from '../wasm/core.js';
 import {
   captureFastSystemState,
   zeroFastSystemState,
@@ -22,7 +23,7 @@ import { capturePagingState, type PagingState } from '../state/system/paging.js'
 import { sharedLayout } from './control.js';
 
 interface Common {
-  compiler: Uint8Array | WebAssembly.Module;
+  compiler: CompilerSource;
   limits: Limits;
   sharedRamCapacity: number;
   memory: { backings: MemoryBackingInput[]; mappings: MemoryMapping[] };

@@ -23,6 +23,7 @@ import { captureX87State, type X87State, type X87Exception } from '../state/nume
 import {
   Core,
   type CompileLimits,
+  type CompilerSource,
   type Fault,
   type AlignmentFault,
   type AlignmentCheck,
@@ -64,7 +65,7 @@ export interface Limits extends CompileLimits {
 
 interface CommonOptions {
   io?: IoProvider;
-  compiler: Uint8Array | WebAssembly.Module;
+  compiler: CompilerSource;
   limits: Limits;
   context?: ExecutionContext;
 }
