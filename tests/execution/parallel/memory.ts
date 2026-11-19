@@ -1,0 +1,228 @@
+import { context } from '../modes/fixture.js';
+import type { Scenario } from '../../support/fixture.js';
+import {
+  ENTRY,
+  RAM,
+  asBytes,
+  cpuState,
+  done,
+  equal,
+  linearMachine,
+  same,
+  span,
+  withMachine,
+  words,
+  type MachineFactory,
+} from './fixture.js';
+
+export function parallelMemoryScenarios(
+  factory: MachineFactory,
+  compiler: WebAssembly.Module,
+): Scenario[] {
+  return [
+    {
+      name: 'parallel x86 workers rendezvous in guest memory with private TLS, stack and I/O replies',
+      async run() {
+        // Entire relocation-free worker symbols compiled from rendezvous.c with Apple clang 21
+        // (-O2, -ffreestanding, no PIE), SysV i386 and x86-64. The compiled stack slot is at SP-4.
+        const bodies = {
+          protected32:
+            '508b4c240c8b442408f0ff000f1f40008b1083fa0272f931c0648b008904248b04248901e68059c3',
+          long64:
+            'f0ff07666666662e0f1f8400000000008b0783f80272f931c064678b00894424fc8b4424fc8906e680c3',
+        };
+        for (const long of [false, true]) {
+          const options = linearMachine(compiler, long ? bodies.long64 : bodies.protected32);
+          const trace: number[] = [];
+          options.io = {
+            read() {
+              throw new Error('unexpected input');
+            },
+            write(port, width, value) {
+              equal(port, 0x80, 'guest port');
+              equal(width, 8, 'output width');
+              trace.push(value);
+            },
+          };
+          options.cpus.forEach((cpu, i) => {
+            const tls = RAM + 0x100n + BigInt(i) * 64n;
+            if (long) cpu.context = { mode: 'long64', fsBase: tls, gsBase: 0n };
+            else {
+              const protected32 = context('protected');
+              protected32.segments.fs.base = tls;
+              cpu.context = protected32;
+            }
+          });
+          await withMachine(factory, options, async (machine) => {
+            equal(machine.cpus.length, 2, 'two independent handles');
+            const stop = 0x2000n;
+            for (const [i, cpu] of machine.cpus.entries()) {
+              equal(cpu.id, i, 'stable id');
+              const offset = BigInt(i) * 64n;
+              const out = RAM + 0x200n + offset;
+              const sp = RAM + 0x600n + offset;
+              await machine.writeMemory(RAM + 0x100n + offset, asBytes(BigInt(0x31 + i)));
+              const frame = new Uint8Array(long ? 8 : 12);
+              const view = new DataView(frame.buffer);
+              view.setUint32(0, Number(stop), true);
+              if (!long) {
+                view.setUint32(4, Number(RAM), true);
+                view.setUint32(8, Number(out), true);
+              }
+              await machine.writeMemory(sp, frame);
+              await cpu.setState(cpuState(ENTRY, { 4: sp, 6: out, 7: RAM }));
+            }
+            const results = await Promise.all(
+              machine.cpus.map((cpu) => cpu.run({ budget: 2_000_000n, stop })),
+            );
+            for (const [i, result] of results.entries()) {
+              const sp = RAM + 0x600n + BigInt(i) * 64n;
+              done(result, stop);
+              equal(
+                result.state.registers[0],
+                BigInt(0x31 + i) | (long ? 0n : 0x1122334400000000n),
+                'thread-local return value and legacy high-half retention',
+              );
+              equal(
+                result.state.registers[4],
+                sp + (long ? 8n : 4n),
+                'original ABI consumed the return slot',
+              );
+              same(
+                [...(await machine.readMemory(sp - 4n, 4))],
+                [0x31 + i, 0, 0, 0],
+                'private compiled stack spill',
+              );
+              same(
+                await words(machine, RAM + 0x200n + BigInt(i) * 64n, 1),
+                [BigInt(0x31 + i)],
+                'thread output',
+              );
+            }
+            same(await words(machine, RAM, 1), [2n], 'actual guest rendezvous');
+            same(trace.sort(), [0x31, 0x32], 'provider invoked once per guest effect');
+          });
+        }
+      },
+    },
+    {
+      name: 'narrow locked updates through distinct aliases preserve neighboring bytes and exact retirements',
+      async run() {
+        // lock inc byte [rbx]; dec ecx; jnz entry.
+        const options = linearMachine(compiler, 'f0fe03ffc975f9');
+        const alias = 0x8000n;
+        options.memory.mappings.push(span(alias, 'data', 0, 4096));
+        await withMachine(factory, options, async (machine) => {
+          const count = 8195n;
+          await machine.writeMemory(RAM, Uint8Array.of(0, 0, 0xad, 0xde, 0x99, 0x21, 0xaf, 0x59));
+          const [a, b] = machine.cpus;
+          await Promise.all([
+            a!.setState(cpuState(ENTRY, { 1: count, 3: RAM })),
+            b!.setState(cpuState(ENTRY, { 1: count, 3: alias + 1n })),
+          ]);
+          const stop = ENTRY + 7n;
+          const r = await Promise.all(
+            machine.cpus.map((cpu) => cpu.run({ budget: count * 3n + 1n, stop })),
+          );
+          for (const result of r) done(result, stop, count * 3n);
+          same(
+            [...(await machine.readMemory(alias, 8))],
+            [3, 3, 0xad, 0xde, 0x99, 0x21, 0xaf, 0x59],
+            'target bytes and never-addressed neighbors',
+          );
+        });
+      },
+    },
+    {
+      name: 'guest atomicity is retained for a split-backed XCHG and ordinary overlapping readers',
+      async run() {
+        // Writer: xchg [rbx],rax; dec ecx; jnz. Reader: mov rax,[rbx]; cmp rax,rsi;
+        // je next; cmp rax,rdi; jne bad; next: dec ecx; jnz reader; nop; bad: ud2.
+        const program = new Uint8Array(80).fill(0x90);
+        program.set([0x48, 0x87, 0x03, 0xff, 0xc9, 0x75, 0xf9]);
+        program.set(
+          [
+            0x48, 0x8b, 0x03, 0x48, 0x39, 0xf0, 0x74, 0x05, 0x48, 0x39, 0xf8, 0x75, 0x05, 0xff,
+            0xc9, 0x75, 0xef, 0x90, 0x0f, 0x0b,
+          ],
+          32,
+        );
+        const options = linearMachine(compiler, program);
+        const at = RAM + 0x40n;
+        options.memory.mappings.splice(
+          1,
+          1,
+          span(at, 'data', 61, 3),
+          span(at + 3n, 'data', 192, 5),
+        );
+        const low = 0x7766554433221100n,
+          high = 0xcafedecab00badc0n;
+        await withMachine(factory, options, async (machine) => {
+          const count = 20_000n,
+            reader = ENTRY + 32n;
+          await machine.writeMemory(at, asBytes(low));
+          const [writer, observer] = machine.cpus;
+          await writer!.setState(cpuState(ENTRY, { 0: high, 1: count, 3: at }));
+          await observer!.setState(cpuState(reader, { 1: count, 3: at, 6: low, 7: high }));
+          const [w, r] = await Promise.all([
+            writer!.run({ budget: count * 3n + 1n, stop: ENTRY + 7n }),
+            observer!.run({ budget: count * 7n + 1n, stop: reader + 17n }),
+          ]);
+          done(w, ENTRY + 7n, count * 3n);
+          done(r, reader + 17n);
+          equal(
+            r.state.registers[1],
+            0n,
+            'reader consumes every iteration without torn byte diagnostic',
+          );
+          same(await words(machine, at, 1), [low], 'even swap count returns original full value');
+          equal(w.state.registers[0], high, 'writer register holds the other complete value');
+        });
+      },
+    },
+    {
+      name: 'split locked write fault publishes no partial bytes and exact retry retires once',
+      async run() {
+        // xchg [rbx],rax in the split-backed window, with only the second mapping write-protected.
+        const options = linearMachine(compiler, '48870390');
+        const at = RAM + 0x40n;
+        const old = 0x7766554433221100n,
+          value = 0x0011223344556677n;
+        const data = options.memory.backings[1]!.bytes;
+        const prefix = asBytes(old);
+        data.set(prefix.subarray(0, 3), 61);
+        data.set(prefix.subarray(3), 192);
+        options.memory.mappings.splice(
+          1,
+          1,
+          span(at, 'data', 61, 3),
+          span(at + 3n, 'data', 192, 5, 'r'),
+        );
+        await withMachine(factory, options, async (machine) => {
+          const cpu = machine.cpus[0]!;
+          await cpu.setState(cpuState(ENTRY, { 0: value, 3: at }));
+          const refused = await cpu.run({ budget: 2n, stop: ENTRY + 3n });
+          equal(refused.reason, 'data-fault', 'late permission check fault');
+          equal(refused.fault?.failingAddress, at + 3n, 'precise denied fragment');
+          equal(refused.retired, 0n, 'uncommitted instruction did not retire');
+          equal(refused.state.rip, ENTRY, 'retry at instruction start');
+          equal(
+            refused.state.registers[0],
+            value,
+            'failed atomic read leaves accumulator unchanged',
+          );
+          same(await words(machine, at, 1), [old], 'first writable fragment untouched');
+          await machine.setMappings(
+            options.memory.mappings.map((m) =>
+              m.base === at + 3n ? span(at + 3n, 'data', 192, 5) : m,
+            ),
+          );
+          const complete = await cpu.run({ budget: 2n, stop: ENTRY + 3n });
+          done(complete, ENTRY + 3n, 1n);
+          equal(complete.state.registers[0], old, 'one authorized atomic exchange');
+          same(await words(machine, at, 1), [value], 'both fragments written');
+        });
+      },
+    },
+  ];
+}
