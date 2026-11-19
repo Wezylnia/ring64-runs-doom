@@ -415,7 +415,8 @@ class ParallelMachine implements Machine {
     if (
       !binding ||
       this.#inProvider ||
-      peer.command?.sequence !== message.sequence ||
+      peer.command?.method !== 'run' ||
+      peer.command.sequence !== message.sequence ||
       message.ticket !== nextIdentity(peer.portTicket) ||
       !Number.isInteger(message.port) ||
       message.port < 0 ||

@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import { Worker } from 'node:worker_threads';
 import type { createMachine as create, Machine, MachineOptions } from './machine.js';
 import { SharedControl, SLOT } from './parallel/control.js';
+import type { FromWorker, ToWorker } from './parallel/protocol.js';
 import { bindRam, ramModule } from './parallel/ram.js';
 
 test('a phase close between publishing and rechecking a lease prevents entry', () => {
@@ -235,6 +237,210 @@ test(
       assert.equal(calls, 1);
       assert.throws(() => first.run({ budget: 1n }), { code: 'failed' });
       assert.throws(() => second.readState(), { code: 'failed' });
+    } finally {
+      await board.dispose();
+    }
+  },
+);
+
+type PortRequest = Extract<FromWorker, { kind: 'io' }>;
+
+test(
+  'a single run publishes two reached I/O effects in ticket order',
+  { timeout: 30000 },
+  async () => {
+    const ports: number[] = [];
+    const board = await machine([0xe4, 0x80, 0xe4, 0x81], {
+      read(port) {
+        ports.push(port);
+        return port;
+      },
+      write() {
+        assert.fail('unexpected output');
+      },
+    });
+    try {
+      const [result] = await Promise.allSettled([board.cpus[0]!.run({ budget: 2n })]);
+      assert.deepEqual(ports, [0x80, 0x81], 'the reached I/O sequence lost an effect');
+      assert.equal(result.status, 'fulfilled');
+      assert.equal(result.value.retired, 2n);
+      assert.equal(result.value.state.registers[0], 0x81n);
+    } finally {
+      await board.dispose();
+    }
+  },
+);
+
+function assertRejectedPort(result: PromiseSettledResult<unknown>): void {
+  assert.equal(result.status, 'rejected');
+  const error: unknown = result.reason;
+  assert.ok(error instanceof Error && 'code' in error);
+  assert.equal(error.code, 'failed');
+  assert.ok(error.cause instanceof Error);
+  assert.equal(error.cause.message, 'invalid parallel port request');
+}
+
+for (const [field, description] of [
+  ['ticket', 'a duplicate reached I/O ticket'],
+  ['sequence', 'a reached I/O request from a stale run'],
+] as const) {
+  test(`${description} fails before the provider runs`, { timeout: 30000 }, async (t) => {
+    const emit = Worker.prototype.emit;
+    const requests: PortRequest[] = [];
+    t.mock.method(
+      Worker.prototype,
+      'emit',
+      function (this: Worker, event: string, ...args: unknown[]) {
+        const message = args[0] as FromWorker | undefined;
+        if (event === 'message' && message?.kind === 'io') {
+          requests.push(message);
+          if (requests.length === 2) args[0] = { ...message, [field]: requests[0]![field] };
+        }
+        return emit.call(this, event, ...args);
+      },
+    );
+
+    const ports: number[] = [];
+    const board = await machine([0xe4, 0x80, 0xe4, 0x81], {
+      read(port) {
+        ports.push(port);
+        return port;
+      },
+      write() {
+        assert.fail('unexpected output');
+      },
+    });
+    try {
+      const cpu = board.cpus[0]!;
+      const first = await cpu.run({ budget: 1n });
+      assert.equal(first.retired, 1n);
+      assert.equal(first.state.registers[0], 0x80n);
+      const [result] = await Promise.allSettled([cpu.run({ budget: 1n })]);
+      assert.deepEqual(ports, [0x80], 'rejected request reached the provider');
+      assertRejectedPort(result);
+      assert.equal(requests.length, 2);
+      assert.equal(requests[1]!.ticket, requests[0]!.ticket + 1n);
+      assert.notEqual(requests[1]!.sequence, requests[0]!.sequence);
+    } finally {
+      await board.dispose();
+    }
+  });
+}
+
+test(
+  'a port request tagged to idle CPU inspection fails before the provider runs',
+  { timeout: 30000 },
+  async (t) => {
+    const post = Worker.prototype.postMessage;
+    t.mock.method(
+      Worker.prototype,
+      'postMessage',
+      function (this: Worker, ...args: Parameters<Worker['postMessage']>) {
+        const message = args[0] as ToWorker;
+        if (message.kind === 'command' && message.method === 'readState') {
+          const request: PortRequest = {
+            kind: 'io',
+            sequence: message.sequence,
+            ticket: 1n,
+            port: 0x80,
+            width: 8,
+          };
+          this.emit('message', request);
+        }
+        return post.apply(this, args);
+      },
+    );
+
+    const ports: number[] = [];
+    const board = await machine([0x90], {
+      read(port) {
+        ports.push(port);
+        return 0;
+      },
+      write() {
+        assert.fail('unexpected output');
+      },
+    });
+    try {
+      const [result] = await Promise.allSettled([board.cpus[0]!.readState()]);
+      assert.deepEqual(ports, [], 'idle inspection reached the provider');
+      assertRejectedPort(result);
+    } finally {
+      await board.dispose();
+    }
+  },
+);
+
+test(
+  'a reached INS retains its exclusive grant across input and a late destination fault',
+  { timeout: 30000 },
+  async (t) => {
+    const post = Worker.prototype.postMessage;
+    let control: SharedControl | undefined;
+    t.mock.method(
+      Worker.prototype,
+      'postMessage',
+      function (this: Worker, ...args: Parameters<Worker['postMessage']>) {
+        const message = args[0] as ToWorker;
+        if (message.kind === 'start' && message.id === 0)
+          control = new SharedControl(message.shared);
+        return post.apply(this, args);
+      },
+    );
+
+    const reached: Array<{ phase: bigint; grant: bigint }> = [];
+    const board = await machine([0x6c], {
+      read(port, width) {
+        assert.equal(port, 0x80);
+        assert.equal(width, 8);
+        assert.ok(control);
+        reached.push({ phase: control.phase, grant: control.load(0, SLOT.grant) });
+        return 0xa0 + reached.length;
+      },
+      write() {
+        assert.fail('unexpected output');
+      },
+    });
+    try {
+      const cpu = board.cpus[0]!;
+      const destination = 0x3020n;
+      const input = registers(destination);
+      input[2] = 0x80n;
+      await cpu.setState({ rip: 0x1000n, flags: 2n, registers: input });
+      const fault = await cpu.run({ budget: 1n });
+      assert.equal(fault.reason, 'data-fault');
+      assert.equal(fault.fault?.failingAddress, destination);
+      assert.equal(fault.retired, 0n);
+      assert.equal(fault.state.rip, 0x1000n);
+      assert.equal(fault.state.registers[7], destination);
+      assert.equal(reached.length, 1, 'the late fault consumed the first input');
+      assert.equal(reached[0]!.phase & 1n, 1n, 'reached INS input lacks a closed phase');
+      assert.notEqual(reached[0]!.grant, 0n, 'reached INS input lacks an exclusive grant');
+
+      await board.setMappings([
+        {
+          base: 0x1000n,
+          backing: 'code',
+          offset: 0,
+          length: 1,
+          permissions: { read: true, write: false, execute: true },
+        },
+        {
+          base: destination,
+          backing: 'ram',
+          offset: 0,
+          length: 32,
+          permissions: { read: true, write: true, execute: false },
+        },
+      ]);
+      const retried = await cpu.run({ budget: 1n });
+      assert.equal(retried.retired, 1n);
+      assert.equal(retried.state.rip, 0x1001n);
+      assert.equal(retried.state.registers[7], destination + 1n);
+      assert.equal(reached.length, 2, 'the architectural retry consumed one fresh input');
+      assert.equal(reached[1]!.phase & 1n, 1n);
+      assert.notEqual(reached[1]!.grant, reached[0]!.grant);
+      assert.equal((await board.readMemory(destination, 1))[0], 0xa2);
     } finally {
       await board.dispose();
     }
