@@ -104,6 +104,8 @@ where
         pc,
         next_pc: cursor.next_pc(),
         operation,
+        #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+        explicit_lock: prefixes.lock,
     })
 }
 

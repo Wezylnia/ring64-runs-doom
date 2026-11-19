@@ -103,7 +103,15 @@ fn initial_image(input: &[u8], metadata_len: u32) -> Result<InitialImage, Memory
     if total > u64::from(limits.max_backing_bytes) {
         return Err(MemoryError::Capacity("backing byte capacity exceeded"));
     }
-    if total != (input.len() - metadata_len) as u64 {
+    #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+    let shared = config.get("shared").map(|shared| {
+        ["ramBase", "ramCapacity", "guardBase", "watchBase"].map(|field| word(&shared[field]))
+    });
+    #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+    let payload_bytes = if shared.is_some() { 0 } else { total };
+    #[cfg(not(all(feature = "parallel", target_arch = "wasm32")))]
+    let payload_bytes = total;
+    if payload_bytes != (input.len() - metadata_len) as u64 {
         return Err(invalid());
     }
     let mut backings = Vec::new();
@@ -112,10 +120,32 @@ fn initial_image(input: &[u8], metadata_len: u32) -> Result<InitialImage, Memory
         .map_err(|_| MemoryError::Capacity("backing allocation refused"))?;
     let mut cursor = metadata_len;
     for description in inputs {
+        #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+        if shared.is_some() {
+            break;
+        }
         let length = word(&description["length"])? as usize;
         let id = name(&description["id"])?;
         backings.push((id.into(), copy(&input[cursor..cursor + length])?));
         cursor += length;
+    }
+    macro_rules! image {
+        ($standalone:ident, $physical:literal) => {{
+            #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+            if let Some([ram_base, ram_capacity, guard_base, watch_base]) = shared {
+                shared_image(
+                    inputs,
+                    maps,
+                    limits,
+                    $physical,
+                    [ram_base?, ram_capacity?, guard_base?, watch_base?],
+                )
+            } else {
+                Image::$standalone(backings, maps, limits)
+            }
+            #[cfg(not(all(feature = "parallel", target_arch = "wasm32")))]
+            Image::$standalone(backings, maps, limits)
+        }};
     }
     match config.get("memoryModel") {
         None | Some(Value::String(_))
@@ -124,7 +154,7 @@ fn initial_image(input: &[u8], metadata_len: u32) -> Result<InitialImage, Memory
             if config.get("paging").is_some() || config.get("fastSystem").is_some() {
                 return Err(invalid());
             }
-            Image::mapped(backings, maps, limits).map(|image| InitialImage {
+            image!(mapped, false).map(|image| InitialImage {
                 image,
                 paging: None,
                 fast_system: Default::default(),
@@ -142,7 +172,7 @@ fn initial_image(input: &[u8], metadata_len: u32) -> Result<InitialImage, Memory
                 .transpose()
                 .map_err(MemoryError::Invalid)?
                 .unwrap_or_default();
-            Image::physical_mapped(backings, maps, limits).map(|image| InitialImage {
+            image!(physical_mapped, true).map(|image| InitialImage {
                 image,
                 paging: Some(state),
                 fast_system,
@@ -164,7 +194,7 @@ fn initial_image(input: &[u8], metadata_len: u32) -> Result<InitialImage, Memory
             state
                 .validate_physical_context(&context)
                 .map_err(MemoryError::Invalid)?;
-            Image::physical_mapped(backings, maps, limits).map(|image| InitialImage {
+            image!(physical_mapped, true).map(|image| InitialImage {
                 image,
                 paging: Some(state),
                 fast_system,
@@ -174,6 +204,32 @@ fn initial_image(input: &[u8], metadata_len: u32) -> Result<InitialImage, Memory
         }
         _ => Err(invalid()),
     }
+}
+
+#[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+fn shared_image(
+    inputs: &[Value],
+    maps: Vec<MappingInput>,
+    limits: MemoryLimits,
+    physical: bool,
+    layout: [u32; 4],
+) -> Result<Image, MemoryError> {
+    let mut backings = Vec::new();
+    backings
+        .try_reserve_exact(inputs.len())
+        .map_err(|_| MemoryError::Capacity("shared backing allocation refused"))?;
+    for row in inputs {
+        backings.push((
+            name(&row["id"])?.into(),
+            word(&row["length"])?,
+            word(&row["offset"])?,
+            row["incarnation"]
+                .as_str()
+                .and_then(|value| value.parse::<u64>().ok())
+                .ok_or_else(invalid)?,
+        ));
+    }
+    Image::mapped_shared(backings, maps, limits, physical, layout)
 }
 
 #[unsafe(no_mangle)]

@@ -1138,12 +1138,27 @@ pub struct Instruction {
     pub pc: u64,
     pub next_pc: u64,
     pub operation: Operation,
+    #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+    pub explicit_lock: bool,
 }
 
 impl Instruction {
     pub fn encoded_len(&self) -> u32 {
         // Lengths are at most 15; low32 keeps both EIP32 and RIP64 wrap exact.
         self.next_pc.wrapping_sub(self.pc) as u32
+    }
+
+    #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+    pub(crate) fn shared_atomic(self) -> bool {
+        self.explicit_lock
+            || matches!(
+                self.operation,
+                Operation::Exchange {
+                    dst: Location::Memory(_),
+                    ..
+                } | Operation::CompareExchange8b { .. }
+                    | Operation::CompareExchange16b { .. }
+            )
     }
 }
 

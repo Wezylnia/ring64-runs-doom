@@ -54,7 +54,7 @@ impl Emitter {
         self.narrow(address.size);
     }
 
-    fn linear_address(&mut self) {
+    pub(super) fn linear_address(&mut self) {
         self.op(Op::LocalGet(ADDRESS));
         if self.context.is_long64() {
             let base = self.context.segment_base(self.segment);
@@ -125,6 +125,14 @@ impl Emitter {
     }
 
     pub(super) fn load_address_value(&mut self, width: Width, for_write: bool, exit_depth: u32) {
+        #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+        if self.parallel_load(width, for_write, exit_depth) {
+            return;
+        }
+        self.load_address_slow(width, for_write, exit_depth);
+    }
+
+    pub(super) fn load_address_slow(&mut self, width: Width, for_write: bool, exit_depth: u32) {
         self.linear_address();
         self.op(Op::I32Const(i32::from(width.bytes())));
         if !self.context.is_long64() {
@@ -139,6 +147,14 @@ impl Emitter {
     }
 
     pub(super) fn store_result(&mut self, width: Width, exit_depth: u32) {
+        #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+        if self.parallel_store(width, exit_depth) {
+            return;
+        }
+        self.store_result_slow(width, exit_depth);
+    }
+
+    pub(super) fn store_result_slow(&mut self, width: Width, exit_depth: u32) {
         self.stores = true;
         self.linear_address();
         self.op(Op::I32Const(i32::from(width.bytes())))
@@ -164,6 +180,13 @@ impl Emitter {
     ) {
         self.address(address, next_pc);
         self.op(Op::LocalSet(ADDRESS));
+        #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+        if self.parallel_scalar.is_some() {
+            self.data_operand(src, width);
+            self.op(Op::LocalSet(RESULT));
+            self.store_result(width, exit_depth);
+            return;
+        }
         self.linear_address();
         self.op(Op::I32Const(i32::from(width.bytes())));
         self.data_operand(src, width);

@@ -89,6 +89,8 @@ impl Emitter {
             self.exit(DISPATCH, exit_depth + 3);
             self.op(Op::End);
         }
+        #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+        self.parallel_boundary_with_flags(exit_depth + 2, compare);
         self.op(Op::Br(0)).op(Op::End).op(Op::End);
     }
 

@@ -130,8 +130,12 @@ impl Emitter {
         let store = self.vector_store.expect("16-byte store import");
         self.stores = true;
         self.address(address, next_pc);
-        self.op(Op::LocalTee(ADDRESS))
-            .op(Op::I32Const(address.segment as i32))
+        self.op(Op::LocalTee(ADDRESS));
+        #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+        if self.parallel_scalar.is_some() {
+            self.enter_parallel_guarded(16);
+        }
+        self.op(Op::I32Const(address.segment as i32))
             .op(Op::Call(read))
             .op(Op::LocalTee(STORE_STATUS))
             .op(Op::I32Eqz)

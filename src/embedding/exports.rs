@@ -807,6 +807,9 @@ pub extern "C" fn core_dispose() {
 #[cfg(test)]
 mod tests;
 
+#[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+mod parallel;
+
 #[unsafe(no_mangle)]
 pub extern "C" fn core_paged_load(address: u64, width: u32) -> u64 {
     core_load_impl::<false, true>(address, width)

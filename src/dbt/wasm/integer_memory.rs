@@ -12,6 +12,10 @@ impl Emitter {
         next_pc: u64,
         exit_depth: u32,
     ) {
+        #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+        let parallel = self.native_locked_integer(kind, address, operands, width, next_pc);
+        #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+        let exit_depth = exit_depth + u32::from(parallel);
         let writes_memory =
             matches!(operands, MemoryAluOperands::MemoryFirst(_)) && kind.writes_result();
         self.load_value(address, width, next_pc, writes_memory, exit_depth);
@@ -52,6 +56,10 @@ impl Emitter {
         {
             self.op(Op::LocalGet(RESULT));
             self.write_register(register, width);
+        }
+        #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+        if parallel {
+            self.op(Op::End);
         }
     }
 }

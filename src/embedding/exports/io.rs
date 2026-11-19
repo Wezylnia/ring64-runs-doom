@@ -153,6 +153,17 @@ fn execute<const OBSERVED: bool>(
         Ok(value) => value,
         Err(reason) => return reason,
     };
+    #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+    let _destination_permit = (kind == 2).then(|| {
+        BRIDGE.with_borrow(|bridge| {
+            bridge
+                .core
+                .as_ref()
+                .expect("initialized parallel core")
+                .image
+                .shared_exclusive()
+        })
+    });
     // The provider may throw through Wasm: no bridge/state borrow survives this call.
     let data = unsafe {
         if kind == 0 || kind == 2 {

@@ -33,6 +33,9 @@ mod unary;
 mod vector;
 mod x87;
 
+#[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+mod parallel;
+
 use std::collections::BTreeMap;
 use wasm_encoder::{
     BlockType, CodeSection, EntityType, ExportKind, ExportSection, Function, FunctionSection,
@@ -65,6 +68,12 @@ const ENTRY_FLAGS: u32 = 36;
 
 struct Emitter {
     paged: bool,
+    #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+    parallel_atomic: Option<parallel::Atomic>,
+    #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+    parallel_scalar: Option<parallel::Scalar>,
+    #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+    parallel_retry: Option<u32>,
     body: Function,
     entries: BTreeMap<u64, u32>,
     current_index: u32,
@@ -638,6 +647,29 @@ pub(crate) fn emit_profile(unit: &Unit, observed: bool, paged: bool) -> Vec<u8> 
             page_size_log2: None,
         }),
     );
+    #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+    {
+        imports.import(
+            "env",
+            "shared_ram",
+            EntityType::Memory(MemoryType {
+                minimum: 1,
+                maximum: Some(65536),
+                memory64: false,
+                shared: true,
+                page_size_log2: None,
+            }),
+        );
+        imports.import(
+            "env",
+            "parallel_signal",
+            EntityType::Global(wasm_encoder::GlobalType {
+                val_type: ValType::I32,
+                mutable: false,
+                shared: false,
+            }),
+        );
+    }
     imports.import(
         "env",
         if segmented { "segmented_load" } else { "load" },
@@ -926,6 +958,44 @@ pub(crate) fn emit_profile(unit: &Unit, observed: bool, paged: bool) -> Vec<u8> 
     } else {
         None
     };
+    #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+    let parallel_atomic = unit
+        .instructions
+        .iter()
+        .any(|instruction| instruction.shared_atomic())
+        .then(|| {
+            let release_type = types.len();
+            types.ty().function([ValType::I32], []);
+            let guard_type = types.len();
+            types
+                .ty()
+                .function([ValType::I64, ValType::I32, ValType::I32], [ValType::I32]);
+            let unguard_type = types.len();
+            types.ty().function([], []);
+            imports.import("env", "parallel_begin", EntityType::Function(2));
+            imports.import("env", "parallel_end", EntityType::Function(release_type));
+            imports.import("env", "parallel_guard", EntityType::Function(guard_type));
+            imports.import(
+                "env",
+                "parallel_unguard",
+                EntityType::Function(unguard_type),
+            );
+            let begin = run_index;
+            run_index += 4;
+            begin
+        });
+    #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+    let parallel_resolve = (!paged && !observed).then(|| {
+        let signature = types.len();
+        types.ty().function(
+            [ValType::I64, ValType::I32, ValType::I32, ValType::I32],
+            [ValType::I32],
+        );
+        imports.import("env", "parallel_resolve", EntityType::Function(signature));
+        let index = run_index;
+        run_index += 1;
+        index
+    });
     let mut functions = FunctionSection::new();
     functions.function(3);
     if dynamic_targets {
@@ -946,6 +1016,21 @@ pub(crate) fn emit_profile(unit: &Unit, observed: bool, paged: bool) -> Vec<u8> 
     }
     let mut vector_registers = [None; 16];
     let mut next_local = 35 + 2 * u32::from(has_repeat);
+    #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+    let parallel_atomic = parallel_atomic.map(|begin| {
+        let token = next_local;
+        locals.push((2, ValType::I32));
+        next_local += 2;
+        parallel::Atomic::new(begin, token)
+    });
+    #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+    let parallel_scalar = parallel_resolve.map(|resolve| {
+        let first = next_local;
+        locals.push((2, ValType::I32));
+        locals.push((4, ValType::I64));
+        next_local += 6;
+        parallel::Scalar::new(resolve, first)
+    });
     let boundary_locals = observed.then(|| {
         let result = [next_local, next_local + 1, next_local + 2, next_local + 3];
         locals.push((4, ValType::I32));
@@ -964,6 +1049,12 @@ pub(crate) fn emit_profile(unit: &Unit, observed: bool, paged: bool) -> Vec<u8> 
     });
     let mut emitter = Emitter {
         paged,
+        #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+        parallel_atomic,
+        #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+        parallel_scalar,
+        #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+        parallel_retry: None,
         current_index: 0,
         entry_lookup: dynamic_targets.then_some(run_index + 1),
         multiply_high,
@@ -1061,7 +1152,11 @@ pub(crate) fn emit_profile(unit: &Unit, observed: bool, paged: bool) -> Vec<u8> 
             .op(Op::I64Const(instruction.pc as i64))
             .op(Op::LocalSet(RIP));
         emitter.gates(exit_depth);
+        #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+        emitter.parallel_boundary(exit_depth);
         emitter.begin(instruction.operation, exit_depth);
+        #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+        let exit_depth = emitter.begin_parallel_instruction(*instruction, exit_depth);
         match instruction.operation {
             Operation::ProtectionKey(operation) => emitter.protection_key(operation, exit_depth),
             Operation::Processor(operation) => {
@@ -1359,6 +1454,8 @@ pub(crate) fn emit_profile(unit: &Unit, observed: bool, paged: bool) -> Vec<u8> 
                 emitter.count_branch(condition, count_width, target, loop_depth, exit_depth);
             }
         }
+        #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+        let exit_depth = emitter.end_parallel_instruction(*instruction, exit_depth);
         emitter.commit(instruction.next_pc);
         emitter.route(instruction.next_pc, loop_depth, exit_depth);
     }
@@ -1366,6 +1463,8 @@ pub(crate) fn emit_profile(unit: &Unit, observed: bool, paged: bool) -> Vec<u8> 
     emitter.exit(DISPATCH, 1);
     emitter.op(Op::End).op(Op::End);
     emitter.publish_state();
+    #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+    emitter.leave_parallel_atomic_if_held();
     emitter.op(Op::LocalGet(REASON)).op(Op::End);
     let mut code = CodeSection::new();
     code.function(&emitter.body);
