@@ -1,4 +1,5 @@
-import { byteLength, unsigned64, type Span } from './core.js';
+import { byteLength, unsigned64 } from './input.js';
+import type { Span } from './core.js';
 import type { ExecutionContext } from './context.js';
 import type { PagingState } from './paging.js';
 import type { FastSystemState } from './fast-system.js';

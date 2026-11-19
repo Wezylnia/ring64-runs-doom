@@ -1,4 +1,4 @@
-import { byteLength, copyMemoryInput, unsigned64 } from './core.js';
+import { byteLength, copyMemoryInput, unsigned64 } from './input.js';
 import {
   backingName,
   captureBackings,

@@ -1,4 +1,5 @@
 import { captureIo, type IoProvider } from './io.js';
+import { copyMemoryInput, unsigned64 } from './input.js';
 import type { DeviceNotAvailable, NumericControlFault } from './numeric-controls.js';
 import { captureDebugState, type DebugState } from './debug.js';
 import { capturePagingState, type PagingState } from './paging.js';
@@ -21,8 +22,6 @@ import {
   captureState,
   captureXmmState,
   captureMxcsr,
-  copyMemoryInput,
-  unsigned64,
   type CompileLimits,
   type Fault,
   type AlignmentFault,

@@ -1,5 +1,5 @@
 import { captureContext, type ExecutionContext } from '../context.js';
-import { copyMemoryInput, unsigned64 } from '../core.js';
+import { copyMemoryInput, unsigned64 } from '../input.js';
 import type { Limits } from '../cpu.js';
 import {
   captureFastSystemState,
