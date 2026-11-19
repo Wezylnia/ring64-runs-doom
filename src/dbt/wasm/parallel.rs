@@ -3,7 +3,7 @@ use crate::x86::instruction::{Address, Alu, Instruction, MemoryAluOperands, Oper
 use wasm_encoder::{BlockType, Instruction as Op, MemArg};
 
 const BOUNDARY: i32 = 29;
-const ATTEMPTS: i32 = 16;
+const ATTEMPTS: i32 = crate::memory::SHARED_CAS_ATTEMPTS as i32;
 const LANE: MemArg = MemArg {
     offset: 0,
     align: 3,

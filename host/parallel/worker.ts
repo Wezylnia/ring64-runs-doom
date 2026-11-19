@@ -212,7 +212,10 @@ class WorkerRuntime implements Binding {
   }
 
   #addScope(): number {
-    if (this.#scopeNext === 0xffffffff) throw new Error('parallel scope identity exhausted');
+    if (this.#scopeNext === 0x7fffffff) {
+      if (this.#scopes.size !== 0) throw new Error('parallel scope identity exhausted');
+      this.#scopeNext = 0;
+    }
     const token = ++this.#scopeNext;
     this.#scopes.add(token);
     return token;

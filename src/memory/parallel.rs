@@ -6,7 +6,8 @@ mod tests;
 #[cfg(all(feature = "parallel", any(target_arch = "wasm32", test)))]
 pub(crate) use image::{SharedBacking, SharedExclusive, SharedHeld, SharedLayout};
 
-const CAS_ATTEMPTS: usize = 16;
+// A generated store and its checked fallback can each spend one pass.
+pub(crate) const CAS_ATTEMPTS: usize = 8;
 
 trait Lanes {
     fn load(&self, lane: u32) -> u64;
