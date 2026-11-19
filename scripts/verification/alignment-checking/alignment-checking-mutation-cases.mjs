@@ -7,15 +7,17 @@ const granular = 'semantic operand granules suppress all candidate numeric and R
 const edit = (file, old, replacement) => ({ file, old, replacement });
 const native = (name, filter, ...edits) => ({ name, kind: 'native', filter, edits });
 const publicCpu = (name, filter, ...edits) => ({ name, kind: 'public', filter, edits });
-const gate = `        let prepared = self.prepare(address, width, access, rmw, class)?;
-        if self.alignment_controls
+const gate = `        if self.alignment_controls
             && class.is_user()
             && let Err(fault) = intent.check(address, width, access)
         {
             self.storage.borrow_mut().work.clear();
             return Err(AccessFailure::AlignmentCheck(fault));
-        }
-        Ok(prepared)`;
+        }`;
+const nominalAdmission = `        let mut candidates = Vec::new();
+        let mut offset = 0;
+        let mut storage = self.storage.borrow_mut();
+        while offset < width {`;
 export const mutants = [
   native(
     'new-ac-retains-older-mandatory-alignment-report',
@@ -71,12 +73,13 @@ export const mutants = [
       access,
       `        let prepared =
             self.prepare_aligned(address, width, Access::Write, true, self.class, intent)?;
-        let mut bytes = [0; 8];`,
+        self.read_prepared(&prepared, output);`,
       `        let prepared =
             self.prepare_aligned(address, width, Access::Write, true, self.class, intent)?;
         let updates = self.dirty_admission(&prepared, &[(0, width)])?;
         self.dirty_publish(&updates);
-        let mut bytes = [0; 8];`,
+        self.mark_dirty(&prepared, &[(0, width)]);
+        self.read_prepared(&prepared, output);`,
     ),
   ),
   native(
@@ -87,11 +90,12 @@ export const mutants = [
       `        if !prepared.published {
             let updates = self.dirty_admission(&prepared, fields)?;
             self.dirty_publish(&updates);
+            self.mark_dirty(&prepared, fields);
         }
         let mut storage = self.storage.borrow_mut();`,
       `        let deferred_updates = if !prepared.published {
-            self.dirty_admission(&prepared, fields)?
-        } else { Vec::new() };
+            Some(self.dirty_admission(&prepared, fields)?)
+        } else { None };
         let mut storage = self.storage.borrow_mut();`,
     ),
     edit(
@@ -104,7 +108,10 @@ export const mutants = [
 fn participates`,
       `        }
         drop(storage);
-        self.dirty_publish(&deferred_updates);
+        if let Some(updates) = deferred_updates {
+            self.dirty_publish(&updates);
+            self.mark_dirty(&prepared, fields);
+        }
         Ok(())
     }
 }
@@ -200,10 +207,12 @@ fn participates`,
       'src/embedding/exports/memory/paging.rs',
       `        core.paging = Some(candidate);
         core.paging_work.clear();
+        core.task_work = None;
         core.alignment_check = None;
         0`,
       `        core.paging = Some(candidate);
         core.paging_work.clear();
+        core.task_work = None;
         0`,
     ),
   ),
@@ -416,16 +425,7 @@ fn participates`,
   native(
     'ac-before-complete-nominal-admission',
     'complete_nominal_page_admission_precedes_alignment_in_fragment_order',
-    edit(
-      access,
-      gate,
-      gate
-        .replace('        let prepared = self.prepare(address, width, access, rmw, class)?;\n', '')
-        .replace(
-          '        Ok(prepared)',
-          '        let prepared = self.prepare(address, width, access, rmw, class)?;\n        Ok(prepared)',
-        ),
-    ),
+    edit(access, nominalAdmission, `${gate}\n${nominalAdmission}`),
   ),
   native(
     'dirty-publication-before-ac',
@@ -558,9 +558,10 @@ fn participates`,
     'secondary_alignment_is_benign_after_page_or_contributory_faults',
     edit(
       exceptions,
-      `        let double_fault = vector != 17
-            && (self.vector == 14 || vector != 14 && matches!(self.vector, 0 | 10..=13));`,
-      '        let double_fault = self.vector == 14 || vector != 14 && matches!(self.vector, 0 | 10..=13);',
+      `    if fault.vector != 17
+        && (previous == 14 || fault.vector != 14 && matches!(previous, 0 | 10..=13))
+    {`,
+      '    if previous == 14 || fault.vector != 14 && matches!(previous, 0 | 10..=13) {',
     ),
   ),
   native(
@@ -574,13 +575,13 @@ fn participates`,
     }
 
     fn secondary(self, vector: u8, error_code: u16, page_fault_address: Option<u64>) -> EventState {
-        if self.vector == 8`,
+        entry_secondary(`,
       `    pub fn escalate_alignment_check(self) -> EventState {
         self.secondary(17, 0, None)
     }
 
     fn secondary(self, vector: u8, error_code: u16, page_fault_address: Option<u64>) -> EventState {
-        if self.vector == 8`,
+        entry_secondary(`,
     ),
   ),
   publicCpu(
