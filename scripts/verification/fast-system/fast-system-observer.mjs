@@ -1,0 +1,754 @@
+import { access, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { createServer } from 'node:http';
+import { dirname, resolve, sep } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { chromium } from 'playwright';
+import { coreModulePath } from '../../emitted-host.mjs';
+import {
+  assertFastCandidate,
+  baseline,
+  checkedBaseline,
+  encode,
+  freeze,
+  hash,
+  manifest,
+  root,
+} from './fast-system-support.mjs';
+import {
+  checkedContextBaseline,
+  contextBaseline,
+} from '../context-reuse/context-reuse-support.mjs';
+
+const args = process.argv.slice(2);
+const browserMode = args.includes('--browser');
+const contextReuse = args.includes('--context-reuse');
+const inputFiles = [
+  ...(await readdir(resolve(root, 'benchmarks')))
+    .filter((name) => name.endsWith('.mjs'))
+    .map((name) => 'benchmarks/' + name),
+  'scripts/verification/paging/paging-kernels.mjs',
+  'scripts/verification/fast-system/fast-system-kernels.mjs',
+  'scripts/verification/context-reuse/context-reuse-kernels.mjs',
+  'scripts/verification/fast-system/fast-system-observer.mjs',
+  'scripts/emitted-host.mjs',
+];
+const inputHashes = async () =>
+  Object.fromEntries(
+    await Promise.all(
+      inputFiles.sort().map(async (path) => [path, hash(await readFile(resolve(root, path)))]),
+    ),
+  );
+const sourcesBefore = await inputHashes();
+if (contextReuse && !args.includes('--include-fast'))
+  throw Error('--context-reuse observes inherited fast kernels and requires --include-fast');
+const value = (name, fallback) => (args.includes(name) ? args[args.indexOf(name) + 1] : fallback);
+const stamp = new Date().toISOString().replaceAll(/[:.]/g, '-');
+const current = args.includes('--snapshot')
+  ? await manifest(resolve(value('--snapshot')))
+  : await freeze(value('--current', root), `fast-system-observer-build-${stamp}`);
+const old = await (contextReuse ? checkedContextBaseline : checkedBaseline)(
+  value('--baseline', contextReuse ? contextBaseline : baseline),
+);
+if (args.includes('--baseline-control')) {
+  if (resolve(current.path) !== resolve(old.path))
+    throw Error('baseline control requires the same exact8a build');
+} else await assertFastCandidate(current.path);
+const output = resolve(
+  value(
+    '--output',
+    `build/verification/fast-system-observer-${browserMode ? 'chrome' : 'node'}-${stamp}.json`,
+  ),
+);
+
+// Self-contained so the same transparent instrumentation runs in Node and Chrome.
+async function observe({
+  sides: definitions,
+  kernels,
+  pagingKernels,
+  fastKernels,
+  reuseKernels,
+  includeFast,
+  contextReuse,
+  sameBuildControl,
+  iterations,
+}) {
+  const canonical = (value) =>
+    JSON.stringify(value, (_, item) => {
+      if (typeof item === 'bigint') return item.toString();
+      if (item && typeof item === 'object' && !Array.isArray(item))
+        return Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b)));
+      return item;
+    });
+  const same = (a, b) => canonical(a) === canonical(b);
+  const key = (bytes) => {
+    let text = '';
+    for (let i = 0; i < bytes.length; i += 8192)
+      text += String.fromCharCode(...bytes.subarray(i, i + 8192));
+    return btoa(text);
+  };
+  const hash = async (bytes) =>
+    [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))]
+      .map((v) => v.toString(16).padStart(2, '0'))
+      .join('');
+  const evidence = {
+    timed: false,
+    description:
+      'Transparent actual Cpu/Wasm observation of all170 report/169 matched inherited linear groups and the20 inherited paged kernels, including debug-observed artifacts. All Core prototype methods/getters and generated helper calls are counted. Instrumentation is excluded from timing cohorts.',
+    interfaces: [],
+    runs: [],
+    failures: [],
+  };
+  const { measure, workloadNames } = await import(kernels);
+  const { measurePaging, pagingNames } = await import(pagingKernels);
+  if (workloadNames.length !== 170 || pagingNames.length !== 20)
+    throw Error('inherited workload manifest changed; review the baseline explicitly');
+  evidence.workloads = workloadNames;
+  evidence.pagingWorkloads = pagingNames;
+  const nativeCompile = WebAssembly.compile,
+    NativeInstance = WebAssembly.Instance;
+  const modules = new WeakMap(),
+    compiled = new Map(),
+    namesBySide = new Map(),
+    restore = [],
+    hooked = new WeakSet();
+  let active,
+    workload,
+    delivery,
+    phase,
+    cohort = 'inherited';
+  try {
+    WebAssembly.compile = async (bytes) => {
+      const module = await nativeCompile(bytes);
+      if (active) {
+        const descriptor = compiled.get(active.side + ':' + key(bytes));
+        if (!descriptor) throw Error('unattributed generated module');
+        const item = {
+          sha256: await hash(bytes),
+          bytes: bytes.byteLength,
+          observed: descriptor.observed,
+          imports: WebAssembly.Module.imports(module),
+        };
+        modules.set(module, { ...item, side: active.side });
+        active.modules.push(item);
+      }
+      return module;
+    };
+    WebAssembly.Instance = class extends NativeInstance {
+      constructor(module, imports) {
+        const metadata = modules.get(module),
+          record = active;
+        if (record && metadata && imports?.env) {
+          const names = namesBySide.get(metadata.side),
+            used = new Set(
+              metadata.imports.filter((item) => item.module === 'env').map((item) => item.name),
+            );
+          const bindings = Object.fromEntries(
+            Object.entries(imports.env)
+              .filter(([name]) => used.has(name))
+              .map(([name, value]) => [
+                name,
+                typeof value === 'function' ? (names.get(value.name) ?? ['unknown']) : ['memory'],
+              ]),
+          );
+          record.bindings.push({ observed: metadata.observed, imports: bindings });
+          if (Object.values(bindings).some((names) => names.includes('unknown')))
+            throw Error('generated helper binding could not be attributed');
+          if (
+            record.memoryModel === 'linear' &&
+            Object.values(bindings).some((list) =>
+              list.some((name) => name.startsWith('core_paged_')),
+            )
+          )
+            throw Error('linear artifact bound a paged helper');
+          imports = {
+            ...imports,
+            env: Object.fromEntries(
+              Object.entries(imports.env).map(([name, value]) => [
+                name,
+                typeof value === 'function'
+                  ? (...args) => {
+                      if (!active || active.side !== metadata.side)
+                        throw Error('helper invoked outside its owning measured run');
+                      const calls = metadata.observed ? active.observedCalls : active.ordinaryCalls;
+                      calls[name] = (calls[name] ?? 0) + 1;
+                      return value(...args);
+                    }
+                  : value,
+              ]),
+            ),
+          };
+        }
+        super(module, imports);
+        if (record && metadata) {
+          record.runArities.push(this.exports.run.length);
+          if (this.exports.run.length !== 5)
+            throw Error('generated invocation is no longer five arguments');
+        }
+      }
+    };
+    const sides = [];
+    for (const definition of definitions) {
+      const { createCpu } = await import(definition.host + '/index.js');
+      const { Core } = await import(definition.host + '/' + definition.core);
+      const bytes = definition.bytes
+        ? Uint8Array.from(definition.bytes)
+        : new Uint8Array(await (await fetch(definition.wasm)).arrayBuffer());
+      const compiler = await nativeCompile(bytes),
+        api = new NativeInstance(compiler, {
+          io: {
+            read() {
+              throw Error('unexpected port input during observer layout probe');
+            },
+            write() {
+              throw Error('unexpected port output during observer layout probe');
+            },
+          },
+        }).exports;
+      const input = api.core_input(2);
+      new Uint8Array(api.memory.buffer).set([0x90, 0], input);
+      if (api.core_init(0x1000n, 1, 0x4000n, 1) !== 0) throw Error('layout control failed');
+      const layout = JSON.parse(
+        new TextDecoder().decode(
+          new Uint8Array(api.memory.buffer, api.core_info_ptr(), api.core_info_len()),
+        ),
+      );
+      const exports = WebAssembly.Module.exports(compiler)
+        .map((item) => ({
+          ...item,
+          ...(item.kind === 'function' ? { arity: api[item.name].length } : {}),
+        }))
+        .sort((a, b) => a.name.localeCompare(b.name));
+      const names = new Map();
+      for (const item of exports)
+        if (item.kind === 'function')
+          names.set(api[item.name].name, [...(names.get(api[item.name].name) ?? []), item.name]);
+      namesBySide.set(definition.label, names);
+      evidence.interfaces.push({ side: definition.label, layout, exports });
+      api.core_dispose();
+      if (!hooked.has(Core)) {
+        hooked.add(Core);
+        for (const [name, descriptor] of Object.entries(
+          Object.getOwnPropertyDescriptors(Core.prototype),
+        )) {
+          if (name === 'constructor') continue;
+          const operation = descriptor.value ?? descriptor.get;
+          if (typeof operation !== 'function') continue;
+          const label = descriptor.get ? 'get:' + name : name;
+          const wrapped = function (...args) {
+            if (active) active.hostCalls[label] = (active.hostCalls[label] ?? 0) + 1;
+            const result = operation.apply(this, args);
+            if (contextReuse && active && name === 'stateView' && result instanceof DataView)
+              active.coreMemoryBytes = Math.max(
+                active.coreMemoryBytes ?? 0,
+                result.buffer.byteLength,
+              );
+            if (name === 'compile' && result && active)
+              compiled.set(active.side + ':' + key(result.bytes), {
+                observed: result.metadata.boundaryObserved ?? false,
+              });
+            return result;
+          };
+          Object.defineProperty(
+            Core.prototype,
+            name,
+            descriptor.get ? { ...descriptor, get: wrapped } : { ...descriptor, value: wrapped },
+          );
+          restore.push(() => Object.defineProperty(Core.prototype, name, descriptor));
+        }
+      }
+      sides.push({
+        label: definition.label,
+        compiler,
+        createCpu: async (options) => {
+          const cpu = await createCpu(options);
+          return new Proxy(cpu, {
+            get(target, name) {
+              if (name === 'run')
+                return async (...args) => {
+                  const record = {
+                    side: definition.label,
+                    workload,
+                    cohort,
+                    memoryModel: options.memoryModel ?? 'linear',
+                    matchedDelivery: delivery,
+                    modules: [],
+                    bindings: [],
+                    runArities: [],
+                    ordinaryCalls: {},
+                    observedCalls: {},
+                    hostCalls: {},
+                    ...(contextReuse ? { phase } : {}),
+                  };
+                  active = record;
+                  try {
+                    const result = await target.run(...args);
+                    Object.assign(record, {
+                      reason: result.reason,
+                      retired: result.retired,
+                      repeatIterations: result.repeatIterations,
+                      resources: result.resources,
+                      ...(contextReuse
+                        ? {
+                            semantic: Object.fromEntries(
+                              Object.entries(result).filter(
+                                ([name]) => !['resources', 'timings'].includes(name),
+                              ),
+                            ),
+                          }
+                        : {}),
+                    });
+                    evidence.runs.push(record);
+                    return result;
+                  } finally {
+                    active = undefined;
+                  }
+                };
+              const result = Reflect.get(target, name, target);
+              return typeof result === 'function' ? result.bind(target) : result;
+            },
+          });
+        },
+      });
+    }
+    const old = evidence.interfaces[0],
+      now = evidence.interfaces[1];
+    evidence.oldOffsetsPreserved = Object.entries(old.layout)
+      .filter(([name]) => name !== 'size' && name !== 'reasons')
+      .every(([name, item]) => same(item, now.layout[name]));
+    evidence.oldReasonCodesPreserved = same(
+      old.layout.reasons,
+      now.layout.reasons.slice(0, old.layout.reasons.length),
+    );
+    evidence.stateSizePreserved = now.layout.size === old.layout.size;
+    evidence.oldExportAritiesPreserved = old.exports.every((item) =>
+      now.exports.some((entry) => same(item, entry)),
+    );
+    for (const [name, ok] of Object.entries({
+      oldOffsetsPreserved: evidence.oldOffsetsPreserved,
+      oldReasonCodesPreserved: evidence.oldReasonCodesPreserved,
+      stateSizePreserved: evidence.stateSizePreserved,
+      oldExportAritiesPreserved: evidence.oldExportAritiesPreserved,
+    }))
+      if (!ok) evidence.failures.push(name);
+    for (const matchedDelivery of [false, true])
+      for (const name of workloadNames) {
+        workload = name;
+        delivery = matchedDelivery;
+        const result = await measure(sides, {
+          iterations,
+          samples: 1,
+          workloads: [name],
+          matchedDelivery,
+        });
+        if (result.unavailable.some((row) => !row.reason.startsWith('TF stepping detects events')))
+          throw Error('unexpected unavailable workload: ' + name);
+      }
+    delivery = false;
+    for (const name of pagingNames) {
+      workload = name;
+      for (const side of sides)
+        await measurePaging(side, { iterations, samples: 1, workloads: [name] });
+    }
+    const activeDefinitions = [];
+    if (includeFast) {
+      const { measureFast, fastNames, measureInheritedMsr, inheritedMsrNames } = await import(
+        fastKernels
+      );
+      cohort = contextReuse ? 'fast-paired' : 'fast-current-only';
+      for (const name of fastNames) {
+        workload = name;
+        for (const side of contextReuse ? sides : [sides[1]]) {
+          const result = await measureFast(side, { iterations, samples: 1, workloads: [name] });
+          if (side.label === 'current') activeDefinitions.push(...result.definitions);
+        }
+      }
+      cohort = 'inherited-msr-control';
+      for (const name of inheritedMsrNames) {
+        workload = name;
+        for (const side of sides)
+          await measureInheritedMsr(side, { iterations, samples: 1, workloads: [name] });
+      }
+      if (contextReuse) {
+        const { measureReuse, reuseNames, measurePopulation, populationNames } = await import(
+          reuseKernels
+        );
+        cohort = 'warm-reuse';
+        for (const name of reuseNames) {
+          workload = name;
+          for (const side of sides)
+            await measureReuse(side, {
+              iterations,
+              samples: 1,
+              workloads: [name],
+              requireReuse: side.label === 'current' && !sameBuildControl,
+              onPhase: (value) => {
+                phase = value;
+              },
+            });
+        }
+        phase = undefined;
+        evidence.warmCharacterizations = reuseNames.map((name) => {
+          const rows = evidence.runs.filter(
+            (row) =>
+              row.cohort === 'warm-reuse' &&
+              row.workload === name &&
+              row.side === 'current' &&
+              row.phase === 'measured',
+          );
+          const compileCalls = rows.reduce((sum, row) => sum + (row.hostCalls.compile ?? 0), 0);
+          const modules = rows.flatMap((row) => row.modules).length;
+          const instances = rows.flatMap((row) => row.runArities).length;
+          if (!sameBuildControl && (compileCalls || modules || instances))
+            evidence.failures.push(name + ':warm-actual-compilation');
+          return {
+            name,
+            nativeEntries: rows.reduce((sum, row) => sum + row.resources.nativeEntries, 0),
+            compileCalls,
+            modules,
+            instances,
+          };
+        });
+        cohort = 'population';
+        for (const name of populationNames) {
+          workload = name;
+          for (const side of sides)
+            await measurePopulation(side, {
+              iterations,
+              samples: 1,
+              workloads: [name],
+              requireReuse: side.label === 'current' && !sameBuildControl,
+              onPhase: (value) => {
+                phase = value;
+              },
+            });
+        }
+        evidence.populationCharacterizations = populationNames.map((name) => {
+          const rows = evidence.runs.filter(
+            (row) =>
+              row.cohort === 'population' &&
+              row.workload === name &&
+              row.side === 'current' &&
+              row.phase === 'measured',
+          );
+          const sum = (key) => rows.reduce((total, row) => total + (row.hostCalls[key] ?? 0), 0);
+          const [, count, position] = name.split('-'),
+            population = Number(count),
+            n = rows.length;
+          if (!sameBuildControl && position === 'first') {
+            const expected = {
+              activate: n,
+              valid: population * n,
+              compile: 0,
+              probe: 0,
+              publish: 0,
+              contextVersion: 0,
+              boundaryObserved: 0,
+            };
+            for (const [key, value] of Object.entries(expected))
+              if (sum(key) !== value) evidence.failures.push(name + ':default-call-count:' + key);
+          }
+          return {
+            name,
+            calls: rows.length,
+            activate: sum('activate'),
+            valid: sum('valid'),
+            compile: sum('compile'),
+            publish: sum('publish'),
+            release: sum('release'),
+            peakCoreLinearMemoryBytes: Math.max(...rows.map((row) => row.coreMemoryBytes ?? 0)),
+            maxCachedArtifacts: Math.max(...rows.map((row) => row.resources.cachedArtifacts)),
+            maxCachedBytes: Math.max(...rows.map((row) => row.resources.cachedBytes)),
+          };
+        });
+        phase = undefined;
+      }
+    }
+    const activeRuns = evidence.runs.filter(
+      (row) =>
+        row.side === 'current' &&
+        row.cohort === (contextReuse ? 'fast-paired' : 'fast-current-only'),
+    );
+    evidence.activeCharacterizations = activeDefinitions.map((definition) => {
+      const runs = activeRuns.filter((row) => row.workload === definition.name);
+      const count = (name) =>
+        runs.reduce(
+          (sum, row) => sum + (row.ordinaryCalls[name] ?? 0) + (row.observedCalls[name] ?? 0),
+          0,
+        );
+      const helperCalls = {
+        fastSystem: count('fast_system'),
+        pagingControl: count('paging_control'),
+      };
+      const exactSelectedHelperWork = same(helperCalls, definition.helperWork);
+      if (!exactSelectedHelperWork)
+        evidence.failures.push(definition.name + ':selected-helper-work');
+      return { definition, runCalls: runs.length, helperCalls, exactSelectedHelperWork };
+    });
+    const groupKey = (row) =>
+      `${row.cohort}:${row.memoryModel}:${row.matchedDelivery}:${row.workload}`;
+    const keys = [
+      ...new Set(evidence.runs.filter((row) => row.cohort !== 'fast-current-only').map(groupKey)),
+    ];
+    evidence.comparisons = keys.map((key) => {
+      const group = (side) =>
+        evidence.runs.filter((row) => groupKey(row) === key && row.side === side);
+      const project = (rows) => rows.map(({ side: _side, ...row }) => row);
+      const a = group('baseline'),
+        b = group('current');
+      const fields = [
+        'modules',
+        'bindings',
+        'ordinaryCalls',
+        'observedCalls',
+        'hostCalls',
+        'reason',
+        'retired',
+        'repeatIterations',
+        'resources',
+      ];
+      const mismatches = fields.filter(
+        (field) =>
+          !same(
+            a.map((row) => row[field]),
+            b.map((row) => row[field]),
+          ),
+      );
+      const invariantMismatches = [];
+      if (contextReuse) {
+        const unique = (rows, field) =>
+          [...new Set(rows.flatMap((row) => row[field]).map(canonical))].sort();
+        const total = (rows, field, omit = []) => {
+          const values = {};
+          for (const row of rows)
+            for (const [name, count] of Object.entries(row[field]))
+              if (!omit.includes(name)) values[name] = (values[name] ?? 0) + count;
+          return values;
+        };
+        for (const field of ['modules', 'bindings'])
+          if (!same(unique(a, field), unique(b, field))) invariantMismatches.push(field);
+        for (const field of ['ordinaryCalls', 'observedCalls'])
+          if (!same(total(a, field), total(b, field))) invariantMismatches.push(field);
+        for (const field of ['semantic'])
+          if (
+            !same(
+              a.map((row) => row[field]),
+              b.map((row) => row[field]),
+            )
+          )
+            invariantMismatches.push(field);
+        const ownershipCalls = [
+          'compile',
+          'probe',
+          'instantiate',
+          'publish',
+          'release',
+          'valid',
+          'activate',
+          'contextVersion',
+          'boundaryObserved',
+        ];
+        const invariantCalls = (rows) => {
+          const calls = total(rows, 'hostCalls');
+          // Metadata and reason adaptation occur on every cold compile/probe too.
+          for (const name of ['info', 'output'])
+            calls[name] = (calls[name] ?? 0) - (calls.compile ?? 0);
+          calls.reason = (calls.reason ?? 0) - (calls.compile ?? 0) - (calls.probe ?? 0);
+          return Object.fromEntries(
+            Object.entries(calls).filter(
+              ([name, value]) => value !== 0 && !ownershipCalls.includes(name),
+            ),
+          );
+        };
+        if (!same(invariantCalls(a), invariantCalls(b)))
+          invariantMismatches.push('unexpected-host-call-change');
+        const cacheResources = [
+          'compilations',
+          'cacheHits',
+          'generatedBytes',
+          'cachedArtifacts',
+          'cachedBytes',
+        ];
+        if (!same(total(a, 'resources', cacheResources), total(b, 'resources', cacheResources)))
+          invariantMismatches.push('non-cache-resource-change');
+        if (invariantMismatches.length)
+          evidence.failures.push(key + ':' + invariantMismatches.join(','));
+      } else if (!same(project(a), project(b)))
+        evidence.failures.push(key + ':' + mismatches.join(','));
+      return {
+        key,
+        baselineRunCalls: a.length,
+        currentRunCalls: b.length,
+        baselineModules: a.flatMap((row) => row.modules).length,
+        currentModules: b.flatMap((row) => row.modules).length,
+        mismatches,
+        identical: !mismatches.length,
+        ...(contextReuse
+          ? { invariantMismatches, invariantsPreserved: !invariantMismatches.length }
+          : {}),
+      };
+    });
+    evidence.msrComparisons = evidence.comparisons.filter((row) =>
+      row.key.startsWith('inherited-msr-control:'),
+    );
+    if (contextReuse) {
+      evidence.fastComparisons = evidence.comparisons.filter((row) =>
+        row.key.startsWith('fast-paired:'),
+      );
+      if (evidence.fastComparisons.length !== 11)
+        evidence.failures.push('missing paired fast controls');
+      evidence.warmComparisons = evidence.comparisons.filter((row) =>
+        row.key.startsWith('warm-reuse:'),
+      );
+      if (evidence.warmComparisons.length !== 7)
+        evidence.failures.push('missing paired warm controls');
+      evidence.populationComparisons = evidence.comparisons.filter((row) =>
+        row.key.startsWith('population:'),
+      );
+      if (evidence.populationComparisons.length !== 12)
+        evidence.failures.push('missing population controls');
+    }
+    evidence.comparisons = evidence.comparisons.filter((row) => row.key.startsWith('inherited:'));
+    if (includeFast && evidence.msrComparisons.length !== 2)
+      evidence.failures.push('missing inherited EFER controls');
+    if (evidence.comparisons.length !== 359)
+      evidence.failures.push('expected339 linear groups plus20 paged groups');
+    evidence.passed = evidence.failures.length === 0;
+  } finally {
+    WebAssembly.compile = nativeCompile;
+    WebAssembly.Instance = NativeInstance;
+    restore.forEach((item) => item());
+  }
+  return evidence;
+}
+
+const sides = [
+  ['baseline', old],
+  ['current', current],
+].map(([label, side]) => ({ label, path: side.path, core: coreModulePath(side) }));
+
+let result;
+if (!browserMode) {
+  result = await observe({
+    sides: await Promise.all(
+      sides.map(async ({ label, path, core }) => ({
+        label,
+        core,
+        host: pathToFileURL(resolve(path, 'build/host')).href,
+        bytes: [...(await readFile(resolve(path, 'build/ring64.wasm')))],
+      })),
+    ),
+    kernels: pathToFileURL(resolve(root, 'benchmarks/kernels.mjs')).href,
+    pagingKernels: pathToFileURL(resolve(root, 'scripts/verification/paging/paging-kernels.mjs'))
+      .href,
+    fastKernels: pathToFileURL(
+      resolve(root, 'scripts/verification/fast-system/fast-system-kernels.mjs'),
+    ).href,
+    reuseKernels: pathToFileURL(
+      resolve(root, 'scripts/verification/context-reuse/context-reuse-kernels.mjs'),
+    ).href,
+    includeFast: args.includes('--include-fast'),
+    contextReuse,
+    sameBuildControl: args.includes('--baseline-control'),
+    iterations: Number(value('--iterations', 101)),
+  });
+} else {
+  const roots = new Map(sides.map(({ label, path }) => [label, path]));
+  const server = createServer(async (request, response) => {
+    try {
+      const pathname = new URL(request.url ?? '/', 'http://localhost').pathname;
+      if (pathname === '/') {
+        response.end('<!doctype html><title>fast-system observer</title>');
+        return;
+      }
+      if (
+        [
+          '/scripts/verification/paging/paging-kernels.mjs',
+          '/scripts/verification/fast-system/fast-system-kernels.mjs',
+          '/scripts/verification/context-reuse/context-reuse-kernels.mjs',
+        ].includes(pathname)
+      ) {
+        response.writeHead(200, { 'content-type': 'text/javascript', 'cache-control': 'no-store' });
+        response.end(await readFile(resolve(root, '.' + pathname)));
+        return;
+      }
+      const [, label, ...parts] = pathname.split('/');
+      const base =
+        label === 'benchmarks'
+          ? resolve(root, 'benchmarks')
+          : resolve(roots.get(label) ?? '/invalid', 'build');
+      const file = resolve(base, ...parts);
+      if (!file.startsWith(base + sep)) throw Error('outside allowed route');
+      response.writeHead(200, {
+        'content-type': file.endsWith('.wasm') ? 'application/wasm' : 'text/javascript',
+        'cache-control': 'no-store',
+      });
+      response.end(await readFile(file));
+    } catch {
+      response.writeHead(404);
+      response.end();
+    }
+  });
+  await new Promise((done) => server.listen(0, '127.0.0.1', done));
+  let browser;
+  try {
+    let executablePath = process.env.RING64_BROWSER;
+    if (!executablePath)
+      try {
+        await access('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome');
+        executablePath = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+      } catch {
+        /* Playwright default */
+      }
+    browser = await chromium.launch({
+      headless: true,
+      ...(executablePath ? { executablePath } : {}),
+    });
+    const page = await browser.newPage();
+    await page.goto(`http://127.0.0.1:${server.address().port}/`);
+    result = await page.evaluate(observe, {
+      sides: sides.map(({ label, core }) => ({
+        label,
+        core,
+        host: `/${label}/host`,
+        wasm: `/${label}/ring64.wasm`,
+      })),
+      kernels: '/benchmarks/kernels.mjs',
+      pagingKernels: '/scripts/verification/paging/paging-kernels.mjs',
+      fastKernels: '/scripts/verification/fast-system/fast-system-kernels.mjs',
+      reuseKernels: '/scripts/verification/context-reuse/context-reuse-kernels.mjs',
+      includeFast: args.includes('--include-fast'),
+      contextReuse,
+      sameBuildControl: args.includes('--baseline-control'),
+      iterations: Number(value('--iterations', 101)),
+    });
+    result.browserVersion = browser.version();
+  } finally {
+    await browser?.close();
+    await new Promise((done) => server.close(done));
+  }
+}
+const sourcesAfter = await inputHashes();
+if (JSON.stringify(sourcesBefore) !== JSON.stringify(sourcesAfter))
+  throw Error('observer inputs changed during observation; discard the mixed-source result');
+await mkdir(dirname(output), { recursive: true });
+await writeFile(
+  output,
+  encode({
+    at: new Date().toISOString(),
+    runtime: browserMode ? 'chrome' : 'node',
+    manifests: { baseline: old, current },
+    inputSources: sourcesBefore,
+    inputSourcesUnchanged: true,
+    baselineControl: args.includes('--baseline-control'),
+    ...result,
+  }),
+);
+console.log({
+  output,
+  passed: result.passed,
+  comparisons: result.comparisons.length,
+  failures: result.failures,
+  activeCharacterizations: result.activeCharacterizations.length,
+  msrComparisons: result.msrComparisons.length,
+});
+if (!result.passed) process.exitCode = 1;

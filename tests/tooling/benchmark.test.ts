@@ -8,7 +8,9 @@ import test from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 test('call-gate plans bound resume amplification without changing other workloads', () => {
-  const script = fileURLToPath(new URL('../../scripts/call-gates-pair.mjs', import.meta.url));
+  const script = fileURLToPath(
+    new URL('../../scripts/verification/call-gates/call-gates-pair.mjs', import.meta.url),
+  );
   const names = ['gate-w4-n1-short-resumes', 'gate-w4-n1-linear', 'gate-w4-n1-private-page-repair'];
   const plan = (extra: string[]) =>
     spawnSync(
@@ -195,7 +197,9 @@ async function analyzeTimings(
     const input = join(directory, 'input.json');
     const output = join(directory, 'analysis.json');
     await writeFile(input, JSON.stringify({ definitions, samples }));
-    const script = fileURLToPath(new URL('../../scripts/paging-analyze.mjs', import.meta.url));
+    const script = fileURLToPath(
+      new URL('../../scripts/verification/paging/paging-analyze.mjs', import.meta.url),
+    );
     const result = spawnSync(process.execPath, [script, input, '--output', output], {
       encoding: 'utf8',
     });
