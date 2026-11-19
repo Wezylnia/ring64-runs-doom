@@ -60,3 +60,14 @@ The machine owns backing allocations and mappings. Its memory methods return
 copies, and its writes are visible to all vCPUs. Call `await machine.dispose()`
 when the embedding is finished. Use `createCpu` and `build/ring64.wasm` for the
 private single-vCPU runtime.
+
+Run the Node and isolated browser suites with `npm run test:parallel` and
+`npm run test:browser:parallel`. `npm run test:parallel:mutations` rebuilds a
+copy of the current Git commit and verifies each deliberate change against a
+specific failing assertion. It saves the baseline, failing and restored runs
+under `build/verification/parallel-mutations`.
+
+Use `npm run bench:parallel-latency -- node build build/parallel-latency.json`
+after building. The same command accepts `chromium` for the isolated browser.
+It compares identical guest work with and without timing probes in a temporary
+host copy and records native-entry, phase, pause, compile and I/O timings.
