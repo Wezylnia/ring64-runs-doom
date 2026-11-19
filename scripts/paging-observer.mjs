@@ -3,6 +3,7 @@ import { createServer } from 'node:http';
 import { dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { chromium } from 'playwright';
+import { coreModulePath } from './emitted-host.mjs';
 import { baseline, encode, freeze, manifest, root } from './paging-support.mjs';
 
 const args = process.argv.slice(2);
@@ -125,7 +126,7 @@ async function observe({ sides: definitions, kernels, iterations }) {
     const sides = [];
     for (const definition of definitions) {
       const { createCpu } = await import(definition.host + '/index.js');
-      const { Core } = await import(definition.host + '/core.js');
+      const { Core } = await import(definition.host + '/' + definition.core);
       const bytes = definition.bytes
         ? Uint8Array.from(definition.bytes)
         : new Uint8Array(await (await fetch(definition.wasm)).arrayBuffer());
@@ -304,27 +305,27 @@ async function observe({ sides: definitions, kernels, iterations }) {
   return evidence;
 }
 
+const sides = [
+  ['baseline', old],
+  ['current', current],
+].map(([label, side]) => ({ label, path: side.path, core: coreModulePath(side) }));
+
 let result;
 if (!browserMode) {
   result = await observe({
     sides: await Promise.all(
-      [
-        ['baseline', old],
-        ['current', current],
-      ].map(async ([label, side]) => ({
+      sides.map(async ({ label, path, core }) => ({
         label,
-        host: pathToFileURL(resolve(side.path, 'build/host')).href,
-        bytes: [...(await readFile(resolve(side.path, 'build/ring64.wasm')))],
+        core,
+        host: pathToFileURL(resolve(path, 'build/host')).href,
+        bytes: [...(await readFile(resolve(path, 'build/ring64.wasm')))],
       })),
     ),
     kernels: pathToFileURL(resolve(root, 'benchmarks/kernels.mjs')).href,
     iterations: Number(value('--iterations', 101)),
   });
 } else {
-  const roots = new Map([
-    ['baseline', old.path],
-    ['current', current.path],
-  ]);
+  const roots = new Map(sides.map(({ label, path }) => [label, path]));
   const server = createServer(async (request, response) => {
     try {
       const pathname = new URL(request.url ?? '/', 'http://localhost').pathname;
@@ -367,8 +368,9 @@ if (!browserMode) {
     const page = await browser.newPage();
     await page.goto(`http://127.0.0.1:${server.address().port}/`);
     result = await page.evaluate(observe, {
-      sides: ['baseline', 'current'].map((label) => ({
+      sides: sides.map(({ label, core }) => ({
         label,
+        core,
         host: `/${label}/host`,
         wasm: `/${label}/ring64.wasm`,
       })),

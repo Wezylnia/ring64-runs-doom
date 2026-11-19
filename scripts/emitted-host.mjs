@@ -9,6 +9,13 @@ export async function emittedModules(directory) {
     .sort();
 }
 
+export function coreModulePath({ hostFiles, path }) {
+  const cores = hostFiles.filter(({ name }) => name === 'wasm/core.js' || name === 'core.js');
+  if (cores.length !== 1) throw Error(`expected one emitted Core module in ${path}`);
+  const [core] = cores;
+  return core.name;
+}
+
 export async function hostIdentity(directory) {
   const host = createHash('sha256');
   const productionHost = createHash('sha256');

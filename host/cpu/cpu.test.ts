@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Core } from './core.js';
+import { Core } from '../wasm/core.js';
 import { Cpu, createCpu } from './cpu.js';
 
 const limits = {

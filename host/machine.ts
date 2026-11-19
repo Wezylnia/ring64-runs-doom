@@ -1,4 +1,4 @@
-import { byteLength, copyMemoryInput, unsigned64 } from './input.js';
+import { byteLength, copyMemoryInput, unsigned64 } from './embedding/input.js';
 import {
   backingName,
   captureBackings,
@@ -7,7 +7,7 @@ import {
   validateMappings,
   type MemoryBackingInput,
   type MemoryMapping,
-} from './memory.js';
+} from './embedding/memory.js';
 import { SharedControl, SIGNAL, SLOT, STARTUP_WORD, nextIdentity } from './parallel/control.js';
 import { handle, type ParallelCpu } from './parallel/handle.js';
 import {

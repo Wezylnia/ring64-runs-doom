@@ -1,12 +1,12 @@
 import { captureContext, type ExecutionContext } from '../state/context.js';
-import { copyMemoryInput, unsigned64 } from '../input.js';
-import type { Limits } from '../cpu.js';
+import { copyMemoryInput, unsigned64 } from '../embedding/input.js';
+import type { Limits } from '../cpu/cpu.js';
 import {
   captureFastSystemState,
   zeroFastSystemState,
   type FastSystemState,
 } from '../state/fast-system.js';
-import { captureIo, type IoProvider } from '../io.js';
+import { captureIo, type IoProvider } from '../embedding/io.js';
 import {
   captureBackings,
   captureMappings,
@@ -17,7 +17,7 @@ import {
   type MemoryLimits,
   type MemoryMapping,
   type MemoryModel,
-} from '../memory.js';
+} from '../embedding/memory.js';
 import { capturePagingState, type PagingState } from '../state/paging.js';
 import { sharedLayout } from './control.js';
 

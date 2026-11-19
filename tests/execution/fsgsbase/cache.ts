@@ -1,5 +1,5 @@
 import { type Cpu, createCpu } from '../../../host/index.js';
-import { Core } from '../../../host/core.js';
+import { Core } from '../../../host/wasm/core.js';
 import { check, equal, hex, initial, LIMITS, type Scenario } from '../../support/fixture.js';
 import { fixture, put, using } from '../supervisor-access/fixture.js';
 

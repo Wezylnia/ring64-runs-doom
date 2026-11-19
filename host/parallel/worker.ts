@@ -1,5 +1,5 @@
 import { SIGNAL, SLOT, STARTUP_WORD, SharedControl, cpuOffset, nextIdentity } from './control.js';
-import type { IoWidth } from '../io.js';
+import type { IoWidth } from '../embedding/io.js';
 import type {
   Binding,
   Command,

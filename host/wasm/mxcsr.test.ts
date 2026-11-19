@@ -1,14 +1,14 @@
-import { DEBUG_LAYOUT } from '../tests/support/debug-layout.js';
-import { TIME_LAYOUT } from '../tests/support/time-layout.js';
+import { DEBUG_LAYOUT } from '../../tests/support/debug-layout.js';
+import { TIME_LAYOUT } from '../../tests/support/time-layout.js';
 import {
   PROTECTION_KEYS_LAYOUT,
   PROTECTION_KEYS_STATE_SIZE,
-} from '../tests/support/protection-keys-layout.js';
+} from '../../tests/support/protection-keys-layout.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Core } from './core.js';
-import { createCpu } from './cpu.js';
-import { captureInitialMemory } from './memory.js';
+import { createCpu } from '../cpu/cpu.js';
+import { captureInitialMemory } from '../embedding/memory.js';
 
 const options = () => ({
   compiler: new WebAssembly.Module(Uint8Array.of(0, 97, 115, 109, 1, 0, 0, 0)),

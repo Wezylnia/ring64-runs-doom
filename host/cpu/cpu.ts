@@ -1,22 +1,22 @@
-import { captureIo, type IoProvider } from './io.js';
-import { copyMemoryInput, unsigned64 } from './input.js';
-import type { DeviceNotAvailable, NumericControlFault } from './state/numeric-controls.js';
-import { captureDebugState, type DebugState } from './state/debug.js';
-import { capturePagingState, type PagingState } from './state/paging.js';
-import { captureTimeState, type TimeState } from './state/time.js';
-import { captureProtectionKeysState, type ProtectionKeysState } from './state/protection-keys.js';
+import { captureIo, type IoProvider } from '../embedding/io.js';
+import { copyMemoryInput, unsigned64 } from '../embedding/input.js';
+import type { DeviceNotAvailable, NumericControlFault } from '../state/numeric-controls.js';
+import { captureDebugState, type DebugState } from '../state/debug.js';
+import { capturePagingState, type PagingState } from '../state/paging.js';
+import { captureTimeState, type TimeState } from '../state/time.js';
+import { captureProtectionKeysState, type ProtectionKeysState } from '../state/protection-keys.js';
 import {
   captureFastSystemState,
   zeroFastSystemState,
   type FastSystemState,
-} from './state/fast-system.js';
+} from '../state/fast-system.js';
 import {
   captureContext,
   type ExecutionContext,
   type ExecutionContextSnapshot,
   type SegmentFault,
-} from './state/context.js';
-import { captureX87State, type X87State, type X87Exception } from './state/x87.js';
+} from '../state/context.js';
+import { captureX87State, type X87State, type X87Exception } from '../state/x87.js';
 import {
   Core,
   type CompileLimits,
@@ -30,7 +30,7 @@ import {
   type DebugException,
   type PageFault,
   type PhysicalMemoryFault,
-} from './core.js';
+} from '../wasm/core.js';
 import { Translations, type Artifact, type InstalledEntry } from './translations.js';
 import {
   captureState,
@@ -38,7 +38,7 @@ import {
   captureMxcsr,
   type State,
   type StateSnapshot,
-} from './state/registers.js';
+} from '../state/registers.js';
 import {
   backingName,
   captureBackings,
@@ -51,7 +51,7 @@ import {
   type MemoryMapping,
   type MemoryModel,
   type MemoryOptions,
-} from './memory.js';
+} from '../embedding/memory.js';
 
 export interface Limits extends CompileLimits {
   maxCachedArtifacts: number;

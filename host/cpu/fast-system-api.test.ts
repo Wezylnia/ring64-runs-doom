@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Core } from './core.js';
+import { Core } from '../wasm/core.js';
 import { createCpu, type Options } from './cpu.js';
-import { longSnapshot } from '../tests/support/context.js';
+import { longSnapshot } from '../../tests/support/context.js';
 
 const limits = {
   maxInstructions: 32,

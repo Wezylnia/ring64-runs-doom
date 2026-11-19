@@ -106,7 +106,7 @@ const mutants = [
   {
     name: 'host-ignores-activation-refusal',
     kind: 'public-cpu',
-    file: 'host/cpu.ts',
+    file: 'host/cpu/cpu.ts',
     old: 'if (this.#engine.activate(candidate.artifact.metadata.owner)) {',
     replacement: 'if (this.#engine.activate(candidate.artifact.metadata.owner) || true) {',
     filter: 'keeps dormant FS variants',
@@ -156,30 +156,30 @@ const mutants = [
   {
     name: 'candidate-scan-falsely-updates-lru',
     kind: 'host-owner',
-    file: 'host/translations.ts',
+    file: 'host/cpu/translations.ts',
     old: '    return entries.get(pc) ?? EMPTY;',
     replacement:
       '    const found = entries.get(pc) ?? EMPTY;\n    for (const entry of found) this.touch(entry.artifact);\n    return found;',
-    testFile: 'host/translations.test.ts',
+    testFile: 'host/cpu/translations.test.ts',
     filter:
       'same-PC context candidates retain every owner and middle alias without changing recency',
   },
   {
     name: 'global-artifact-cap-doubled',
     kind: 'host-owner',
-    file: 'host/translations.ts',
+    file: 'host/cpu/translations.ts',
     old: 'this.#artifacts.size >= this.maxArtifacts',
     replacement: 'this.#artifacts.size >= this.maxArtifacts * 2',
-    testFile: 'host/translations.test.ts',
+    testFile: 'host/cpu/translations.test.ts',
     filter: 'count-limited eviction',
   },
   {
     name: 'global-byte-cap-doubled',
     kind: 'host-owner',
-    file: 'host/translations.ts',
+    file: 'host/cpu/translations.ts',
     old: 'this.#bytes + artifact.metadata.byteLength > this.maxBytes',
     replacement: 'this.#bytes + artifact.metadata.byteLength > this.maxBytes * 2',
-    testFile: 'host/translations.test.ts',
+    testFile: 'host/cpu/translations.test.ts',
     filter: 'byte pressure can evict multiple artifacts',
   },
   {

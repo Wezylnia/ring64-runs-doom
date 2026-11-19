@@ -1,4 +1,4 @@
-import { byteLength, unsigned64 } from '../input.js';
+import { byteLength, unsigned64 } from '../embedding/input.js';
 
 export type SegmentName = 'cs' | 'ss' | 'ds' | 'es' | 'fs' | 'gs';
 export type SegmentType =

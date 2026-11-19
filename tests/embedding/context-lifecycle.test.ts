@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import { Core } from '../../host/core.js';
+import { Core } from '../../host/wasm/core.js';
 import {
   createCpu,
   type Cpu,

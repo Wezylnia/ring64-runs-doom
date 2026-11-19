@@ -1,5 +1,5 @@
-export { createCpu } from './cpu.js';
-export type { Cpu, Limits, Options, RunResult } from './cpu.js';
+export { createCpu } from './cpu/cpu.js';
+export type { Cpu, Limits, Options, RunResult } from './cpu/cpu.js';
 export type { State, StateSnapshot, Interruptibility } from './state/registers.js';
 export type { X87State, X87Exception } from './state/x87.js';
 export type { EventState, ExceptionEvent, InterruptEvent, InterruptState } from './state/events.js';
@@ -16,14 +16,14 @@ export type {
   PhysicalMemoryFault,
   Span,
   UnitMetadata,
-} from './core.js';
+} from './wasm/core.js';
 export type {
   MemoryBackingInput,
   MemoryPermissions,
   MemoryMapping,
   MemoryLimits,
   MemoryModel,
-} from './memory.js';
+} from './embedding/memory.js';
 export type {
   ExecutionContext,
   ExecutionContextSnapshot,
@@ -45,7 +45,7 @@ export type { FastSystemState } from './state/fast-system.js';
 export type { TimeState } from './state/time.js';
 export type { ProtectionKeysState } from './state/protection-keys.js';
 
-export type { IoProvider, IoWidth } from './io.js';
+export type { IoProvider, IoWidth } from './embedding/io.js';
 export type {
   DeviceNotAvailable,
   NumericControlFault,

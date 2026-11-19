@@ -1,4 +1,4 @@
-import { Core } from '../../../host/core.js';
+import { Core } from '../../../host/wasm/core.js';
 import { LIMITS } from '../../support/fixture.js';
 import { mapping, RX, RW } from '../mapped-memory/fixture.js';
 import {

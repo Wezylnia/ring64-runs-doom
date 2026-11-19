@@ -705,7 +705,7 @@ fn participates`,
     'public-ac-packet-omitted',
     'semantic operand granules suppress all candidate numeric and RMW state',
     edit(
-      'host/cpu.ts',
+      'host/cpu/cpu.ts',
       "reason === 'alignment-check' ? this.#engine.alignmentCheck(reason) : undefined;",
       'undefined;',
     ),
@@ -715,7 +715,7 @@ fn participates`,
     'final segmented linear address reverses effective-offset residues',
     // Match the whole method tail to avoid mutating the older alignment-fault API.
     edit(
-      'host/core.ts',
+      'host/wasm/core.ts',
       `      address: BigInt(raw.address),
     };
   }

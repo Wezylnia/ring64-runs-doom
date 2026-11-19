@@ -1,4 +1,4 @@
-import type { Cpu } from '../cpu.js';
+import type { Cpu } from '../cpu/cpu.js';
 import {
   LOCAL_METHODS,
   type LocalMethod,

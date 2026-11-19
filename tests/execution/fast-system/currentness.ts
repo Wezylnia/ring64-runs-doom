@@ -1,4 +1,4 @@
-import { Core } from '../../../host/core.js';
+import { Core } from '../../../host/wasm/core.js';
 import type { FastSystemState } from '../../../host/index.js';
 import { longSnapshot } from '../../support/context.js';
 import {

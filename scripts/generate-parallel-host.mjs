@@ -10,14 +10,9 @@ function change(source, before, after) {
   return source.slice(0, start) + after + source.slice(start + before.length);
 }
 
-function relocate(source) {
-  return source.replaceAll(" from './", " from '../");
-}
-
 function coreBody(input) {
-  let source = relocate(input);
-  source = change(
-    source,
+  let source = change(
+    input,
     'constructor(exports, isPaged = false, physicalControls = false, io) {',
     'constructor(exports, isPaged = false, physicalControls = false, io, binding) {\n        this.parallelBinding = binding;',
   );
@@ -130,8 +125,8 @@ function coreBody(input) {
 }
 
 function cpuBody(input) {
-  let source = relocate(input);
-  source = change(source, " from '../core.js';", " from './core.generated.js';");
+  let source = change(input, " from '../wasm/core.js';", " from './core.generated.js';");
+  source = change(source, " from './translations.js';", " from '../cpu/translations.js';");
   source = change(
     source,
     'export async function createCpu(options) {',
@@ -264,7 +259,7 @@ function cpuBody(input) {
 }
 
 const [core, cpu] = await Promise.all(
-  ['core.js', 'cpu.js'].map((file) => readFile(new URL(file, directory), 'utf8')),
+  ['wasm/core.js', 'cpu/cpu.js'].map((file) => readFile(new URL(file, directory), 'utf8')),
 );
 const header = '// Generated from the standalone host during the build.\n';
 const files = [

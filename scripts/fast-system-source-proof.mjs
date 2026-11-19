@@ -86,14 +86,14 @@ for (const path of untouched) {
   if (before !== now) throw Error('previous successful helper/layout changed: ' + path);
 }
 const sections = [];
-for (const [path, start, end] of [
-  ['host/cpu.ts', '  async run(', undefined],
-  ['host/core.ts', '  snapshot(): StateSnapshot {', '\n  setState('],
+for (const [path, start, end, originalPath = path] of [
+  ['host/cpu/cpu.ts', '  async run(', undefined, 'host/cpu.ts'],
+  ['host/wasm/core.ts', '  snapshot(): StateSnapshot {', '\n  setState(', 'host/core.ts'],
   ['src/embedding/exports.rs', 'macro_rules! guest_access', '\nmod context;'],
   ['src/embedding/exports.rs', 'pub extern "C" fn core_load(', undefined],
 ]) {
   const current = await readFile(resolve(root, path), 'utf8'),
-    baseline = baselineSource(path);
+    baseline = baselineSource(originalPath);
   const take = (source) => {
     const from = source.indexOf(start),
       to = end ? source.indexOf(end, from) : source.length;
@@ -104,6 +104,7 @@ for (const [path, start, end] of [
     b = take(current);
   sections.push({
     path,
+    originalPath,
     start,
     end: end ?? 'EOF',
     baselineSha256: hash(a),
@@ -126,7 +127,7 @@ for (const [path, anchors] of Object.entries({
     'pub extern "C" fn core_fast_system(',
   ],
   'src/embedding/exports.rs': ['fast_system: crate::x86::fast_system::State'],
-  'host/core.ts': [
+  'host/wasm/core.ts': [
     'readFastSystemState(): FastSystemState',
     'env.fast_system = this.#exports.core_fast_system',
   ],

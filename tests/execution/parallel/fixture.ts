@@ -8,7 +8,7 @@ import type {
   RunResult,
   State,
 } from '../../../host/index.js';
-import type { IoProvider } from '../../../host/io.js';
+import type { IoProvider } from '../../../host/embedding/io.js';
 import { LIMITS, equal, hex, initial, same } from '../../support/fixture.js';
 
 export { equal, hex, initial, same };

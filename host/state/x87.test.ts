@@ -7,9 +7,9 @@ import {
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { captureX87State, type X87State } from './x87.js';
-import { Core } from '../core.js';
-import { captureInitialMemory } from '../memory.js';
-import { createCpu } from '../cpu.js';
+import { Core } from '../wasm/core.js';
+import { captureInitialMemory } from '../embedding/memory.js';
+import { createCpu } from '../cpu/cpu.js';
 
 const layout = {
   size: PROTECTION_KEYS_STATE_SIZE,
