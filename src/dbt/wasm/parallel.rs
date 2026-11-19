@@ -152,7 +152,7 @@ impl Emitter {
     }
 
     fn shared_address(&mut self, scalar: Scalar, width: Width, access: i32) {
-        let memo = if access != 2 && self.parallel_retry.is_none() {
+        let memo = if self.parallel_memo_address && access != 2 && self.parallel_retry.is_none() {
             self.parallel_address_memos.pop()
         } else {
             None
@@ -168,10 +168,13 @@ impl Emitter {
                 .op(Op::LocalGet(resolved))
                 .op(Op::I32Eqz)
                 .op(Op::I32Eqz)
-                .op(Op::I32And);
+                .op(Op::I32And)
+                .op(Op::If(BlockType::Result(wasm_encoder::ValType::I32)));
             self.parallel_signal();
             self.op(Op::I32Eqz)
-                .op(Op::I32And)
+                .op(Op::Else)
+                .op(Op::I32Const(0))
+                .op(Op::End)
                 .op(Op::If(BlockType::Result(wasm_encoder::ValType::I32)))
                 .op(Op::LocalGet(resolved))
                 .op(Op::Else)

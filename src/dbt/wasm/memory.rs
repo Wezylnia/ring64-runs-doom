@@ -16,6 +16,15 @@ impl Emitter {
         pending_stack: Option<u32>,
     ) {
         self.segment = address.segment;
+        #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+        {
+            self.parallel_memo_address = address.index.is_none()
+                && pending_stack.is_none()
+                && !matches!(
+                    self.current_operation,
+                    crate::x86::instruction::Operation::String { .. }
+                );
+        }
         let has_base = if let AddressBase::Register(base) = address.base {
             self.op(Op::LocalGet(if base == 4 {
                 pending_stack.unwrap_or(GPR + 4)

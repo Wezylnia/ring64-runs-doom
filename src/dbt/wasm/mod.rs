@@ -76,6 +76,8 @@ struct Emitter {
     parallel_retry: Option<u32>,
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     parallel_address_memos: Vec<(u32, u32)>,
+    #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+    parallel_memo_address: bool,
     body: Function,
     entries: BTreeMap<u64, u32>,
     current_index: u32,
@@ -1078,6 +1080,8 @@ pub(crate) fn emit_profile(unit: &Unit, observed: bool, paged: bool) -> Vec<u8> 
         parallel_retry: None,
         #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
         parallel_address_memos,
+        #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+        parallel_memo_address: false,
         current_index: 0,
         entry_lookup: dynamic_targets.then_some(run_index + 1),
         multiply_high,
@@ -1168,6 +1172,10 @@ pub(crate) fn emit_profile(unit: &Unit, observed: bool, paged: bool) -> Vec<u8> 
         emitter.current_index = index as u32;
         emitter.current_pc = instruction.pc;
         emitter.current_operation = instruction.operation;
+        #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+        {
+            emitter.parallel_memo_address = false;
+        }
         emitter.stores = false;
         let loop_depth = count - index as u32;
         let exit_depth = loop_depth + 1;
