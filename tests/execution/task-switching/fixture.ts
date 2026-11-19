@@ -3,8 +3,7 @@ import { protectedSnapshot } from '../../support/context.js';
 import { equal, LIMITS } from '../../support/fixture.js';
 import { image } from './program.js';
 
-export { check, equal, throws, type Scenario } from '../../support/fixture.js';
-export { same } from '../far-control/fixture.js';
+export { check, equal, same, throws, type Scenario } from '../../support/fixture.js';
 
 // Physical/linear addresses from the flat NASM listing in repair.asm.
 export const CALL = 0x100131n,

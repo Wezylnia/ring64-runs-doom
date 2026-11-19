@@ -4,9 +4,8 @@ import {
   type ExecutionContext,
   type PagingState,
 } from '../../../host/index.js';
-import { LIMITS, check, equal, hex, initial, type Scenario } from '../../support/fixture.js';
+import { LIMITS, check, equal, hex, initial, same, type Scenario } from '../../support/fixture.js';
 import { context } from '../modes/fixture.js';
-import { same } from '../far-control/fixture.js';
 
 const PC = 0x400000n;
 const BANK: PagingState = { cr0: 0x80000033n, cr2: 0n, cr3: 0x1000n, cr4: 0x628n, efer: 0x500n };

@@ -27,6 +27,19 @@ export function equal(actual: unknown, expected: unknown, label: string): void {
   check(actual === expected, `${label}: expected ${String(expected)}, received ${String(actual)}`);
 }
 
+export function fingerprint(value: unknown): string {
+  return JSON.stringify(value, (_, v: unknown) => {
+    if (typeof v === 'bigint') return v.toString(16);
+    if (v !== null && typeof v === 'object' && !Array.isArray(v))
+      return Object.fromEntries(Object.entries(v).sort(([a], [b]) => a.localeCompare(b)));
+    return v;
+  });
+}
+
+export function same(actual: unknown, expected: unknown, label: string): void {
+  equal(fingerprint(actual), fingerprint(expected), label);
+}
+
 export function hex(source: string): Uint8Array {
   check(source.length % 2 === 0 && /^[0-9a-f]*$/.test(source), 'malformed literal bytes');
   return Uint8Array.from(source.match(/../g) ?? [], (byte) => Number.parseInt(byte, 16));

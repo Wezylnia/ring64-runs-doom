@@ -1,13 +1,7 @@
 import type { SegmentName, SegmentSnapshot } from '../../../host/index.js';
+import { fingerprint } from '../../support/fixture.js';
 import { changed, equal, hex, initial, snapshot, state, using, type Scenario } from './fixture.js';
-import {
-  addressPrefix,
-  bytes,
-  fingerprint,
-  operandPrefix,
-  preserveNumeric,
-  profiles,
-} from './modes.js';
+import { addressPrefix, bytes, operandPrefix, preserveNumeric, profiles } from './modes.js';
 
 function loaded(selector = 8): SegmentSnapshot {
   return {

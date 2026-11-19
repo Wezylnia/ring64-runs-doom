@@ -8,8 +8,8 @@ import type {
 import { context } from '../modes/fixture.js';
 export { createCpu } from '../../../host/index.js';
 export { using, input as initial, changed } from '../modes/fixture.js';
-export { equal, check, state, hex, LIMITS, type Scenario } from '../../support/fixture.js';
-import { equal } from '../../support/fixture.js';
+export { equal, check, state, hex, same, LIMITS, type Scenario } from '../../support/fixture.js';
+import { equal, fingerprint } from '../../support/fixture.js';
 
 export const CODE16 = 'ffff0000009b0000';
 export const CODE32 = 'ffff0000009bcf00';
@@ -90,17 +90,6 @@ export function bytes(value: bigint, width: number): string {
       .toString(16)
       .padStart(2, '0'),
   ).join('');
-}
-export function fingerprint(value: unknown): string {
-  return JSON.stringify(value, (_, v: unknown) => {
-    if (typeof v === 'bigint') return v.toString(16);
-    if (v !== null && typeof v === 'object' && !Array.isArray(v))
-      return Object.fromEntries(Object.entries(v).sort(([a], [b]) => a.localeCompare(b)));
-    return v;
-  });
-}
-export function same(actual: unknown, expected: unknown, label: string): void {
-  equal(fingerprint(actual), fingerprint(expected), label);
 }
 export function preserveNumeric(cpu: Cpu): () => void {
   cpu.setXmmState(

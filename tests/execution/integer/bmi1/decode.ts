@@ -1,5 +1,4 @@
-import { check, equal, exit, hex, initial, type Scenario } from '../../../support/fixture.js';
-import { same } from '../../far-control/fixture.js';
+import { check, equal, exit, hex, initial, same, type Scenario } from '../../../support/fixture.js';
 import { context, LONG, using } from '../../modes/fixture.js';
 import { BANK, PC, usingPaged } from '../../paging/fixture.js';
 

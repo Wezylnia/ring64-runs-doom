@@ -4,8 +4,7 @@ import type {
   RunResult,
   StateSnapshot,
 } from '../../../host/index.js';
-import { hex, equal } from '../../support/fixture.js';
-import { same } from '../far-control/fixture.js';
+import { hex, equal, same } from '../../support/fixture.js';
 export { createCpu } from '../../../host/index.js';
 export type {
   Cpu,
@@ -14,12 +13,11 @@ export type {
   StateSnapshot,
 } from '../../../host/index.js';
 export { using } from '../modes/fixture.js';
-export { check, equal, hex, LIMITS, throws, type Scenario } from '../../support/fixture.js';
+export { check, equal, hex, LIMITS, same, throws, type Scenario } from '../../support/fixture.js';
 export {
   snapshot,
   loadedCode,
   loadedData,
-  same,
   bytes,
   CODE16,
   CODE32,

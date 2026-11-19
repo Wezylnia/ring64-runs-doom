@@ -9,10 +9,9 @@ import type {
   State,
 } from '../../../host/index.js';
 import type { IoProvider } from '../../../host/io.js';
-import { LIMITS, equal, hex, initial } from '../../support/fixture.js';
+import { LIMITS, equal, hex, initial, same } from '../../support/fixture.js';
 
-export { equal, hex, initial };
-export { same } from '../paging/fixture.js';
+export { equal, hex, initial, same };
 export const ENTRY = 0x1000n;
 export const RAM = 0x4000n;
 

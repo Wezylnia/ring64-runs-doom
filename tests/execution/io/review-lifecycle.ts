@@ -1,6 +1,5 @@
 import { createCpu, type IoProvider } from '../../../host/index.js';
-import { LIMITS, check, equal, hex, initial, type Scenario } from '../../support/fixture.js';
-import { same } from '../far-control/fixture.js';
+import { LIMITS, check, equal, hex, initial, same, type Scenario } from '../../support/fixture.js';
 
 export function ioLifecycleReviewScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [

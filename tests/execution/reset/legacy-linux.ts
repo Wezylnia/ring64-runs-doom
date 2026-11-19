@@ -1,6 +1,5 @@
 import type { Cpu, ExecutionContextSnapshot, Options, PagingState } from '../../../host/index.js';
-import { LIMITS } from '../../support/fixture.js';
-import { same } from '../far-control/fixture.js';
+import { LIMITS, same } from '../../support/fixture.js';
 import { createCpu, equal, hex, put, resetContext, type Scenario } from './fixture.js';
 
 // Linux v0.11, archive 7aadf253807264ad5561479e2a8b9de9602f966d.

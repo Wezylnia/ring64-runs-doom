@@ -1,14 +1,7 @@
 import type { Cpu, ExecutionContextSnapshot } from '../../../host/index.js';
+import { fingerprint } from '../../support/fixture.js';
 import { changed, equal, hex, initial, snapshot, state, using, type Scenario } from './fixture.js';
 
-export function fingerprint(value: unknown): string {
-  return JSON.stringify(value, (_, v: unknown) => {
-    if (typeof v === 'bigint') return v.toString(16);
-    if (v !== null && typeof v === 'object' && !Array.isArray(v))
-      return Object.fromEntries(Object.entries(v).sort(([a], [b]) => a.localeCompare(b)));
-    return v;
-  });
-}
 export function bytes(value: bigint, width: number): string {
   return Array.from({ length: width }, (_, i) =>
     Number((value >> BigInt(i * 8)) & 255n)

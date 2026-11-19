@@ -7,8 +7,7 @@ import {
   type IoProvider,
 } from '../../../host/index.js';
 import { LIMITS, hex } from '../../support/fixture.js';
-export { check, equal, hex, initial, type Scenario } from '../../support/fixture.js';
-export { same } from '../far-control/fixture.js';
+export { check, equal, hex, initial, same, type Scenario } from '../../support/fixture.js';
 export type { Cpu, PagingState } from '../../../host/index.js';
 export const PC = 0x400000n;
 export const BANK: PagingState = {

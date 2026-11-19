@@ -1,5 +1,11 @@
-import { CODE, createFixture, initial, equal, type Scenario } from '../../../support/fixture.js';
-import { same } from '../../far-control/fixture.js';
+import {
+  CODE,
+  createFixture,
+  initial,
+  equal,
+  same,
+  type Scenario,
+} from '../../../support/fixture.js';
 import { bitmapScenario } from './bitmap.js';
 import { boundaryScenarios } from './boundaries.js';
 import { decodeScenarios } from './decode.js';

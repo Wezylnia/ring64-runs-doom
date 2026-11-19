@@ -12,7 +12,7 @@ import {
   hex,
   type Scenario,
 } from './paging/fixture.js';
-import { same } from './far-control/fixture.js';
+import { same } from '../support/fixture.js';
 
 export function numericControlScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [
