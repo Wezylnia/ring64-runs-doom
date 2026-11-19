@@ -254,21 +254,22 @@ function cpuBody(input) {
                     (reason === 'repeat-budget' && remainingRepeatBudget !== 0n))
                     reason = 'parallel-boundary';`,
   );
-  const restart = source.lastIndexOf("                if (reason === 'paging-restart') {");
-  if (restart < 0) throw new Error('parallel host derivative lost the reached restart branch');
-  return (
-    source.slice(0, restart) +
-    "                if (reason === 'parallel-boundary') continue execution;\n" +
-    source.slice(restart)
+  const restart = `                if (reason === 'paging-restart') {
+                    resources.pagingRestarts = (resources.pagingRestarts ?? 0) + 1;`;
+  return change(
+    source,
+    restart,
+    `                if (reason === 'parallel-boundary') continue execution;\n${restart}`,
   );
 }
 
-await mkdir(output, { recursive: true });
 const [core, cpu] = await Promise.all(
   ['core.js', 'cpu.js'].map((file) => readFile(new URL(file, directory), 'utf8')),
 );
 const header = '// Generated from the standalone host during the build.\n';
-await Promise.all([
-  writeFile(new URL('core.generated.js', output), header + coreBody(core)),
-  writeFile(new URL('engine.generated.js', output), header + cpuBody(cpu)),
-]);
+const files = [
+  ['core.generated.js', header + coreBody(core)],
+  ['engine.generated.js', header + cpuBody(cpu)],
+];
+await mkdir(output, { recursive: true });
+await Promise.all(files.map(([name, contents]) => writeFile(new URL(name, output), contents)));
