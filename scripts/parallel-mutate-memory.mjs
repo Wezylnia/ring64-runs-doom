@@ -72,7 +72,7 @@ export const memoryMutations = [
   },
   {
     name: 'locked-masked-lane-publishes-without-compare',
-    path: 'src/dbt/wasm/parallel.rs',
+    path: 'src/dbt/wasm/memory/parallel.rs',
     from: 'self.op(Op::I64AtomicRmwCmpxchg(LANE));',
     to: `self.op(Op::LocalSet(scalar.payload))
             .op(Op::Drop)

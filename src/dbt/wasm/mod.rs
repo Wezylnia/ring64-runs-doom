@@ -1,39 +1,75 @@
+// Group source files by responsibility while keeping the emitter modules in one scope.
+#[path = "integer/bits.rs"]
 mod bits;
+#[path = "integer/bmi.rs"]
 mod bmi;
+#[path = "execution/boundary.rs"]
 mod boundary;
+#[path = "execution/compound_stack.rs"]
 mod compound_stack;
+#[path = "execution/control.rs"]
 mod control;
+#[path = "integer/counts.rs"]
 mod counts;
+#[path = "integer/data.rs"]
 mod data;
+#[path = "system/debug.rs"]
 mod debug;
+#[path = "execution/entry_lookup.rs"]
 mod entry_lookup;
+#[path = "integer/exchange.rs"]
 mod exchange;
+#[path = "execution/far.rs"]
 mod far;
+#[path = "system/fast_system.rs"]
 mod fast_system;
+#[path = "numeric/float.rs"]
 mod float;
+#[path = "integer/integer.rs"]
 mod integer;
+#[path = "integer/integer_memory.rs"]
 mod integer_memory;
+#[path = "system/io.rs"]
 mod io;
+#[path = "memory/memory.rs"]
 mod memory;
+#[path = "numeric/mmx.rs"]
 mod mmx;
+#[path = "integer/multiply_divide.rs"]
 mod multiply_divide;
+#[path = "numeric/numeric_state.rs"]
 mod numeric_state;
+#[path = "system/paging.rs"]
 mod paging;
+#[path = "system/processor.rs"]
 mod processor;
+#[path = "system/protection.rs"]
 mod protection;
+#[path = "system/protection_keys.rs"]
 mod protection_keys;
+#[path = "system/software_events.rs"]
 mod software_events;
+#[path = "numeric/ssse3.rs"]
 mod ssse3;
+#[path = "execution/stack.rs"]
 mod stack;
+#[path = "execution/state.rs"]
 mod state;
+#[path = "memory/streaming.rs"]
 mod streaming;
+#[path = "memory/strings.rs"]
 mod strings;
+#[path = "system/system_flags.rs"]
 mod system_flags;
+#[path = "integer/unary.rs"]
 mod unary;
+#[path = "numeric/vector.rs"]
 mod vector;
+#[path = "numeric/x87.rs"]
 mod x87;
 
 #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+#[path = "memory/parallel.rs"]
 mod parallel;
 
 use std::collections::BTreeMap;

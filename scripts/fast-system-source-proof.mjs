@@ -21,22 +21,22 @@ if (candidate.coreSha256 !== live.coreSha256 || candidate.hostSha256 !== live.ho
 const git = (args) => execFileSync('git', args, { cwd: root, encoding: 'utf8' });
 const baselineSource = (path) => git(['show', baselineCommit + ':' + path]);
 const untouched = [
-  'src/embedding/layout.rs',
-  'src/embedding/exports/context.rs',
-  'src/embedding/exports/vector.rs',
-  'src/embedding/exports/numeric.rs',
-  'src/embedding/exports/x87.rs',
-  'src/embedding/exports/mmx.rs',
-  'src/embedding/exports/numeric_image.rs',
-  'src/embedding/exports/streaming.rs',
-  'src/embedding/exports/protection.rs',
-  'src/embedding/exports/far_control.rs',
-  'src/embedding/exports/software_events.rs',
-  'src/memory/access.rs',
-  'src/x86/access.rs',
-  'src/x86/paging/access.rs',
-  'src/x86/paging/walk.rs',
-  'src/dbt/wasm/boundary.rs',
+  ['src/embedding/layout.rs'],
+  ['src/embedding/exports/context.rs'],
+  ['src/embedding/exports/vector.rs'],
+  ['src/embedding/exports/numeric.rs'],
+  ['src/embedding/exports/x87.rs'],
+  ['src/embedding/exports/mmx.rs'],
+  ['src/embedding/exports/numeric_image.rs'],
+  ['src/embedding/exports/streaming.rs'],
+  ['src/embedding/exports/protection.rs'],
+  ['src/embedding/exports/far_control.rs'],
+  ['src/embedding/exports/software_events.rs'],
+  ['src/memory/access.rs'],
+  ['src/x86/access.rs'],
+  ['src/x86/paging/access.rs'],
+  ['src/x86/paging/walk.rs'],
+  ['src/dbt/wasm/execution/boundary.rs', 'src/dbt/wasm/boundary.rs'],
 ];
 const files = [],
   unchanged = [];
@@ -74,11 +74,12 @@ benchmarkInputs.push({
   identical: pagingKernel === baselineSource('scripts/paging-kernels.mjs'),
 });
 if (!benchmarkInputs.at(-1).identical) throw Error('predecessor20 paging guest kernels changed');
-for (const path of untouched) {
+for (const [path, originalPath = path] of untouched) {
   const now = await readFile(resolve(root, path), 'utf8'),
-    before = baselineSource(path);
+    before = baselineSource(originalPath);
   unchanged.push({
     path,
+    originalPath,
     baselineSha256: hash(before),
     currentSha256: hash(now),
     identical: before === now,
@@ -121,7 +122,7 @@ for (const [path, anchors] of Object.entries({
     'let fast_system = fast_system_type.map',
     'Operation::FastSystem(operation)',
   ],
-  'src/dbt/wasm/fast_system.rs': ['pub(super) fn fast_system(', 'self.fast_system.expect'],
+  'src/dbt/wasm/system/fast_system.rs': ['pub(super) fn fast_system(', 'self.fast_system.expect'],
   'src/embedding/exports/fast_system.rs': [
     'pub extern "C" fn core_fast_system_state()',
     'pub extern "C" fn core_fast_system(',

@@ -53,7 +53,7 @@ for (const [path, anchors] of Object.entries({
     'let observed = observed || paged;',
     'let access_reason = (segmented || paged).then',
   ],
-  'src/dbt/wasm/boundary.rs': ['if self.paged {'],
+  'src/dbt/wasm/execution/boundary.rs': ['if self.paged {'],
   'src/embedding/exports/system_flags.rs': ['pub(super) fn boundary_observed(&self)'],
   'host/wasm/core.ts': ['if (this.isPaged)', '...PAGED_HELPERS', 'run(this.#statePointer, budget'],
   'src/memory/access.rs': [

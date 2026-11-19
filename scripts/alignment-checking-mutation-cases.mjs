@@ -248,7 +248,7 @@ fn participates`,
     'generated-operand-refusal-loses-ac-reason',
     granular,
     edit(
-      'src/dbt/wasm/memory.rs',
+      'src/dbt/wasm/memory/memory.rs',
       '        if let Some(reason) = self.access_reason {',
       '        if let Some(reason) = self.access_reason.filter(|_| false) {',
     ),
@@ -269,7 +269,7 @@ fn participates`,
     'rep-zero-count-still-touches-an-operand',
     'MOVS preserves source-before-destination order and skips zero or suspended work',
     edit(
-      'src/dbt/wasm/strings.rs',
+      'src/dbt/wasm/memory/strings.rs',
       '        self.op(Op::I64Eqz).op(Op::BrIf(0));',
       '        self.op(Op::I64Eqz).op(Op::Drop);',
     ),
@@ -278,7 +278,7 @@ fn participates`,
     'movs-publishes-source-index-before-refused-read',
     'MOVS preserves source-before-destination order and skips zero or suspended work',
     edit(
-      'src/dbt/wasm/strings.rs',
+      'src/dbt/wasm/memory/strings.rs',
       `        if matches!(kind, Movs | Lods | Cmps) {
             self.string_address(6, address_width, source_segment);
             self.load_address_value(width, false, exit_depth);`,
@@ -292,7 +292,7 @@ fn participates`,
     'movs-preflights-destination-before-source',
     'MOVS preserves source-before-destination order and skips zero or suspended work',
     edit(
-      'src/dbt/wasm/strings.rs',
+      'src/dbt/wasm/memory/strings.rs',
       `        if matches!(kind, Movs | Lods | Cmps) {
             self.string_address(6, address_width, source_segment);
             self.load_address_value(width, false, exit_depth);`,
@@ -361,7 +361,7 @@ fn participates`,
     'popf-preclears-ac-before-stack-read',
     'POPF reads under old AC and sixteen-bit restores cannot clear the upper flag',
     edit(
-      'src/dbt/wasm/system_flags.rs',
+      'src/dbt/wasm/system/system_flags.rs',
       `                self.stack_word(operation.width, exit_depth);
                 self.flags_call(operation, Some(VALUE), exit_depth);`,
       `                let memory = MemArg { offset: offset_of!(RunState, flags) as u64, align: 3, memory_index: 0 };

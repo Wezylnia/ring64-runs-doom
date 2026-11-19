@@ -100,7 +100,7 @@ const mutants = [
   },
   {
     name: 'paged-effective-ss-provenance-lost',
-    file: 'src/dbt/wasm/memory.rs',
+    file: 'src/dbt/wasm/memory/memory.rs',
     old: '        if self.paged {\n            self.record_fault_segment(self.segment);\n        }',
     replacement: '',
     filter: 'preserves effective stack segment',
@@ -161,7 +161,7 @@ const mutants = [
   },
   {
     name: 'native-rep-skips-code-invalidation-redispatch',
-    file: 'src/dbt/wasm/strings.rs',
+    file: 'src/dbt/wasm/memory/strings.rs',
     old: '        if self.paged {\n            self.op(Op::LocalGet(self.boundary_result.unwrap()))\n                .op(Op::I32Eqz)\n                .op(Op::If(BlockType::Empty));\n            self.exit(DISPATCH, exit_depth + 3);\n            self.op(Op::End);\n        } else if self.stores {',
     replacement: '        if !self.paged && self.stores {',
     filter: 'native REP abandons changed STOSD',

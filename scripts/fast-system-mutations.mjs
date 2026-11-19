@@ -15,7 +15,7 @@ if (!work.startsWith('/tmp/') || work === root)
 const sha = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const env = { ...process.env, CARGO_TARGET_DIR: join(work, 'target') };
 const semantic = 'src/x86/fast_system.rs';
-const lowering = 'src/dbt/wasm/fast_system.rs';
+const lowering = 'src/dbt/wasm/system/fast_system.rs';
 const mutants = [
   {
     name: 'compatibility-syscall-admitted',
@@ -45,7 +45,7 @@ const mutants = [
     replacement: 'flags::architectural(scalar.flags, context)',
     extra: [
       {
-        file: 'src/dbt/wasm/boundary.rs',
+        file: 'src/dbt/wasm/execution/boundary.rs',
         old: '        self.clear_resume();\n    }\n\n    fn ss_producer',
         replacement:
           '        if !matches!(operation, Operation::FastSystem(_)) { self.clear_resume(); }\n    }\n\n    fn ss_producer',
