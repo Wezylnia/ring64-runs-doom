@@ -142,13 +142,8 @@ impl Emitter {
     }
 
     pub(super) fn parallel_boundary_with_flags(&mut self, exit_depth: u32, compare: bool) {
-        self.op(Op::GlobalGet(0))
-            .op(Op::I32AtomicLoad(MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 1,
-            }))
-            .op(Op::If(BlockType::Empty));
+        self.parallel_signal();
+        self.op(Op::If(BlockType::Empty));
         if compare {
             self.restore_repeat_flags();
         }
@@ -157,13 +152,48 @@ impl Emitter {
     }
 
     fn shared_address(&mut self, scalar: Scalar, width: Width, access: i32) {
+        let memo = if access != 2 && self.parallel_retry.is_none() {
+            self.parallel_address_memos.pop()
+        } else {
+            None
+        };
         let segment = self.shared_segment();
         self.linear_address();
+        if let Some((address, resolved)) = memo {
+            // Memo sites live only inside an invocation. A parked effect sets the
+            // phase signal before its grant, so it cannot reuse an old decision.
+            self.op(Op::LocalTee(scalar.payload))
+                .op(Op::LocalGet(address))
+                .op(Op::I64Eq)
+                .op(Op::LocalGet(resolved))
+                .op(Op::I32Eqz)
+                .op(Op::I32Eqz)
+                .op(Op::I32And);
+            self.parallel_signal();
+            self.op(Op::I32Eqz)
+                .op(Op::I32And)
+                .op(Op::If(BlockType::Result(wasm_encoder::ValType::I32)))
+                .op(Op::LocalGet(resolved))
+                .op(Op::Else)
+                .op(Op::LocalGet(scalar.payload))
+                .op(Op::LocalTee(address));
+        }
         self.op(Op::I32Const(i32::from(width.bytes())))
             .op(Op::I32Const(access))
             .op(Op::I32Const(segment))
-            .op(Op::Call(scalar.resolve))
-            .op(Op::LocalSet(scalar.address));
+            .op(Op::Call(scalar.resolve));
+        if let Some((_, resolved)) = memo {
+            self.op(Op::LocalTee(resolved)).op(Op::End);
+        }
+        self.op(Op::LocalSet(scalar.address));
+    }
+
+    fn parallel_signal(&mut self) {
+        self.op(Op::GlobalGet(0)).op(Op::I32AtomicLoad(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 1,
+        }));
     }
 
     fn shared_segment(&self) -> i32 {

@@ -23,6 +23,45 @@ export function parallelCoherenceScenarios(
 ): Scenario[] {
   return [
     {
+      name: 'a warm store loop rechecks write permission after a live mapping replacement',
+      async run() {
+        // mov dword [rdi],1; out 0x80,eax; jmp back to the same store
+        const options = linearMachine(compiler, 'c70701000000e780ebf6');
+        let writes = 0;
+        let ready!: () => void;
+        const reached = new Promise<void>((resolve) => {
+          ready = resolve;
+        });
+        options.io = {
+          read: () => 0,
+          write(port, width) {
+            equal(port, 0x80, 'reached port');
+            equal(width, 32, 'OUT operand width');
+            if (++writes === 2) ready();
+          },
+        };
+        await withMachine(factory, options, async (machine) => {
+          const cpu = machine.cpus[0]!;
+          await cpu.setState(cpuState(ENTRY, { 7: RAM }));
+          const running = cpu.run({ budget: 20_000_000n });
+          await Promise.race([
+            reached,
+            running.then(() => {
+              throw new Error('the warmed store loop exited before remap');
+            }),
+          ]);
+          await machine.setMappings([options.memory.mappings[0]!, span(RAM, 'data', 0, 4096, 'r')]);
+          const fault = await running;
+          equal(fault.reason, 'data-fault', 'the next store is checked in the replacement map');
+          equal(fault.state.rip, ENTRY, 'faulting store did not retire');
+          equal(fault.fault?.access, 'write', 'write admission');
+          equal(fault.fault?.cause, 'permission', 'new read-only permissions');
+          equal(fault.fault?.failingAddress, RAM, 'precise address');
+          equal((await machine.readMemory(RAM, 4))[0], 1, 'the earlier reached store committed');
+        });
+      },
+    },
+    {
       name: 'peer code patches through RW alias displace a warm executable owner before CPUID successor',
       async run() {
         // Reader at pc: entered=1; wait: cmp [rdi],0; je wait; xor eax,eax; cpuid;

@@ -74,6 +74,8 @@ struct Emitter {
     parallel_scalar: Option<parallel::Scalar>,
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     parallel_retry: Option<u32>,
+    #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+    parallel_address_memos: Vec<(u32, u32)>,
     body: Function,
     entries: BTreeMap<u64, u32>,
     current_index: u32,
@@ -1031,6 +1033,25 @@ pub(crate) fn emit_profile(unit: &Unit, observed: bool, paged: bool) -> Vec<u8> 
         next_local += 6;
         parallel::Scalar::new(resolve, first)
     });
+    #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+    let parallel_address_memos = if parallel_scalar.is_some()
+        && unit.instructions.iter().any(|i| {
+            matches!(i.operation, Operation::Jump { target } | Operation::Jcc { target, .. }
+            | Operation::CountBranch { target, .. } if target <= i.pc)
+        }) {
+        let entries = (0..4)
+            .map(|index| {
+                let address = next_local + index * 2;
+                locals.push((1, ValType::I64));
+                locals.push((1, ValType::I32));
+                (address, address + 1)
+            })
+            .collect::<Vec<_>>();
+        next_local += (entries.len() as u32) * 2;
+        entries
+    } else {
+        Vec::new()
+    };
     let boundary_locals = observed.then(|| {
         let result = [next_local, next_local + 1, next_local + 2, next_local + 3];
         locals.push((4, ValType::I32));
@@ -1055,6 +1076,8 @@ pub(crate) fn emit_profile(unit: &Unit, observed: bool, paged: bool) -> Vec<u8> 
         parallel_scalar,
         #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
         parallel_retry: None,
+        #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+        parallel_address_memos,
         current_index: 0,
         entry_lookup: dynamic_targets.then_some(run_index + 1),
         multiply_high,
