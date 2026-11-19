@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -81,8 +82,12 @@ function run(cwd, [command, ...args], options = {}) {
   return { status: result.status, log: (result.stdout ?? '') + (result.stderr ?? '') };
 }
 
-function build(cmd) {
-  const result = run(tree, [process.execPath, ...cmd]);
+function build(script) {
+  const path = join(tree, 'scripts', 'build', script);
+  const result = run(tree, [
+    process.execPath,
+    existsSync(path) ? path : join(tree, 'scripts', script),
+  ]);
   assert.equal(result.status, 0, result.log);
 }
 
@@ -107,8 +112,12 @@ try {
   await mkdir(tree);
   const unpack = run(tree, ['tar', '-xf', '-'], { input: archive });
   assert.equal(unpack.status, 0, unpack.log);
-  await symlink(join(root, 'node_modules'), join(tree, 'node_modules'), 'dir');
-  build(['scripts/build.mjs']);
+  await symlink(
+    join(root, 'node_modules'),
+    join(tree, 'node_modules'),
+    process.platform === 'win32' ? 'junction' : 'dir',
+  );
+  build('build.mjs');
   await cp(join(tree, 'build'), original, { recursive: true });
   const baselineCore = hash(await readFile(join(original, core)));
 
@@ -119,9 +128,9 @@ try {
     const baseline = await check(out, entry, 'baseline', false);
     await writeFile(path, source.replace(entry.from, entry.to));
     if (entry.build === 'host') {
-      build(['scripts/build-sdk.mjs']);
+      build('build-sdk.mjs');
     } else if (entry.build === 'core') {
-      build(['scripts/parallel-core.mjs']);
+      build('parallel-core.mjs');
     }
     const mutatedCore = hash(await readFile(join(tree, 'build', core)));
     if (entry.build === 'core') assert.notEqual(mutatedCore, baselineCore);

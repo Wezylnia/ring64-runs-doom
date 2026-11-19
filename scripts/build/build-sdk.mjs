@@ -10,7 +10,7 @@ await Promise.all(
 );
 
 execFileSync(process.execPath, ['node_modules/typescript/bin/tsc'], { stdio: 'inherit' });
-execFileSync(process.execPath, ['scripts/generate-parallel-host.mjs'], { stdio: 'inherit' });
+execFileSync(process.execPath, ['scripts/build/generate-parallel-host.mjs'], { stdio: 'inherit' });
 for (const name of ['ring64.wasm', 'ring64-parallel.wasm'])
   await copyFile(`build/${name}`, `${emitted}/${name}`);
 

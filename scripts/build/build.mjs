@@ -10,5 +10,5 @@ function run(command, args) {
 run('cargo', ['build', '--locked', '--release', '--target', 'wasm32-unknown-unknown']);
 await mkdir('build', { recursive: true });
 await copyFile('target/wasm32-unknown-unknown/release/ring64.wasm', 'build/ring64.wasm');
-run('node', ['scripts/parallel-core.mjs']);
-run('node', ['scripts/build-sdk.mjs']);
+run('node', ['scripts/build/parallel-core.mjs']);
+run('node', ['scripts/build/build-sdk.mjs']);

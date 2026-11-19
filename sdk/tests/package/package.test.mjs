@@ -8,7 +8,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { chromium } from 'playwright';
-import { awaitBrowserResult } from '../../../scripts/browser-result.mjs';
+import { awaitBrowserResult } from '../../../scripts/check/browser-result.mjs';
 
 const exec = promisify(execFile);
 const root = fileURLToPath(new URL('../../../', import.meta.url));

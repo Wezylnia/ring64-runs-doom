@@ -1,12 +1,13 @@
 import { createServer } from 'node:http';
 import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
-import { resolve, extname } from 'node:path';
+import { resolve, extname, sep } from 'node:path';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { chromium } from 'playwright';
 import { awaitBrowserResult } from './browser-result.mjs';
 
 const root = resolve('.');
+const build = resolve(root, 'build') + sep;
 const html = `<!doctype html><meta charset="utf-8"><title>ring64 execution checks</title>
 <script type="module" src="/build/tests/runners/browser.js"></script>`;
 
@@ -19,7 +20,7 @@ const server = createServer(async (request, response) => {
       return;
     }
     const file = resolve(root, `.${pathname}`);
-    if (!file.startsWith(`${root}/build/`)) {
+    if (!file.startsWith(build)) {
       response.writeHead(404);
       response.end();
       return;
