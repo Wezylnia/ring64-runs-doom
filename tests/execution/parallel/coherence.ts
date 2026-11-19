@@ -1,6 +1,6 @@
 import { snapshot, loadedCode, loadedData } from '../far-control/fixture.js';
 import { BANK, PC, little } from '../paging/fixture.js';
-import type { Scenario } from '../../support/fixture.js';
+import { check, type Scenario } from '../../support/fixture.js';
 import {
   ENTRY,
   RAM,
@@ -173,14 +173,79 @@ export function parallelCoherenceScenarios(
           equal(illegal.reason, 'invalid-encoding', 'complete LOCK CPUID gives #UD');
           equal(illegal.retired, 0n, 'LOCK legality precedes CPUID');
           equal(illegal.pageFault, undefined, 'complete encoding did not fetch its successor');
-          await machine.writePhysicalMemory(first + 4081n, new Uint8Array(15).fill(0x66));
-          await fetching!.setState(cpuState(end - 15n));
-          const tooLong = await fetching!.run({ budget: 1n });
-          equal(tooLong.reason, 'invalid-encoding', 'required byte 16 rejected as #GP');
+          for (const prefixes of ['f0f3', 'f3f0', 'f0f2', 'f2f0']) {
+            // Selected MOVSS/MOVSD register forms consume ModR/M before rejecting LOCK.
+            const start = end - 5n;
+            await machine.writePhysicalMemory(first + 4091n, hex(prefixes + '0f10c0'));
+            await fetching!.setState(cpuState(start));
+            const rejected = await fetching!.run({ budget: 1n, eventDelivery: { budget: 0n } });
+            check(rejected.state.event.kind === 'pending', `${prefixes} stages a fault`);
+            equal(
+              rejected.state.event.exception.vector,
+              6,
+              `${prefixes} complete encoding gives #UD`,
+            );
+            equal(rejected.state.rip, start, 'illegal prefix combination leaves RIP');
+            equal(rejected.retired, 0n, 'illegal prefix combination does not retire');
+
+            await machine.writePhysicalMemory(first + 4092n, hex(prefixes + '0f10'));
+            await fetching!.setState(cpuState(start + 1n));
+            const incomplete = await fetching!.run({ budget: 1n });
+            equal(incomplete.reason, 'page-fault', `${prefixes} fetches the required ModR/M`);
+            equal(incomplete.pageFault?.address, end, 'missing ModR/M faults at the page seam');
+            equal(incomplete.retired, 0n, 'missing ModR/M does not retire');
+          }
+
+          const lastFifteen = first + 4081n;
+          const fromFifteen = end - 15n;
+          await machine.writePhysicalMemory(lastFifteen, hex('66'.repeat(13) + '0fa2'));
+          await fetching!.setState(cpuState(fromFifteen, { 0: 0n, 1: 0n }));
+          const exact = await fetching!.run({ budget: 2n, stop: end });
+          done(exact, end, 1n);
+          equal((await fetching!.readPagingState()).cr2, end, 'valid byte fifteen preserves CR2');
+
+          await machine.writePhysicalMemory(lastFifteen, new Uint8Array(15).fill(0x66));
+          await fetching!.setState(cpuState(fromFifteen));
+          const tooLong = await fetching!.run({ budget: 1n, eventDelivery: { budget: 0n } });
+          check(tooLong.state.event.kind === 'pending', 'overlong instruction must stage #GP');
+          equal(tooLong.state.event.exception.vector, 13, 'required byte sixteen gives #GP');
+          equal(tooLong.state.event.exception.errorCode, 0, 'instruction length fault code');
+          equal(tooLong.state.rip, fromFifteen, 'length fault leaves RIP');
           equal(tooLong.retired, 0n, 'no retirement on length rejection');
           equal(tooLong.pageFault, undefined, 'byte 16 was not fetched');
           equal((await fetching!.readPagingState()).cr2, end, 'length check preserves CR2');
           await machine.writePhysicalMemory(first + 4095n, Uint8Array.of(0x0f));
+          await machine.writePhysicalMemory(0x4008n, little([0x800000000000a007n]));
+          const split = end - 1n;
+          const debug = await fetching!.readDebugState();
+          await fetching!.setDebugState({ ...debug, addresses: [split, 0n, 0n, 0n], dr7: 0x401n });
+          await fetching!.setPagingState({ ...(await fetching!.readPagingState()), cr2: 0x1234n });
+          await fetching!.setState(cpuState(split));
+          await peer!.setState(cpuState(split));
+          const [db, nx] = await Promise.all([
+            fetching!.run({ budget: 1n }),
+            peer!.run({ budget: 1n }),
+          ]);
+          equal(db.reason, 'debug-exception', 'local execute breakpoint precedes split fetch');
+          equal(db.retired, 0n, 'execution breakpoint is pre-begin');
+          equal(db.resources.compilations, 0, 'no compilation to select breakpoint');
+          equal((await fetching!.readPagingState()).cr2, 0x1234n, 'breakpoint preserves local CR2');
+          equal((await fetching!.readDebugState()).dr6 & 1n, 1n, 'local execution slot selected');
+          equal(nx.reason, 'page-fault', 'present second page denies instruction fetch');
+          equal(nx.pageFault?.errorCode, 17, 'execute protection #PF');
+          equal(nx.pageFault?.address, end, 'NX page is the first forbidden byte');
+          equal(nx.retired, 0n, 'execute protection does not retire');
+          equal(
+            (await peer!.readDebugState()).dr6 & 1n,
+            0n,
+            'peer never takes the local breakpoint',
+          );
+          await fetching!.setState({ ...cpuState(split), flags: 0x10002n });
+          const resumed = await fetching!.run({ budget: 1n });
+          equal(resumed.pageFault?.address, end, 'RF exposes the same required fetch fault');
+          equal(resumed.state.flags, 0x10002n, 'pre-begin failure preserves RF');
+          await fetching!.setDebugState(debug);
+
           await machine.writePhysicalMemory(0x4008n, little([0xa007n]));
           await fetching!.setState(cpuState(end - 1n, { 0: 0n, 1: 0n }));
           const repaired = await fetching!.run({ budget: 2n, stop: end + 1n });

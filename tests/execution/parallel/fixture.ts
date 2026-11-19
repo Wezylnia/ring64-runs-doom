@@ -25,6 +25,8 @@ export type TestCpu = AsyncMethods<
   | 'readState'
   | 'setState'
   | 'readContext'
+  | 'readDebugState'
+  | 'setDebugState'
   | 'inspectTranslations'
   | 'readTimeState'
   | 'readPagingState'
