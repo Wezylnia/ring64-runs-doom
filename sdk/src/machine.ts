@@ -39,6 +39,12 @@ import {
 export type { MachineOptions, ParallelCpu, ParallelRunResult, RunOptions };
 export { ParallelError };
 
+/** Compile the packaged parallel Core for reuse across machines. */
+export async function loadParallelCompiler(): Promise<WebAssembly.Module> {
+  const { loadCompiler } = await import('./wasm/load.js');
+  return loadCompiler(new URL('./ring64-parallel.wasm', import.meta.url));
+}
+
 interface Deferred<T> {
   promise: Promise<T>;
   resolve(value: T): void;

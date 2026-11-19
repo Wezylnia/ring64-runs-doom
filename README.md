@@ -2,29 +2,27 @@
 
 an x86 and x86-64 cpu emulator for the browser
 
-`src/` implements the CPU and its Wasm code generator. `host/` connects them to
-Node.js and the browser through the standalone CPU and parallel machine APIs.
-[Source layout](agents/architecture.md#host-entry-points)
+## build
 
-## installation
-
-requires node 22.12 or newer and rustup.
+build from the repository with Node.js 22.12 or newer and rustup.
 
 ```sh
 npm ci
 npm run build
+npm pack ./build/npm/ring64 --pack-destination ./build
 ```
+
+in your app, run `npm install /path/to/ring64/build/ring64-0.1.0.tgz`.
 
 ## usage
 
-this Node.js example runs `mov eax, 1`. the runtime requires WebAssembly SIMD support.
+runs `mov eax, 1`. requires WebAssembly SIMD.
 
 ```js
-import { readFile } from 'node:fs/promises';
-import { createCpu } from './build/host/index.js';
+import { createCpu, loadCpuCompiler } from 'ring64';
 
 const cpu = await createCpu({
-  compiler: await readFile('build/ring64.wasm'),
+  compiler: await loadCpuCompiler(),
   code: { base: 0x1000n, bytes: Uint8Array.of(0xb8, 1, 0, 0, 0) },
   ram: { base: 0x8000n, bytes: new Uint8Array(32) },
   limits: {
@@ -45,33 +43,8 @@ try {
 }
 ```
 
-## parallel vCPUs
+## parallel
 
-`createMachine` from `build/host/machine.js` takes `build/ring64-parallel.wasm`,
-one explicit guest memory map, and a `cpus` array with the initial entry and
-execution context of each vCPU. Use `sharedRamCapacity` to reserve the backing
-arena in multiples of a Wasm page. In a browser, serve the page and its workers
-in a cross-origin isolated context. Node uses worker threads.
-
-```js
-const results = await Promise.all(
-  machine.cpus.map((cpu) => cpu.run({ budget: 100_000n })),
-);
-```
-
-Each handle owns its registers, queued interrupts and execution lifecycle.
-The machine owns backing allocations and mappings. Its memory methods return
-copies, and its writes are visible to all vCPUs. Call `await machine.dispose()`
-when the embedding is finished. Use `createCpu` and `build/ring64.wasm` for the
-private single-vCPU runtime.
-
-Run the Node and isolated browser suites with `npm run test:parallel` and
-`npm run test:browser:parallel`. `npm run test:parallel:mutations` rebuilds a
-copy of the current Git commit and verifies each deliberate change against a
-specific failing assertion. It saves the baseline, failing and restored runs
-under `build/verification/parallel-mutations`.
-
-Use `npm run bench:parallel-latency -- node build build/parallel-latency.json`
-after building. The same command accepts `chromium` for the isolated browser.
-It compares identical guest work with and without timing probes in a temporary
-host copy and records native-entry, phase, pause, compile and I/O timings.
+import `createMachine` and `loadParallelCompiler` from `ring64/parallel`.
+browser workers require a cross-origin isolated page.
+[example](https://github.com/fatihguzeldev/ring64/blob/main/sdk/tests/package/consumer.ts).

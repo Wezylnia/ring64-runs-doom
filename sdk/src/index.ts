@@ -1,4 +1,11 @@
 export { createCpu } from './cpu/cpu.js';
+
+/** Compile the packaged standalone Core for reuse across CPU instances. */
+export async function loadCpuCompiler(): Promise<WebAssembly.Module> {
+  const { loadCompiler } = await import('./wasm/load.js');
+  return loadCompiler(new URL('./ring64.wasm', import.meta.url));
+}
+
 export type { Cpu, Limits, Options, RunResult } from './cpu/cpu.js';
 export type { State, StateSnapshot, Interruptibility } from './state/execution/registers.js';
 export type { X87State, X87Exception } from './state/numeric/x87.js';

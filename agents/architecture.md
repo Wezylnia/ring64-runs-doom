@@ -4,13 +4,17 @@ organize source around behavior owners, then separate responsibilities inside ea
 
 let module and directory boundaries follow the responsibilities and consumers that emerge in the code. keep related behavior together; separate responsibilities that need to change independently. a component does not need a fixed number of files or a separate crate or package.
 
-## host entry points
+## sdk entry points
 
-`sdk/src/index.ts` exposes the standalone CPU. `sdk/src/cpu/` coordinates its runs and owns the installed translation cache. `sdk/src/wasm/` exchanges inputs, state and generated code with the Rust Wasm core.
+`sdk/src/index.ts` exposes the standalone CPU as `ring64`. Its `cpu/` directory coordinates runs and owns the installed translation cache. `wasm/` exchanges inputs, state and generated code with the Rust Wasm core.
 
-`sdk/src/machine.ts` exposes the shared-memory machine. It owns worker admission, memory barriers and I/O ordering. `sdk/src/parallel/` contains the worker protocol and execution binding. Its `memory/` directory holds shared RAM access and executable source watches, which the machine reclaims during its closed phase.
+`sdk/src/machine.ts` exposes the shared-memory machine as `ring64/parallel`. It owns worker admission, memory barriers and I/O ordering. `sdk/src/parallel/` contains the worker protocol and execution binding. Its `memory/` directory holds shared RAM access and executable source watches, which the machine reclaims during its closed phase.
 
-`sdk/src/state/execution/` owns run snapshots, event delivery state and debug continuations. `sdk/src/state/system/` holds context, paging, protection, time and fast-system state. `sdk/src/state/numeric/` holds x87 state and numeric control contracts. `sdk/src/embedding/` owns memory backing, mappings and I/O supplied by the caller. The Rust implementations below `src/` own guest instruction and memory semantics.
+`sdk/src/state/` groups execution snapshots, system and numeric state. `sdk/src/embedding/` owns memory backing, mappings and I/O supplied by the caller. The Rust implementations below `src/` own guest instruction and memory semantics.
+
+`sdk/package.json` defines the published entry points. The build stages the compiled SDK and its Wasm and worker assets in `build/npm/ring64/`. The existing `build/host/` layout lets benchmarks compare current and archived artifacts.
+
+`sdk/tests/unit/` covers internal SDK behavior. `sdk/tests/api/` exercises the public contract through its entry points. `sdk/tests/integration/` exercises the Wasm bridge and real workers. `sdk/tests/package/` installs the actual archive in a consumer project. The root execution suite exercises guest x86 behavior.
 
 ## dependency direction
 
@@ -60,6 +64,6 @@ a change should have a recognizable owner and affected consumers:
 - changing discovery limits changes unit admission, not instruction meaning.
 - changing eviction changes browser artifact ownership, not x86 state or decode.
 
-keep unit tests beside the behavior they verify. share literal packets where multiple checks use the same case, and test the complete host/core/generated-wasm path across its boundaries. independent expected results must not be calculated by the same decoder or lowering under test.
+keep unit tests with their owning component. share literal packets where multiple checks use the same case, and test the complete host/core/generated-wasm path across its boundaries. independent expected results must not be calculated by the same decoder or lowering under test.
 
 preserve dependency directions when moving code, and move the relevant tests and consumers with it. separate crates or packages when a concrete dependency or build boundary calls for them.

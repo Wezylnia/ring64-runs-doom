@@ -131,7 +131,7 @@ try {
     await writeFile(path, source);
     if (entry.build === 'core') await cp(join(original, core), join(tree, 'build', core));
     if (entry.build === 'host')
-      for (const dir of ['host', 'sdk', 'tests'])
+      for (const dir of ['host', 'sdk', 'tests', 'npm'])
         await cp(join(original, dir), join(tree, 'build', dir), { recursive: true });
     const restored = await check(out, entry, 'restored', false);
     rows.push({ name: entry.name, source: entry.path, baseline, mutant, restored, mutatedCore });

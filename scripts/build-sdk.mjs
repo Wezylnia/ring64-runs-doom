@@ -1,14 +1,24 @@
 import { execFileSync } from 'node:child_process';
-import { cp, rm } from 'node:fs/promises';
+import { copyFile, cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 
 const emitted = 'build/sdk/src';
+const packageRoot = 'build/npm/ring64';
 await Promise.all(
-  ['build/sdk', 'build/tests', 'build/host'].map((path) =>
+  ['build/sdk', 'build/tests', 'build/host', packageRoot].map((path) =>
     rm(path, { recursive: true, force: true }),
   ),
 );
 
 execFileSync(process.execPath, ['node_modules/typescript/bin/tsc'], { stdio: 'inherit' });
 execFileSync(process.execPath, ['scripts/generate-parallel-host.mjs'], { stdio: 'inherit' });
+for (const name of ['ring64.wasm', 'ring64-parallel.wasm'])
+  await copyFile(`build/${name}`, `${emitted}/${name}`);
+
 // Benchmarks use this artifact layout for both fresh and historical snapshots.
 await cp(emitted, 'build/host', { recursive: true });
+await mkdir('build/npm', { recursive: true });
+await cp(emitted, packageRoot, { recursive: true });
+const manifest = JSON.parse(await readFile('sdk/package.json', 'utf8'));
+delete manifest.private;
+await writeFile(`${packageRoot}/package.json`, JSON.stringify(manifest, null, 2) + '\n');
+await copyFile('README.md', `${packageRoot}/README.md`);

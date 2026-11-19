@@ -329,7 +329,11 @@ async function projection(base, directories, names) {
   return { sha256: hash(JSON.stringify(files)), files };
 }
 async function identity(base) {
-  const runtime = await projection(base, ['src', 'sdk/src'], ['Cargo.toml', 'Cargo.lock']);
+  const runtime = await projection(
+    base,
+    ['src', 'sdk/src'],
+    ['Cargo.toml', 'Cargo.lock', 'sdk/package.json'],
+  );
   const oracles = await projection(base, ['sdk/tests', 'tests'], ['package.json', 'tsconfig.json']);
   return { sha256: hash(JSON.stringify([runtime.sha256, oracles.sha256])), runtime, oracles };
 }
@@ -646,7 +650,7 @@ try {
     target: env.CARGO_TARGET_DIR,
     evidence,
     sourceIdentityScope:
-      'runtime: src/** + sdk/src/** + Cargo.toml/Cargo.lock; oracles: sdk/tests/** + tests/** + package.json/tsconfig.json',
+      'runtime: src/** + sdk/src/** + Cargo.toml/Cargo.lock/sdk/package.json; oracles: sdk/tests/** + tests/** + package.json/tsconfig.json',
     candidate,
     parentStillMatches: currentParent.sha256 === candidate.sha256,
     restoredSourceMatches: restored.sha256 === candidate.sha256,

@@ -13,5 +13,6 @@
     "rootDir": ".",
     "skipLibCheck": true
   },
-  "include": ["sdk/src/**/*.ts", "sdk/tests/**/*.ts", "tests/**/*.ts"]
+  "include": ["sdk/src/**/*.ts", "sdk/tests/**/*.ts", "tests/**/*.ts"],
+  "exclude": ["sdk/tests/package"]
 }
