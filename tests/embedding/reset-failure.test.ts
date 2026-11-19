@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
-import { Core } from '../../host/wasm/core.js';
+import { Core } from '../../sdk/src/wasm/core.js';
 import { physicalCpu } from '../execution/reset/fixture.js';
 
 test('a trap while releasing reset owners leaves the existing CPU failed', async () => {

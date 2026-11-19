@@ -1,4 +1,4 @@
-import { createCpu } from '../../../host/index.js';
+import { createCpu } from '../../../sdk/src/index.js';
 import { hex } from '../../support/fixture.js';
 import { context as legacyContext } from '../modes/fixture.js';
 import { RESET_BANK, resetContext } from '../reset/fixture.js';

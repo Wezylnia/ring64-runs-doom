@@ -5,10 +5,10 @@ import {
   type IoProvider,
   type Limits,
   type FastSystemState,
-} from '../../../host/index.js';
+} from '../../../sdk/src/index.js';
 import { LIMITS, hex } from '../../support/fixture.js';
 export { equal, hex, type Scenario } from '../../support/fixture.js';
-export { createCpu } from '../../../host/index.js';
+export { createCpu } from '../../../sdk/src/index.js';
 export const RESET_BANK: PagingState = { cr0: 0x60000010n, cr2: 0n, cr3: 0n, cr4: 0n, efer: 0n };
 export function resetContext(): ExecutionContextSnapshot {
   const data = () => ({

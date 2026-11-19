@@ -1,4 +1,4 @@
-import type { Cpu, ExecutionContextSnapshot } from '../../../host/index.js';
+import type { Cpu, ExecutionContextSnapshot } from '../../../sdk/src/index.js';
 import { fingerprint } from '../../support/fixture.js';
 import { changed, equal, hex, initial, snapshot, state, using, type Scenario } from './fixture.js';
 

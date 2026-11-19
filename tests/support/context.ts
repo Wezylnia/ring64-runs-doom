@@ -1,4 +1,7 @@
-import type { ExecutionContextSnapshot, SegmentSnapshot } from '../../host/state/system/context.js';
+import type {
+  ExecutionContextSnapshot,
+  SegmentSnapshot,
+} from '../../sdk/src/state/system/context.js';
 
 // Literal normalized fixtures, independent of the production context normalizer.
 export function longSnapshot(fsBase = 0n, gsBase = 0n): ExecutionContextSnapshot {

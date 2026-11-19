@@ -1,4 +1,4 @@
-import { createCpu, type Cpu } from '../../../host/index.js';
+import { createCpu, type Cpu } from '../../../sdk/src/index.js';
 import { equal, hex, initial, throws, type Scenario } from '../../support/fixture.js';
 import { using, snapshot, same, preserveNumeric } from '../far-control/fixture.js';
 import { usingGate } from '../call-gates/fixture.js';

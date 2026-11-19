@@ -111,7 +111,7 @@ for (const path of [work, evidence]) {
 if (work === evidence) throw Error('work and evidence must differ');
 await mkdir(work);
 await mkdir(evidence);
-for (const directory of ['src', 'host', 'tests'])
+for (const directory of ['src', 'sdk', 'host', 'tests'])
   await cp(join(root, directory), join(work, directory), { recursive: true });
 for (const name of ['Cargo.toml', 'Cargo.lock', 'package.json', 'tsconfig.json'])
   await copyFile(join(root, name), join(work, name));
@@ -141,7 +141,7 @@ async function identity(base) {
       else if (entry.isFile()) entries.push([name, hash(await readFile(join(base, name)))]);
     }
   }
-  for (const directory of ['src', 'host', 'tests']) await visit(directory);
+  for (const directory of ['src', 'sdk', 'host', 'tests']) await visit(directory);
   for (const name of ['Cargo.toml', 'Cargo.lock', 'package.json', 'tsconfig.json'])
     entries.push([name, hash(await readFile(join(base, name)))]);
   return { sha256: hash(JSON.stringify(entries)), files: entries };
@@ -368,7 +368,7 @@ async function receipt() {
     cargoIncremental: env.CARGO_INCREMENTAL,
     sourceIdentitySha256: baselineIdentity.sha256,
     sourceIdentityScope:
-      'src/** + host/** + tests/** + Cargo.toml/Cargo.lock/package.json/tsconfig.json',
+      'src/** + sdk/** + host/** + tests/** + Cargo.toml/Cargo.lock/package.json/tsconfig.json',
     baselineArtifacts: Object.fromEntries(baselineArtifacts),
     baselineTests,
     restoredArtifacts: Object.fromEntries(restoredArtifacts),

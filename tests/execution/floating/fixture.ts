@@ -1,4 +1,4 @@
-import type { Cpu, RunResult } from '../../../host/index.js';
+import type { Cpu, RunResult } from '../../../sdk/src/index.js';
 import { equal } from '../../support/fixture.js';
 export * from '../simd/fixture.js';
 export function mxcsr(cpu: Cpu, expected: number) {

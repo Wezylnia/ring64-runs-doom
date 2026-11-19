@@ -1,5 +1,5 @@
-import { Core } from '../../../host/wasm/core.js';
-import type { FastSystemState } from '../../../host/index.js';
+import { Core } from '../../../sdk/src/wasm/core.js';
+import type { FastSystemState } from '../../../sdk/src/index.js';
 import { longSnapshot } from '../../support/context.js';
 import {
   BANK,

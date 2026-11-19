@@ -1,4 +1,4 @@
-import { createCpu } from '../../host/index.js';
+import { createCpu } from '../../sdk/src/index.js';
 import { runParallelScenarios } from '../execution/parallel/index.js';
 import { ENTRY, equal, linearMachine, type MachineFactory } from '../execution/parallel/fixture.js';
 
@@ -6,7 +6,7 @@ const page = window as Window & {
   ring64Parallel?: Promise<{ passed: string[] }>;
 };
 page.ring64Parallel = (async () => {
-  const entry = new URL('../../host/machine.js', import.meta.url);
+  const entry = new URL('../../sdk/src/machine.js', import.meta.url);
   const { createMachine }: { createMachine: MachineFactory } = await import(entry.href);
   const response = await fetch('/build/ring64-parallel.wasm');
   if (!response.ok) throw new Error('missing parallel Core Wasm');

@@ -1,6 +1,6 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 
-const directory = new URL('../build/host/', import.meta.url);
+const directory = new URL('../build/sdk/src/', import.meta.url);
 const output = new URL('parallel/', directory);
 
 function change(source, before, after) {

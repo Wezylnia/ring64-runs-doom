@@ -1,9 +1,9 @@
-import { createCpu, type Cpu, type Options, type PagingState } from '../../../host/index.js';
+import { createCpu, type Cpu, type Options, type PagingState } from '../../../sdk/src/index.js';
 import { protectedSnapshot } from '../../support/context.js';
 import { LIMITS, hex } from '../../support/fixture.js';
 export { check, equal, hex, initial, type Scenario } from '../../support/fixture.js';
 export { protectedSnapshot } from '../../support/context.js';
-export type { Cpu, PagingState } from '../../../host/index.js';
+export type { Cpu, PagingState } from '../../../sdk/src/index.js';
 
 export function little(word: bigint, width = 8): Uint8Array {
   return Uint8Array.from({ length: width }, (_, i) => Number((word >> BigInt(i * 8)) & 255n));

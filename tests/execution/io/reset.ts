@@ -1,4 +1,4 @@
-import { createCpu } from '../../../host/index.js';
+import { createCpu } from '../../../sdk/src/index.js';
 import { equal, check, LIMITS, initial, type Scenario } from '../../support/fixture.js';
 import { resetContext } from '../reset/fixture.js';
 

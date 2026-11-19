@@ -55,7 +55,11 @@ for (const [path, anchors] of Object.entries({
   ],
   'src/dbt/wasm/execution/boundary.rs': ['if self.paged {'],
   'src/embedding/exports/events/system_flags.rs': ['pub(super) fn boundary_observed(&self)'],
-  'host/wasm/core.ts': ['if (this.isPaged)', '...PAGED_HELPERS', 'run(this.#statePointer, budget'],
+  'sdk/src/wasm/core.ts': [
+    'if (this.isPaged)',
+    '...PAGED_HELPERS',
+    'run(this.#statePointer, budget',
+  ],
   'src/memory/access.rs': [
     'fn preflight<const PHYSICAL: bool>',
     'self.preflight::<false>(address, width, Access::Read',

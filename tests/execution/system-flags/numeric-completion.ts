@@ -9,7 +9,7 @@ import {
   hex,
   type Scenario,
 } from './fixture.js';
-import type { X87State } from '../../../host/index.js';
+import type { X87State } from '../../../sdk/src/index.js';
 
 export function numericCompletionScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [

@@ -2,10 +2,10 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { Worker } from 'node:worker_threads';
-import type { createMachine as create, Machine, MachineOptions } from '../machine.js';
-import { SharedControl, SLOT } from './control.js';
-import type { FromWorker, ToWorker } from './protocol.js';
-import { bindRam, ramModule } from './memory/ram.js';
+import type { createMachine as create, Machine, MachineOptions } from '../../sdk/src/machine.js';
+import { SharedControl, SLOT } from '../../sdk/src/parallel/control.js';
+import type { FromWorker, ToWorker } from '../../sdk/src/parallel/protocol.js';
+import { bindRam, ramModule } from '../../sdk/src/parallel/memory/ram.js';
 
 test('a phase close between publishing and rechecking a lease prevents entry', () => {
   const memory = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true });

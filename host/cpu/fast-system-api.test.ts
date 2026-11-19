@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Core } from '../wasm/core.js';
-import { createCpu, type Options } from './cpu.js';
+import { Core } from '../../sdk/src/wasm/core.js';
+import { createCpu, type Options } from '../../sdk/src/cpu/cpu.js';
 import { longSnapshot } from '../../tests/support/context.js';
 
 const limits = {

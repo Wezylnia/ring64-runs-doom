@@ -1,4 +1,4 @@
-import { createCpu, type Cpu, type PagingState } from '../../../host/index.js';
+import { createCpu, type Cpu, type PagingState } from '../../../sdk/src/index.js';
 import { check, equal, hex, initial, throws, type Scenario } from '../../support/fixture.js';
 import {
   context,

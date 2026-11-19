@@ -1,4 +1,4 @@
-import { createCpu, type Cpu, type RunResult } from '../../../host/index.js';
+import { createCpu, type Cpu, type RunResult } from '../../../sdk/src/index.js';
 import { fixture as pagedFixture, same } from '../supervisor-access/fixture.js';
 export {
   AC,

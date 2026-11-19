@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Translations, type Artifact } from './translations.js';
+import { Translations, type Artifact } from '../../sdk/src/cpu/translations.js';
 
 function use(cache: Translations, pc: bigint, observed = false) {
   const entry = cache.candidates(pc, observed)[0];

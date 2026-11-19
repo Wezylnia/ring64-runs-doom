@@ -4,12 +4,12 @@ const nodeTest = (...args) => [process.execPath, '--import', 'tsx', '--test', ..
 const protocolTest = (name) =>
   nodeTest(`--test-name-pattern=${name}`, 'host/parallel/protocol.test.ts');
 const leaseCheck = 'this.phase === phase && this.load(cpu, SLOT.invalidations) === invalidation';
-const portValidation = 'host/machine.ts';
+const portValidation = 'sdk/src/machine.ts';
 
 export const protocolMutations = [
   {
     name: 'public-machine-exposes-raw-ram',
-    path: 'host/machine.ts',
+    path: 'sdk/src/machine.ts',
     from: '    this.#memory = memory;\n',
     to: "    this.#memory = memory;\n    Object.defineProperty(this, 'memory', { value: memory });\n",
     check: protocolTest('the public machine keeps shared RAM and worker initialization private'),
@@ -18,7 +18,7 @@ export const protocolMutations = [
   },
   {
     name: 'lease-phase-recheck',
-    path: 'host/parallel/control.ts',
+    path: 'sdk/src/parallel/control.ts',
     from: leaseCheck,
     to: leaseCheck.replace('=== phase', '>= phase'),
     check: protocolTest('a phase close between publishing and rechecking a lease prevents entry'),
@@ -27,7 +27,7 @@ export const protocolMutations = [
   },
   {
     name: 'lease-invalidation-watermark',
-    path: 'host/parallel/control.ts',
+    path: 'sdk/src/parallel/control.ts',
     from: leaseCheck,
     to: 'this.phase === phase',
     check: protocolTest(
@@ -38,7 +38,7 @@ export const protocolMutations = [
   },
   {
     name: 'worker-apply-invalidation',
-    path: 'host/parallel/worker.ts',
+    path: 'sdk/src/parallel/worker.ts',
     from: '          this.#applyInvalidation(core);\n',
     to: '',
     check: [

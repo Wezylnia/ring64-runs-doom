@@ -1,4 +1,4 @@
-import { createCpu, type ExecutionContextSnapshot } from '../../../host/index.js';
+import { createCpu, type ExecutionContextSnapshot } from '../../../sdk/src/index.js';
 import { exit, initial } from '../../support/fixture.js';
 import { fixture, using, memory as physicalMemory, put } from '../supervisor-access/fixture.js';
 import { gate } from '../software-events/fixture.js';

@@ -1,4 +1,4 @@
-import type { ExecutionContextSnapshot } from '../../../host/index.js';
+import type { ExecutionContextSnapshot } from '../../../sdk/src/index.js';
 import { gate } from '../software-events/fixture.js';
 import {
   AC,

@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createCpu } from '../../host/index.js';
+import { createCpu } from '../../sdk/src/index.js';
 
 const compiler = await readFile(new URL('../../build/ring64.wasm', import.meta.url));
 const limits = {

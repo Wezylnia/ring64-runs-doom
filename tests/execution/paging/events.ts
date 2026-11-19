@@ -1,4 +1,4 @@
-import { type Cpu, type EventState } from '../../../host/index.js';
+import { type Cpu, type EventState } from '../../../sdk/src/index.js';
 import { longSnapshot } from '../../support/context.js';
 import { gate } from '../software-events/fixture.js';
 import { preserveNumeric } from '../far-control/fixture.js';

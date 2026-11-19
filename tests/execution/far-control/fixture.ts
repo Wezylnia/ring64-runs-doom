@@ -1,12 +1,12 @@
-import { captureContext } from '../../../host/state/system/context.js';
+import { captureContext } from '../../../sdk/src/state/system/context.js';
 import type {
   Cpu,
   ExecutionContextSnapshot,
   SegmentSnapshot,
   RunResult,
-} from '../../../host/index.js';
+} from '../../../sdk/src/index.js';
 import { context } from '../modes/fixture.js';
-export { createCpu } from '../../../host/index.js';
+export { createCpu } from '../../../sdk/src/index.js';
 export { using, input as initial, changed } from '../modes/fixture.js';
 export { equal, check, state, hex, same, LIMITS, type Scenario } from '../../support/fixture.js';
 import { equal, fingerprint } from '../../support/fixture.js';

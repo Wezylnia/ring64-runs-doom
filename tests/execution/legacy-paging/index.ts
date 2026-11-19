@@ -3,7 +3,7 @@ import { legacyBoundaryScenarios } from './boundaries.js';
 import { legacyModeScenarios } from './modes.js';
 import { legacyEventScenarios } from './events.js';
 import { legacyControlScenarios } from './controls.js';
-import { createCpu } from '../../../host/index.js';
+import { createCpu } from '../../../sdk/src/index.js';
 import {
   legacyCpu,
   legacyOptions,

@@ -1,14 +1,14 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import { Core } from '../../host/wasm/core.js';
+import { Core } from '../../sdk/src/wasm/core.js';
 import {
   createCpu,
   type Cpu,
   type ExecutionContext,
   type LoadedSegment,
   type RunResult,
-} from '../../host/index.js';
+} from '../../sdk/src/index.js';
 import { LIMITS, changed, hex, initial } from '../support/fixture.js';
 import { longSnapshot } from '../support/context.js';
 

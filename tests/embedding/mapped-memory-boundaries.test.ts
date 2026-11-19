@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import { createCpu, type MemoryMapping } from '../../host/index.js';
-import { Core } from '../../host/wasm/core.js';
+import { createCpu, type MemoryMapping } from '../../sdk/src/index.js';
+import { Core } from '../../sdk/src/wasm/core.js';
 import { LIMITS, changed, initial } from '../support/fixture.js';
 
 const compiler = await WebAssembly.compile(

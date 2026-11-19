@@ -106,7 +106,7 @@ const mutants = [
   {
     name: 'host-ignores-activation-refusal',
     kind: 'public-cpu',
-    file: 'host/cpu/cpu.ts',
+    file: 'sdk/src/cpu/cpu.ts',
     old: 'if (this.#engine.activate(candidate.artifact.metadata.owner)) {',
     replacement: 'if (this.#engine.activate(candidate.artifact.metadata.owner) || true) {',
     filter: 'keeps dormant FS variants',
@@ -156,7 +156,7 @@ const mutants = [
   {
     name: 'candidate-scan-falsely-updates-lru',
     kind: 'host-owner',
-    file: 'host/cpu/translations.ts',
+    file: 'sdk/src/cpu/translations.ts',
     old: '    return entries.get(pc) ?? EMPTY;',
     replacement:
       '    const found = entries.get(pc) ?? EMPTY;\n    for (const entry of found) this.touch(entry.artifact);\n    return found;',
@@ -167,7 +167,7 @@ const mutants = [
   {
     name: 'global-artifact-cap-doubled',
     kind: 'host-owner',
-    file: 'host/cpu/translations.ts',
+    file: 'sdk/src/cpu/translations.ts',
     old: 'this.#artifacts.size >= this.maxArtifacts',
     replacement: 'this.#artifacts.size >= this.maxArtifacts * 2',
     testFile: 'host/cpu/translations.test.ts',
@@ -176,7 +176,7 @@ const mutants = [
   {
     name: 'global-byte-cap-doubled',
     kind: 'host-owner',
-    file: 'host/cpu/translations.ts',
+    file: 'sdk/src/cpu/translations.ts',
     old: 'this.#bytes + artifact.metadata.byteLength > this.maxBytes',
     replacement: 'this.#bytes + artifact.metadata.byteLength > this.maxBytes * 2',
     testFile: 'host/cpu/translations.test.ts',
@@ -303,7 +303,7 @@ if (reuse && (await realpath(work)) === (await realpath(root)))
   throw Error('work aliases main checkout');
 await mkdir(work, { recursive: reuse });
 await mkdir(evidence);
-for (const directory of ['src', 'host', 'tests']) {
+for (const directory of ['src', 'sdk', 'host', 'tests']) {
   await rm(join(work, directory), { recursive: true, force: true });
   await cp(join(root, directory), join(work, directory), { recursive: true });
 }
@@ -329,8 +329,8 @@ async function projection(base, directories, names) {
   return { sha256: hash(JSON.stringify(files)), files };
 }
 async function identity(base) {
-  const runtime = await projection(base, ['src', 'host'], ['Cargo.toml', 'Cargo.lock']);
-  const oracles = await projection(base, ['tests'], ['package.json', 'tsconfig.json']);
+  const runtime = await projection(base, ['src', 'sdk/src'], ['Cargo.toml', 'Cargo.lock']);
+  const oracles = await projection(base, ['host', 'tests'], ['package.json', 'tsconfig.json']);
   return { sha256: hash(JSON.stringify([runtime.sha256, oracles.sha256])), runtime, oracles };
 }
 const candidate = await identity(work);
@@ -646,7 +646,7 @@ try {
     target: env.CARGO_TARGET_DIR,
     evidence,
     sourceIdentityScope:
-      'runtime: src/** + host/** + Cargo.toml/Cargo.lock; oracles: tests/** + package.json/tsconfig.json',
+      'runtime: src/** + sdk/src/** + Cargo.toml/Cargo.lock; oracles: host/** + tests/** + package.json/tsconfig.json',
     candidate,
     parentStillMatches: currentParent.sha256 === candidate.sha256,
     restoredSourceMatches: restored.sha256 === candidate.sha256,

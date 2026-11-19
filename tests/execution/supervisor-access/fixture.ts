@@ -5,12 +5,12 @@ import type {
   Options,
   PagingState,
   State,
-} from '../../../host/index.js';
+} from '../../../sdk/src/index.js';
 import { longSnapshot, protectedSnapshot } from '../../support/context.js';
 import { LIMITS, hex } from '../../support/fixture.js';
 
 export { check, hex, type Scenario } from '../../support/fixture.js';
-export type { Cpu, PagingState } from '../../../host/index.js';
+export type { Cpu, PagingState } from '../../../sdk/src/index.js';
 export type Side = { createCpu(options: Options): Promise<Cpu>; compiler: WebAssembly.Module };
 export type Family = 'non-pae' | 'pae' | 'ia32e' | 'fixed';
 export const families: Family[] = ['non-pae', 'pae', 'ia32e', 'fixed'];

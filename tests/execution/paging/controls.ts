@@ -3,7 +3,7 @@ import {
   type Cpu,
   type ExecutionContext,
   type PagingState,
-} from '../../../host/index.js';
+} from '../../../sdk/src/index.js';
 import { LIMITS, check, equal, hex, initial, same, type Scenario } from '../../support/fixture.js';
 import { context } from '../modes/fixture.js';
 

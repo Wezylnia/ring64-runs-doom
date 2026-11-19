@@ -9,7 +9,7 @@ import { ioSourcePteScenarios } from './source-pte.js';
 import { pagedIoScenarios } from './paging.js';
 import { ioBoundaryScenarios } from './boundaries.js';
 import { stringIoScenarios } from './strings.js';
-import { createCpu } from '../../../host/index.js';
+import { createCpu } from '../../../sdk/src/index.js';
 import { LIMITS, equal, hex, initial, type Scenario } from '../../support/fixture.js';
 
 export function ioScenarios(compiler: WebAssembly.Module): Scenario[] {

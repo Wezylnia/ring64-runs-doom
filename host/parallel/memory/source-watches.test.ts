@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { sharedLayout } from '../control.js';
-import { markSourceWatches, SourceWatches } from './source-watches.js';
+import { sharedLayout } from '../../../sdk/src/parallel/control.js';
+import {
+  markSourceWatches,
+  SourceWatches,
+} from '../../../sdk/src/parallel/memory/source-watches.js';
 
 test('sweeping source watches clears only bytes whose last worker owner was released', () => {
   const layout = sharedLayout(2, 4096, 16, 2);

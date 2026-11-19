@@ -1,8 +1,8 @@
-import type { RunResult, StateSnapshot } from '../../../host/index.js';
+import type { RunResult, StateSnapshot } from '../../../sdk/src/index.js';
 import { input } from '../modes/fixture.js';
 import { check, equal } from '../../support/fixture.js';
-export { createCpu } from '../../../host/index.js';
-export type { Cpu, ExecutionContextSnapshot, State } from '../../../host/index.js';
+export { createCpu } from '../../../sdk/src/index.js';
+export type { Cpu, ExecutionContextSnapshot, State } from '../../../sdk/src/index.js';
 export { using } from '../modes/fixture.js';
 export {
   snapshot,

@@ -1,4 +1,4 @@
-import { createCpu } from '../../../host/index.js';
+import { createCpu } from '../../../sdk/src/index.js';
 import { longSnapshot } from '../../support/context.js';
 import { execution, input, using as usingProfile } from '../identity-time/oracle.js';
 import {

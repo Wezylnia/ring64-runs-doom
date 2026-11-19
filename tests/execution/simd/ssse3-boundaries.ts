@@ -1,4 +1,4 @@
-import type { Cpu } from '../../../host/index.js';
+import type { Cpu } from '../../../sdk/src/index.js';
 import {
   DATA,
   PC,

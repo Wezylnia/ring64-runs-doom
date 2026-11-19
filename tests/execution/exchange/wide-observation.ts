@@ -1,4 +1,4 @@
-import { createCpu } from '../../../host/index.js';
+import { createCpu } from '../../../sdk/src/index.js';
 import { changed, check, equal, exit, hex, initial, type Scenario } from '../../support/fixture.js';
 import { fixture, same, using, word } from '../supervisor-access/fixture.js';
 import { little } from '../paging/fixture.js';

@@ -6,10 +6,10 @@ import {
 } from '../../../tests/support/protection-keys-layout.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { captureX87State, type X87State } from './x87.js';
-import { Core } from '../../wasm/core.js';
-import { captureInitialMemory } from '../../embedding/memory.js';
-import { createCpu } from '../../cpu/cpu.js';
+import { captureX87State, type X87State } from '../../../sdk/src/state/numeric/x87.js';
+import { Core } from '../../../sdk/src/wasm/core.js';
+import { captureInitialMemory } from '../../../sdk/src/embedding/memory.js';
+import { createCpu } from '../../../sdk/src/cpu/cpu.js';
 
 const layout = {
   size: PROTECTION_KEYS_STATE_SIZE,

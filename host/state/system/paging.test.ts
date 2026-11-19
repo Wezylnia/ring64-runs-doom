@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { capturePagingState, pagingStateFromJson } from './paging.js';
+import { capturePagingState, pagingStateFromJson } from '../../../sdk/src/state/system/paging.js';
 
 const bank = () => ({ cr0: 0x80010033n, cr2: 0n, cr3: 0x1000n, cr4: 0x628n, efer: 0xd00n });
 

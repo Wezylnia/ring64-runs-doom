@@ -1,8 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createCpu } from '../../host/index.js';
-import { Core } from '../../host/wasm/core.js';
+import { createCpu } from '../../sdk/src/index.js';
+import { Core } from '../../sdk/src/wasm/core.js';
 
 const compiler = await WebAssembly.compile(
   new Uint8Array(await readFile(new URL('../../build/ring64.wasm', import.meta.url))),

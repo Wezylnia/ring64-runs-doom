@@ -1,4 +1,4 @@
-import type { RunResult, State } from '../../../../host/index.js';
+import type { RunResult, State } from '../../../../sdk/src/index.js';
 import { CODE, equal, exit, initial } from '../../../support/fixture.js';
 
 export function input(rip = CODE, registers: Record<number, bigint> = {}, flags = 0x8d7n) {

@@ -1,4 +1,4 @@
-import { createCpu } from '../../../host/index.js';
+import { createCpu } from '../../../sdk/src/index.js';
 import { equal, check, initial, snapshot, using, hex, LIMITS, type Scenario } from './fixture.js';
 
 export function reuseScenarios(compiler: WebAssembly.Module): Scenario[] {

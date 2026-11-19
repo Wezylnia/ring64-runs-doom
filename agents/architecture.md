@@ -6,11 +6,11 @@ let module and directory boundaries follow the responsibilities and consumers th
 
 ## host entry points
 
-`host/index.ts` exposes the standalone CPU. `host/cpu/` coordinates its runs and owns the installed translation cache. `host/wasm/` exchanges inputs, state and generated code with the Rust Wasm core.
+`sdk/src/index.ts` exposes the standalone CPU. `sdk/src/cpu/` coordinates its runs and owns the installed translation cache. `sdk/src/wasm/` exchanges inputs, state and generated code with the Rust Wasm core.
 
-`host/machine.ts` exposes the shared-memory machine. It owns worker admission, memory barriers and I/O ordering. `host/parallel/` contains the worker protocol and execution binding. Its `memory/` directory holds shared RAM access and executable source watches, which the machine reclaims during its closed phase.
+`sdk/src/machine.ts` exposes the shared-memory machine. It owns worker admission, memory barriers and I/O ordering. `sdk/src/parallel/` contains the worker protocol and execution binding. Its `memory/` directory holds shared RAM access and executable source watches, which the machine reclaims during its closed phase.
 
-`host/state/execution/` owns run snapshots, event delivery state and debug continuations. `host/state/system/` holds context, paging, protection, time and fast-system state. `host/state/numeric/` holds x87 state and numeric control contracts. `host/embedding/` owns memory backing, mappings and I/O supplied by the caller. The Rust implementations below `src/` own guest instruction and memory semantics.
+`sdk/src/state/execution/` owns run snapshots, event delivery state and debug continuations. `sdk/src/state/system/` holds context, paging, protection, time and fast-system state. `sdk/src/state/numeric/` holds x87 state and numeric control contracts. `sdk/src/embedding/` owns memory backing, mappings and I/O supplied by the caller. The Rust implementations below `src/` own guest instruction and memory semantics.
 
 ## dependency direction
 

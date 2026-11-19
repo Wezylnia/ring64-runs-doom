@@ -5,10 +5,10 @@ import {
   type Limits,
   type PagingState,
   type IoProvider,
-} from '../../../host/index.js';
+} from '../../../sdk/src/index.js';
 import { LIMITS, hex } from '../../support/fixture.js';
 export { check, equal, hex, initial, same, type Scenario } from '../../support/fixture.js';
-export type { Cpu, PagingState } from '../../../host/index.js';
+export type { Cpu, PagingState } from '../../../sdk/src/index.js';
 export const PC = 0x400000n;
 export const BANK: PagingState = {
   cr0: 0x80000033n,

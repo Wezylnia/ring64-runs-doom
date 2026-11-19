@@ -1,4 +1,4 @@
-import { createCpu, type MemoryMapping } from '../../../host/index.js';
+import { createCpu, type MemoryMapping } from '../../../sdk/src/index.js';
 import { LIMITS, check, equal, hex, initial, type Scenario } from '../../support/fixture.js';
 import { snapshot, same } from '../far-control/fixture.js';
 

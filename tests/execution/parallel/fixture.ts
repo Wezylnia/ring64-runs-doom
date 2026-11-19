@@ -7,8 +7,8 @@ import type {
   PagingState,
   RunResult,
   State,
-} from '../../../host/index.js';
-import type { IoProvider } from '../../../host/embedding/io.js';
+} from '../../../sdk/src/index.js';
+import type { IoProvider } from '../../../sdk/src/embedding/io.js';
 import { LIMITS, equal, hex, initial, same } from '../../support/fixture.js';
 
 export { equal, hex, initial, same };

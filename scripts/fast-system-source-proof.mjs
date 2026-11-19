@@ -88,8 +88,8 @@ for (const [path, originalPath = path] of untouched) {
 }
 const sections = [];
 for (const [path, start, end, originalPath = path, originalEnd = end] of [
-  ['host/cpu/cpu.ts', '  async run(', undefined, 'host/cpu.ts'],
-  ['host/wasm/core.ts', '  snapshot(): StateSnapshot {', '\n  setState(', 'host/core.ts'],
+  ['sdk/src/cpu/cpu.ts', '  async run(', undefined, 'host/cpu.ts'],
+  ['sdk/src/wasm/core.ts', '  snapshot(): StateSnapshot {', '\n  setState(', 'host/core.ts'],
   [
     'src/embedding/exports.rs',
     'macro_rules! guest_access',
@@ -135,7 +135,7 @@ for (const [path, anchors] of Object.entries({
     'pub extern "C" fn core_fast_system(',
   ],
   'src/embedding/exports.rs': ['fast_system: crate::x86::fast_system::State'],
-  'host/wasm/core.ts': [
+  'sdk/src/wasm/core.ts': [
     'readFastSystemState(): FastSystemState',
     'env.fast_system = this.#exports.core_fast_system',
   ],

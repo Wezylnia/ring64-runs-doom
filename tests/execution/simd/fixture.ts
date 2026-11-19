@@ -1,4 +1,4 @@
-import type { Cpu } from '../../../host/index.js';
+import type { Cpu } from '../../../sdk/src/index.js';
 import { equal } from '../../support/fixture.js';
 export { LONG, changed, context, input, using, type Scenario } from '../modes/fixture.js';
 export { outcome } from '../strings/fixture.js';

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import { createCpu, type RunResult } from '../../host/index.js';
+import { createCpu, type RunResult } from '../../sdk/src/index.js';
 import { LIMITS, hex, initial } from '../support/fixture.js';
 
 const compiler = await WebAssembly.compile(

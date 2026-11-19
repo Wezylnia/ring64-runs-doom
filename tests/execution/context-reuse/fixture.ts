@@ -4,7 +4,7 @@ import {
   type ExecutionContext,
   type ExecutionContextSnapshot,
   type Limits,
-} from '../../../host/index.js';
+} from '../../../sdk/src/index.js';
 import { longSnapshot } from '../../support/context.js';
 import { LIMITS, hex } from '../../support/fixture.js';
 export {
@@ -19,7 +19,7 @@ export {
 export { same, preserveNumeric, loadedCode, loadedData } from '../far-control/fixture.js';
 export { longSnapshot, protectedSnapshot } from '../../support/context.js';
 export { gate, tssDescriptor, encoded, image } from '../software-events/fixture.js';
-export type { Cpu, ExecutionContextSnapshot, State, RunResult } from '../../../host/index.js';
+export type { Cpu, ExecutionContextSnapshot, State, RunResult } from '../../../sdk/src/index.js';
 export type Factory = typeof createCpu;
 
 export async function linear(

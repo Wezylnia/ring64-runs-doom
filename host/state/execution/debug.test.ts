@@ -8,7 +8,7 @@ import {
   readDebugSource,
   writeDebugSource,
   validateDebugLayout,
-} from './debug.js';
+} from '../../../sdk/src/state/execution/debug.js';
 
 test('debug bank capture detaches all four raw addresses and reads caller values once', () => {
   let reads = 0;

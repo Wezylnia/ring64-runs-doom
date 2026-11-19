@@ -1,4 +1,4 @@
-import type { EventState, ExecutionContextSnapshot, State } from '../../../host/index.js';
+import type { EventState, ExecutionContextSnapshot, State } from '../../../sdk/src/index.js';
 import { gate } from '../software-events/fixture.js';
 import {
   AC,

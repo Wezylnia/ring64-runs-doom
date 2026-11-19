@@ -1,4 +1,4 @@
-import { createCpu, type Cpu } from '../../../host/index.js';
+import { createCpu, type Cpu } from '../../../sdk/src/index.js';
 import { PC, fixture, hex, same, state, using } from '../protection-keys/fixture.js';
 import { context } from '../supervisor-access/fixture.js';
 export {

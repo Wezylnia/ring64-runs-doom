@@ -284,7 +284,7 @@ export function boundaryScenarios(compiler: WebAssembly.Module): Scenario[] {
     },
   ];
 }
-function putImageRights(cpu: import('../../../host/index.js').Cpu, keyValue: number) {
+function putImageRights(cpu: import('../../../sdk/src/index.js').Cpu, keyValue: number) {
   const p = new Uint8Array(4);
   put(p, 0, BigInt(keyValue), 4);
   cpu.writePhysicalMemory(BigInt(PHYS) + 576n, p);

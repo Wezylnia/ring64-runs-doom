@@ -180,6 +180,7 @@ async function identity(base) {
     }
   }
   await visit('src');
+  await visit('sdk');
   await visit('host');
   for (const name of ['Cargo.toml', 'Cargo.lock'])
     files.push([name, sha(await readFile(join(base, name)))]);
@@ -215,7 +216,7 @@ if (!selectedMutants.length) throw Error('unknown mutant selection');
 const reuse = process.argv.includes('--reuse');
 await mkdir(work, { recursive: reuse });
 await mkdir(evidence);
-for (const directory of ['src', 'host', 'tests'])
+for (const directory of ['src', 'sdk', 'host', 'tests'])
   await cp(join(root, directory), join(work, directory), { recursive: true });
 for (const file of ['Cargo.toml', 'Cargo.lock', 'package.json', 'tsconfig.json'])
   await copyFile(join(root, file), join(work, file));

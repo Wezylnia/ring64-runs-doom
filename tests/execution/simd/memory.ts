@@ -1,4 +1,4 @@
-import { createCpu, type ExecutionContext } from '../../../host/index.js';
+import { createCpu, type ExecutionContext } from '../../../sdk/src/index.js';
 import { LIMITS, equal, fault, hex, memory } from '../../support/fixture.js';
 import {
   LONG,

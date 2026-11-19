@@ -1,4 +1,4 @@
-import type { Cpu, ExecutionContextSnapshot, FastSystemState } from '../../../host/index.js';
+import type { Cpu, ExecutionContextSnapshot, FastSystemState } from '../../../sdk/src/index.js';
 import { longSnapshot } from '../../support/context.js';
 import { gate } from '../software-events/fixture.js';
 import {

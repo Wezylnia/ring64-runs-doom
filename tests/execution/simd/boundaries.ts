@@ -1,4 +1,4 @@
-import type { AlignmentFault, ExecutionContext, RunResult } from '../../../host/index.js';
+import type { AlignmentFault, ExecutionContext, RunResult } from '../../../sdk/src/index.js';
 import { check, equal, fault, memory } from '../../support/fixture.js';
 import {
   LONG,

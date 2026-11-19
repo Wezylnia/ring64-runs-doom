@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { captureState, type State } from './registers.js';
+import { captureState, type State } from '../../../sdk/src/state/execution/registers.js';
 
 function input(): State {
   return { registers: Array<bigint>(16).fill(7n), flags: 2n, rip: 0x1000n };

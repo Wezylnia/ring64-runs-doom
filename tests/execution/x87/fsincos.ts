@@ -1,4 +1,4 @@
-import type { Cpu, X87State } from '../../../host/index.js';
+import type { Cpu, X87State } from '../../../sdk/src/index.js';
 import {
   CODE32,
   DATA32,

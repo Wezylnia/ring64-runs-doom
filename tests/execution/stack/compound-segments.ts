@@ -1,4 +1,4 @@
-import { createCpu } from '../../../host/index.js';
+import { createCpu } from '../../../sdk/src/index.js';
 import { exit, memory as scalarMemory, initial } from '../../support/fixture.js';
 import { using as usingProfile, type Profile } from '../identity-time/oracle.js';
 import {

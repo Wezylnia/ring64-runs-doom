@@ -119,8 +119,7 @@ try {
     const baseline = await check(out, entry, 'baseline', false);
     await writeFile(path, source.replace(entry.from, entry.to));
     if (entry.build === 'host') {
-      build(['node_modules/typescript/bin/tsc']);
-      build(['scripts/generate-parallel-host.mjs']);
+      build(['scripts/build-sdk.mjs']);
     } else if (entry.build === 'core') {
       build(['scripts/parallel-core.mjs']);
     }
@@ -132,7 +131,8 @@ try {
     await writeFile(path, source);
     if (entry.build === 'core') await cp(join(original, core), join(tree, 'build', core));
     if (entry.build === 'host')
-      await cp(join(original, 'host'), join(tree, 'build', 'host'), { recursive: true });
+      for (const dir of ['host', 'sdk', 'tests'])
+        await cp(join(original, dir), join(tree, 'build', dir), { recursive: true });
     const restored = await check(out, entry, 'restored', false);
     rows.push({ name: entry.name, source: entry.path, baseline, mutant, restored, mutatedCore });
     await writeFile(

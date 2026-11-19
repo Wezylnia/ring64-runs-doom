@@ -3,7 +3,7 @@ import {
   type MemoryMapping,
   type RunResult,
   type X87State,
-} from '../../../host/index.js';
+} from '../../../sdk/src/index.js';
 import { LIMITS } from '../../support/fixture.js';
 import {
   LONG,

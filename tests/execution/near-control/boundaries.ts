@@ -1,4 +1,4 @@
-import { createCpu, type RunResult, type SegmentFault } from '../../../host/index.js';
+import { createCpu, type RunResult, type SegmentFault } from '../../../sdk/src/index.js';
 import { LIMITS, check, equal, exit, fault, hex, memory } from '../../support/fixture.js';
 import {
   LONG,

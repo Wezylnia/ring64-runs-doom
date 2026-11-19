@@ -6,9 +6,9 @@ import {
 } from '../../tests/support/protection-keys-layout.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Core } from './core.js';
-import { createCpu } from '../cpu/cpu.js';
-import { captureInitialMemory } from '../embedding/memory.js';
+import { Core } from '../../sdk/src/wasm/core.js';
+import { createCpu } from '../../sdk/src/cpu/cpu.js';
+import { captureInitialMemory } from '../../sdk/src/embedding/memory.js';
 
 const options = () => ({
   compiler: new WebAssembly.Module(Uint8Array.of(0, 97, 115, 109, 1, 0, 0, 0)),

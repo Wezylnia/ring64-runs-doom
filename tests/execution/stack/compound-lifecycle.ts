@@ -1,5 +1,5 @@
-import { createCpu, type Cpu, type Options } from '../../../host/index.js';
-import { Core } from '../../../host/wasm/core.js';
+import { createCpu, type Cpu, type Options } from '../../../sdk/src/index.js';
+import { Core } from '../../../sdk/src/wasm/core.js';
 import { longSnapshot } from '../../support/context.js';
 import { LIMITS, check, initial, exit } from '../../support/fixture.js';
 import { using as usingProfile, type Profile } from '../identity-time/oracle.js';

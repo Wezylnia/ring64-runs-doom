@@ -6,7 +6,7 @@ import {
   type Options,
   type PagingState,
   type RunResult,
-} from '../../../host/index.js';
+} from '../../../sdk/src/index.js';
 import { loadedCode, loadedData, snapshot } from '../far-control/fixture.js';
 import { LIMITS, equal, hex } from '../../support/fixture.js';
 
@@ -20,7 +20,7 @@ export {
   type Scenario,
 } from '../../support/fixture.js';
 export { bytes, same, preserveNumeric, operandPrefix } from '../far-control/fixture.js';
-export type { Cpu, ExecutionContextSnapshot, RunResult } from '../../../host/index.js';
+export type { Cpu, ExecutionContextSnapshot, RunResult } from '../../../sdk/src/index.js';
 
 export type Family = 'linear' | 'pg0' | 'legacy32' | 'pae' | 'ia32e' | 'fixed-ia32e';
 export const SOURCE = 0x1000n;

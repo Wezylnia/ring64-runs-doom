@@ -27,7 +27,7 @@ export {
 export { noDeliveryFault } from '../software-events/fixture.js';
 
 import { equal, same } from '../software-events/fixture.js';
-import type { RunResult } from '../../../host/index.js';
+import type { RunResult } from '../../../sdk/src/index.js';
 
 export const STACK = 0x7f00n;
 export const FILL = 'a5'.repeat(256);

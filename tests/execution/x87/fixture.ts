@@ -1,4 +1,4 @@
-import type { Cpu, RunResult, X87State } from '../../../host/index.js';
+import type { Cpu, RunResult, X87State } from '../../../sdk/src/index.js';
 import { equal } from '../../support/fixture.js';
 import { banks, xmm } from '../simd/fixture.js';
 export { LONG, context, input, changed, using, type Scenario } from '../modes/fixture.js';

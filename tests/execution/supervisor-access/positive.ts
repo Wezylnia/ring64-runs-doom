@@ -1,4 +1,4 @@
-import { createCpu } from '../../../host/index.js';
+import { createCpu } from '../../../sdk/src/index.js';
 import { ONE, banks, clone, pop, slot, stack } from '../x87/fixture.js';
 import {
   AC,

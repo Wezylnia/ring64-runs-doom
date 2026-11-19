@@ -8,7 +8,7 @@ import {
   throws,
   type Scenario,
 } from '../exception-delivery/fixture.js';
-import type { RunResult } from '../../../host/index.js';
+import type { RunResult } from '../../../sdk/src/index.js';
 
 export function reviewCaptureScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [

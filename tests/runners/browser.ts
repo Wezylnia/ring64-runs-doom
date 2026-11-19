@@ -1,4 +1,4 @@
-import { createCpu } from '../../host/index.js';
+import { createCpu } from '../../sdk/src/index.js';
 import { runScenarios } from '../suite.js';
 
 const resultWindow = window as Window & { ring64Result?: Promise<string> };

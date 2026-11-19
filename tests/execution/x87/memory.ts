@@ -1,4 +1,4 @@
-import { createCpu, type MemoryMapping } from '../../../host/index.js';
+import { createCpu, type MemoryMapping } from '../../../sdk/src/index.js';
 import { LIMITS } from '../../support/fixture.js';
 import {
   ONE,

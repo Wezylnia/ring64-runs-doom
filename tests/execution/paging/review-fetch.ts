@@ -1,4 +1,4 @@
-import { createCpu, type Cpu, type MemoryBackingInput } from '../../../host/index.js';
+import { createCpu, type Cpu, type MemoryBackingInput } from '../../../sdk/src/index.js';
 import { LIMITS } from '../../support/fixture.js';
 import { BANK, PC, equal, same, initial, little, word, type Scenario } from './fixture.js';
 

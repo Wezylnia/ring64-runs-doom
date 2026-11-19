@@ -1,4 +1,4 @@
-import { createCpu, type Cpu } from '../../../host/index.js';
+import { createCpu, type Cpu } from '../../../sdk/src/index.js';
 import { LIMITS, exit, hex } from '../../support/fixture.js';
 import { preserveNumeric } from '../far-control/fixture.js';
 import {

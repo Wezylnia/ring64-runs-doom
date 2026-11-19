@@ -1,4 +1,4 @@
-import { createCpu, type Cpu } from '../../../host/index.js';
+import { createCpu, type Cpu } from '../../../sdk/src/index.js';
 import { longSnapshot, protectedSnapshot } from '../../support/context.js';
 import { LIMITS, equal, hex } from '../../support/fixture.js';
 import { little } from '../legacy-paging/fixture.js';
@@ -15,7 +15,7 @@ export const SHARED_PC = 0x7000n,
   SHARED = 0x11000;
 export { check, equal, hex, type Scenario } from '../../support/fixture.js';
 export { little, word } from '../legacy-paging/fixture.js';
-export type { Cpu } from '../../../host/index.js';
+export type { Cpu } from '../../../sdk/src/index.js';
 
 export async function withRoots(
   compiler: WebAssembly.Module,

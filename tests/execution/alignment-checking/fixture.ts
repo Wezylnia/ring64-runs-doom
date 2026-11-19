@@ -1,4 +1,4 @@
-import { createCpu, type Cpu, type RunResult, type State } from '../../../host/index.js';
+import { createCpu, type Cpu, type RunResult, type State } from '../../../sdk/src/index.js';
 import { equal, hex, initial, type Scenario } from '../../support/fixture.js';
 import {
   fixture as pagedFixture,

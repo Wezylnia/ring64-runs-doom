@@ -1,5 +1,5 @@
 import { equal, hex, physicalCpu, resetContext, RESET_BANK, type Scenario } from './fixture.js';
-import type { Cpu, MemoryMapping } from '../../../host/index.js';
+import type { Cpu, MemoryMapping } from '../../../sdk/src/index.js';
 const encode = (value: unknown): string =>
   JSON.stringify(value, (_k, v: unknown) => {
     if (typeof v === 'bigint') return v.toString(16);

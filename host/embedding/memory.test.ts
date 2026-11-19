@@ -8,7 +8,7 @@ import {
   validateMappings,
   type MemoryLimits,
   type MemoryMapping,
-} from './memory.js';
+} from '../../sdk/src/embedding/memory.js';
 const limits: MemoryLimits = { maxBackingBytes: 16, maxBackings: 2, maxMappings: 2 };
 const mapping = (base = 0x1000n): MemoryMapping => ({
   base,

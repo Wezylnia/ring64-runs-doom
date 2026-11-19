@@ -5,7 +5,7 @@ import {
   type MemoryBackingInput,
   type MemoryMapping,
   type X87State,
-} from '../../../host/index.js';
+} from '../../../sdk/src/index.js';
 import { LIMITS, hex } from '../../support/fixture.js';
 export * from '../x87/fixture.js';
 export { segment } from '../modes/fixture.js';

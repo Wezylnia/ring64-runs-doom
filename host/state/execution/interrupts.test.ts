@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { captureState, type State } from './registers.js';
+import { captureState, type State } from '../../../sdk/src/state/execution/registers.js';
 import {
   captureEventState,
   readEvent,
@@ -9,7 +9,7 @@ import {
   writeInterrupts,
   validateInterruptLayout,
   type EventState,
-} from './events.js';
+} from '../../../sdk/src/state/execution/events.js';
 
 const layout = {
   offset: 560,

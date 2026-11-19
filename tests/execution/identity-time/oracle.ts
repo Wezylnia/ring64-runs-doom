@@ -6,7 +6,7 @@ import type {
   Options,
   PagingState,
   State,
-} from '../../../host/index.js';
+} from '../../../sdk/src/index.js';
 
 export type Factory = (options: Options) => Promise<Cpu>;
 export type Side = { createCpu: Factory; compiler: WebAssembly.Module };

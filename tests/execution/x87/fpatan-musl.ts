@@ -1,4 +1,4 @@
-import type { Cpu } from '../../../host/index.js';
+import type { Cpu } from '../../../sdk/src/index.js';
 import { LONG, ONE, equal, input, other, seed, stack, using, type Scenario } from './fixture.js';
 
 // complete .text from musl v1.2.5 src/math/x86_64; assemble with clang -target x86_64-linux-musl -c.

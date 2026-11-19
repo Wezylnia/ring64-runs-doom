@@ -1,4 +1,9 @@
-import type { Cpu, ExecutionContextSnapshot, Options, PagingState } from '../../../host/index.js';
+import type {
+  Cpu,
+  ExecutionContextSnapshot,
+  Options,
+  PagingState,
+} from '../../../sdk/src/index.js';
 import { LIMITS, same } from '../../support/fixture.js';
 import { createCpu, equal, hex, put, resetContext, type Scenario } from './fixture.js';
 

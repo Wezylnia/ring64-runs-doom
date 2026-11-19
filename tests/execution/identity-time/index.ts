@@ -1,4 +1,4 @@
-import { createCpu } from '../../../host/index.js';
+import { createCpu } from '../../../sdk/src/index.js';
 import type { Scenario } from '../../support/fixture.js';
 import { checkIdentityTime, groups } from './oracle.js';
 import { identityBoundaryScenarios } from './boundaries.js';

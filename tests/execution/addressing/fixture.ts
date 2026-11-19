@@ -1,4 +1,4 @@
-import type { RunResult } from '../../../host/index.js';
+import type { RunResult } from '../../../sdk/src/index.js';
 import { initial, equal, CODE } from '../../support/fixture.js';
 
 export const defaultRam = { ramBase: 0x4000n, ram: '00' };

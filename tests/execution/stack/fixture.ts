@@ -1,4 +1,4 @@
-import type { Cpu, Limits, RunResult } from '../../../host/index.js';
+import type { Cpu, Limits, RunResult } from '../../../sdk/src/index.js';
 import { CODE, createFixture, initial } from '../../support/fixture.js';
 
 export const RAM = 'a5'.repeat(64);

@@ -5,7 +5,7 @@ import {
   type LoadedSegment,
   type Limits,
   type State,
-} from '../../../host/index.js';
+} from '../../../sdk/src/index.js';
 import { LIMITS, hex, type Scenario } from '../../support/fixture.js';
 export type { Scenario };
 export const LONG: ExecutionContext = { mode: 'long64', fsBase: 0n, gsBase: 0n };

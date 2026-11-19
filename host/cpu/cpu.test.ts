@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Core } from '../wasm/core.js';
-import { Cpu, createCpu } from './cpu.js';
+import { Core } from '../../sdk/src/wasm/core.js';
+import { Cpu, createCpu } from '../../sdk/src/cpu/cpu.js';
 
 const limits = {
   maxInstructions: 32,

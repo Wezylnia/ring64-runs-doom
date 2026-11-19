@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import { createCpu, type MemoryMapping, type Options } from '../../host/index.js';
+import { createCpu, type MemoryMapping, type Options } from '../../sdk/src/index.js';
 import { LIMITS, hex } from '../support/fixture.js';
 import { BASE, RW, RX, input, mapping } from '../execution/mapped-memory/fixture.js';
 

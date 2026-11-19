@@ -1,4 +1,4 @@
-import { createCpu, type IoProvider } from '../../../host/index.js';
+import { createCpu, type IoProvider } from '../../../sdk/src/index.js';
 import {
   LIMITS,
   equal,

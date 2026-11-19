@@ -1,5 +1,5 @@
-import { captureContext } from '../../../host/state/system/context.js';
-import type { ExecutionContextSnapshot, SegmentName } from '../../../host/index.js';
+import { captureContext } from '../../../sdk/src/state/system/context.js';
+import type { ExecutionContextSnapshot, SegmentName } from '../../../sdk/src/index.js';
 import { context, segment } from '../modes/fixture.js';
 export { using, input as initial, changed } from '../modes/fixture.js';
 export { equal, check, state, hex, LIMITS, type Scenario } from '../../support/fixture.js';

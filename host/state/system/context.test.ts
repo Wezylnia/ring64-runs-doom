@@ -6,7 +6,7 @@ import {
   type ContextInfo,
   type ExecutionContext,
   type LoadedSegment,
-} from './context.js';
+} from '../../../sdk/src/state/system/context.js';
 import { longSnapshot, protectedSnapshot } from '../../../tests/support/context.js';
 
 const data = (): LoadedSegment => ({

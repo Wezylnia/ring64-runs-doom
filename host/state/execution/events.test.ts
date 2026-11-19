@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Core } from '../../wasm/core.js';
-import { captureState, type State } from './registers.js';
-import { createCpu } from '../../cpu/cpu.js';
+import { Core } from '../../../sdk/src/wasm/core.js';
+import { captureState, type State } from '../../../sdk/src/state/execution/registers.js';
+import { createCpu } from '../../../sdk/src/cpu/cpu.js';
 import {
   captureEventState,
   readEvent,
@@ -12,7 +12,7 @@ import {
   writePagingSource,
   validatePagingSourceLayout,
   type EventState,
-} from './events.js';
+} from '../../../sdk/src/state/execution/events.js';
 
 const layout = {
   offset: 560,

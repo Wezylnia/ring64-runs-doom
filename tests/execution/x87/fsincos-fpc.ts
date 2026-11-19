@@ -1,4 +1,4 @@
-import { createCpu, type RunResult } from '../../../host/index.js';
+import { createCpu, type RunResult } from '../../../sdk/src/index.js';
 import { LIMITS } from '../../support/fixture.js';
 import {
   bytes,

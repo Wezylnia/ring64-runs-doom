@@ -1,4 +1,4 @@
-import type { Cpu, State } from '../../../host/index.js';
+import type { Cpu, State } from '../../../sdk/src/index.js';
 import { check, equal, memory } from '../../support/fixture.js';
 import {
   LONG,

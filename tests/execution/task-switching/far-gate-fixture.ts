@@ -1,4 +1,4 @@
-import { createCpu, type Cpu, type MemoryModel } from '../../../host/index.js';
+import { createCpu, type Cpu, type MemoryModel } from '../../../sdk/src/index.js';
 import { protectedSnapshot } from '../../support/context.js';
 import { initial, LIMITS } from '../../support/fixture.js';
 

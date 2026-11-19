@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { copyFile, mkdir, rm } from 'node:fs/promises';
+import { copyFile, mkdir } from 'node:fs/promises';
 
 function run(command, args) {
   const result = spawnSync(command, args, { stdio: 'inherit' });
@@ -8,11 +8,7 @@ function run(command, args) {
 }
 
 run('cargo', ['build', '--locked', '--release', '--target', 'wasm32-unknown-unknown']);
-await Promise.all(
-  ['build/host', 'build/tests'].map((path) => rm(path, { recursive: true, force: true })),
-);
-run('node', ['node_modules/typescript/bin/tsc']);
 await mkdir('build', { recursive: true });
 await copyFile('target/wasm32-unknown-unknown/release/ring64.wasm', 'build/ring64.wasm');
 run('node', ['scripts/parallel-core.mjs']);
-run('node', ['scripts/generate-parallel-host.mjs']);
+run('node', ['scripts/build-sdk.mjs']);

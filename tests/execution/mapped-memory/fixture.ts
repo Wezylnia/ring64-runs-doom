@@ -6,7 +6,7 @@ import {
   type MemoryMapping,
   type MemoryPermissions,
   type State,
-} from '../../../host/index.js';
+} from '../../../sdk/src/index.js';
 import { LIMITS, hex } from '../../support/fixture.js';
 
 export const BASE = 0x1000n;

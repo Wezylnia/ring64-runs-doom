@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Core } from '../wasm/core.js';
-import { createCpu, type Options } from './cpu.js';
-import type { PagingState } from '../state/system/paging.js';
+import { Core } from '../../sdk/src/wasm/core.js';
+import { createCpu, type Options } from '../../sdk/src/cpu/cpu.js';
+import type { PagingState } from '../../sdk/src/state/system/paging.js';
 import { longSnapshot, protectedSnapshot } from '../../tests/support/context.js';
 
 const limits = {

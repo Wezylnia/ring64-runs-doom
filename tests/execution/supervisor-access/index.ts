@@ -1,4 +1,4 @@
-import { createCpu } from '../../../host/index.js';
+import { createCpu } from '../../../sdk/src/index.js';
 import type { Scenario } from '../../support/fixture.js';
 import { checkSupervisorAccess, groups } from './oracle.js';
 import { supervisorFlagScenarios } from './flags.js';

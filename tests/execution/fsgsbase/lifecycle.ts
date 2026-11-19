@@ -1,4 +1,4 @@
-import { createCpu } from '../../../host/index.js';
+import { createCpu } from '../../../sdk/src/index.js';
 import { longSnapshot } from '../../support/context.js';
 import { check, equal, hex, initial, LIMITS, type Scenario } from '../../support/fixture.js';
 import { little, same } from '../paging/fixture.js';

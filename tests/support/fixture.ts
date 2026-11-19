@@ -1,4 +1,10 @@
-import { createCpu, type Cpu, type Limits, type RunResult, type State } from '../../host/index.js';
+import {
+  createCpu,
+  type Cpu,
+  type Limits,
+  type RunResult,
+  type State,
+} from '../../sdk/src/index.js';
 
 type Execution = RunResult;
 

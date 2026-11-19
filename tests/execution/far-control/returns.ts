@@ -1,4 +1,4 @@
-import type { ExecutionContextSnapshot } from '../../../host/index.js';
+import type { ExecutionContextSnapshot } from '../../../sdk/src/index.js';
 import {
   CODE32,
   CODE64,

@@ -1,4 +1,4 @@
-import type { RunResult, State } from '../../../host/index.js';
+import type { RunResult, State } from '../../../sdk/src/index.js';
 import { equal, exit } from '../../support/fixture.js';
 export { LONG, context, input, changed, using, type Scenario } from '../modes/fixture.js';
 

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { captureIo, IoBridge, type IoProvider } from './io.js';
+import { captureIo, IoBridge, type IoProvider } from '../../sdk/src/embedding/io.js';
 
 test('I/O captures option and methods once and keeps their receiver across replacement', () => {
   let options = 0,

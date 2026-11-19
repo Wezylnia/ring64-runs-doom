@@ -4,7 +4,7 @@ import {
   captureFastSystemState,
   fastSystemStateFromJson,
   zeroFastSystemState,
-} from './fast-system.js';
+} from '../../../sdk/src/state/system/fast-system.js';
 
 const bank = () => ({
   star: 0x0020000800000000n,

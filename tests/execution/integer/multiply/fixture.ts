@@ -1,4 +1,4 @@
-import type { Cpu, State } from '../../../../host/index.js';
+import type { Cpu, State } from '../../../../sdk/src/index.js';
 import { CODE, changed, createFixture, exit, memory } from '../../../support/fixture.js';
 import { completed } from '../arithmetic/fixture.js';
 import { input as scalarInput, RAM, setup, view, written } from '../data/fixture.js';

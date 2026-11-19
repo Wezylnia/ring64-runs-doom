@@ -1,4 +1,4 @@
-import type { RunResult, State } from '../../../../host/index.js';
+import type { RunResult, State } from '../../../../sdk/src/index.js';
 import {
   CODE,
   changed,

@@ -3,15 +3,15 @@ import type {
   ExecutionContextSnapshot,
   RunResult,
   StateSnapshot,
-} from '../../../host/index.js';
+} from '../../../sdk/src/index.js';
 import { hex, equal, same } from '../../support/fixture.js';
-export { createCpu } from '../../../host/index.js';
+export { createCpu } from '../../../sdk/src/index.js';
 export type {
   Cpu,
   ExecutionContext,
   ExecutionContextSnapshot,
   StateSnapshot,
-} from '../../../host/index.js';
+} from '../../../sdk/src/index.js';
 export { using } from '../modes/fixture.js';
 export { check, equal, hex, LIMITS, same, throws, type Scenario } from '../../support/fixture.js';
 export {

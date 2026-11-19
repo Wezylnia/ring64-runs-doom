@@ -1,4 +1,4 @@
-import { createCpu, type ExecutionContextSnapshot } from '../../../host/index.js';
+import { createCpu, type ExecutionContextSnapshot } from '../../../sdk/src/index.js';
 import { usingPaged, PC } from '../paging/fixture.js';
 import {
   legacyOptions,
@@ -128,7 +128,7 @@ export function legacyEventScenarios(compiler: WebAssembly.Module): Scenario[] {
       name: 'historic IA32e high canonical PF survives physical legacy restore and legacy entry',
       async run() {
         const high = 0xffff800000006000n;
-        let saved: ReturnType<import('../../../host/index.js').Cpu['readState']> | undefined;
+        let saved: ReturnType<import('../../../sdk/src/index.js').Cpu['readState']> | undefined;
         await usingPaged(compiler, { code: '8b03' }, async (cpu) => {
           cpu.setState(initial(PC, { 3: high }));
           const first = await cpu.run({ budget: 1n, eventDelivery: { budget: 0n } });
