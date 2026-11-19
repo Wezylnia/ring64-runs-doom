@@ -15,9 +15,9 @@ if (!work.startsWith('/tmp/') || work === root)
 const sha = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const env = { ...process.env, CARGO_TARGET_DIR: join(work, 'target') };
 const access = 'src/x86/paging/access.rs';
-const paging = 'src/embedding/exports/paging.rs';
+const paging = 'src/embedding/exports/memory/paging.rs';
 const exception = 'src/x86/exception.rs';
-const delivery = 'src/embedding/exports/exception_delivery.rs';
+const delivery = 'src/embedding/exports/events/exception_delivery.rs';
 const walk = 'src/x86/paging/walk.rs';
 const mutants = [
   {

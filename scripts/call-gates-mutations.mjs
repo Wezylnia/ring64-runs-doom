@@ -70,14 +70,14 @@ export const callGateMutationPlan = [
   },
   {
     name: 'invented-old-stack-debug',
-    owner: 'exports/far_control.rs',
+    owner: 'exports/system/far_control.rs',
     mutation: 'reuse old operands::far CALL footprint instead of observed actual slots',
     assertion: 'old-stack write watch must miss and actual new frame watch must hit',
     domains: ['linear watch', 'source-width differs gate width', 'metadata excluded'],
   },
   {
     name: 'publish-failed-debug-candidate',
-    owner: 'exports/far_control.rs',
+    owner: 'exports/system/far_control.rs',
     mutation: 'merge observed hit mask even when gate returns Err',
     assertion: 'repair retry with watch removed must not inherit failed tentative hits',
     domains: ['debug fault atomicity', 'later preflight refusal'],
@@ -91,7 +91,7 @@ export const callGateMutationPlan = [
   },
   {
     name: 'erase-canonical-provenance',
-    owner: 'exports/far_control.rs',
+    owner: 'exports/system/far_control.rs',
     mutation: 'replace SYSTEM_MEMORY report with PROTECTION or remove selected companion',
     assertion: 'report full original SystemMemoryFault and opt-in selector-coded GP must both hold',
     domains: [

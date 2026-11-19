@@ -27,6 +27,8 @@ cross-component calls use the owner's explicit entry points and owned types. kee
 
 split at responsibilities that can be named and changed independently. inside decode, prefix handling, opcode refinement and operand/address parsing are different responsibilities. inside wasm lowering, integer flags, memory operations, control transfers and entry/exit publication have different contracts. inside host execution, run coordination and artifact ownership remain separate even though both participate in one cpu instance.
 
+`src/dbt/wasm/` groups lowering by execution, integer, memory, numeric and system behavior. `src/embedding/exports/` groups the Wasm ABI adapters by execution, events, memory, numeric and system behavior. Their test trees follow the same groups. Explicit Rust module paths preserve existing module names and visibility while keeping related files together.
+
 keep a local type or helper with the behavior it serves. put a shared contract with its meaning's owner: decoded operand types with instructions, access failures with memory access, artifact entry metadata with translation units. importing a small contract should not expose an owner's entire implementation.
 
 architectural meaning and wasm realization are separate responsibilities. keep instruction/effect definitions and the affected lowering aligned.

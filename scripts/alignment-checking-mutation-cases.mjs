@@ -21,7 +21,7 @@ export const mutants = [
     'new-ac-retains-older-mandatory-alignment-report',
     'alignment_report_bank_switches_classes_without_resurrecting_an_older_fault',
     edit(
-      'src/embedding/exports/context.rs',
+      'src/embedding/exports/system/context.rs',
       `            AccessFailure::AlignmentCheck(fault) => {
                 self.alignment_fault = None;
                 self.alignment_check = Some(fault);
@@ -44,7 +44,7 @@ export const mutants = [
     'aligned-effective-offset-suppresses-linear-natural-check',
     'final segmented linear address reverses effective-offset residues',
     edit(
-      'src/embedding/exports/context.rs',
+      'src/embedding/exports/system/context.rs',
       '        match guest_access!(core, PAGED, read(address, width)) {',
       `        match guest_access!(core, PAGED,
             read_aligned(address, width, if offset & u64::from(width - 1) == 0 {
@@ -116,7 +116,7 @@ fn participates`,
     'x87-store-candidate-published-before-operand-admission',
     granular,
     edit(
-      'src/embedding/exports/x87.rs',
+      'src/embedding/exports/numeric/x87.rs',
       '        let mut address = None;\n        let source = if width == 0 {',
       `        if operation.is_store() {
             unsafe { let state = &mut *core.state.get(); let _ = x87::eval(&mut state.x87, operation, 0, flags); }
@@ -183,7 +183,7 @@ fn participates`,
     'captured-ac-rechecks-disabled-live-gate',
     'alignment_staging_uses_captured_fault_even_after_eligibility_is_cleared',
     edit(
-      'src/embedding/exports/exception_delivery.rs',
+      'src/embedding/exports/events/exception_delivery.rs',
       `            ALIGNMENT_CHECK => {
                 if core.alignment_check.is_none() {`,
       `            ALIGNMENT_CHECK => {
@@ -197,7 +197,7 @@ fn participates`,
     'validated-control-import-keeps-stale-ac',
     'paging_import_clears_transient_alignment_only_after_validation_and_keeps_pending_source',
     edit(
-      'src/embedding/exports/paging.rs',
+      'src/embedding/exports/memory/paging.rs',
       `        core.paging = Some(candidate);
         core.paging_work.clear();
         core.alignment_check = None;
@@ -211,7 +211,7 @@ fn participates`,
     'saturated-epoch-skips-pending-owner-cancellation',
     'context_reuse_pending_aba_is_cancelled_even_when_epoch_saturates',
     edit(
-      'src/embedding/exports/translation.rs',
+      'src/embedding/exports/execution/translation.rs',
       `        self.translation_owners
             .cancel_pending(fetch_changed, |owner| self.image.release(owner));`,
       `        if self.context_version != u64::MAX {
@@ -232,7 +232,7 @@ fn participates`,
     'ac-overwrites-cr2',
     granular,
     edit(
-      'src/embedding/exports/context.rs',
+      'src/embedding/exports/system/context.rs',
       `            AccessFailure::AlignmentCheck(fault) => {
                 self.alignment_fault = None;
                 self.alignment_check = Some(fault);
@@ -316,7 +316,7 @@ fn participates`,
     'ins-consumes-two-provider-values-for-one-element',
     'INS retains consumed input before destination AC',
     edit(
-      'src/embedding/exports/io.rs',
+      'src/embedding/exports/system/io.rs',
       '            u64::from(port_read(port, width.bits()))',
       `            let _ = port_read(port, width.bits());
             u64::from(port_read(port, width.bits()))`,
@@ -326,7 +326,7 @@ fn participates`,
     'outs-calls-provider-before-source-refusal',
     'OUTS source refusal prevents provider output',
     edit(
-      'src/embedding/exports/io.rs',
+      'src/embedding/exports/system/io.rs',
       `            if kind == 3 {
                 data = match guest_access!(core, paged, read(address, u32::from(width.bytes()))) {
                     Ok(value) => value,
@@ -342,7 +342,7 @@ fn participates`,
       '            // Deliberately defer OUTS source admission until after the provider.',
     ),
     edit(
-      'src/embedding/exports/io.rs',
+      'src/embedding/exports/system/io.rs',
       `        core.io_effect = false;
         if kind == 2 {`,
       `        core.io_effect = false;
@@ -530,7 +530,7 @@ fn participates`,
     'ac-misclassified-as-general-protection',
     'each_operand_admission_clears_a_previous_alignment_refusal',
     edit(
-      'src/embedding/exports/paging.rs',
+      'src/embedding/exports/memory/paging.rs',
       '            None if self.alignment_check.is_some() => super::super::layout::ALIGNMENT_CHECK,',
       '            None if self.alignment_check.is_some() => super::super::layout::GENERAL_PROTECTION,',
     ),
@@ -638,7 +638,7 @@ fn participates`,
     'mandatory-vector-gp-admission-skipped',
     'admitted unaligned128 loads differ from mandatory16 GP',
     edit(
-      'src/embedding/exports/vector.rs',
+      'src/embedding/exports/numeric/vector.rs',
       '        if address & u64::from(alignment - 1) != 0 {',
       '        if false && address & u64::from(alignment - 1) != 0 {',
     ),
@@ -647,12 +647,12 @@ fn participates`,
     'mmx-qwords-inherit-mandatory16',
     granular,
     edit(
-      'src/embedding/exports/mmx.rs',
+      'src/embedding/exports/numeric/mmx.rs',
       '            let alignment = if width == 16 { 16 } else { 1 };',
       '            let alignment = if width >= 8 { 16 } else { 1 };',
     ),
     edit(
-      'src/embedding/exports/vector.rs',
+      'src/embedding/exports/numeric/vector.rs',
       '        assert!(alignment == 1 || alignment == 16 && width == 16);',
       '        assert!(alignment == 1 || alignment == 16 && matches!(width, 8 | 16));',
     ),
@@ -661,7 +661,7 @@ fn participates`,
     'zero-mask-movq-skips-nominal-alignment',
     granular,
     edit(
-      'src/embedding/exports/streaming.rs',
+      'src/embedding/exports/memory/streaming.rs',
       '                check_write_aligned(address, width, crate::x86::alignment::Intent::vector(width))',
       '                check_write_aligned(address, width, crate::x86::alignment::Intent::Exempt)',
     ),
@@ -670,7 +670,7 @@ fn participates`,
     'ins-preflights-destination-before-provider',
     'INS retains consumed input before destination AC',
     edit(
-      'src/embedding/exports/io.rs',
+      'src/embedding/exports/system/io.rs',
       '            if kind == 3 {\n                data = match guest_access!',
       `            if kind == 2 {
                 if let Err(failure) = guest_access!(core, paged,
@@ -687,7 +687,7 @@ fn participates`,
     'outs-source-becomes-exempt',
     'OUTS source refusal prevents provider output',
     edit(
-      'src/embedding/exports/io.rs',
+      'src/embedding/exports/system/io.rs',
       'data = match guest_access!(core, paged, read(address, u32::from(width.bytes()))) {',
       'data = match guest_access!(core, paged, read_aligned(address, u32::from(width.bytes()), crate::x86::alignment::Intent::Exempt)) {',
     ),

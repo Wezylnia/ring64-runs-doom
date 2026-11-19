@@ -4,20 +4,20 @@ import { encode, hash, manifest, root } from './paging-support.mjs';
 
 const families = {
   'src/embedding/exports.rs': ['load', 'load_for_write', 'store'],
-  'src/embedding/exports/context.rs': [
+  'src/embedding/exports/system/context.rs': [
     'segmented_load',
     'segmented_load_for_write',
     'segmented_store',
   ],
-  'src/embedding/exports/vector.rs': ['vector_load', 'vector_store'],
-  'src/embedding/exports/numeric.rs': ['load_mxcsr', 'store_mxcsr'],
-  'src/embedding/exports/x87.rs': ['x87'],
-  'src/embedding/exports/mmx.rs': ['mmx'],
-  'src/embedding/exports/numeric_image.rs': ['numeric_image'],
-  'src/embedding/exports/streaming.rs': ['masked_store', 'clflush'],
-  'src/embedding/exports/protection.rs': ['protection'],
-  'src/embedding/exports/far_control.rs': ['far_control'],
-  'src/embedding/exports/software_events.rs': ['software_event'],
+  'src/embedding/exports/numeric/vector.rs': ['vector_load', 'vector_store'],
+  'src/embedding/exports/numeric/numeric.rs': ['load_mxcsr', 'store_mxcsr'],
+  'src/embedding/exports/numeric/x87.rs': ['x87'],
+  'src/embedding/exports/numeric/mmx.rs': ['mmx'],
+  'src/embedding/exports/numeric/numeric_image/mod.rs': ['numeric_image'],
+  'src/embedding/exports/memory/streaming.rs': ['masked_store', 'clflush'],
+  'src/embedding/exports/system/protection.rs': ['protection'],
+  'src/embedding/exports/system/far_control.rs': ['far_control'],
+  'src/embedding/exports/events/software_events.rs': ['software_event'],
 };
 const files = [],
   wrappers = [],
@@ -54,7 +54,7 @@ for (const [path, anchors] of Object.entries({
     'let access_reason = (segmented || paged).then',
   ],
   'src/dbt/wasm/execution/boundary.rs': ['if self.paged {'],
-  'src/embedding/exports/system_flags.rs': ['pub(super) fn boundary_observed(&self)'],
+  'src/embedding/exports/events/system_flags.rs': ['pub(super) fn boundary_observed(&self)'],
   'host/wasm/core.ts': ['if (this.isPaged)', '...PAGED_HELPERS', 'run(this.#statePointer, budget'],
   'src/memory/access.rs': [
     'fn preflight<const PHYSICAL: bool>',
@@ -62,7 +62,7 @@ for (const [path, anchors] of Object.entries({
     'self.preflight::<true>(address, width, Access::Read',
   ],
   'src/x86/access.rs': ['impl GuestMemory for Image'],
-  'src/embedding/exports/paging.rs': [
+  'src/embedding/exports/memory/paging.rs': [
     'pub(super) fn paged_decode(',
     'fn encoding_current(',
     'pub extern "C" fn core_paged_debug_begin(',

@@ -49,33 +49,61 @@ macro_rules! guest_semantics {
     }};
 }
 
+#[path = "exports/execution/admission.rs"]
 mod admission;
+#[path = "exports/system/compound_stack.rs"]
 mod compound_stack;
+#[path = "exports/system/context.rs"]
 mod context;
+#[path = "exports/events/debug.rs"]
 mod debug;
+#[path = "exports/events/exception_delivery.rs"]
 mod exception_delivery;
+#[path = "exports/events/external_interrupts.rs"]
 mod external_interrupts;
+#[path = "exports/system/far_control.rs"]
 mod far_control;
+#[path = "exports/system/fast_system.rs"]
 mod fast_system;
+#[path = "exports/execution/invalidation.rs"]
 mod invalidation;
+#[path = "exports/system/io.rs"]
 mod io;
+#[path = "exports/memory/mapped.rs"]
 mod mapped;
+#[path = "exports/numeric/mmx.rs"]
 mod mmx;
+#[path = "exports/numeric/numeric.rs"]
 mod numeric;
+#[path = "exports/numeric/numeric_controls.rs"]
 mod numeric_controls;
+#[path = "exports/numeric/numeric_image/mod.rs"]
 mod numeric_image;
+#[path = "exports/memory/paging.rs"]
 mod paging;
+#[path = "exports/system/processor.rs"]
 mod processor;
+#[path = "exports/system/protection.rs"]
 mod protection;
+#[path = "exports/memory/protection_keys.rs"]
 mod protection_keys;
+#[path = "exports/execution/reset.rs"]
 mod reset;
+#[path = "exports/events/software_events.rs"]
 mod software_events;
+#[path = "exports/memory/streaming.rs"]
 mod streaming;
+#[path = "exports/events/system_flags.rs"]
 mod system_flags;
+#[path = "exports/system/task_switch.rs"]
 mod task_switch;
+#[path = "exports/execution/translation.rs"]
 mod translation;
+#[path = "exports/numeric/vector.rs"]
 mod vector;
+#[path = "exports/numeric/x87.rs"]
 mod x87;
+#[path = "exports/numeric/x87_state.rs"]
 mod x87_state;
 
 struct Core {
@@ -838,6 +866,7 @@ pub extern "C" fn core_dispose() {
 mod tests;
 
 #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+#[path = "exports/memory/parallel.rs"]
 mod parallel;
 
 #[unsafe(no_mangle)]

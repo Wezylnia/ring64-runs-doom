@@ -23,7 +23,7 @@ const work = resolve(arg('--work', `/tmp/ring64-context-reuse-mutations-${stamp}
 const evidence = resolve(arg('--evidence', `/tmp/ring64-context-reuse-mutation-evidence-${stamp}`));
 const hash = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const owners = 'src/dbt/ownership.rs';
-const adapter = 'src/embedding/exports/translation.rs';
+const adapter = 'src/embedding/exports/execution/translation.rs';
 const validity = 'src/memory/validity.rs';
 const fieldOracle = 'context_reuse_assumptions_distinguish_every_normalized_context_field';
 const mutants = [
@@ -98,7 +98,7 @@ const mutants = [
   {
     name: 'released-assumptions-leak',
     kind: 'rust-owner',
-    file: 'src/embedding/exports/mapped.rs',
+    file: 'src/embedding/exports/memory/mapped.rs',
     old: '        core.translation_owners.release(owner);',
     replacement: '        let _ = owner;',
     filter: 'context_reuse_pending_aba_is_cancelled_even_when_epoch_saturates',
@@ -131,7 +131,7 @@ const mutants = [
   {
     name: 'fs-msr-publisher-still-retires-all',
     kind: 'public-cpu',
-    file: 'src/embedding/exports/paging.rs',
+    file: 'src/embedding/exports/memory/paging.rs',
     old: '                        core.context_changed();',
     replacement: '                        core.retire_translations();',
     filter: 'guest FS_BASE WRMSR ends the old native path',
@@ -139,7 +139,7 @@ const mutants = [
   {
     name: 'dynamic-fast-bank-write-dropped',
     kind: 'public-cpu',
-    file: 'src/embedding/exports/fast_system.rs',
+    file: 'src/embedding/exports/system/fast_system.rs',
     old: '        core.fast_system = bank;',
     replacement: '        let _ = bank;',
     filter: 'mutable entry and SCE',
@@ -226,7 +226,7 @@ const mutants = [
   {
     name: 'fs-msr-context-proof-not-cleared',
     kind: 'public-cpu',
-    file: 'src/embedding/exports/paging.rs',
+    file: 'src/embedding/exports/memory/paging.rs',
     old: '                        core.context_changed();',
     replacement: `                        core.translation_owners.cancel_pending_without_proof_clear(|owner| core.image.release(owner));
                         core.context_version = core.context_version.saturating_add(1);`,

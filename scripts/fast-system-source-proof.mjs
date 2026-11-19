@@ -22,16 +22,16 @@ const git = (args) => execFileSync('git', args, { cwd: root, encoding: 'utf8' })
 const baselineSource = (path) => git(['show', baselineCommit + ':' + path]);
 const untouched = [
   ['src/embedding/layout.rs'],
-  ['src/embedding/exports/context.rs'],
-  ['src/embedding/exports/vector.rs'],
-  ['src/embedding/exports/numeric.rs'],
-  ['src/embedding/exports/x87.rs'],
-  ['src/embedding/exports/mmx.rs'],
-  ['src/embedding/exports/numeric_image.rs'],
-  ['src/embedding/exports/streaming.rs'],
-  ['src/embedding/exports/protection.rs'],
-  ['src/embedding/exports/far_control.rs'],
-  ['src/embedding/exports/software_events.rs'],
+  ['src/embedding/exports/system/context.rs', 'src/embedding/exports/context.rs'],
+  ['src/embedding/exports/numeric/vector.rs', 'src/embedding/exports/vector.rs'],
+  ['src/embedding/exports/numeric/numeric.rs', 'src/embedding/exports/numeric.rs'],
+  ['src/embedding/exports/numeric/x87.rs', 'src/embedding/exports/x87.rs'],
+  ['src/embedding/exports/numeric/mmx.rs', 'src/embedding/exports/mmx.rs'],
+  ['src/embedding/exports/numeric/numeric_image/mod.rs', 'src/embedding/exports/numeric_image.rs'],
+  ['src/embedding/exports/memory/streaming.rs', 'src/embedding/exports/streaming.rs'],
+  ['src/embedding/exports/system/protection.rs', 'src/embedding/exports/protection.rs'],
+  ['src/embedding/exports/system/far_control.rs', 'src/embedding/exports/far_control.rs'],
+  ['src/embedding/exports/events/software_events.rs', 'src/embedding/exports/software_events.rs'],
   ['src/memory/access.rs'],
   ['src/x86/access.rs'],
   ['src/x86/paging/access.rs'],
@@ -87,27 +87,34 @@ for (const [path, originalPath = path] of untouched) {
   if (before !== now) throw Error('previous successful helper/layout changed: ' + path);
 }
 const sections = [];
-for (const [path, start, end, originalPath = path] of [
+for (const [path, start, end, originalPath = path, originalEnd = end] of [
   ['host/cpu/cpu.ts', '  async run(', undefined, 'host/cpu.ts'],
   ['host/wasm/core.ts', '  snapshot(): StateSnapshot {', '\n  setState(', 'host/core.ts'],
-  ['src/embedding/exports.rs', 'macro_rules! guest_access', '\nmod context;'],
+  [
+    'src/embedding/exports.rs',
+    'macro_rules! guest_access',
+    '\n#[path = "exports/execution/admission.rs"]',
+    'src/embedding/exports.rs',
+    '\nmod context;',
+  ],
   ['src/embedding/exports.rs', 'pub extern "C" fn core_load(', undefined],
 ]) {
   const current = await readFile(resolve(root, path), 'utf8'),
     baseline = baselineSource(originalPath);
-  const take = (source) => {
+  const take = (source, end) => {
     const from = source.indexOf(start),
       to = end ? source.indexOf(end, from) : source.length;
     if (from < 0 || to < from) throw Error('missing inherited section: ' + path + ':' + start);
     return source.slice(from, to);
   };
-  const a = take(baseline),
-    b = take(current);
+  const a = take(baseline, originalEnd),
+    b = take(current, end);
   sections.push({
     path,
     originalPath,
     start,
     end: end ?? 'EOF',
+    originalEnd: originalEnd ?? 'EOF',
     baselineSha256: hash(a),
     currentSha256: hash(b),
     identical: a === b,
@@ -123,7 +130,7 @@ for (const [path, anchors] of Object.entries({
     'Operation::FastSystem(operation)',
   ],
   'src/dbt/wasm/system/fast_system.rs': ['pub(super) fn fast_system(', 'self.fast_system.expect'],
-  'src/embedding/exports/fast_system.rs': [
+  'src/embedding/exports/system/fast_system.rs': [
     'pub extern "C" fn core_fast_system_state()',
     'pub extern "C" fn core_fast_system(',
   ],
@@ -132,7 +139,7 @@ for (const [path, anchors] of Object.entries({
     'readFastSystemState(): FastSystemState',
     'env.fast_system = this.#exports.core_fast_system',
   ],
-  'src/embedding/exports/paging.rs': [
+  'src/embedding/exports/memory/paging.rs': [
     'core.fast_system.read_msr',
     'prepare_msr_write(register, value, &core.context)',
   ],

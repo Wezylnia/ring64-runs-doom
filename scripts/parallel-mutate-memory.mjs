@@ -61,7 +61,7 @@ export const memoryMutations = [
   },
   {
     name: 'parallel-slice-flushes-architectural-tlb',
-    path: 'src/embedding/exports/parallel.rs',
+    path: 'src/embedding/exports/memory/parallel.rs',
     from: '.paging_work\n            .clear();',
     to: '.memory_admin_changed();',
     check: scenario(

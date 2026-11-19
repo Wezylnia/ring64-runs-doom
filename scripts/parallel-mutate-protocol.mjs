@@ -89,7 +89,7 @@ export const protocolMutations = [
   },
   {
     name: 'ins-destination-permit',
-    path: 'src/embedding/exports/io.rs',
+    path: 'src/embedding/exports/system/io.rs',
     from: 'let _destination_permit = (kind == 2).then(|| {',
     to: 'let _destination_permit = (kind == 3).then(|| {',
     check: protocolTest(

@@ -108,7 +108,7 @@ const mutants = [
   },
   {
     name: 'synthetic-transfer-probes-gdt',
-    file: 'src/embedding/exports/fast_system.rs',
+    file: 'src/embedding/exports/system/fast_system.rs',
     old: '        let prepared = match fast_system::prepare(',
     replacement:
       '        if core.image.physical_read(core.context.gdtr().base, 8).is_err() { return failure(core, Failure::Target); }\n        let prepared = match fast_system::prepare(',
@@ -145,7 +145,7 @@ const mutants = [
   },
   {
     name: 'msr-base-change-keeps-old-context-owner',
-    file: 'src/embedding/exports/paging.rs',
+    file: 'src/embedding/exports/memory/paging.rs',
     old: '                    if core.context != context {\n                        core.image.retire_sources();\n                        core.observed_owners.clear();\n                        core.context_version = core.context_version.wrapping_add(1);\n                    }',
     replacement: '',
     filter: 'straight-line WRMSR FS consumer',
@@ -166,7 +166,7 @@ const mutants = [
   },
   {
     name: 'committed-entry-resumes-at-source',
-    file: 'src/embedding/exports/fast_system.rs',
+    file: 'src/embedding/exports/system/fast_system.rs',
     old: '            raw.rip = prepared.scalar.rip;',
     replacement: '            raw.rip = next.wrapping_sub(2);',
     filter: 'target PF and private X refusal',
@@ -180,7 +180,7 @@ const mutants = [
   },
   {
     name: 'lstar-write-eagerly-probes-private-backing',
-    file: 'src/embedding/exports/paging.rs',
+    file: 'src/embedding/exports/memory/paging.rs',
     old: '            3 => core\n                .fast_system',
     replacement:
       '            3 if register == 0xc0000082 && core.image.physical_read(value, 1).is_err() => Err(ControlFailure::GeneralProtection),\n            3 => core\n                .fast_system',
@@ -196,7 +196,7 @@ const mutants = [
   },
   {
     name: 'pending-compile-base-change-keeps-old-owner',
-    file: 'src/embedding/exports/context.rs',
+    file: 'src/embedding/exports/system/context.rs',
     old: '            core.image.retire_sources();\n            core.context = context;\n            core.context_version = core.context_version.saturating_add(1);',
     replacement: '            core.context = context;',
     filter: 'pending compiler honors changed loaded bases',
