@@ -151,6 +151,16 @@ pub(crate) fn emit_observed(unit: &Unit, observed: bool) -> Vec<u8> {
     emit_profile(unit, observed, false)
 }
 
+fn add_function_type<const PARAMS: usize, const RESULTS: usize>(
+    types: &mut TypeSection,
+    params: [ValType; PARAMS],
+    results: [ValType; RESULTS],
+) -> u32 {
+    let index = types.len();
+    types.ty().function(params, results);
+    index
+}
+
 pub(crate) fn emit_profile(unit: &Unit, observed: bool, paged: bool) -> Vec<u8> {
     let observed = observed || paged;
     let vector_banks = vector::Banks::for_unit(unit);
@@ -204,7 +214,6 @@ pub(crate) fn emit_profile(unit: &Unit, observed: bool, paged: bool) -> Vec<u8> 
     if target_type {
         types.ty().function([ValType::I64], [ValType::I32]);
     }
-    let mut next_type = 4 + u32::from(target_type);
     let wide_product = unit.instructions.iter().any(|i| {
         matches!(
             i.operation,
@@ -227,46 +236,35 @@ pub(crate) fn emit_profile(unit: &Unit, observed: bool, paged: bool) -> Vec<u8> 
         )
     });
     let multiply_type = wide_product.then(|| {
-        let index = next_type;
-        types
-            .ty()
-            .function([ValType::I64, ValType::I64, ValType::I32], [ValType::I64]);
-        next_type += 1;
-        index
+        add_function_type(
+            &mut types,
+            [ValType::I64, ValType::I64, ValType::I32],
+            [ValType::I64],
+        )
     });
     let divide_type = wide_divide.then(|| {
-        let index = next_type;
-        types.ty().function(
+        add_function_type(
+            &mut types,
             [ValType::I64, ValType::I64, ValType::I64, ValType::I32],
             [ValType::I64],
-        );
-        next_type += 1;
-        index
+        )
     });
     let vector_load_type = vector_banks.loads.then(|| {
-        let index = next_type;
-        types.ty().function(
+        add_function_type(
+            &mut types,
             [ValType::I64, ValType::I32, ValType::I32, ValType::I32],
             [ValType::I32],
-        );
-        next_type += 1;
-        index
+        )
     });
     let wide_compare = unit
         .instructions
         .iter()
         .any(|i| matches!(i.operation, Operation::CompareExchange16b { .. }));
-    let block16_for_write_type = wide_compare.then(|| {
-        let index = next_type;
-        types
-            .ty()
-            .function([ValType::I64, ValType::I32], [ValType::I32]);
-        next_type += 1;
-        index
-    });
+    let block16_for_write_type = wide_compare
+        .then(|| add_function_type(&mut types, [ValType::I64, ValType::I32], [ValType::I32]));
     let vector_store_type = (vector_banks.stores || wide_compare).then(|| {
-        let index = next_type;
-        types.ty().function(
+        add_function_type(
+            &mut types,
             [
                 ValType::I64,
                 ValType::I32,
@@ -275,9 +273,7 @@ pub(crate) fn emit_profile(unit: &Unit, observed: bool, paged: bool) -> Vec<u8> 
                 ValType::I32,
             ],
             [ValType::I32],
-        );
-        next_type += 1;
-        index
+        )
     });
     let has_float = unit
         .instructions
@@ -377,8 +373,8 @@ pub(crate) fn emit_profile(unit: &Unit, observed: bool, paged: bool) -> Vec<u8> 
             .iter()
             .any(|i| boundary::ss_producer(i.operation));
     let float_type = has_float.then(|| {
-        let index = next_type;
-        types.ty().function(
+        add_function_type(
+            &mut types,
             [
                 ValType::I32,
                 ValType::I64,
@@ -387,21 +383,13 @@ pub(crate) fn emit_profile(unit: &Unit, observed: bool, paged: bool) -> Vec<u8> 
                 ValType::I64,
             ],
             [ValType::I32],
-        );
-        next_type += 1;
-        index
+        )
     });
-    let mxcsr_type = (load_mxcsr_used || store_mxcsr_used).then(|| {
-        let index = next_type;
-        types
-            .ty()
-            .function([ValType::I64, ValType::I32], [ValType::I32]);
-        next_type += 1;
-        index
-    });
+    let mxcsr_type = (load_mxcsr_used || store_mxcsr_used)
+        .then(|| add_function_type(&mut types, [ValType::I64, ValType::I32], [ValType::I32]));
     let x87_type = has_x87.then(|| {
-        let index = next_type;
-        types.ty().function(
+        add_function_type(
+            &mut types,
             [
                 ValType::I32,
                 ValType::I64,
@@ -411,13 +399,11 @@ pub(crate) fn emit_profile(unit: &Unit, observed: bool, paged: bool) -> Vec<u8> 
                 ValType::I64,
             ],
             [ValType::I32],
-        );
-        next_type += 1;
-        index
+        )
     });
     let masked_store_type = has_masked_store.then(|| {
-        let index = next_type;
-        types.ty().function(
+        add_function_type(
+            &mut types,
             [
                 ValType::I64,
                 ValType::I32,
@@ -426,36 +412,22 @@ pub(crate) fn emit_profile(unit: &Unit, observed: bool, paged: bool) -> Vec<u8> 
                 ValType::I32,
             ],
             [ValType::I32],
-        );
-        next_type += 1;
-        index
+        )
     });
-    let clflush_type = has_clflush.then(|| {
-        let index = next_type;
-        types
-            .ty()
-            .function([ValType::I64, ValType::I32], [ValType::I32]);
-        next_type += 1;
-        index
-    });
+    let clflush_type = has_clflush
+        .then(|| add_function_type(&mut types, [ValType::I64, ValType::I32], [ValType::I32]));
     let protection_type = has_protection.then(|| {
-        let index = next_type;
-        types.ty().function(
+        add_function_type(
+            &mut types,
             [ValType::I32, ValType::I64, ValType::I64, ValType::I32],
             [ValType::I32],
-        );
-        next_type += 1;
-        index
+        )
     });
-    let compound_stack_type = has_compound_stack.then(|| {
-        let index = next_type;
-        types.ty().function([ValType::I32], [ValType::I32]);
-        next_type += 1;
-        index
-    });
+    let compound_stack_type =
+        has_compound_stack.then(|| add_function_type(&mut types, [ValType::I32], [ValType::I32]));
     let far_type = has_far.then(|| {
-        let index = next_type;
-        types.ty().function(
+        add_function_type(
+            &mut types,
             [
                 ValType::I32,
                 ValType::I64,
@@ -465,39 +437,32 @@ pub(crate) fn emit_profile(unit: &Unit, observed: bool, paged: bool) -> Vec<u8> 
                 ValType::I32,
             ],
             [ValType::I32],
-        );
-        next_type += 1;
-        index
+        )
     });
     let software_event_type = has_software_events.then(|| {
-        let index = next_type;
-        types.ty().function(
+        add_function_type(
+            &mut types,
             [ValType::I32, ValType::I64, ValType::I64, ValType::I64],
             [ValType::I32],
-        );
-        next_type += 1;
-        index
+        )
     });
     let system_flags_type = has_system_flags.then(|| {
-        let index = next_type;
-        types
-            .ty()
-            .function([ValType::I32, ValType::I64, ValType::I64], [ValType::I32]);
-        next_type += 1;
-        index
+        add_function_type(
+            &mut types,
+            [ValType::I32, ValType::I64, ValType::I64],
+            [ValType::I32],
+        )
     });
     let debug_register_type = has_debug_register.then(|| {
-        let index = next_type;
-        types.ty().function(
+        add_function_type(
+            &mut types,
             [ValType::I32, ValType::I64, ValType::I64, ValType::I64],
             [ValType::I32],
-        );
-        next_type += 1;
-        index
+        )
     });
     let paging_type = has_paging.then(|| {
-        let index = next_type;
-        types.ty().function(
+        add_function_type(
+            &mut types,
             [
                 ValType::I32,
                 ValType::I32,
@@ -507,37 +472,27 @@ pub(crate) fn emit_profile(unit: &Unit, observed: bool, paged: bool) -> Vec<u8> 
                 ValType::I64,
             ],
             [ValType::I32],
-        );
-        next_type += 1;
-        index
+        )
     });
     let invpcid_type = has_invpcid.then(|| {
-        let index = next_type;
-        types.ty().function(
+        add_function_type(
+            &mut types,
             [ValType::I32, ValType::I64, ValType::I64, ValType::I64],
             [ValType::I32],
-        );
-        next_type += 1;
-        index
+        )
     });
     let processor_type = has_processor.then(|| {
-        let index = next_type;
-        types.ty().function(
+        add_function_type(
+            &mut types,
             [ValType::I32, ValType::I32, ValType::I32, ValType::I64],
             [ValType::I32],
-        );
-        next_type += 1;
-        index
+        )
     });
-    let protection_key_type = has_protection_key.then(|| {
-        let index = next_type;
-        types.ty().function([ValType::I32; 4], [ValType::I32]);
-        next_type += 1;
-        index
-    });
+    let protection_key_type = has_protection_key
+        .then(|| add_function_type(&mut types, [ValType::I32; 4], [ValType::I32]));
     let fast_system_type = has_fast_system.then(|| {
-        let index = next_type;
-        types.ty().function(
+        add_function_type(
+            &mut types,
             [
                 ValType::I32,
                 ValType::I32,
@@ -549,33 +504,23 @@ pub(crate) fn emit_profile(unit: &Unit, observed: bool, paged: bool) -> Vec<u8> 
                 ValType::I64,
             ],
             [ValType::I32],
-        );
-        next_type += 1;
-        index
+        )
     });
     let write_segment_base_type = unit
         .instructions
         .iter()
         .any(|i| matches!(i.operation, Operation::SegmentBase { write: true, .. }))
-        .then(|| {
-            let index = next_type;
-            types
-                .ty()
-                .function([ValType::I32, ValType::I64], [ValType::I32]);
-            next_type += 1;
-            index
-        });
+        .then(|| add_function_type(&mut types, [ValType::I32, ValType::I64], [ValType::I32]));
     let debug_begin_type = observed.then(|| {
-        let index = next_type;
-        types
-            .ty()
-            .function([ValType::I64, ValType::I64, ValType::I32], [ValType::I32]);
-        next_type += 1;
-        index
+        add_function_type(
+            &mut types,
+            [ValType::I64, ValType::I64, ValType::I32],
+            [ValType::I32],
+        )
     });
     let debug_type = observed.then(|| {
-        let index = next_type;
-        types.ty().function(
+        add_function_type(
+            &mut types,
             [
                 ValType::I64,
                 ValType::I64,
@@ -584,24 +529,16 @@ pub(crate) fn emit_profile(unit: &Unit, observed: bool, paged: bool) -> Vec<u8> 
                 ValType::I32,
             ],
             [ValType::I32],
-        );
-        next_type += 1;
-        index
+        )
     });
     let external_step_type = has_boundary.then(|| {
-        let index = next_type;
-        types
-            .ty()
-            .function([ValType::I64, ValType::I64, ValType::I32], [ValType::I32]);
-        next_type += 1;
-        index
+        add_function_type(
+            &mut types,
+            [ValType::I64, ValType::I64, ValType::I32],
+            [ValType::I32],
+        )
     });
-    let halt_type = has_halt.then(|| {
-        let index = next_type;
-        types.ty().function([ValType::I64], [ValType::I32]);
-        next_type += 1;
-        index
-    });
+    let halt_type = has_halt.then(|| add_function_type(&mut types, [ValType::I64], [ValType::I32]));
     let io_type = unit
         .instructions
         .iter()
@@ -617,8 +554,8 @@ pub(crate) fn emit_profile(unit: &Unit, observed: bool, paged: bool) -> Vec<u8> 
             )
         })
         .then(|| {
-            let index = next_type;
-            types.ty().function(
+            add_function_type(
+                &mut types,
                 [
                     ValType::I32,
                     ValType::I32,
@@ -628,16 +565,14 @@ pub(crate) fn emit_profile(unit: &Unit, observed: bool, paged: bool) -> Vec<u8> 
                     ValType::I64,
                 ],
                 [ValType::I32],
-            );
-            next_type += 1;
-            index
+            )
         });
     let numeric_state_type = (has_mmx || has_numeric_image).then(|| {
-        let index = next_type;
-        types
-            .ty()
-            .function([ValType::I32, ValType::I64, ValType::I32], [ValType::I32]);
-        index
+        add_function_type(
+            &mut types,
+            [ValType::I32, ValType::I64, ValType::I32],
+            [ValType::I32],
+        )
     });
     let mut imports = ImportSection::new();
     imports.import(
@@ -968,14 +903,13 @@ pub(crate) fn emit_profile(unit: &Unit, observed: bool, paged: bool) -> Vec<u8> 
         .iter()
         .any(|instruction| instruction.shared_atomic())
         .then(|| {
-            let release_type = types.len();
-            types.ty().function([ValType::I32], []);
-            let guard_type = types.len();
-            types
-                .ty()
-                .function([ValType::I64, ValType::I32, ValType::I32], [ValType::I32]);
-            let unguard_type = types.len();
-            types.ty().function([], []);
+            let release_type = add_function_type(&mut types, [ValType::I32], []);
+            let guard_type = add_function_type(
+                &mut types,
+                [ValType::I64, ValType::I32, ValType::I32],
+                [ValType::I32],
+            );
+            let unguard_type = add_function_type(&mut types, [], []);
             imports.import("env", "parallel_begin", EntityType::Function(2));
             imports.import("env", "parallel_end", EntityType::Function(release_type));
             imports.import("env", "parallel_guard", EntityType::Function(guard_type));
@@ -990,8 +924,8 @@ pub(crate) fn emit_profile(unit: &Unit, observed: bool, paged: bool) -> Vec<u8> 
         });
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     let parallel_resolve = (!paged && !observed).then(|| {
-        let signature = types.len();
-        types.ty().function(
+        let signature = add_function_type(
+            &mut types,
             [ValType::I64, ValType::I32, ValType::I32, ValType::I32],
             [ValType::I32],
         );
