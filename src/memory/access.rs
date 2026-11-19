@@ -114,6 +114,11 @@ impl Image {
             "unsupported scalar access width"
         );
         let first = self.preflight::<false>(address, width, Access::Write, false, true)?;
+        #[cfg(all(feature = "parallel", any(target_arch = "wasm32", test)))]
+        if self.shared.is_some() {
+            self.shared_write(address, &value.to_le_bytes()[..width as usize], first);
+            return Ok(());
+        }
         let mapping = &self.mappings[first];
         let relative = address - mapping.base;
         if u64::from(width) <= u64::from(mapping.length) - relative {
@@ -146,6 +151,12 @@ impl Image {
     }
 
     fn bytes_after_preflight(&self, address: u64, length: u32, mut index: usize) -> Vec<u8> {
+        #[cfg(all(feature = "parallel", any(target_arch = "wasm32", test)))]
+        if self.shared.is_some() {
+            let mut bytes = vec![0; length as usize];
+            self.shared_read(address, &mut bytes, index);
+            return bytes;
+        }
         let mut output = Vec::with_capacity(length as usize);
         let mut cursor = u128::from(address);
         let end = cursor + u128::from(length);
@@ -177,6 +188,12 @@ impl Image {
     }
 
     fn vector_after_preflight(&self, address: u64, width: u32, mut index: usize) -> [u8; 16] {
+        #[cfg(all(feature = "parallel", any(target_arch = "wasm32", test)))]
+        if self.shared.is_some() {
+            let mut bytes = [0; 16];
+            self.shared_read(address, &mut bytes[..width as usize], index);
+            return bytes;
+        }
         let mapping = &self.mappings[index];
         let relative = address - mapping.base;
         if u64::from(width) <= u64::from(mapping.length) - relative {
@@ -240,6 +257,21 @@ impl Image {
     ) -> Result<(), Fault> {
         Self::check_fields(width, fields, output.len());
         let mut index = self.preflight::<false>(address, width, Access::Read, false, false)?;
+        #[cfg(all(feature = "parallel", any(target_arch = "wasm32", test)))]
+        if self.shared.is_some() {
+            for &(start, length) in fields {
+                let cursor = address + u64::from(start);
+                while self.mappings[index].end() <= u128::from(cursor) {
+                    index += 1;
+                }
+                self.shared_read(
+                    cursor,
+                    &mut output[start as usize..(start + length) as usize],
+                    index,
+                );
+            }
+            return Ok(());
+        }
         if fields.is_empty() {
             return Ok(());
         }
@@ -297,6 +329,21 @@ impl Image {
     ) -> Result<(), Fault> {
         Self::check_fields(width, fields, bytes.len());
         let mut index = self.preflight::<false>(address, width, Access::Write, false, false)?;
+        #[cfg(all(feature = "parallel", any(target_arch = "wasm32", test)))]
+        if self.shared.is_some() {
+            for &(start, length) in fields {
+                let cursor = address + u64::from(start);
+                while self.mappings[index].end() <= u128::from(cursor) {
+                    index += 1;
+                }
+                self.shared_write(
+                    cursor,
+                    &bytes[start as usize..(start + length) as usize],
+                    index,
+                );
+            }
+            return Ok(());
+        }
         if fields.is_empty() {
             return Ok(());
         }
@@ -354,6 +401,11 @@ impl Image {
     }
 
     fn write_after_preflight(&mut self, address: u64, bytes: &[u8], mut index: usize) {
+        #[cfg(all(feature = "parallel", any(target_arch = "wasm32", test)))]
+        if self.shared.is_some() {
+            self.shared_write(address, bytes, index);
+            return;
+        }
         let mut cursor = address;
         let mut source = 0;
         while source < bytes.len() {
@@ -383,7 +435,7 @@ impl Image {
     }
 
     #[inline]
-    fn preflight<const PHYSICAL: bool>(
+    pub(super) fn preflight<const PHYSICAL: bool>(
         &self,
         address: u64,
         width: u32,
@@ -446,6 +498,12 @@ impl Image {
 
     #[inline]
     fn byte_after_preflight(&self, address: u64, index: usize) -> u8 {
+        #[cfg(all(feature = "parallel", any(target_arch = "wasm32", test)))]
+        if self.shared.is_some() {
+            let mut byte = [0];
+            self.shared_read(address, &mut byte, index);
+            return byte[0];
+        }
         let mapping = &self.mappings[index];
         let offset = mapping.offset as usize + (address - mapping.base) as usize;
         self.backings[mapping.backing].bytes[offset]
@@ -453,6 +511,12 @@ impl Image {
 
     #[inline]
     fn scalar_after_preflight(&self, address: u64, width: u32, mut index: usize) -> u64 {
+        #[cfg(all(feature = "parallel", any(target_arch = "wasm32", test)))]
+        if self.shared.is_some() {
+            let mut bytes = [0; 8];
+            self.shared_read(address, &mut bytes[..width as usize], index);
+            return u64::from_le_bytes(bytes);
+        }
         let mapping = &self.mappings[index];
         let relative = address - mapping.base;
         let offset = mapping.offset as usize + relative as usize;

@@ -50,6 +50,10 @@ pub struct Image {
     pub(super) validity: Validity,
     pub(super) last_mapping: Cell<usize>,
     pub(super) previous_mapping: Cell<usize>,
+    #[cfg(all(feature = "parallel", any(target_arch = "wasm32", test)))]
+    pub(super) shared: Option<super::parallel::SharedLayout>,
+    #[cfg(all(feature = "parallel", any(target_arch = "wasm32", test)))]
+    pub(super) shared_rmw: Option<super::parallel::SharedHeld>,
 }
 
 #[derive(Debug)]
@@ -58,6 +62,8 @@ pub(super) struct Backing {
     pub(super) bytes: Vec<u8>,
     pub(super) incarnation: Rc<()>,
     pub(super) has_sources: bool,
+    #[cfg(all(feature = "parallel", any(target_arch = "wasm32", test)))]
+    pub(super) shared: Option<super::parallel::SharedBacking>,
 }
 
 #[derive(Clone, Debug)]
@@ -165,6 +171,10 @@ impl Image {
             validity: Validity::default(),
             last_mapping: Cell::new(usize::MAX),
             previous_mapping: Cell::new(usize::MAX),
+            #[cfg(all(feature = "parallel", any(target_arch = "wasm32", test)))]
+            shared: None,
+            #[cfg(all(feature = "parallel", any(target_arch = "wasm32", test)))]
+            shared_rmw: None,
         };
         for (id, bytes) in backings {
             image.add_backing(id, bytes)?;
@@ -187,7 +197,7 @@ impl Image {
         let total: u64 = self
             .backings
             .iter()
-            .map(|backing| backing.bytes.len() as u64)
+            .map(|backing| backing.logical_length() as u64)
             .sum();
         if self.backings.len() >= self.limits.max_backings as usize
             || total + length as u64 > u64::from(self.limits.max_backing_bytes)
@@ -198,6 +208,12 @@ impl Image {
     }
 
     pub fn add_backing(&mut self, id: String, bytes: Vec<u8>) -> Result<(), MemoryError> {
+        #[cfg(all(feature = "parallel", any(target_arch = "wasm32", test)))]
+        if self.shared.is_some() {
+            return Err(MemoryError::Invalid(
+                "attached RAM requires a shared backing extent",
+            ));
+        }
         self.check_backing(&id, bytes.len())?;
         self.backings
             .try_reserve(1)
@@ -207,6 +223,8 @@ impl Image {
             bytes,
             incarnation: Rc::new(()),
             has_sources: false,
+            #[cfg(all(feature = "parallel", any(target_arch = "wasm32", test)))]
+            shared: None,
         });
         Ok(())
     }
@@ -251,7 +269,7 @@ impl Image {
             if input.length == 0
                 || self.mapping_span_failure(input.base, u64::from(input.length))
                 || u64::from(input.offset) + u64::from(input.length)
-                    > self.backings[backing].bytes.len() as u64
+                    > self.backings[backing].logical_length() as u64
             {
                 return Err(MemoryError::Invalid(if self.physical {
                     "mapping must be a nonempty 52-bit physical backing slice"
@@ -336,6 +354,17 @@ pub(super) fn locate_index(mappings: &[Mapping], address: u64) -> Option<usize> 
         .partition_point(|mapping| mapping.base <= address)
         .checked_sub(1)?;
     (u128::from(address) < mappings[index].end()).then_some(index)
+}
+
+impl Backing {
+    #[inline(always)]
+    fn logical_length(&self) -> usize {
+        #[cfg(all(feature = "parallel", any(target_arch = "wasm32", test)))]
+        if let Some(backing) = self.shared {
+            return backing.length as usize;
+        }
+        self.bytes.len()
+    }
 }
 
 #[cfg(test)]

@@ -26,3 +26,9 @@ mod vector_tests;
 
 #[cfg(test)]
 mod vector_read_tests;
+
+#[cfg(any(all(feature = "parallel", target_arch = "wasm32"), test))]
+mod parallel;
+
+#[cfg(all(feature = "parallel", any(target_arch = "wasm32", test)))]
+pub(crate) use parallel::SharedExclusive;

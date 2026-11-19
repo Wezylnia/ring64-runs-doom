@@ -274,6 +274,27 @@ impl Image {
     }
 }
 
+#[cfg(all(feature = "parallel", any(target_arch = "wasm32", test)))]
+impl Image {
+    pub(crate) fn parallel_proof(&self, owner: u64) -> Option<Vec<(u32, u32)>> {
+        let record = self.validity.owners.get(&owner)?;
+        if !record.valid {
+            return None;
+        }
+        record
+            .sources
+            .iter()
+            .map(|source| {
+                let backing = self
+                    .backings
+                    .iter()
+                    .find(|backing| Rc::ptr_eq(&backing.incarnation, &source.incarnation))?;
+                Some((backing.shared?.offset + source.offset, source.length))
+            })
+            .collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
