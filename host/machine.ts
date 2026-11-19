@@ -28,6 +28,7 @@ import type {
   Start,
 } from './parallel/protocol.js';
 import { bindRam, ramModule } from './parallel/ram.js';
+import { SourceWatches } from './parallel/source-watches.js';
 import {
   launchWorker,
   ParallelError,
@@ -68,7 +69,6 @@ interface Peer {
   waitingNmi: Promise<void> | undefined;
   sequence: bigint;
   portTicket: bigint;
-  watches: Map<bigint, Range[]>;
 }
 
 type Job = {
@@ -165,8 +165,7 @@ class ParallelMachine implements Machine {
   #round: { phase: bigint; peers: Peer[]; finished: Deferred<void> } | undefined;
   #drain: Promise<void> | undefined;
   #writes: Range[] = [];
-  #removeWatches: Range[][] = [];
-  #watched = new Map<number, number>();
+  readonly #sourceWatches: SourceWatches;
   #records = new Map<string, BackingRecord>();
   #maps: MemoryMapping[];
   #incarnation = 0n;
@@ -188,6 +187,7 @@ class ParallelMachine implements Machine {
     this.#storeLane = storeLane;
     this.#maps = input.mappings;
     this.#control = new SharedControl(memory);
+    this.#sourceWatches = new SourceWatches(memory, input.layout);
     this.#control.initialize();
     this.#peers = input.cpus.map((_, id) => ({
       id,
@@ -197,7 +197,6 @@ class ParallelMachine implements Machine {
       replacement: undefined,
       waitingIrq: undefined,
       waitingNmi: undefined,
-      watches: new Map(),
       sequence: 0n,
       portTicket: 0n,
     }));
@@ -406,17 +405,11 @@ class ParallelMachine implements Machine {
         case 'watch':
           if (this.#grant?.peer !== peer)
             throw new Error('parallel watch publication lacked a grant');
-          this.#rememberWatch(peer, message.owner, message.ranges);
+          this.#sourceWatches.remember(peer.id, message.owner, message.ranges);
           return;
-        case 'unwatch': {
-          const old = peer.watches.get(message.owner);
-          if (old) {
-            peer.watches.delete(message.owner);
-            this.#removeWatches.push(old);
-            this.#schedule();
-          }
+        case 'unwatch':
+          if (this.#sourceWatches.release(peer.id, message.owner)) this.#schedule();
           return;
-        }
         case 'io':
           this.#port(peer, message);
           return;
@@ -480,36 +473,6 @@ class ParallelMachine implements Machine {
     }
   }
 
-  #rememberWatch(peer: Peer, owner: bigint, ranges: Range[]): void {
-    if (peer.watches.has(owner)) throw new Error('duplicate parallel source watch');
-    peer.watches.set(owner, ranges);
-    for (const { offset, length } of ranges)
-      for (let i = offset; i < offset + length; i++)
-        this.#watched.set(i, (this.#watched.get(i) ?? 0) + 1);
-  }
-
-  #sweepWatches(): void {
-    const words = new Int32Array(this.#memory.buffer);
-    for (const ranges of this.#removeWatches.splice(0)) {
-      for (const { offset, length } of ranges) {
-        for (let i = offset; i < offset + length; i++) {
-          const count = this.#watched.get(i)! - 1;
-          if (count === 0) {
-            this.#watched.delete(i);
-            const byte = i - this.#input.layout.ramBase;
-            Atomics.and(
-              words,
-              this.#input.layout.watchBase / 4 + Math.floor(byte / 32),
-              ~(1 << (byte % 32)),
-            );
-          } else {
-            this.#watched.set(i, count);
-          }
-        }
-      }
-    }
-  }
-
   #acknowledged(): void {
     const phase = this.#control.phase;
     if (
@@ -533,7 +496,7 @@ class ParallelMachine implements Machine {
   }
 
   async #reopen(): Promise<void> {
-    if (this.#jobs.length || this.#requests.length || this.#removeWatches.length) {
+    if (this.#jobs.length || this.#requests.length || this.#sourceWatches.hasReleases) {
       const phase = nextIdentity(this.#control.phase);
       const peers = this.#peers.filter(
         (peer) =>
@@ -574,7 +537,7 @@ class ParallelMachine implements Machine {
         this.#drain = undefined;
         if (
           !this.#failure &&
-          (this.#jobs.length || this.#requests.length || this.#removeWatches.length)
+          (this.#jobs.length || this.#requests.length || this.#sourceWatches.hasReleases)
         )
           this.#schedule();
       });
@@ -583,7 +546,7 @@ class ParallelMachine implements Machine {
   async #barriers(): Promise<void> {
     while (
       !this.#failure &&
-      (this.#jobs.length || this.#requests.length || this.#removeWatches.length)
+      (this.#jobs.length || this.#requests.length || this.#sourceWatches.hasReleases)
     ) {
       const phase = this.#control.transition(true);
       const closed = deferred<void>();
@@ -619,7 +582,7 @@ class ParallelMachine implements Machine {
         }
       }
       if (this.#failure) return;
-      this.#sweepWatches();
+      this.#sourceWatches.sweep();
       const ranges = this.#writes.splice(0);
       if (ranges.length > 0) {
         const sequence = (this.#invalidation = nextIdentity(this.#invalidation));

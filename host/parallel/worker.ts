@@ -12,6 +12,7 @@ import type {
   ToWorker,
 } from './protocol.js';
 import { bindRam } from './ram.js';
+import { markSourceWatches } from './source-watches.js';
 import { connectWorker } from './transport.js';
 
 class WorkerRuntime implements Binding {
@@ -251,15 +252,7 @@ class WorkerRuntime implements Binding {
 
   watch(core: ParallelCore, owner: bigint): void {
     const ranges = core.parallelProof(owner);
-    const words = new Int32Array(this.shared.buffer);
-    for (const { offset, length } of ranges) {
-      const begin = offset - this.layout.ramBase;
-      if (begin < 0 || length <= 0 || begin + length > this.layout.ramCapacity)
-        throw new Error('invalid parallel source range');
-      for (let i = begin; i < begin + length; i++) {
-        Atomics.or(words, this.layout.watchBase / 4 + Math.floor(i / 32), 1 << (i % 32));
-      }
-    }
+    markSourceWatches(this.shared, this.layout, ranges);
     this.send({ kind: 'watch', owner, ranges });
   }
 
