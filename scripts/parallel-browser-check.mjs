@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { extname, resolve, sep } from 'node:path';
 import { chromium, firefox } from 'playwright';
+import { awaitBrowserResult } from './browser-result.mjs';
 
 const root = resolve('.');
 const base = resolve(root, 'build') + sep;
@@ -75,23 +76,11 @@ try {
       const passed = [];
       for (const pathname of ['/', '/unisolated']) {
         await page.goto(`http://127.0.0.1:${host.port}${pathname}`);
-        await page.waitForFunction(() => globalThis.ring64Parallel !== undefined, undefined, {
-          timeout: 30_000,
-        });
-        const conformance = await page.evaluate(async () => {
-          try {
-            return await Promise.race([
-              globalThis.ring64Parallel,
-              new Promise((_, reject) =>
-                setTimeout(() => reject(Error('parallel browser run timed out')), 120_000),
-              ),
-            ]);
-          } catch (error) {
-            const messages = [];
-            for (let value = error; value; value = value.cause) messages.push(String(value));
-            throw new Error(messages.join('\n'));
-          }
-        });
+        const conformance = await awaitBrowserResult(
+          page,
+          'ring64Parallel',
+          'parallel browser run timed out',
+        );
         passed.push(...conformance.passed);
       }
       const receipt = { name, engine: browser.version(), coreSha256, passed };

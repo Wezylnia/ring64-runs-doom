@@ -4,6 +4,7 @@ import { resolve, extname } from 'node:path';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { chromium } from 'playwright';
+import { awaitBrowserResult } from './browser-result.mjs';
 
 const root = resolve('.');
 const html = `<!doctype html><meta charset="utf-8"><title>ring64 execution checks</title>
@@ -60,8 +61,11 @@ try {
   page.on('pageerror', (error) => errors.push(error.message));
   const address = server.address();
   await page.goto(`http://127.0.0.1:${address.port}/`);
-  await page.waitForFunction(() => window.ring64Result !== undefined);
-  const encoded = await page.evaluate(async () => await window.ring64Result);
+  const encoded = await awaitBrowserResult(
+    page,
+    'ring64Result',
+    'browser execution checks timed out',
+  );
   if (errors.length) throw new Error(errors.join('\n'));
   const result = JSON.parse(encoded);
   const binary = await readFile('build/ring64.wasm');
@@ -95,6 +99,9 @@ try {
     `browser ${evidence.browser}: ${evidence.conformance.passed.length} scenarios passed; evidence build/verification/browser.json`,
   );
 } finally {
-  await browser?.close();
-  await new Promise((resolve) => server.close(resolve));
+  try {
+    await browser?.close();
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
 }
