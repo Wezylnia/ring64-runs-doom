@@ -2,6 +2,10 @@
 
 an x86 and x86-64 cpu emulator for the browser
 
+`src/` implements the CPU and its Wasm code generator. `host/` connects them to
+Node.js and the browser through the standalone CPU and parallel machine APIs.
+[Source layout](agents/architecture.md#host-entry-points)
+
 ## installation
 
 requires node 22.12 or newer and rustup.

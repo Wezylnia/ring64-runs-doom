@@ -9,7 +9,7 @@ import {
   writeInterrupts,
   validateInterruptLayout,
   type EventState,
-} from './events.js';
+} from './state/events.js';
 
 const layout = {
   offset: 560,

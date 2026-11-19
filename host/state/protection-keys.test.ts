@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import { createCpu, type Cpu, type Options } from './index.js';
-import { longSnapshot } from '../tests/support/context.js';
+import { createCpu, type Cpu, type Options } from '../index.js';
+import { longSnapshot } from '../../tests/support/context.js';
 import { captureProtectionKeysState, validateProtectionKeysLayout } from './protection-keys.js';
 
 const compiler = await WebAssembly.compile(
-  new Uint8Array(await readFile(new URL('../build/ring64.wasm', import.meta.url))),
+  new Uint8Array(await readFile(new URL('../../build/ring64.wasm', import.meta.url))),
 );
 
 function options(

@@ -7,7 +7,7 @@ import {
   validateNumericSourceLayout,
   type NumericSourceLayout,
   type NumericFault,
-} from './numeric-controls.js';
+} from './state/numeric-controls.js';
 import {
   captureDebugState,
   captureDebugContinuation,
@@ -19,7 +19,7 @@ import {
   type DebugState,
   type DebugContinuation,
   type DebugLayout,
-} from './debug.js';
+} from './state/debug.js';
 import {
   contextFromJson,
   type ContextInfo,
@@ -27,22 +27,22 @@ import {
   type ExecutionContextSnapshot,
   type SegmentFault,
   type SegmentName,
-} from './context.js';
+} from './state/context.js';
 import type { InitialMemory, MemoryBackingInput, MemoryMapping } from './memory.js';
-import { capturePagingState, pagingStateFromJson, type PagingState } from './paging.js';
-import { captureTimeState, validateTimeLayout, type TimeLayout, type TimeState } from './time.js';
+import { capturePagingState, pagingStateFromJson, type PagingState } from './state/paging.js';
+import { captureTimeState, validateTimeLayout, type TimeLayout, type TimeState } from './state/time.js';
 import {
   captureProtectionKeysState,
   validateProtectionKeysLayout,
   type ProtectionKeysLayout,
   type ProtectionKeysState,
-} from './protection-keys.js';
+} from './state/protection-keys.js';
 import {
   captureFastSystemState,
   fastSystemStateFromJson,
   zeroFastSystemState,
   type FastSystemState,
-} from './fast-system.js';
+} from './state/fast-system.js';
 import {
   captureEventState,
   captureInterruptState,
@@ -60,7 +60,7 @@ import {
   type InterruptLayout,
   type InterruptState,
   type PagingSourceLayout,
-} from './events.js';
+} from './state/events.js';
 import {
   captureX87State,
   readX87,
@@ -69,7 +69,7 @@ import {
   type X87State,
   type X87Exception,
   type X87Layout,
-} from './x87.js';
+} from './state/x87.js';
 
 export interface State {
   debugContinuation?: DebugContinuation;

@@ -1,4 +1,4 @@
-import { captureContext } from '../../../host/context.js';
+import { captureContext } from '../../../host/state/context.js';
 import type { ExecutionContextSnapshot, SegmentName } from '../../../host/index.js';
 import { context, segment } from '../modes/fixture.js';
 export { using, input as initial, changed } from '../modes/fixture.js';

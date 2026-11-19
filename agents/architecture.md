@@ -4,6 +4,14 @@ organize source around behavior owners, then separate responsibilities inside ea
 
 let module and directory boundaries follow the responsibilities and consumers that emerge in the code. keep related behavior together; separate responsibilities that need to change independently. a component does not need a fixed number of files or a separate crate or package.
 
+## host entry points
+
+`host/index.ts` exposes the standalone CPU. `host/cpu.ts` coordinates its runs, and `host/translations.ts` owns installed translations. `host/core.ts` exchanges inputs, state and generated code with the Rust Wasm core.
+
+`host/machine.ts` exposes the shared-memory machine. It owns worker admission, memory barriers and I/O ordering. `host/parallel/` contains the worker protocol, execution binding and shared RAM helpers. Executable source watches have their own owner there and are reclaimed during the machine's closed phase.
+
+`host/state/` holds the CPU state contracts and their host-side validation. `host/memory.ts` owns the backing and mapping inputs. The Rust implementations below `src/` own guest instruction and memory semantics.
+
 ## dependency direction
 
 - architectural state and instruction models do not depend on wasm encoding, browser modules or artifact caches.

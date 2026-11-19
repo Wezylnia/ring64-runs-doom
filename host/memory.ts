@@ -1,8 +1,8 @@
 import { byteLength, unsigned64 } from './input.js';
 import type { Span } from './core.js';
-import type { ExecutionContext } from './context.js';
-import type { PagingState } from './paging.js';
-import type { FastSystemState } from './fast-system.js';
+import type { ExecutionContext } from './state/context.js';
+import type { PagingState } from './state/paging.js';
+import type { FastSystemState } from './state/fast-system.js';
 
 export type MemoryModel = 'linear' | 'ia32e-paged' | 'physical';
 

@@ -1,4 +1,4 @@
-import type { ExecutionContext } from '../context.js';
+import type { ExecutionContext } from '../state/context.js';
 import type { Cpu, Limits, RunResult } from '../cpu.js';
 import type { IoWidth } from '../io.js';
 import type { InitialMemory, MemoryModel } from '../memory.js';

@@ -1,22 +1,22 @@
 import { captureIo, type IoProvider } from './io.js';
 import { copyMemoryInput, unsigned64 } from './input.js';
-import type { DeviceNotAvailable, NumericControlFault } from './numeric-controls.js';
-import { captureDebugState, type DebugState } from './debug.js';
-import { capturePagingState, type PagingState } from './paging.js';
-import { captureTimeState, type TimeState } from './time.js';
-import { captureProtectionKeysState, type ProtectionKeysState } from './protection-keys.js';
+import type { DeviceNotAvailable, NumericControlFault } from './state/numeric-controls.js';
+import { captureDebugState, type DebugState } from './state/debug.js';
+import { capturePagingState, type PagingState } from './state/paging.js';
+import { captureTimeState, type TimeState } from './state/time.js';
+import { captureProtectionKeysState, type ProtectionKeysState } from './state/protection-keys.js';
 import {
   captureFastSystemState,
   zeroFastSystemState,
   type FastSystemState,
-} from './fast-system.js';
+} from './state/fast-system.js';
 import {
   captureContext,
   type ExecutionContext,
   type ExecutionContextSnapshot,
   type SegmentFault,
-} from './context.js';
-import { captureX87State, type X87State, type X87Exception } from './x87.js';
+} from './state/context.js';
+import { captureX87State, type X87State, type X87Exception } from './state/x87.js';
 import {
   Core,
   captureState,

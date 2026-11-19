@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { captureState, Core, type State } from './core.js';
-import { createCpu } from './cpu.js';
+import { captureState, Core, type State } from '../core.js';
+import { createCpu } from '../cpu.js';
 import {
   captureEventState,
   readEvent,
