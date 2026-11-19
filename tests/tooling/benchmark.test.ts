@@ -55,13 +55,16 @@ test('frozen benchmarks preserve saved source and refuse changed artifacts befor
   const directory = await mkdtemp(join(tmpdir(), 'ring64-benchmark-'));
   try {
     await mkdir(join(directory, 'build'));
-    await mkdir(join(directory, 'scripts'));
+    await mkdir(join(directory, 'scripts/bench'), { recursive: true });
     await Promise.all([
       cp(join(root, 'build/host'), join(directory, 'build/host'), { recursive: true }),
       cp(join(root, 'build/ring64.wasm'), join(directory, 'build/ring64.wasm')),
       cp(join(root, 'benchmarks'), join(directory, 'benchmarks'), { recursive: true }),
-      cp(join(root, 'scripts/benchmark.mjs'), join(directory, 'scripts/benchmark.mjs')),
-      cp(join(root, 'scripts/emitted-host.mjs'), join(directory, 'scripts/emitted-host.mjs')),
+      cp(join(root, 'scripts/bench/benchmark.mjs'), join(directory, 'scripts/bench/benchmark.mjs')),
+      cp(
+        join(root, 'scripts/bench/emitted-host.mjs'),
+        join(directory, 'scripts/bench/emitted-host.mjs'),
+      ),
       symlink(
         join(root, 'node_modules'),
         join(directory, 'node_modules'),
@@ -75,7 +78,7 @@ test('frozen benchmarks preserve saved source and refuse changed artifacts befor
         }),
       ),
     ]);
-    const script = join(directory, 'scripts/benchmark.mjs');
+    const script = join(directory, 'scripts/bench/benchmark.mjs');
     const output = join(directory, 'accepted.json');
     const args = [
       script,

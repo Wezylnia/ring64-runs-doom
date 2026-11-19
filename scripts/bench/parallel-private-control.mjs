@@ -344,7 +344,7 @@ for (const engine of runtime ? [runtime] : ['node', 'chromium']) {
     for (const [arm, current] of arms) {
       const report = resolve(root, `${engine}-${pair}-${arm}.json`);
       const args = [
-        resolve('scripts/benchmark.mjs'),
+        resolve('scripts/bench/benchmark.mjs'),
         '--baseline',
         resolve(a),
         '--candidate',

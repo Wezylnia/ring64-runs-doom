@@ -3,7 +3,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
-import { hostIdentity } from '../../emitted-host.mjs';
+import { hostIdentity } from '../../bench/emitted-host.mjs';
 
 const values = {},
   args = process.argv.slice(2);

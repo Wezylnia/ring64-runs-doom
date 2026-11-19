@@ -3,7 +3,7 @@ import { createServer } from 'node:http';
 import { dirname, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { chromium } from 'playwright';
-import { coreModulePath } from '../../emitted-host.mjs';
+import { coreModulePath } from '../../bench/emitted-host.mjs';
 import { baseline, encode, freeze, manifest, root } from './paging-support.mjs';
 
 const args = process.argv.slice(2);

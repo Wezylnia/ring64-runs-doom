@@ -17,10 +17,10 @@
     "test:parallel:mutations": "node scripts/check/parallel-mutations/parallel-mutation-check.mjs",
     "test:browser:parallel": "node scripts/check/parallel-browser-check.mjs",
     "check": "npm run format:check && npm run lint && cargo clippy --all-targets -- -D warnings && cargo clippy --target wasm32-unknown-unknown --lib -- -D warnings && cargo clippy --target wasm32-unknown-unknown --lib --features parallel -- -D warnings && cargo test --locked && npm run build && npm test && npm run test:browser && npm run test:browser:parallel && npm run test:package",
-    "bench": "node scripts/benchmark.mjs",
-    "bench:parallel": "node scripts/parallel-bench.mjs",
-    "bench:parallel-latency": "node scripts/parallel-latency.mjs",
-    "bench:private-control": "node scripts/parallel-private-control.mjs"
+    "bench": "node scripts/bench/benchmark.mjs",
+    "bench:parallel": "node scripts/bench/parallel-bench.mjs",
+    "bench:parallel-latency": "node scripts/bench/parallel-latency.mjs",
+    "bench:private-control": "node scripts/bench/parallel-private-control.mjs"
   },
   "devDependencies": {
     "@types/node": "22.20.5",

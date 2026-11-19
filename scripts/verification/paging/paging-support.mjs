@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs';
 import { cp, mkdir, readFile, symlink, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { hostIdentity } from '../../emitted-host.mjs';
+import { hostIdentity } from '../../bench/emitted-host.mjs';
 
 export const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 export const baseline = '/tmp/ring64-paging-baseline-c1380a4';
@@ -53,10 +53,10 @@ export async function freeze(path, name) {
   await cp(resolve(path, 'build/host'), resolve(target, 'build/host'), { recursive: true });
   await cp(resolve(path, 'build/ring64.wasm'), resolve(target, 'build/ring64.wasm'));
   await cp(resolve(root, 'benchmarks'), resolve(target, 'benchmarks'), { recursive: true });
-  await mkdir(resolve(target, 'scripts'), { recursive: true });
+  await mkdir(resolve(target, 'scripts/bench'), { recursive: true });
   await Promise.all(
     ['benchmark.mjs', 'emitted-host.mjs'].map((name) =>
-      cp(resolve(root, 'scripts', name), resolve(target, 'scripts', name)),
+      cp(resolve(root, 'scripts/bench', name), resolve(target, 'scripts/bench', name)),
     ),
   );
   await writeFile(resolve(target, 'package.json'), '{"type":"module"}\n');

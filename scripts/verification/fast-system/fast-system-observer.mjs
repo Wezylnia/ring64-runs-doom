@@ -3,7 +3,7 @@ import { createServer } from 'node:http';
 import { dirname, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { chromium } from 'playwright';
-import { coreModulePath } from '../../emitted-host.mjs';
+import { coreModulePath } from '../../bench/emitted-host.mjs';
 import {
   assertFastCandidate,
   baseline,
@@ -30,7 +30,7 @@ const inputFiles = [
   'scripts/verification/fast-system/fast-system-kernels.mjs',
   'scripts/verification/context-reuse/context-reuse-kernels.mjs',
   'scripts/verification/fast-system/fast-system-observer.mjs',
-  'scripts/emitted-host.mjs',
+  'scripts/bench/emitted-host.mjs',
 ];
 const inputHashes = async () =>
   Object.fromEntries(

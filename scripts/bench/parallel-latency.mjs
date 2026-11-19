@@ -6,7 +6,7 @@ import { resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Worker } from 'node:worker_threads';
 import { chromium } from 'playwright';
-import { measureLatency } from '../benchmarks/parallel-latency.mjs';
+import { measureLatency } from '../../benchmarks/parallel-latency.mjs';
 import { emittedModules } from './emitted-host.mjs';
 
 const [runtime, candidate, output, count = '128', order] = process.argv.slice(2);
@@ -23,7 +23,7 @@ if (
   throw Error('usage: parallel-latency.mjs node|chromium BUILD_DIR OUTPUT [SAMPLES] [--reverse]');
 }
 
-const benchmark = resolve(fileURLToPath(new URL('../benchmarks/', import.meta.url)));
+const benchmark = resolve(fileURLToPath(new URL('../../benchmarks/', import.meta.url)));
 const build = resolve(candidate);
 const traceFile = resolve(benchmark, 'parallel-latency-trace.mjs');
 const wasm = await readFile(resolve(build, 'ring64-parallel.wasm'));

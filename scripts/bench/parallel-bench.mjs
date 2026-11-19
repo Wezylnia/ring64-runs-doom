@@ -4,7 +4,7 @@ import { access, readFile, writeFile } from 'node:fs/promises';
 import { extname, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { chromium } from 'playwright';
-import { measureParallel, parallelWorkloads } from '../benchmarks/parallel.mjs';
+import { measureParallel, parallelWorkloads } from '../../benchmarks/parallel.mjs';
 import { hostIdentity } from './emitted-host.mjs';
 
 const [runtime, candidate, baseline, output, workers, max, replicates, ...flags] =

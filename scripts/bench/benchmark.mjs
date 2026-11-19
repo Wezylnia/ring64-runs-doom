@@ -1,15 +1,15 @@
 import { createServer } from 'node:http';
 import { readFile, mkdir, writeFile, access } from 'node:fs/promises';
-import { resolve, dirname, relative } from 'node:path';
+import { resolve, dirname, relative, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import os from 'node:os';
 import { chromium } from 'playwright';
-import { loadSides, measure, workloadNames } from '../benchmarks/kernels.mjs';
+import { loadSides, measure, workloadNames } from '../../benchmarks/kernels.mjs';
 import { hostIdentity } from './emitted-host.mjs';
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 function options(args) {
   const value = { browser: false, iterations: 1000001, samples: 11, workloads: workloadNames };
   for (let i = 0; i < args.length; i++) {
@@ -70,7 +70,7 @@ function options(args) {
 const config = options(process.argv.slice(2));
 if (config.help) {
   console.log(
-    'node scripts/benchmark.mjs [--browser] [--baseline BUILT_REPO] [--candidate BUILT_REPO] [--cold-setup] [--exception-idle | --matched-delivery] [--reverse] [--iterations N] [--samples N] [--workloads NAME,NAME] [--output FILE]',
+    'node scripts/bench/benchmark.mjs [--browser] [--baseline BUILT_REPO] [--candidate BUILT_REPO] [--cold-setup] [--exception-idle | --matched-delivery] [--reverse] [--iterations N] [--samples N] [--workloads NAME,NAME] [--output FILE]',
   );
   console.log(workloadNames.join('\n'));
   process.exit(0);
@@ -168,7 +168,7 @@ async function browserRun() {
           base = roots.get(label);
         if (!base) throw Error('unknown side');
         file = resolve(base, ...parts);
-        if (!file.startsWith(resolve(base, 'build') + '/')) throw Error('outside build');
+        if (!file.startsWith(resolve(base, 'build') + sep)) throw Error('outside build');
       }
       const bytes = await readFile(file);
       response.writeHead(200, {
