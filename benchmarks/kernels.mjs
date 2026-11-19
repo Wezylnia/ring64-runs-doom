@@ -10,6 +10,22 @@ import { externalInterruptNames, measureExternalInterrupts } from './external-in
 import { accessFaultNames, measureAccessFaults } from './access-faults.mjs';
 import { debugNames, measureDebug } from './debug.mjs';
 
+export async function loadSides(sides, { coldSetup, reverse }, instantiate) {
+  async function load(side) {
+    return { ...side, ...(await instantiate(side)) };
+  }
+  if (!coldSetup) return { loaded: await Promise.all(sides.map(load)) };
+  const order = reverse ? [...sides].reverse() : sides;
+  const installed = new Map();
+  const setup = [];
+  for (const side of order) {
+    const began = performance.now();
+    installed.set(side.label, await load(side));
+    setup.push({ side: side.label, elapsedMs: performance.now() - began });
+  }
+  return { loaded: sides.map((side) => installed.get(side.label)), setup };
+}
+
 const MASK64 = (1n << 64n) - 1n;
 const MASK128 = (1n << 128n) - 1n;
 const FLAGS = 0xcd7n;

@@ -29,8 +29,8 @@ for (const [format, body, bytes] of [
   ['m32', 'd903d91b', 4],
   ['m64', 'dd03dd1b', 8],
   ['m80', 'db2bdb3b', 10],
-])
-  rows.push({
+]) {
+  const row = {
     name: `x87-load-store-${format}`,
     body,
     instructions: 2,
@@ -42,7 +42,10 @@ for (const [format, body, bytes] of [
       s.x87.registers[7] = ONE;
       metadata(s, 2, true);
     },
-  });
+  };
+  rows.push(row);
+  if (format === 'm80') rows.push({ ...row, name: row.name + '-resume', resume: true });
+}
 for (const [pc, encoding] of [
   [24, 0],
   [53, 2],

@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import os from 'node:os';
 import { chromium } from 'playwright';
-import { measure, workloadNames } from '../benchmarks/kernels.mjs';
+import { loadSides, measure, workloadNames } from '../benchmarks/kernels.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 function options(args) {
@@ -15,6 +15,10 @@ function options(args) {
     const key = args[i];
     if (key === '--browser') {
       value.browser = true;
+      continue;
+    }
+    if (key === '--cold-setup') {
+      value.coldSetup = true;
       continue;
     }
     if (key === '--exception-idle' || key === '--matched-delivery' || key === '--reverse') {
@@ -32,12 +36,20 @@ function options(args) {
       continue;
     }
     if (
-      !['--baseline', '--output', '--iterations', '--samples', '--workloads'].includes(key) ||
+      ![
+        '--baseline',
+        '--candidate',
+        '--output',
+        '--iterations',
+        '--samples',
+        '--workloads',
+      ].includes(key) ||
       args[i + 1] === undefined
     )
       throw Error(`unknown or incomplete option: ${key}`);
     const next = args[++i];
     if (key === '--baseline') value.baseline = resolve(next);
+    else if (key === '--candidate') value.candidate = resolve(next);
     else if (key === '--output') value.output = resolve(next);
     else if (key === '--workloads') value.workloads = next.split(',');
     else value[key.slice(2)] = Number(next);
@@ -57,7 +69,7 @@ function options(args) {
 const config = options(process.argv.slice(2));
 if (config.help) {
   console.log(
-    'node scripts/benchmark.mjs [--browser] [--baseline BUILT_REPO] [--exception-idle | --matched-delivery] [--reverse] [--iterations N] [--samples N] [--workloads NAME,NAME] [--output FILE]',
+    'node scripts/benchmark.mjs [--browser] [--baseline BUILT_REPO] [--candidate BUILT_REPO] [--cold-setup] [--exception-idle | --matched-delivery] [--reverse] [--iterations N] [--samples N] [--workloads NAME,NAME] [--output FILE]',
   );
   console.log(workloadNames.join('\n'));
   process.exit(0);
@@ -110,7 +122,7 @@ async function manifest(path, label) {
 }
 const definitions = [
   ...(config.baseline ? [['baseline', config.baseline]] : []),
-  ['current', root],
+  ['current', config.candidate ?? root],
 ];
 const manifests = await Promise.all(definitions.map(([label, path]) => manifest(path, label)));
 const knobs = {
@@ -122,19 +134,14 @@ const knobs = {
   reverse: config.reverse ?? false,
 };
 async function nodeRun() {
-  const sides = await Promise.all(
-    manifests.map(async (side) => {
-      const { createCpu } = await import(pathToFileURL(resolve(side.path, 'build/host/index.js')));
-      return {
-        ...side,
-        createCpu,
-        compiler: await WebAssembly.compile(
-          await readFile(resolve(side.path, 'build/ring64.wasm')),
-        ),
-      };
-    }),
-  );
-  return measure(sides, knobs);
+  const { loaded, setup } = await loadSides(manifests, config, async (side) => {
+    const { createCpu } = await import(pathToFileURL(resolve(side.path, 'build/host/index.js')));
+    return {
+      createCpu,
+      compiler: await WebAssembly.compile(await readFile(resolve(side.path, 'build/ring64.wasm'))),
+    };
+  });
+  return { ...(await measure(loaded, knobs)), setup };
 }
 async function browserRun() {
   const roots = new Map(manifests.map((side) => [side.label, side.path]));
@@ -203,23 +210,25 @@ async function browserRun() {
     const page = await browser.newPage();
     await page.goto(`http://127.0.0.1:${server.address().port}/`);
     const encoded = await page.evaluate(
-      async ({ manifests, knobs }) => {
-        const { measure } = await import('/kernels.mjs');
-        const sides = await Promise.all(
-          manifests.map(async (side) => {
+      async ({ manifests, knobs, coldSetup }) => {
+        const { loadSides, measure } = await import('/kernels.mjs');
+        const { loaded, setup } = await loadSides(
+          manifests,
+          { coldSetup, reverse: knobs.reverse },
+          async (side) => {
             const { createCpu } = await import(`/${side.label}/build/host/index.js`);
             const bytes = new Uint8Array(
               await (await fetch(`/${side.label}/build/ring64.wasm`)).arrayBuffer(),
             );
-            return { ...side, createCpu, compiler: await WebAssembly.compile(bytes) };
-          }),
+            return { createCpu, compiler: await WebAssembly.compile(bytes) };
+          },
         );
         return JSON.stringify(
-          { ...(await measure(sides, knobs)), browserUserAgent: navigator.userAgent },
+          { ...(await measure(loaded, knobs)), setup, browserUserAgent: navigator.userAgent },
           (_, v) => (typeof v === 'bigint' ? v.toString() : v),
         );
       },
-      { manifests, knobs },
+      { manifests, knobs, coldSetup: config.coldSetup },
     );
     return { ...JSON.parse(encoded), browserVersion: browser.version() };
   } finally {
