@@ -113,6 +113,26 @@ struct Core {
     debug_candidate: u8,
 }
 
+struct InitialImage {
+    image: Image,
+    paging: Option<crate::x86::paging::State>,
+    fast_system: crate::x86::fast_system::State,
+    context: ExecutionContext,
+    physical_controls: bool,
+}
+
+impl InitialImage {
+    fn linear(image: Image) -> Self {
+        Self {
+            image,
+            paging: None,
+            fast_system: Default::default(),
+            context: Default::default(),
+            physical_controls: false,
+        }
+    }
+}
+
 #[derive(Default)]
 struct Bridge {
     core: Option<Core>,
@@ -122,6 +142,55 @@ struct Bridge {
 }
 
 impl Bridge {
+    fn install_core(&mut self, entry: u64, initial: InitialImage) -> i32 {
+        let InitialImage {
+            image,
+            paging,
+            fast_system,
+            context,
+            physical_controls,
+        } = initial;
+        self.core = Some(Core {
+            task_work: None,
+            io_present: false,
+            io_configured: false,
+            io_effect: false,
+            image,
+            fast_system,
+            paging,
+            physical_controls,
+            paging_work: Default::default(),
+            translation_cache: Default::default(),
+            active_owner: None,
+            paging_failure: None,
+            pdpte_load_fault: None,
+            paging_system: None,
+            state: Box::new(UnsafeCell::new(RunState {
+                rip: entry,
+                ..RunState::default()
+            })),
+            fault: None,
+            divide_failed: false,
+            decode_fault: None,
+            context,
+            context_version: 0,
+            segment_fault: None,
+            alignment_fault: None,
+            alignment_check: None,
+            simd_exception: None,
+            numeric_fault: None,
+            numeric_form: None,
+            general_protection: None,
+            protection_fault: None,
+            system_memory_fault: None,
+            debug_exception: None,
+            translation_owners: Default::default(),
+            debug_candidate: 0,
+        });
+        self.info = serde_json::to_vec(&RunState::descriptor()).unwrap();
+        0
+    }
+
     fn error(&mut self, message: &str) -> i32 {
         self.info = serde_json::to_vec(&serde_json::json!({ "error": message })).unwrap();
         1
@@ -165,46 +234,7 @@ pub extern "C" fn core_init(code_base: u64, code_len: u32, ram_base: u64, ram_le
             Ok(image) => image,
             Err(message) => return bridge.error(message),
         };
-        let state = Box::new(UnsafeCell::new(RunState {
-            rip: code_base,
-            ..RunState::default()
-        }));
-        bridge.core = Some(Core {
-            task_work: None,
-            io_present: false,
-            io_configured: false,
-            io_effect: false,
-            image,
-            fast_system: Default::default(),
-            paging: None,
-            physical_controls: false,
-            paging_work: Default::default(),
-            translation_cache: Default::default(),
-            active_owner: None,
-            paging_failure: None,
-            pdpte_load_fault: None,
-            paging_system: None,
-            state,
-            fault: None,
-            divide_failed: false,
-            decode_fault: None,
-            context: ExecutionContext::default(),
-            context_version: 0,
-            segment_fault: None,
-            alignment_fault: None,
-            alignment_check: None,
-            simd_exception: None,
-            numeric_fault: None,
-            numeric_form: None,
-            general_protection: None,
-            protection_fault: None,
-            system_memory_fault: None,
-            debug_exception: None,
-            translation_owners: Default::default(),
-            debug_candidate: 0,
-        });
-        bridge.info = serde_json::to_vec(&RunState::descriptor()).unwrap();
-        0
+        bridge.install_core(code_base, InitialImage::linear(image))
     })
 }
 

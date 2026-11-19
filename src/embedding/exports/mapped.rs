@@ -72,14 +72,6 @@ fn mappings(value: &Value, capacity: usize) -> Result<Vec<MappingInput>, MemoryE
     Ok(mappings)
 }
 
-struct InitialImage {
-    image: Image,
-    paging: Option<crate::x86::paging::State>,
-    fast_system: crate::x86::fast_system::State,
-    context: ExecutionContext,
-    physical_controls: bool,
-}
-
 fn initial_image(input: &[u8], metadata_len: u32) -> Result<InitialImage, MemoryError> {
     let metadata_len = metadata_len as usize;
     let config = json(input.get(..metadata_len).ok_or_else(invalid)?)?;
@@ -154,13 +146,7 @@ fn initial_image(input: &[u8], metadata_len: u32) -> Result<InitialImage, Memory
             if config.get("paging").is_some() || config.get("fastSystem").is_some() {
                 return Err(invalid());
             }
-            image!(mapped, false).map(|image| InitialImage {
-                image,
-                paging: None,
-                fast_system: Default::default(),
-                context: Default::default(),
-                physical_controls: false,
-            })
+            image!(mapped, false).map(InitialImage::linear)
         }
         Some(Value::String(model)) if model == "ia32e-paged" => {
             let state =
@@ -235,55 +221,11 @@ fn shared_image(
 #[unsafe(no_mangle)]
 pub extern "C" fn core_init_mapped(entry: u64, metadata_len: u32) -> i32 {
     BRIDGE.with_borrow_mut(|bridge| {
-        let InitialImage {
-            image,
-            paging,
-            fast_system,
-            context,
-            physical_controls,
-        } = match initial_image(&bridge.input, metadata_len) {
-            Ok(image) => image,
+        let initial = match initial_image(&bridge.input, metadata_len) {
+            Ok(initial) => initial,
             Err(error) => return memory_error(bridge, error),
         };
-        bridge.core = Some(Core {
-            task_work: None,
-            io_present: false,
-            io_configured: false,
-            io_effect: false,
-            image,
-            fast_system,
-            paging,
-            physical_controls,
-            paging_work: Default::default(),
-            translation_cache: Default::default(),
-            active_owner: None,
-            paging_failure: None,
-            pdpte_load_fault: None,
-            paging_system: None,
-            state: Box::new(UnsafeCell::new(RunState {
-                rip: entry,
-                ..RunState::default()
-            })),
-            fault: None,
-            divide_failed: false,
-            decode_fault: None,
-            context,
-            context_version: 0,
-            segment_fault: None,
-            alignment_fault: None,
-            alignment_check: None,
-            simd_exception: None,
-            numeric_fault: None,
-            numeric_form: None,
-            general_protection: None,
-            protection_fault: None,
-            system_memory_fault: None,
-            debug_exception: None,
-            translation_owners: Default::default(),
-            debug_candidate: 0,
-        });
-        bridge.info = serde_json::to_vec(&RunState::descriptor()).unwrap();
-        0
+        bridge.install_core(entry, initial)
     })
 }
 
