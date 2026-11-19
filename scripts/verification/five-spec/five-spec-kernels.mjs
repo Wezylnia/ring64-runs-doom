@@ -442,6 +442,7 @@ async function ioProgressKernel(side, name, requested) {
     const bytes = new Uint8Array(8);
     put(bytes, 0, 0x13063n);
     cpu.writePhysicalMemory(0x13030n, bytes);
+    cpu.writePhysicalMemory(0x6000n, hex('0f013b'));
     cpu.setPagingState({ ...cpu.readPagingState(), efer: 0xd00n });
   }
   return {
@@ -466,9 +467,17 @@ async function ioProgressKernel(side, name, requested) {
       }
     },
     async run() {
-      const results = [await cpu.run({ budget: 1n, repeatBudget: 2n })];
+      const results = [await cpu.run({ budget: 1n, repeatBudget: pteEdit ? 1n : 2n })];
       if (!codeEdit) {
         if (pteEdit) {
+          // Guest page-table writes keep the cached fetch translation until INVLPG.
+          const state = results[0].state;
+          const registers = state.registers.slice();
+          registers[3] = 0x1000n;
+          cpu.setState({ ...state, rip: 0x4000n, registers });
+          results.push(await cpu.run({ budget: 1n }));
+          cpu.setState(state);
+          results.push(await cpu.run({ budget: 1n, repeatBudget: 1n }));
           const bytes = new Uint8Array(8);
           put(bytes, 0, 0x5023n);
           cpu.writePhysicalMemory(0x13008n, bytes);
@@ -481,7 +490,10 @@ async function ioProgressKernel(side, name, requested) {
       const work = ioRunWork(results),
         first = results[0],
         last = results.at(-1);
-      check(last.reason === 'budget' && work.retired === 1n, name + ' completed packet');
+      check(
+        last.reason === 'budget' && work.retired === (pteEdit ? 2n : 1n),
+        name + ' completed packet',
+      );
       check(callbacks === inputs.length, name + ' exact external attempts');
       check(
         transactionGeometry.every((value, i) => value === (i % 2 ? 8 : 0x80)),
@@ -501,20 +513,28 @@ async function ioProgressKernel(side, name, requested) {
           name + ' new bare form and tail',
         );
       else {
+        const fault = results.at(-2);
         check(
-          first.reason === (pteEdit ? 'page-fault' : 'data-fault') &&
-            first.retired === 0n &&
-            first.repeatIterations === 1n,
+          fault.reason === (pteEdit ? 'page-fault' : 'data-fault') &&
+            fault.retired === 0n &&
+            first.repeatIterations === 1n &&
+            fault.repeatIterations === (pteEdit ? 0n : 1n),
           name + ' first committed element and later fault',
         );
         check(
-          first.state.registers[1] === 1n &&
-            first.state.registers[7] === (pteEdit ? 0x6009n : 0x4001n),
+          fault.state.registers[1] === 1n &&
+            fault.state.registers[7] === (pteEdit ? 0x6009n : 0x4001n),
           name + ' fault preserves preceding progress',
         );
         if (pteEdit) {
           check(
-            first.pageFault.address === 0x1000n && first.pageFault.errorCode === 0x10,
+            first.reason === 'repeat-budget' &&
+              results[1].reason === 'budget' &&
+              results[1].retired === 1n,
+            name + ' guest invalidation after first input',
+          );
+          check(
+            fault.pageFault.address === 0x1000n && fault.pageFault.errorCode === 0x10,
             name + ' source fetch fault',
           );
           check(
@@ -544,6 +564,7 @@ async function ioProgressKernel(side, name, requested) {
         operandAttempts: inputs.length,
         dataBytes: 2,
         timedHostRepair: !codeEdit,
+        timedGuestInvalidation: pteEdit,
         owners: cpu.inspectTranslations(),
         ownerWarmth: codeEdit
           ? 'source bytes restored before each packet; timed recompilation'
