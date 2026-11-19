@@ -3,18 +3,22 @@ import { parallelMemoryScenarios } from './memory.js';
 import { parallelCoherenceScenarios } from './coherence.js';
 import { parallelLifecycleScenarios } from './lifecycle.js';
 import { parallelLitmusScenarios } from './litmus.js';
+import { parallelPagingMemoryScenarios } from './paging-memory.js';
 
 export async function runParallelScenarios(
   factory: MachineFactory,
   bytes: BufferSource,
+  selected?: string,
 ): Promise<{ passed: string[] }> {
   const compiler = await WebAssembly.compile(bytes);
   const scenarios = [
     ...parallelMemoryScenarios(factory, compiler),
+    ...parallelPagingMemoryScenarios(factory, compiler),
     ...parallelLitmusScenarios(factory, compiler),
     ...parallelCoherenceScenarios(factory, compiler),
     ...parallelLifecycleScenarios(factory, compiler),
-  ];
+  ].filter(({ name }) => selected === undefined || name === selected);
+  if (scenarios.length === 0) throw new Error(`parallel scenario not found: ${selected}`);
   const passed: string[] = [];
   for (const { name, run } of scenarios) {
     try {

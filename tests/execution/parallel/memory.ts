@@ -106,6 +106,76 @@ export function parallelMemoryScenarios(
       },
     },
     {
+      name: 'separate guest read and write lose exactly one update while LOCK keeps both',
+      async run() {
+        // mov rax,[rbx]; inc rax; mov [rbx],rax; lock inc qword [rbx].
+        const options = linearMachine(compiler, '488b0348ffc0488903f048ff03');
+        const alias = 0x8000n;
+        options.memory.mappings.push(span(alias, 'data', 0, 8));
+        await withMachine(factory, options, async (machine) => {
+          await machine.writeMemory(RAM, asBytes(7n));
+          const pointers = [RAM, alias];
+          await Promise.all(
+            machine.cpus.map((cpu, i) => cpu.setState(cpuState(ENTRY, { 3: pointers[i]! }))),
+          );
+          const loaded = await Promise.all(machine.cpus.map((cpu) => cpu.run({ budget: 1n })));
+          for (const read of loaded) {
+            equal(read.reason, 'budget', 'read-only boundary');
+            equal(read.retired, 1n, 'one old-value read');
+            equal(read.state.rip, ENTRY + 3n, 'both reads precede either write');
+            equal(read.state.registers[0], 7n, 'same original value from both aliases');
+          }
+          const writes = await Promise.all(
+            machine.cpus.map((cpu) => cpu.run({ budget: 3n, stop: ENTRY + 9n })),
+          );
+          for (const write of writes) done(write, ENTRY + 9n, 2n);
+          same(await words(machine, RAM, 1), [8n], 'exactly one ordinary update is lost');
+
+          await machine.writeMemory(RAM, asBytes(7n));
+          const locked = await Promise.all(machine.cpus.map((cpu) => cpu.run({ budget: 1n })));
+          for (const update of locked) {
+            equal(update.reason, 'budget', 'locked completion boundary');
+            equal(update.retired, 1n, 'each actor retires one lock');
+            equal(update.state.rip, ENTRY + 13n, 'exact locked successor');
+          }
+          same(await words(machine, alias, 1), [9n], 'both locked updates commit to the same lane');
+        });
+      },
+    },
+    {
+      name: 'exchange through overlapping aliases snapshots once and later logical bytes win',
+      async run() {
+        const options = linearMachine(compiler, '48870390');
+        const at = RAM + 0x40n;
+        const alias = 0x8003n;
+        options.memory.backings[1]!.bytes.set(asBytes(0x8877665544332211n), 32);
+        options.memory.mappings.splice(
+          1,
+          1,
+          span(at, 'data', 32, 3),
+          span(at + 3n, 'data', 33, 3),
+          span(at + 6n, 'data', 36, 2),
+          span(alias, 'data', 32, 8),
+        );
+        await withMachine(factory, options, async (machine) => {
+          const [writer, observer] = machine.cpus;
+          await writer!.setState(cpuState(ENTRY, { 0: 0x1807f6e5d4c3b2a1n, 3: at }));
+          const result = await writer!.run({ budget: 2n, stop: ENTRY + 3n });
+          done(result, ENTRY + 3n, 1n);
+          equal(result.state.registers[0], 0x6655443322332211n, 'original logical snapshot');
+          same(
+            await words(machine, alias, 1),
+            [0x88771807f6e5d4a1n],
+            'later guest offsets replace duplicate canonical bytes',
+          );
+          await observer!.setState(cpuState(ENTRY, { 0: 0x0123456789abcdefn, 3: alias }));
+          const observed = await observer!.run({ budget: 2n, stop: ENTRY + 3n });
+          done(observed, ENTRY + 3n, 1n);
+          equal(observed.state.registers[0], 0x88771807f6e5d4a1n, 'peer sees one canonical lane');
+        });
+      },
+    },
+    {
       name: 'narrow locked updates through distinct aliases preserve neighboring bytes and exact retirements',
       async run() {
         // lock inc byte [rbx]; dec ecx; jnz entry.
@@ -113,14 +183,19 @@ export function parallelMemoryScenarios(
         const alias = 0x8000n;
         options.memory.mappings.push(span(alias, 'data', 0, 4096));
         await withMachine(factory, options, async (machine) => {
-          const count = 8195n;
-          await machine.writeMemory(RAM, Uint8Array.of(0, 0, 0xad, 0xde, 0x99, 0x21, 0xaf, 0x59));
+          const count = 65539n;
           const [a, b] = machine.cpus;
+          const stop = ENTRY + 7n;
+          // Warm each native loop before starting the contention case.
+          await a!.setState(cpuState(ENTRY, { 1: 1n, 3: RAM }));
+          done(await a!.run({ budget: 4n, stop }), stop, 3n);
+          await b!.setState(cpuState(ENTRY, { 1: 1n, 3: alias + 1n }));
+          done(await b!.run({ budget: 4n, stop }), stop, 3n);
+          await machine.writeMemory(RAM, Uint8Array.of(0, 0, 0xad, 0xde, 0x99, 0x21, 0xaf, 0x59));
           await Promise.all([
             a!.setState(cpuState(ENTRY, { 1: count, 3: RAM })),
             b!.setState(cpuState(ENTRY, { 1: count, 3: alias + 1n })),
           ]);
-          const stop = ENTRY + 7n;
           const r = await Promise.all(
             machine.cpus.map((cpu) => cpu.run({ budget: count * 3n + 1n, stop })),
           );

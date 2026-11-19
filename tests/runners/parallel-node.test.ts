@@ -8,7 +8,14 @@ test('parallel public API runs real dedicated Node workers', { timeout: 120_000 
   const entry = new URL('../../build/host/machine.js', import.meta.url);
   const { createMachine }: { createMachine: MachineFactory } = await import(entry.href);
   const bytes = await readFile(new URL('../../build/ring64-parallel.wasm', import.meta.url));
-  const result = await runParallelScenarios(createMachine, Uint8Array.from(bytes));
+  const selected = process.env.RING64_PARALLEL_SCENARIO;
+  const result = await runParallelScenarios(createMachine, Uint8Array.from(bytes), selected).catch(
+    (error: unknown) => {
+      if (selected && error instanceof Error && error.cause !== undefined) throw error.cause;
+      throw error;
+    },
+  );
+  if (selected) assert.deepEqual(result.passed, [selected]);
   assert.ok(result.passed.length > 0);
   assert.equal(new Set(result.passed).size, result.passed.length);
 });
