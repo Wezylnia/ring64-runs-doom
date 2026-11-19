@@ -1,5 +1,5 @@
-import type { SharedLayout } from './control.js';
-import type { Range } from './protocol.js';
+import type { SharedLayout } from '../control.js';
+import type { Range } from '../protocol.js';
 
 function watchWords(memory: WebAssembly.Memory, layout: SharedLayout) {
   return new Int32Array(memory.buffer, layout.watchBase, layout.ramCapacity / 32);

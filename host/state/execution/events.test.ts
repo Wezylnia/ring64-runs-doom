@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Core } from '../wasm/core.js';
+import { Core } from '../../wasm/core.js';
 import { captureState, type State } from './registers.js';
-import { createCpu } from '../cpu/cpu.js';
+import { createCpu } from '../../cpu/cpu.js';
 import {
   captureEventState,
   readEvent,

@@ -7,7 +7,7 @@ import {
   validateNumericSourceLayout,
   type NumericSourceLayout,
 } from './numeric-controls.js';
-import { captureEventState } from './events.js';
+import { captureEventState } from '../execution/events.js';
 
 const controls = () => ({ mp: true, em: false, ts: true, osfxsr: true, osxmmexcpt: true });
 const nm = () => ({ vector: 7, instructionPc: 0x1000n, family: 'x87', controls: controls() });

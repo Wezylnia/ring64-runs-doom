@@ -1,5 +1,5 @@
 import { Core } from '../../host/wasm/core.js';
-import { captureNumericFault } from '../../host/state/numeric-controls.js';
+import { captureNumericFault } from '../../host/state/numeric/numeric-controls.js';
 import { longSnapshot } from '../support/context.js';
 import {
   BANK,

@@ -2,7 +2,7 @@ import {
   captureNumericFault,
   type DeviceNotAvailable,
   type NumericControlFault,
-} from './numeric-controls.js';
+} from '../numeric/numeric-controls.js';
 import { captureDebugSource, type DebugSource } from './debug.js';
 interface ExceptionBoundary {
   deviceNotAvailable?: DeviceNotAvailable;

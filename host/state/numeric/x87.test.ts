@@ -1,15 +1,15 @@
-import { DEBUG_LAYOUT } from '../../tests/support/debug-layout.js';
-import { TIME_LAYOUT } from '../../tests/support/time-layout.js';
+import { DEBUG_LAYOUT } from '../../../tests/support/debug-layout.js';
+import { TIME_LAYOUT } from '../../../tests/support/time-layout.js';
 import {
   PROTECTION_KEYS_LAYOUT,
   PROTECTION_KEYS_STATE_SIZE,
-} from '../../tests/support/protection-keys-layout.js';
+} from '../../../tests/support/protection-keys-layout.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { captureX87State, type X87State } from './x87.js';
-import { Core } from '../wasm/core.js';
-import { captureInitialMemory } from '../embedding/memory.js';
-import { createCpu } from '../cpu/cpu.js';
+import { Core } from '../../wasm/core.js';
+import { captureInitialMemory } from '../../embedding/memory.js';
+import { createCpu } from '../../cpu/cpu.js';
 
 const layout = {
   size: PROTECTION_KEYS_STATE_SIZE,

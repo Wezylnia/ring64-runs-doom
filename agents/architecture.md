@@ -8,9 +8,9 @@ let module and directory boundaries follow the responsibilities and consumers th
 
 `host/index.ts` exposes the standalone CPU. `host/cpu/` coordinates its runs and owns the installed translation cache. `host/wasm/` exchanges inputs, state and generated code with the Rust Wasm core.
 
-`host/machine.ts` exposes the shared-memory machine. It owns worker admission, memory barriers and I/O ordering. `host/parallel/` contains the worker protocol, execution binding and shared RAM helpers. Executable source watches have their own owner there and are reclaimed during the machine's closed phase.
+`host/machine.ts` exposes the shared-memory machine. It owns worker admission, memory barriers and I/O ordering. `host/parallel/` contains the worker protocol and execution binding. Its `memory/` directory holds shared RAM access and executable source watches, which the machine reclaims during its closed phase.
 
-`host/state/` holds the CPU state contracts and their host-side validation. `host/embedding/` owns memory backing, mappings and I/O supplied by the caller. The Rust implementations below `src/` own guest instruction and memory semantics.
+`host/state/execution/` owns run snapshots, event delivery state and debug continuations. `host/state/system/` holds context, paging, protection, time and fast-system state. `host/state/numeric/` holds x87 state and numeric control contracts. `host/embedding/` owns memory backing, mappings and I/O supplied by the caller. The Rust implementations below `src/` own guest instruction and memory semantics.
 
 ## dependency direction
 

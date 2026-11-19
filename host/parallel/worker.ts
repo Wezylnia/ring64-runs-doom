@@ -11,8 +11,8 @@ import type {
   Start,
   ToWorker,
 } from './protocol.js';
-import { bindRam } from './ram.js';
-import { markSourceWatches } from './source-watches.js';
+import { bindRam } from './memory/ram.js';
+import { markSourceWatches } from './memory/source-watches.js';
 import { connectWorker } from './transport.js';
 
 class WorkerRuntime implements Binding {

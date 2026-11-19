@@ -1,8 +1,13 @@
 export { createCpu } from './cpu/cpu.js';
 export type { Cpu, Limits, Options, RunResult } from './cpu/cpu.js';
-export type { State, StateSnapshot, Interruptibility } from './state/registers.js';
-export type { X87State, X87Exception } from './state/x87.js';
-export type { EventState, ExceptionEvent, InterruptEvent, InterruptState } from './state/events.js';
+export type { State, StateSnapshot, Interruptibility } from './state/execution/registers.js';
+export type { X87State, X87Exception } from './state/numeric/x87.js';
+export type {
+  EventState,
+  ExceptionEvent,
+  InterruptEvent,
+  InterruptState,
+} from './state/execution/events.js';
 export type {
   DebugException,
   Fault,
@@ -37,13 +42,13 @@ export type {
   SegmentName,
   SegmentType,
   SegmentFault,
-} from './state/context.js';
+} from './state/system/context.js';
 
-export type { DebugState, DebugContinuation, DebugSource } from './state/debug.js';
-export type { PagingState } from './state/paging.js';
-export type { FastSystemState } from './state/fast-system.js';
-export type { TimeState } from './state/time.js';
-export type { ProtectionKeysState } from './state/protection-keys.js';
+export type { DebugState, DebugContinuation, DebugSource } from './state/execution/debug.js';
+export type { PagingState } from './state/system/paging.js';
+export type { FastSystemState } from './state/system/fast-system.js';
+export type { TimeState } from './state/system/time.js';
+export type { ProtectionKeysState } from './state/system/protection-keys.js';
 
 export type { IoProvider, IoWidth } from './embedding/io.js';
 export type {
@@ -51,4 +56,4 @@ export type {
   NumericControlFault,
   NumericControls,
   NumericFamily,
-} from './state/numeric-controls.js';
+} from './state/numeric/numeric-controls.js';

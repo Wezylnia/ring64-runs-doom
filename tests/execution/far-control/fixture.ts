@@ -1,4 +1,4 @@
-import { captureContext } from '../../../host/state/context.js';
+import { captureContext } from '../../../host/state/system/context.js';
 import type {
   Cpu,
   ExecutionContextSnapshot,

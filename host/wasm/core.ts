@@ -6,7 +6,7 @@ import {
   captureXmmState,
   type State,
   type StateSnapshot,
-} from '../state/registers.js';
+} from '../state/execution/registers.js';
 import {
   captureNumericFault,
   readNumericSource,
@@ -14,7 +14,7 @@ import {
   validateNumericSourceLayout,
   type NumericSourceLayout,
   type NumericFault,
-} from '../state/numeric-controls.js';
+} from '../state/numeric/numeric-controls.js';
 import {
   captureDebugState,
   readDebugSource,
@@ -24,7 +24,7 @@ import {
   validateDebugLayout,
   type DebugState,
   type DebugLayout,
-} from '../state/debug.js';
+} from '../state/execution/debug.js';
 import {
   contextFromJson,
   type ContextInfo,
@@ -32,27 +32,31 @@ import {
   type ExecutionContextSnapshot,
   type SegmentFault,
   type SegmentName,
-} from '../state/context.js';
+} from '../state/system/context.js';
 import type { InitialMemory, MemoryBackingInput, MemoryMapping } from '../embedding/memory.js';
-import { capturePagingState, pagingStateFromJson, type PagingState } from '../state/paging.js';
+import {
+  capturePagingState,
+  pagingStateFromJson,
+  type PagingState,
+} from '../state/system/paging.js';
 import {
   captureTimeState,
   validateTimeLayout,
   type TimeLayout,
   type TimeState,
-} from '../state/time.js';
+} from '../state/system/time.js';
 import {
   captureProtectionKeysState,
   validateProtectionKeysLayout,
   type ProtectionKeysLayout,
   type ProtectionKeysState,
-} from '../state/protection-keys.js';
+} from '../state/system/protection-keys.js';
 import {
   captureFastSystemState,
   fastSystemStateFromJson,
   zeroFastSystemState,
   type FastSystemState,
-} from '../state/fast-system.js';
+} from '../state/system/fast-system.js';
 import {
   eventKind,
   readEvent,
@@ -67,7 +71,7 @@ import {
   type EventState,
   type InterruptLayout,
   type PagingSourceLayout,
-} from '../state/events.js';
+} from '../state/execution/events.js';
 import {
   captureX87State,
   readX87,
@@ -76,7 +80,7 @@ import {
   type X87State,
   type X87Exception,
   type X87Layout,
-} from '../state/x87.js';
+} from '../state/numeric/x87.js';
 
 export interface DebugException {
   vector: 1;

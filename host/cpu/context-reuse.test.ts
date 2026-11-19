@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Core, type GeneratedRun } from '../wasm/core.js';
 import { createCpu } from './cpu.js';
-import type { State } from '../state/registers.js';
+import type { State } from '../state/execution/registers.js';
 
 const PC = 0x1000n;
 const state = (): State => ({ registers: Array<bigint>(16).fill(0n), flags: 2n, rip: PC });

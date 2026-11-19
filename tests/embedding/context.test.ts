@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { createCpu } from '../../host/index.js';
-import type { ExecutionContext, LoadedSegment } from '../../host/state/context.js';
+import type { ExecutionContext, LoadedSegment } from '../../host/state/system/context.js';
 import { LIMITS, initial, hex } from '../support/fixture.js';
 import { longSnapshot, protectedSnapshot } from '../support/context.js';
 

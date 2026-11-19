@@ -1,4 +1,4 @@
-import { DEBUG_LAYOUT } from '../../tests/support/debug-layout.js';
+import { DEBUG_LAYOUT } from '../../../tests/support/debug-layout.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {

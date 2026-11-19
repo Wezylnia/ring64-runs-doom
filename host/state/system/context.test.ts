@@ -7,7 +7,7 @@ import {
   type ExecutionContext,
   type LoadedSegment,
 } from './context.js';
-import { longSnapshot, protectedSnapshot } from '../../tests/support/context.js';
+import { longSnapshot, protectedSnapshot } from '../../../tests/support/context.js';
 
 const data = (): LoadedSegment => ({
   base: 0n,

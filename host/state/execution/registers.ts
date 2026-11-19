@@ -1,4 +1,4 @@
-import { unsigned64 } from '../embedding/input.js';
+import { unsigned64 } from '../../embedding/input.js';
 import { captureDebugContinuation, type DebugContinuation } from './debug.js';
 import {
   captureEventState,

@@ -2,10 +2,10 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { Worker } from 'node:worker_threads';
-import type { createMachine as create, Machine, MachineOptions } from './machine.js';
-import { SharedControl, SLOT } from './parallel/control.js';
-import type { FromWorker, ToWorker } from './parallel/protocol.js';
-import { bindRam, ramModule } from './parallel/ram.js';
+import type { createMachine as create, Machine, MachineOptions } from '../machine.js';
+import { SharedControl, SLOT } from './control.js';
+import type { FromWorker, ToWorker } from './protocol.js';
+import { bindRam, ramModule } from './memory/ram.js';
 
 test('a phase close between publishing and rechecking a lease prevents entry', () => {
   const memory = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true });
@@ -58,9 +58,9 @@ test('shared helper functions access the supplied shared memory at both prescrib
 });
 
 async function machine(code: number[], io?: MachineOptions['io']): Promise<Machine> {
-  const entry = new URL('../build/host/machine.js', import.meta.url);
+  const entry = new URL('../../build/host/machine.js', import.meta.url);
   const { createMachine }: { createMachine: typeof create } = await import(entry.href);
-  const compiler = await readFile(new URL('../build/ring64-parallel.wasm', import.meta.url));
+  const compiler = await readFile(new URL('../../build/ring64-parallel.wasm', import.meta.url));
   return createMachine({
     compiler,
     memoryModel: 'linear',

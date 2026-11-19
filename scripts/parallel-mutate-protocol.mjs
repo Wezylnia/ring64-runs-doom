@@ -2,7 +2,7 @@ import process from 'node:process';
 
 const nodeTest = (...args) => [process.execPath, '--import', 'tsx', '--test', ...args];
 const protocolTest = (name) =>
-  nodeTest(`--test-name-pattern=${name}`, 'host/parallel-protocol.test.ts');
+  nodeTest(`--test-name-pattern=${name}`, 'host/parallel/protocol.test.ts');
 const leaseCheck = 'this.phase === phase && this.load(cpu, SLOT.invalidations) === invalidation';
 const portValidation = 'host/machine.ts';
 

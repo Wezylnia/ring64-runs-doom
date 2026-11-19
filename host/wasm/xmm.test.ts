@@ -7,7 +7,7 @@ import {
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Core } from './core.js';
-import { captureXmmState, type Interruptibility } from '../state/registers.js';
+import { captureXmmState, type Interruptibility } from '../state/execution/registers.js';
 import { createCpu } from '../cpu/cpu.js';
 import { captureInitialMemory } from '../embedding/memory.js';
 

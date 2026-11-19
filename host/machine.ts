@@ -27,8 +27,8 @@ import type {
   RunOptions,
   Start,
 } from './parallel/protocol.js';
-import { bindRam, ramModule } from './parallel/ram.js';
-import { SourceWatches } from './parallel/source-watches.js';
+import { bindRam, ramModule } from './parallel/memory/ram.js';
+import { SourceWatches } from './parallel/memory/source-watches.js';
 import {
   launchWorker,
   ParallelError,

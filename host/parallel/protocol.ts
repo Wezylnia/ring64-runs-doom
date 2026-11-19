@@ -1,8 +1,8 @@
-import type { ExecutionContext } from '../state/context.js';
+import type { ExecutionContext } from '../state/system/context.js';
 import type { Cpu, Limits, RunResult } from '../cpu/cpu.js';
 import type { IoWidth } from '../embedding/io.js';
 import type { InitialMemory, MemoryModel } from '../embedding/memory.js';
-import type { RamHelpers } from './ram.js';
+import type { RamHelpers } from './memory/ram.js';
 import type { SharedLayout } from './control.js';
 import type { BackingRecord, CpuInput } from './options.js';
 
