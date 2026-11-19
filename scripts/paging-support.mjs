@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { cp, mkdir, readFile, readdir, symlink, writeFile } from 'node:fs/promises';
+import { cp, mkdir, readFile, symlink, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { hostIdentity } from './emitted-host.mjs';
 
 export const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export const baseline = '/tmp/ring64-paging-baseline-c1380a4';
@@ -12,23 +13,7 @@ export const hash = (bytes) => createHash('sha256').update(bytes).digest('hex');
 
 export async function manifest(path) {
   const core = await readFile(resolve(path, 'build/ring64.wasm'));
-  const host = createHash('sha256');
-  const productionHost = createHash('sha256');
-  let hostBytes = 0;
-  const hostFiles = [];
-  for (const name of (await readdir(resolve(path, 'build/host')))
-    .filter((name) => name.endsWith('.js'))
-    .sort()) {
-    const bytes = await readFile(resolve(path, 'build/host', name));
-    host.update(name + '\0');
-    host.update(bytes);
-    if (!name.endsWith('.test.js')) {
-      productionHost.update(name + '\0');
-      productionHost.update(bytes);
-    }
-    hostBytes += bytes.length;
-    hostFiles.push({ name, bytes: bytes.length, sha256: hash(bytes) });
-  }
+  const host = await hostIdentity(resolve(path, 'build/host'));
   const git = (args) =>
     execFileSync('git', ['-C', path, ...args], {
       encoding: 'utf8',
@@ -50,13 +35,7 @@ export async function manifest(path) {
     source,
     coreSha256: hash(core),
     coreBytes: core.length,
-    hostSha256: host.digest('hex'),
-    productionHostSha256: productionHost.digest('hex'),
-    hostBytes,
-    productionHostBytes: hostFiles
-      .filter((file) => !file.name.endsWith('.test.js'))
-      .reduce((sum, file) => sum + file.bytes, 0),
-    hostFiles,
+    ...host,
   };
 }
 
@@ -69,7 +48,11 @@ export async function freeze(path, name) {
   await cp(resolve(path, 'build/ring64.wasm'), resolve(target, 'build/ring64.wasm'));
   await cp(resolve(root, 'benchmarks'), resolve(target, 'benchmarks'), { recursive: true });
   await mkdir(resolve(target, 'scripts'), { recursive: true });
-  await cp(resolve(root, 'scripts/benchmark.mjs'), resolve(target, 'scripts/benchmark.mjs'));
+  await Promise.all(
+    ['benchmark.mjs', 'emitted-host.mjs'].map((name) =>
+      cp(resolve(root, 'scripts', name), resolve(target, 'scripts', name)),
+    ),
+  );
   await writeFile(resolve(target, 'package.json'), '{"type":"module"}\n');
   try {
     await symlink(resolve(root, 'node_modules'), resolve(target, 'node_modules'), 'dir');

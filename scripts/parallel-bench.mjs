@@ -5,6 +5,7 @@ import { extname, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { chromium } from 'playwright';
 import { measureParallel, parallelWorkloads } from '../benchmarks/parallel.mjs';
+import { hostIdentity } from './emitted-host.mjs';
 
 const [runtime, candidate, baseline, output, workers, max, replicates, ...flags] =
   process.argv.slice(2);
@@ -56,6 +57,14 @@ const options = {
   reverse: flags.includes('--reverse'),
 };
 const hash = (bytes) => createHash('sha256').update(bytes).digest('hex');
+const hostHashes = async () =>
+  Promise.all(
+    [current, previous].map(async (root) => {
+      const { hostSha256 } = await hostIdentity(resolve(root, 'host'));
+      return hostSha256;
+    }),
+  );
+const [parallelHostSha256, privateHostSha256] = await hostHashes();
 let engine, cases;
 if (runtime === 'node') {
   const { createMachine } = await import(pathToFileURL(resolve(current, 'host/machine.js')));
@@ -144,11 +153,22 @@ if (runtime === 'node') {
     await new Promise((resolve) => server.close(resolve));
   }
 }
+const [parallelAfter, privateAfter] = await hostHashes();
+if (
+  parallelAfter !== parallelHostSha256 ||
+  privateAfter !== privateHostSha256 ||
+  !wasm.equals(await readFile(resolve(current, 'ring64-parallel.wasm'))) ||
+  !privateWasm.equals(await readFile(resolve(previous, 'ring64.wasm')))
+)
+  throw Error('built artifacts changed during parallel observation');
+
 const receipt = {
   runtime,
   engine,
   parallelCore: hash(wasm),
   privateCore: hash(privateWasm),
+  parallelHostSha256,
+  privateHostSha256,
   ...options,
   cases,
 };

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { cp, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { cpus, tmpdir } from 'node:os';
 import { resolve, sep } from 'node:path';
@@ -7,6 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Worker } from 'node:worker_threads';
 import { chromium } from 'playwright';
 import { measureLatency } from '../benchmarks/parallel-latency.mjs';
+import { emittedModules } from './emitted-host.mjs';
 
 const [runtime, candidate, output, count = '128', order] = process.argv.slice(2);
 const samples = Number(count);
@@ -30,9 +31,7 @@ const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const scratch = await mkdtemp(resolve(tmpdir(), 'ring64-parallel-latency-'));
 
 async function graphDigest(root) {
-  const files = (await readdir(root, { recursive: true }))
-    .filter((name) => name.endsWith('.js'))
-    .sort();
+  const files = await emittedModules(root);
   return sha256(
     JSON.stringify(
       await Promise.all(

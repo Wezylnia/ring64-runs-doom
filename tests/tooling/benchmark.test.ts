@@ -59,6 +59,7 @@ test('frozen benchmarks preserve saved source and refuse changed artifacts befor
       cp(join(root, 'build/ring64.wasm'), join(directory, 'build/ring64.wasm')),
       cp(join(root, 'benchmarks'), join(directory, 'benchmarks'), { recursive: true }),
       cp(join(root, 'scripts/benchmark.mjs'), join(directory, 'scripts/benchmark.mjs')),
+      cp(join(root, 'scripts/emitted-host.mjs'), join(directory, 'scripts/emitted-host.mjs')),
       symlink(
         join(root, 'node_modules'),
         join(directory, 'node_modules'),
@@ -115,12 +116,14 @@ test('frozen benchmarks preserve saved source and refuse changed artifacts befor
 const path = ${JSON.stringify(wasm)};
 const bytes = await readFile(path);
 const compile = WebAssembly.compile;
+const target = process.env.RING64_MUTATION_TARGET || path;
 let changed = false;
 WebAssembly.compile = async function(input, ...options) {
   const module = await Reflect.apply(compile, WebAssembly, [input, ...options]);
   if (!changed && Buffer.from(input).equals(bytes)) {
     changed = true;
-    await writeFile(path, Buffer.concat([bytes, Buffer.from([0, 1, 0])]));
+    const prior = await readFile(target);
+    await writeFile(target, Buffer.concat([prior, Buffer.from([0, 1, 0])]));
     console.error('artifact changed after native compilation');
   }
   return module;
@@ -139,6 +142,25 @@ WebAssembly.compile = async function(input, ...options) {
     assert.match(rejected.stderr, /built artifacts changed during observation: current/);
     assert.notEqual(hash(await readFile(wasm)), hash(before));
     await assert.rejects(access(rejectedOutput), { code: 'ENOENT' });
+
+    await writeFile(wasm, before);
+    const nested = join(directory, 'build/host/parallel/control.js');
+    const nestedBefore = await readFile(nested);
+    const nestedOutput = join(directory, 'nested-rejected.json');
+    const nestedRun = spawnSync(
+      process.execPath,
+      ['--import', pathToFileURL(hook).href, ...args, nestedOutput],
+      {
+        encoding: 'utf8',
+        env: { ...process.env, RING64_MUTATION_TARGET: nested },
+      },
+    );
+    assert.ifError(nestedRun.error);
+    assert.match(nestedRun.stderr, /artifact changed after native compilation/);
+    assert.notEqual(hash(await readFile(nested)), hash(nestedBefore));
+    assert.notEqual(nestedRun.status, 0, 'the observer accepted a changed nested host module');
+    assert.match(nestedRun.stderr, /built artifacts changed during observation: current/);
+    await assert.rejects(access(nestedOutput), { code: 'ENOENT' });
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

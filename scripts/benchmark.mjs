@@ -1,5 +1,5 @@
 import { createServer } from 'node:http';
-import { readFile, readdir, mkdir, writeFile, access } from 'node:fs/promises';
+import { readFile, mkdir, writeFile, access } from 'node:fs/promises';
 import { resolve, dirname, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
@@ -7,6 +7,7 @@ import { execFileSync } from 'node:child_process';
 import os from 'node:os';
 import { chromium } from 'playwright';
 import { loadSides, measure, workloadNames } from '../benchmarks/kernels.mjs';
+import { hostIdentity } from './emitted-host.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 function options(args) {
@@ -79,14 +80,7 @@ const encode = (value) =>
   JSON.stringify(value, (_, v) => (typeof v === 'bigint' ? v.toString() : v), 2) + '\n';
 async function manifest(path, label) {
   const core = await readFile(resolve(path, 'build/ring64.wasm'));
-  const files = (await readdir(resolve(path, 'build/host')))
-    .filter((name) => name.endsWith('.js'))
-    .sort();
-  const host = createHash('sha256');
-  for (const name of files) {
-    host.update(name + '\0');
-    host.update(await readFile(resolve(path, 'build/host', name)));
-  }
+  const { hostSha256 } = await hostIdentity(resolve(path, 'build/host'));
   let commit, workingTree;
   try {
     const { source } = JSON.parse(await readFile(resolve(path, 'paging-source.json'), 'utf8'));
@@ -117,7 +111,7 @@ async function manifest(path, label) {
     workingTree,
     coreSha256: hash(core),
     coreBytes: core.length,
-    hostSha256: host.digest('hex'),
+    hostSha256,
   };
 }
 const definitions = [

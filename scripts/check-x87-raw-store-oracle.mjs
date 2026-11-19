@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
-import { readFile, readdir, writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
+import { hostIdentity } from './emitted-host.mjs';
 
 const values = {},
   args = process.argv.slice(2);
@@ -24,14 +25,8 @@ const current = values.current,
   output = values.output;
 const sha = (value) => createHash('sha256').update(value).digest('hex');
 async function hostSha256() {
-  const digest = createHash('sha256');
-  for (const file of (await readdir(resolve(current, 'build/host')))
-    .filter((x) => x.endsWith('.js'))
-    .sort()) {
-    digest.update(file + '\0');
-    digest.update(await readFile(resolve(current, 'build/host', file)));
-  }
-  return digest.digest('hex');
+  const { hostSha256 } = await hostIdentity(resolve(current, 'build/host'));
+  return hostSha256;
 }
 const coreBytes = await readFile(resolve(current, 'build/ring64.wasm'));
 const before = { coreSha256: sha(coreBytes), hostSha256: await hostSha256() };
