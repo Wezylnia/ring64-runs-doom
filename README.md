@@ -40,3 +40,23 @@ try {
   cpu.dispose();
 }
 ```
+
+## parallel vCPUs
+
+`createMachine` from `build/host/machine.js` takes `build/ring64-parallel.wasm`,
+one explicit guest memory map, and a `cpus` array with the initial entry and
+execution context of each vCPU. Use `sharedRamCapacity` to reserve the backing
+arena in multiples of a Wasm page. In a browser, serve the page and its workers
+in a cross-origin isolated context. Node uses worker threads.
+
+```js
+const results = await Promise.all(
+  machine.cpus.map((cpu) => cpu.run({ budget: 100_000n })),
+);
+```
+
+Each handle owns its registers, queued interrupts and execution lifecycle.
+The machine owns backing allocations and mappings. Its memory methods return
+copies, and its writes are visible to all vCPUs. Call `await machine.dispose()`
+when the embedding is finished. Use `createCpu` and `build/ring64.wasm` for the
+private single-vCPU runtime.

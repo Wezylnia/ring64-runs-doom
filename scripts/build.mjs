@@ -14,3 +14,5 @@ await Promise.all(
 run('node', ['node_modules/typescript/bin/tsc']);
 await mkdir('build', { recursive: true });
 await copyFile('target/wasm32-unknown-unknown/release/ring64.wasm', 'build/ring64.wasm');
+run('node', ['scripts/parallel-core.mjs']);
+run('node', ['scripts/generate-parallel-host.mjs']);
