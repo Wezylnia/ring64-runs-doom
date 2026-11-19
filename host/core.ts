@@ -1,6 +1,13 @@
 import { IoBridge, type IoBinding } from './io.js';
 import { byteLength, U64_MAX, unsigned64 } from './input.js';
 import {
+  captureMxcsr,
+  captureState,
+  captureXmmState,
+  type State,
+  type StateSnapshot,
+} from './state/registers.js';
+import {
   captureNumericFault,
   readNumericSource,
   writeNumericSource,
@@ -10,14 +17,12 @@ import {
 } from './state/numeric-controls.js';
 import {
   captureDebugState,
-  captureDebugContinuation,
   readDebugSource,
   writeDebugSource,
   readDebugContinuation,
   writeDebugContinuation,
   validateDebugLayout,
   type DebugState,
-  type DebugContinuation,
   type DebugLayout,
 } from './state/debug.js';
 import {
@@ -30,7 +35,12 @@ import {
 } from './state/context.js';
 import type { InitialMemory, MemoryBackingInput, MemoryMapping } from './memory.js';
 import { capturePagingState, pagingStateFromJson, type PagingState } from './state/paging.js';
-import { captureTimeState, validateTimeLayout, type TimeLayout, type TimeState } from './state/time.js';
+import {
+  captureTimeState,
+  validateTimeLayout,
+  type TimeLayout,
+  type TimeState,
+} from './state/time.js';
 import {
   captureProtectionKeysState,
   validateProtectionKeysLayout,
@@ -44,8 +54,6 @@ import {
   type FastSystemState,
 } from './state/fast-system.js';
 import {
-  captureEventState,
-  captureInterruptState,
   eventKind,
   readEvent,
   readInterrupts,
@@ -58,7 +66,6 @@ import {
   type EventLayout,
   type EventState,
   type InterruptLayout,
-  type InterruptState,
   type PagingSourceLayout,
 } from './state/events.js';
 import {
@@ -70,29 +77,6 @@ import {
   type X87Exception,
   type X87Layout,
 } from './state/x87.js';
-
-export interface State {
-  debugContinuation?: DebugContinuation;
-  registers: bigint[];
-  flags: bigint;
-  rip: bigint;
-  interruptibility?: Interruptibility;
-  event?: EventState;
-  interrupts?: InterruptState;
-}
-
-export interface Interruptibility {
-  sti: boolean;
-  ss: boolean;
-}
-
-export interface StateSnapshot extends State {
-  /** Private memory repair must finish on the CPU that captured this state. */
-  taskSwitchIncomplete?: true;
-  interruptibility: Interruptibility;
-  event: EventState;
-  interrupts: InterruptState;
-}
 
 export interface DebugException {
   vector: 1;
@@ -473,70 +457,6 @@ export type GeneratedRun = (
   hasStop: number,
   entryIndex: number,
 ) => number;
-
-export function captureState(state: State): StateSnapshot {
-  if ('taskSwitchIncomplete' in state)
-    throw new TypeError('incomplete task switch requires its original CPU');
-  const source = state.registers;
-  if (!Array.isArray(source) || source.length !== 16)
-    throw new TypeError('state requires sixteen registers');
-  const registers: bigint[] = [];
-  for (let index = 0; index < 16; index++) {
-    const register = source[index];
-    unsigned64(register, 'register');
-    registers.push(register);
-  }
-  const flags = state.flags;
-  unsigned64(flags, 'flags');
-  const rip = state.rip;
-  unsigned64(rip, 'rip');
-  const boundary = state.interruptibility;
-  let interruptibility: Interruptibility = { sti: false, ss: false };
-  if (boundary !== undefined) {
-    if (boundary === null || typeof boundary !== 'object' || Array.isArray(boundary))
-      throw new TypeError('interruptibility must contain boolean sti and ss');
-    const sti = boundary.sti;
-    const ss = boundary.ss;
-    if (typeof sti !== 'boolean' || typeof ss !== 'boolean')
-      throw new TypeError('interruptibility must contain boolean sti and ss');
-    interruptibility = { sti, ss };
-  }
-  const event = 'event' in state ? captureEventState(state.event!) : { kind: 'ready' as const };
-  const interrupts =
-    'interrupts' in state
-      ? captureInterruptState(state.interrupts!)
-      : { irq: null, nmiPending: false, nmiBlocked: false };
-  const debugContinuation =
-    'debugContinuation' in state ? captureDebugContinuation(state.debugContinuation!) : undefined;
-  return {
-    registers,
-    flags,
-    rip,
-    interruptibility,
-    event,
-    interrupts,
-    ...(debugContinuation ? { debugContinuation } : {}),
-  };
-}
-
-export function captureMxcsr(value: number): number {
-  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0 || value > 0xffff)
-    throw new TypeError('MXCSR must be an unsigned 16-bit integer number');
-  return value === 0 ? 0 : value;
-}
-
-export function captureXmmState(input: bigint[]): bigint[] {
-  if (!Array.isArray(input) || input.length !== 16)
-    throw new TypeError('XMM state requires sixteen registers');
-  const bank: bigint[] = [];
-  for (let index = 0; index < 16; index++) {
-    const value = input[index];
-    if (typeof value !== 'bigint' || value < 0n || value >= 1n << 128n)
-      throw new TypeError('XMM register must be an unsigned 128-bit bigint');
-    bank.push(value);
-  }
-  return bank;
-}
 
 function backingKey(name: string): string {
   // JSON's Unicode strings cannot carry lone UTF-16 surrogates into Rust.

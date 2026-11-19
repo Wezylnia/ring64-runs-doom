@@ -1,11 +1,9 @@
 export { createCpu } from './cpu.js';
 export type { Cpu, Limits, Options, RunResult } from './cpu.js';
+export type { State, StateSnapshot, Interruptibility } from './state/registers.js';
 export type { X87State, X87Exception } from './state/x87.js';
 export type { EventState, ExceptionEvent, InterruptEvent, InterruptState } from './state/events.js';
 export type {
-  State,
-  StateSnapshot,
-  Interruptibility,
   DebugException,
   Fault,
   AlignmentFault,

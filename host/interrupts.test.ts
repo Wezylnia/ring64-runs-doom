@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { captureState, type State } from './core.js';
+import { captureState, type State } from './state/registers.js';
 import {
   captureEventState,
   readEvent,

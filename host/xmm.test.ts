@@ -6,7 +6,8 @@ import {
 } from '../tests/support/protection-keys-layout.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { captureXmmState, Core, type Interruptibility } from './core.js';
+import { Core } from './core.js';
+import { captureXmmState, type Interruptibility } from './state/registers.js';
 import { createCpu } from './cpu.js';
 import { captureInitialMemory } from './memory.js';
 

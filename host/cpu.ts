@@ -19,9 +19,6 @@ import {
 import { captureX87State, type X87State, type X87Exception } from './state/x87.js';
 import {
   Core,
-  captureState,
-  captureXmmState,
-  captureMxcsr,
   type CompileLimits,
   type Fault,
   type AlignmentFault,
@@ -30,13 +27,18 @@ import {
   type GeneralProtectionFault,
   type ProtectionFault,
   type SystemMemoryFault,
-  type State,
-  type StateSnapshot,
   type DebugException,
   type PageFault,
   type PhysicalMemoryFault,
 } from './core.js';
 import { Translations, type Artifact, type InstalledEntry } from './translations.js';
+import {
+  captureState,
+  captureXmmState,
+  captureMxcsr,
+  type State,
+  type StateSnapshot,
+} from './state/registers.js';
 import {
   backingName,
   captureBackings,
