@@ -84,6 +84,12 @@ interface Grant {
 
 type Captured = ReturnType<typeof captureMachine>;
 
+let initializeMachine: (
+  machine: ParallelMachine,
+  compiler: WebAssembly.Module,
+  helper: WebAssembly.Module,
+) => Promise<void>;
+
 export interface Machine {
   readonly cpus: readonly ParallelCpu[];
   pause(): Promise<void>;
@@ -136,12 +142,15 @@ export async function createMachine(options: MachineOptions): Promise<Machine> {
   }
   const backingStore = bindRam(helper, new WebAssembly.Memory({ initial: 1 }), memory);
   const machine = new ParallelMachine(input, memory, backingStore.store_lane);
-  await machine.initialize(compiler, helper);
+  await initializeMachine(machine, compiler, helper);
   return machine;
 }
 
 class ParallelMachine implements Machine {
-  readonly cpus: readonly ParallelCpu[];
+  readonly #cpus: readonly ParallelCpu[];
+  readonly #input: Captured;
+  readonly #memory: WebAssembly.Memory;
+  readonly #storeLane: (offset: number, value: bigint) => void;
   readonly #peers: Peer[];
   readonly #control: SharedControl;
   #state: 'starting' | 'idle' | 'disposing' | 'failed' | 'disposed' = 'starting';
@@ -165,11 +174,18 @@ class ParallelMachine implements Machine {
   #invalidation = 0n;
   #captureGeneration = 0n;
 
+  static {
+    initializeMachine = (machine, compiler, helper) => machine.#initialize(compiler, helper);
+  }
+
   constructor(
-    private readonly input: Captured,
-    private readonly memory: WebAssembly.Memory,
-    private readonly storeLane: (offset: number, value: bigint) => void,
+    input: Captured,
+    memory: WebAssembly.Memory,
+    storeLane: (offset: number, value: bigint) => void,
   ) {
+    this.#input = input;
+    this.#memory = memory;
+    this.#storeLane = storeLane;
     this.#maps = input.mappings;
     this.#control = new SharedControl(memory);
     this.#control.initialize();
@@ -187,11 +203,11 @@ class ParallelMachine implements Machine {
     }));
     for (const backing of input.backings) {
       const record = this.#record(backing);
-      seedBacking(this.storeLane, record.offset, backing.bytes);
+      seedBacking(this.#storeLane, record.offset, backing.bytes);
       this.#records.set(backing.id, record);
     }
     input.backings.length = 0;
-    this.cpus = Object.freeze(
+    this.#cpus = Object.freeze(
       this.#peers.map((peer) =>
         handle(
           {
@@ -210,7 +226,11 @@ class ParallelMachine implements Machine {
     );
   }
 
-  async initialize(compiler: WebAssembly.Module, helper: WebAssembly.Module): Promise<void> {
+  get cpus(): readonly ParallelCpu[] {
+    return this.#cpus;
+  }
+
+  async #initialize(compiler: WebAssembly.Module, helper: WebAssembly.Module): Promise<void> {
     for (const { ready } of this.#peers) void ready.promise.catch(() => {});
     let timer: ReturnType<typeof setTimeout> | undefined;
     const starts = this.#peers.map(async (peer) => {
@@ -228,14 +248,14 @@ class ParallelMachine implements Machine {
         id: peer.id,
         compiler,
         ramModule: helper,
-        shared: this.memory,
-        layout: this.input.layout,
-        model: this.input.memoryModel,
-        memory: { memoryLimits: this.input.memoryLimits, mappings: this.#maps },
-        limits: this.input.limits,
-        state: this.input.cpus[peer.id]!,
+        shared: this.#memory,
+        layout: this.#input.layout,
+        model: this.#input.memoryModel,
+        memory: { memoryLimits: this.#input.memoryLimits, mappings: this.#maps },
+        limits: this.#input.limits,
+        state: this.#input.cpus[peer.id]!,
         backings: [...this.#records.values()],
-        hasIo: this.input.io !== undefined,
+        hasIo: this.#input.io !== undefined,
       };
       try {
         transport.post(start);
@@ -261,7 +281,7 @@ class ParallelMachine implements Machine {
         }),
       ]);
       if (
-        Atomics.load(new BigUint64Array(this.memory.buffer), STARTUP_WORD / 8) !==
+        Atomics.load(new BigUint64Array(this.#memory.buffer), STARTUP_WORD / 8) !==
         BigInt(this.#peers.length)
       )
         throw new Error('parallel worker atomic handshake failed');
@@ -296,7 +316,7 @@ class ParallelMachine implements Machine {
   }
 
   #record(backing: MemoryBackingInput): BackingRecord {
-    const offset = findOffset(this.input.layout, this.#records.values(), backing.bytes.length);
+    const offset = findOffset(this.#input.layout, this.#records.values(), backing.bytes.length);
     this.#incarnation = nextIdentity(this.#incarnation);
     return { id: backing.id, length: backing.bytes.length, offset, incarnation: this.#incarnation };
   }
@@ -411,7 +431,7 @@ class ParallelMachine implements Machine {
   #inProvider = false;
 
   #port(peer: Peer, message: Extract<FromWorker, { kind: 'io' }>): void {
-    const binding = this.input.io;
+    const binding = this.#input.io;
     if (
       !binding ||
       this.#inProvider ||
@@ -469,17 +489,17 @@ class ParallelMachine implements Machine {
   }
 
   #sweepWatches(): void {
-    const words = new Int32Array(this.memory.buffer);
+    const words = new Int32Array(this.#memory.buffer);
     for (const ranges of this.#removeWatches.splice(0)) {
       for (const { offset, length } of ranges) {
         for (let i = offset; i < offset + length; i++) {
           const count = this.#watched.get(i)! - 1;
           if (count === 0) {
             this.#watched.delete(i);
-            const byte = i - this.input.layout.ramBase;
+            const byte = i - this.#input.layout.ramBase;
             Atomics.and(
               words,
-              this.input.layout.watchBase / 4 + Math.floor(byte / 32),
+              this.#input.layout.watchBase / 4 + Math.floor(byte / 32),
               ~(1 << (byte % 32)),
             );
           } else {
@@ -660,7 +680,7 @@ class ParallelMachine implements Machine {
 
   #local(peer: Peer, method: LocalMethod, args: unknown[]): Promise<unknown> {
     this.#check();
-    if (method === 'reset' && this.input.memoryModel !== 'physical')
+    if (method === 'reset' && this.#input.memoryModel !== 'physical')
       throw new TypeError('physical reset required');
     const input = this.#capture(() => structuredClone(args));
     if (method === 'setState' || method === 'reset')
@@ -713,7 +733,7 @@ class ParallelMachine implements Machine {
 
   reset(): Promise<void> {
     this.#check();
-    if (this.input.memoryModel !== 'physical') throw new TypeError('physical reset required');
+    if (this.#input.memoryModel !== 'physical') throw new TypeError('physical reset required');
     return this.#reserve(true);
   }
 
@@ -825,12 +845,12 @@ class ParallelMachine implements Machine {
   addBacking(input: MemoryBackingInput): Promise<void> {
     this.#check();
     const [backing] = this.#capture(() =>
-      captureBackings([input], this.input.memoryLimits, this.#lengths()),
+      captureBackings([input], this.#input.memoryLimits, this.#lengths()),
     );
     return this.#admin(async (permit) => {
-      validateBackings([backing!], this.#lengths(), this.input.memoryLimits);
+      validateBackings([backing!], this.#lengths(), this.#input.memoryLimits);
       const record = this.#record(backing!);
-      seedBacking(this.storeLane, record.offset, backing!.bytes);
+      seedBacking(this.#storeLane, record.offset, backing!.bytes);
       await this.#all('addBacking', [record], permit);
       this.#records.set(record.id, record);
     });
@@ -846,8 +866,8 @@ class ParallelMachine implements Machine {
         throw new TypeError('cannot remove a mapped backing');
       await this.#all('removeBacking', [id], permit);
       this.#records.delete(id);
-      const { ramBase, guardBase } = this.input.layout;
-      const words = new Int32Array(this.memory.buffer);
+      const { ramBase, guardBase } = this.#input.layout;
+      const words = new Int32Array(this.#memory.buffer);
       const first = guardBase / 4 + (record.offset - ramBase) / 64;
       const slots = Math.ceil(record.length / 4096) * 64;
       for (let i = 0; i < slots; i++) Atomics.store(words, first + i, 0);
@@ -857,7 +877,7 @@ class ParallelMachine implements Machine {
   setMappings(mappings: MemoryMapping[]): Promise<void> {
     this.#check();
     const input = this.#capture(() =>
-      captureMappings(mappings, this.input.memoryLimits, this.input.memoryModel),
+      captureMappings(mappings, this.#input.memoryLimits, this.#input.memoryModel),
     );
     return this.#admin(async (permit) => {
       validateMappings(input, this.#lengths());
@@ -868,7 +888,7 @@ class ParallelMachine implements Machine {
 
   #read(address: bigint, length: number, physical: boolean): Promise<Uint8Array> {
     this.#check();
-    requirePlane(this.input.memoryModel, physical);
+    requirePlane(this.#input.memoryModel, physical);
     unsigned64(address, 'address');
     byteLength(length, 'length');
     return this.#admin(
@@ -884,7 +904,7 @@ class ParallelMachine implements Machine {
 
   #write(address: bigint, bytes: Uint8Array, physical: boolean): Promise<void> {
     this.#check();
-    requirePlane(this.input.memoryModel, physical);
+    requirePlane(this.#input.memoryModel, physical);
     unsigned64(address, 'address');
     const input = this.#capture(() => copyMemoryInput(bytes));
     return this.#admin(async (permit) => {

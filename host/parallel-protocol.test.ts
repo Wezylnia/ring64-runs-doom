@@ -106,6 +106,46 @@ function registers(rdi: bigint): bigint[] {
 }
 
 test(
+  'the public machine keeps shared RAM and worker initialization private',
+  { timeout: 30000 },
+  async () => {
+    const board = await machine([0x90]);
+    try {
+      assert.equal(Reflect.has(board, 'memory'), false, 'the public machine exposes shared RAM');
+      assert.equal(
+        Reflect.has(board, 'input'),
+        false,
+        'the public machine exposes captured inputs',
+      );
+      assert.equal(
+        Reflect.has(board, 'storeLane'),
+        false,
+        'the public machine exposes raw lane writes',
+      );
+      assert.equal(
+        Reflect.has(board, 'initialize'),
+        false,
+        'the public machine exposes worker startup',
+      );
+      assert.equal(
+        Reflect.has(board.constructor, 'start'),
+        false,
+        'the constructor exposes startup',
+      );
+      const cpus = board.cpus;
+      assert.equal(Object.isFrozen(cpus), true, 'the CPU list is immutable');
+      assert.equal(Reflect.set(board, 'cpus', []), false, 'the CPU list cannot be replaced');
+      assert.equal(board.cpus, cpus, 'the same handles remain available');
+      const copied = await board.readMemory(0x3000n, 1);
+      copied[0] = 0x42;
+      assert.deepEqual(await board.readMemory(0x3000n, 1), Uint8Array.of(0));
+    } finally {
+      await board.dispose();
+    }
+  },
+);
+
+test(
   'running IRQ intake frees only a staged slot and NMI wakes a sibling with IF clear',
   { timeout: 30000 },
   async () => {

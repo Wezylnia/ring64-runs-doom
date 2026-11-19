@@ -8,6 +8,15 @@ const portValidation = 'host/machine.ts';
 
 export const protocolMutations = [
   {
+    name: 'public-machine-exposes-raw-ram',
+    path: 'host/machine.ts',
+    from: '    this.#memory = memory;\n',
+    to: "    this.#memory = memory;\n    Object.defineProperty(this, 'memory', { value: memory });\n",
+    check: protocolTest('the public machine keeps shared RAM and worker initialization private'),
+    failure: /the public machine exposes shared RAM/,
+    build: 'host',
+  },
+  {
     name: 'lease-phase-recheck',
     path: 'host/parallel/control.ts',
     from: leaseCheck,
