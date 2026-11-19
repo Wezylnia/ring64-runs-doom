@@ -33,6 +33,8 @@ struct Prepared {
     fragments: Vec<Fragment>,
     published: bool,
     fields: Vec<(u32, u32)>,
+    #[cfg(all(feature = "parallel", any(target_arch = "wasm32", test)))]
+    _dirty_grant: Option<crate::memory::SharedExclusive>,
 }
 
 #[derive(Debug, Default)]
@@ -118,6 +120,29 @@ impl<'a> Memory<'a> {
         }
     }
 
+    #[cfg(all(feature = "parallel", any(target_arch = "wasm32", test)))]
+    fn shared_dirty_walk_needed(&self, address: u64, width: u32, class: AccessClass) -> bool {
+        let Some(cache) = self.cache else {
+            return width != 0;
+        };
+        let mut offset = 0;
+        while offset < width {
+            let request = Request {
+                linear: address + u64::from(offset),
+                access: Access::Write,
+                class,
+            };
+            match cache.observe(self.paging, request, self.keys) {
+                Ok(Some(translation)) => {
+                    offset += u64::from(width - offset).min(translation.remaining) as u32;
+                }
+                Ok(None) => return true,
+                Err(_) => return false,
+            }
+        }
+        false
+    }
+
     fn prepare(
         &self,
         address: u64,
@@ -133,6 +158,16 @@ impl<'a> Memory<'a> {
             width,
             fragments: Vec::new(),
             published: false,
+            #[cfg(all(feature = "parallel", any(target_arch = "wasm32", test)))]
+            _dirty_grant: if access == Access::Write
+                && self.paging.cr0 & (1 << 31) != 0
+                && self.storage.borrow().image.parallel_attached()
+                && self.shared_dirty_walk_needed(address, width, class)
+            {
+                self.storage.borrow().image.shared_exclusive()
+            } else {
+                None
+            },
             fields: if access == Access::Write {
                 vec![(0, width)]
             } else {

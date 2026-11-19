@@ -285,6 +285,8 @@ fn actual_walk<const FETCH: bool>(
     mut current: impl FnMut(&Image) -> bool,
     keys: &ProtectionKeys,
 ) -> Result<Option<Translation>, Failure> {
+    #[cfg(all(feature = "parallel", any(target_arch = "wasm32", test)))]
+    let _grant = image.shared_exclusive();
     walk_with::<true, FETCH>(
         state,
         request,
