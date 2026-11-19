@@ -16,6 +16,7 @@ export interface Transport {
 
 type Message = (message: unknown) => void;
 type Failure = (error: unknown) => void;
+type WorkerMessage = (message: unknown, post: Message) => void;
 
 function browser(): boolean {
   return (
@@ -34,18 +35,11 @@ export function requireWorkerCapability(): void {
     throw new ParallelError('unsupported', 'parallel execution requires shared memory and atomics');
 }
 
-async function nodeThreads(): Promise<typeof import('node:worker_threads')> {
-  // The browser bundle must resolve only the browser transport.
-  const moduleName: string = 'node:worker_threads';
-  return (await import(moduleName)) as typeof import('node:worker_threads');
-}
-
 export async function launchWorker(message: Message, failure: Failure): Promise<Transport> {
-  const url = new URL('./worker.js', import.meta.url);
   if (browser()) {
     if (typeof Worker !== 'function')
       throw new ParallelError('unsupported', 'parallel execution requires dedicated workers');
-    const worker = new Worker(url, { type: 'module' });
+    const worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
     worker.addEventListener('message', (event: MessageEvent<unknown>) => message(event.data));
     worker.addEventListener('messageerror', () =>
       failure(new Error('worker message could not be decoded')),
@@ -64,13 +58,13 @@ export async function launchWorker(message: Message, failure: Failure): Promise<
   }
   let node: typeof import('node:worker_threads');
   try {
-    node = await nodeThreads();
+    node = process.getBuiltinModule('node:worker_threads');
   } catch (cause) {
     throw new ParallelError('unsupported', 'parallel execution requires Node worker threads', {
       cause,
     });
   }
-  const worker = new node.Worker(url);
+  const worker = new node.Worker(new URL(import.meta.resolve('./worker.js')));
   let terminated = false;
   worker.on('message', message);
   worker.on('messageerror', failure);
@@ -87,14 +81,17 @@ export async function launchWorker(message: Message, failure: Failure): Promise<
   };
 }
 
-export async function connectWorker(message: Message): Promise<(value: unknown) => void> {
+export function connectWorker(message: WorkerMessage): void {
   if (browser()) {
     requireWorkerCapability();
-    globalThis.addEventListener('message', (event: MessageEvent<unknown>) => message(event.data));
-    return (value) => globalThis.postMessage(value);
+    const post: Message = (value) => globalThis.postMessage(value);
+    globalThis.addEventListener('message', (event: MessageEvent<unknown>) =>
+      message(event.data, post),
+    );
+    return;
   }
-  const { parentPort } = await nodeThreads();
+  const { parentPort } = process.getBuiltinModule('node:worker_threads');
   if (!parentPort) throw new Error('parallel worker was not started by its machine');
-  parentPort.on('message', message);
-  return (value) => parentPort.postMessage(value);
+  const post: Message = (value) => parentPort.postMessage(value);
+  parentPort.on('message', (value: unknown) => message(value, post));
 }

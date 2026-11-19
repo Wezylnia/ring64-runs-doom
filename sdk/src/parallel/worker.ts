@@ -1,9 +1,9 @@
 import { SIGNAL, SLOT, STARTUP_WORD, SharedControl, cpuOffset, nextIdentity } from './control.js';
+import { createCpu } from './engine.generated.js';
 import type { IoWidth } from '../embedding/io.js';
 import type {
   Binding,
   Command,
-  CreateEngine,
   FromWorker,
   ParallelCore,
   ParallelEngine,
@@ -329,7 +329,7 @@ class WorkerRuntime implements Binding {
 let runtime: WorkerRuntime | undefined;
 let cpu: ParallelEngine | undefined;
 
-async function receive(data: ToWorker): Promise<void> {
+async function receive(data: ToWorker, send: (event: FromWorker) => void): Promise<void> {
   if (data.kind === 'phase') {
     runtime?.phaseChanged();
     return;
@@ -342,8 +342,6 @@ async function receive(data: ToWorker): Promise<void> {
     if (runtime) throw new Error('parallel worker initialized twice');
     const current = new WorkerRuntime(data, send);
     runtime = current;
-    const adapter = './engine.generated.js';
-    const { createCpu } = (await import(adapter)) as { createCpu: CreateEngine };
     cpu = await createCpu(
       {
         compiler: data.compiler,
@@ -397,8 +395,8 @@ async function receive(data: ToWorker): Promise<void> {
   }
 }
 
-const send = await connectWorker((message) => {
-  void receive(message as ToWorker).catch((error: unknown) =>
+connectWorker((message, send) => {
+  void receive(message as ToWorker, send).catch((error: unknown) =>
     send({
       kind: 'fatal',
       message: error instanceof Error ? error.message : String(error),
