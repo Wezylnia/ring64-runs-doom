@@ -439,6 +439,7 @@ type CoreExports = WebAssembly.Exports & {
     maxArtifactBytes: number,
   ): number;
   core_load(address: bigint, width: number): bigint;
+  core_read_span?(address: bigint, width: number, segment: number): number;
   core_load_for_write(address: bigint, width: number): bigint;
   core_store(address: bigint, width: number, value: bigint): number;
   core_access_failed(): number;
@@ -1406,6 +1407,7 @@ export class Core {
       divide: this.#exports.core_divide,
       divide_failed: this.#exports.core_divide_failed,
     };
+    if (this.#exports.core_read_span) env.read_span = this.#exports.core_read_span;
     if (this.isPaged) {
       env.fast_system = this.#exports.core_fast_system;
       if (this.#exports.core_write_segment_base)

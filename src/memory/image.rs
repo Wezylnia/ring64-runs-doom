@@ -56,6 +56,15 @@ pub struct Image {
     pub(super) shared_rmw: Option<super::parallel::SharedHeld>,
 }
 
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[derive(Default)]
+#[repr(C)]
+pub(crate) struct ReadSpan {
+    pub(crate) base: u64,
+    pub(crate) length: u32,
+    pub(crate) host: u32,
+}
+
 #[derive(Debug)]
 pub(super) struct Backing {
     pub(super) id: String,
@@ -310,6 +319,25 @@ impl Image {
 
     pub(super) fn locate(&self, address: u64) -> Option<&Mapping> {
         locate(&self.mappings, address)
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(crate) fn direct_read_span(&self, address: u64, width: u32) -> Option<ReadSpan> {
+        if self.physical {
+            return None;
+        }
+        let mapping = &self.mappings[self.locate_index(address)?];
+        let relative = address - mapping.base;
+        if !mapping.permissions.read || u64::from(width) > u64::from(mapping.length) - relative {
+            return None;
+        }
+        // The installed mapping covers canonical addresses and a stable backing slice.
+        let backing = &self.backings[mapping.backing];
+        Some(ReadSpan {
+            base: mapping.base,
+            length: mapping.length,
+            host: backing.bytes.as_ptr().wrapping_add(mapping.offset as usize) as u32,
+        })
     }
 
     #[inline(always)]

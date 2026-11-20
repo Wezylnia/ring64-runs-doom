@@ -1,8 +1,89 @@
-import { type Scenario, changed, exit, fault, memory } from '../../support/fixture.js';
+import { type Scenario, changed, equal, exit, fault, memory } from '../../support/fixture.js';
 import { BASE, RW, RX, backing, input, mapping, using } from './fixture.js';
 
 export function accessScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [
+    {
+      name: 'warm scalar reads enforce both ends of each mapped span',
+      run: async () => {
+        for (const [start, failing, cause] of [
+          [0x4003n, 0x4004n, 'unmapped'],
+          [0x4003n, 0x4004n, 'permission'],
+          [0x3fffn, 0x3fffn, 'unmapped'],
+        ] as const) {
+          const code = '8a038b01ebfa'; // mov al,[rbx]; mov eax,[rcx]; jmp back
+          const maps = [
+            mapping(BASE, 'code', code.length / 2, RX),
+            mapping(0x4000n, 'data', 4, RW, 1),
+          ];
+          if (cause === 'permission')
+            maps.push(mapping(0x4004n, 'data', 1, { ...RW, read: false }, 5));
+          await using(
+            compiler,
+            [backing('code', code), backing('data', 'ab11223344cd')],
+            maps,
+            async (cpu) => {
+              const before = input({ 1: start, 3: 0x4000n });
+              cpu.setState(before);
+              const result = await cpu.run({ budget: 2n });
+              exit(
+                result,
+                'data-fault',
+                2n,
+                1n,
+                changed(before, BASE + 2n, { 0: 0x1122334455667711n }),
+              );
+              fault(result, {
+                instructionPc: BASE + 2n,
+                address: start,
+                failingAddress: failing,
+                width: 4,
+                access: 'read',
+                cause,
+              });
+            },
+          );
+        }
+      },
+    },
+    {
+      name: 'warm scalar reads see alias stores and reused code follows remapping',
+      run: async () => {
+        const code = '8a0388118b03ebf8'; // mov al,[rbx]; mov [rcx],dl; mov eax,[rbx]; jmp back
+        const dataMaps = (id: string) => [
+          mapping(BASE, 'code', code.length / 2, RX),
+          mapping(0x4000n, id, 4, { ...RW, write: false }, 1),
+          mapping(0x5000n, id, 4, RW, 1),
+        ];
+        await using(
+          compiler,
+          [
+            backing('code', code),
+            backing('first', 'ab11223344cd'),
+            backing('other', 'ab55667788cd'),
+          ],
+          dataMaps('first'),
+          async (cpu) => {
+            const before = input({ 1: 0x5000n, 2: 0x99n, 3: 0x4000n });
+            cpu.setState(before);
+            exit(
+              await cpu.run({ budget: 7n }),
+              'budget',
+              7n,
+              7n,
+              changed(before, BASE + 6n, { 0: 0x44332299n }),
+            );
+            cpu.setMappings(dataMaps('other'));
+            cpu.removeBacking('first');
+            cpu.setState(before);
+            const warm = await cpu.run({ budget: 7n });
+            exit(warm, 'budget', 7n, 7n, changed(before, BASE + 6n, { 0: 0x88776699n }));
+            equal(warm.resources.compilations, 0, 'the original artifact follows the new mapping');
+            memory(cpu, 0x4000n, '99667788');
+          },
+        );
+      },
+    },
     {
       name: 'every mapping permission mask independently controls fetch read store and RMW',
       run: async () => {

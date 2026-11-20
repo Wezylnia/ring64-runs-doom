@@ -104,6 +104,8 @@ const ENTRY_FLAGS: u32 = 36;
 
 struct Emitter {
     paged: bool,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    read_span: Option<memory::ReadSpan>,
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     parallel_atomic: Option<parallel::Atomic>,
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
@@ -970,6 +972,37 @@ pub(crate) fn emit_profile(unit: &Unit, observed: bool, paged: bool) -> Vec<u8> 
         run_index += 1;
         index
     });
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let read_span_cycles: Vec<_> = unit
+        .instructions
+        .iter()
+        .filter_map(|instruction| {
+            let pc = instruction.pc;
+            match instruction.operation {
+                Operation::Jump { target }
+                | Operation::Jcc { target, .. }
+                | Operation::CountBranch { target, .. }
+                    if target <= pc =>
+                {
+                    Some(target..=pc)
+                }
+                Operation::String { repeat, .. } if repeat != Repeat::None => Some(pc..=pc),
+                _ => None,
+            }
+        })
+        .collect();
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let read_span = (!observed && !read_span_cycles.is_empty()).then(|| {
+        let signature = add_function_type(
+            &mut types,
+            [ValType::I64, ValType::I32, ValType::I32],
+            [ValType::I32],
+        );
+        imports.import("env", "read_span", EntityType::Function(signature));
+        let index = run_index;
+        run_index += 1;
+        index
+    });
     let mut functions = FunctionSection::new();
     functions.function(3);
     if dynamic_targets {
@@ -990,6 +1023,14 @@ pub(crate) fn emit_profile(unit: &Unit, observed: bool, paged: bool) -> Vec<u8> 
     }
     let mut vector_registers = [None; 16];
     let mut next_local = 35 + 2 * u32::from(has_repeat);
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let read_span = read_span.map(|resolve| {
+        let first = next_local;
+        locals.push((2, ValType::I64));
+        locals.push((2, ValType::I32));
+        next_local += 4;
+        memory::ReadSpan::new(resolve, first)
+    });
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     let parallel_atomic = parallel_atomic.map(|begin| {
         let token = next_local;
@@ -1042,6 +1083,8 @@ pub(crate) fn emit_profile(unit: &Unit, observed: bool, paged: bool) -> Vec<u8> 
     });
     let mut emitter = Emitter {
         paged,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        read_span: None,
         #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
         parallel_atomic,
         #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
@@ -1142,6 +1185,15 @@ pub(crate) fn emit_profile(unit: &Unit, observed: bool, paged: bool) -> Vec<u8> 
         emitter.current_index = index as u32;
         emitter.current_pc = instruction.pc;
         emitter.current_operation = instruction.operation;
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        {
+            // Keep one-shot loads out of the span cache even in an artifact with a hot loop.
+            emitter.read_span = read_span.filter(|_| {
+                read_span_cycles
+                    .iter()
+                    .any(|range| range.contains(&instruction.pc))
+            });
+        }
         #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
         {
             emitter.parallel_memo_address = false;

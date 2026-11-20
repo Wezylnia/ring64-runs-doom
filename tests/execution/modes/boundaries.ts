@@ -20,6 +20,40 @@ function segmentFault(result: RunResult, expected: SegmentFault): void {
 export function boundaryScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [
     {
+      name: 'flat segment limits still apply after a scalar load warmed the mapping',
+      async run() {
+        const ctx = context();
+        ctx.segments.ds.limit = 0x2000;
+        await using(
+          compiler,
+          '8a038b03ebfa', // mov al,[ebx]; mov eax,[ebx]; jmp back
+          ctx,
+          async (cpu) => {
+            const before = input(0x1000n, { 3: 0x2000n }, 2n);
+            cpu.setState(before);
+            const result = await cpu.run({ budget: 2n });
+            exit(
+              result,
+              'segment-fault',
+              2n,
+              1n,
+              changed(before, 0x1002n, { 0: 0x1122334455667711n }),
+            );
+            segmentFault(result, {
+              instructionPc: 0x1002n,
+              segment: 'ds',
+              offset: 0x2000n,
+              width: 4,
+              access: 'read',
+              cause: 'limit',
+              failingOffset: 0x2001n,
+            });
+          },
+          { data: [{ base: 0x2000n, bytes: '11223344' }] },
+        );
+      },
+    },
+    {
       name: 'segment usability and type precede bounds and mapping checks',
       async run() {
         for (const row of [

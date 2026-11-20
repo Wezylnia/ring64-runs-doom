@@ -112,6 +112,8 @@ struct Core {
     io_configured: bool,
     io_effect: bool,
     image: Image,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    read_span: crate::memory::ReadSpan,
     fast_system: crate::x86::fast_system::State,
     paging: Option<crate::x86::paging::State>,
     physical_controls: bool,
@@ -184,6 +186,8 @@ impl Bridge {
             io_configured: false,
             io_effect: false,
             image,
+            #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+            read_span: Default::default(),
             fast_system,
             paging,
             physical_controls,
@@ -582,6 +586,34 @@ pub extern "C" fn core_compile(
 #[unsafe(no_mangle)]
 pub extern "C" fn core_load(address: u64, width: u32) -> u64 {
     core_load_impl::<false, false>(address, width)
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[unsafe(no_mangle)]
+pub extern "C" fn core_read_span(address: u64, width: u32, segment: i32) -> u32 {
+    BRIDGE.with_borrow_mut(|bridge| {
+        let core = bridge.core.as_mut().unwrap();
+        if segment >= 0
+            && core
+                .context
+                .translate(
+                    address,
+                    width,
+                    Segment::from_id(segment as u32),
+                    Access::Read,
+                    false,
+                )
+                .ok()
+                != Some(address)
+        {
+            return 0;
+        }
+        let Some(span) = core.image.direct_read_span(address, width) else {
+            return 0;
+        };
+        core.read_span = span;
+        &raw const core.read_span as u32
+    })
 }
 
 #[unsafe(no_mangle)]
