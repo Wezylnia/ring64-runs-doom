@@ -102,7 +102,12 @@ fn compile_profile(
     observed: bool,
 ) -> Result<Artifact, CompileError> {
     let unit = discovery::discover_with_profile(image, context, paging, cache, entry, limits)?;
-    let bytes = wasm::emit_profile(&unit, observed, paging.is_some());
+    let bytes = wasm::emit_profile(
+        &unit,
+        observed,
+        paging.is_some(),
+        limits.max_artifact_bytes as usize,
+    );
     if bytes.len() > limits.max_artifact_bytes as usize {
         return Err(CompileError::Resource);
     }

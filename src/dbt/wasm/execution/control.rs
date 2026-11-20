@@ -209,11 +209,27 @@ impl Emitter {
         }
         self.code_write_boundary(exit_depth);
         if let Some(&index) = self.entries.get(&target) {
-            if index > self.current_index {
+            let placement = if let Some(body) = self.structured_loop {
+                if self.current_index == body.tail && index == body.head {
+                    self.op(Op::Br(
+                        loop_depth - (self.entries.len() as u32 - body.head + 1),
+                    ));
+                    return;
+                }
+                if self.current_index < body.tail && index == self.current_index + 1 {
+                    return;
+                }
+                // The clone lives at its head's original label. Other edges
+                // still route against the original entry table.
+                body.head
+            } else {
+                self.current_index
+            };
+            if index > placement {
                 // Later instructions retain enclosing labels. A conditional
                 // target adds its active `if` to the ordinary loop depth.
-                let extra_depth = loop_depth - (self.entries.len() as u32 - self.current_index);
-                self.op(Op::Br(index - self.current_index - 1 + extra_depth));
+                let extra_depth = loop_depth - (self.entries.len() as u32 - placement);
+                self.op(Op::Br(index - placement - 1 + extra_depth));
             } else {
                 self.op(Op::I32Const(index as i32))
                     .op(Op::LocalSet(ENTRY))

@@ -172,3 +172,175 @@ fn one_shared_lookup_keeps_many_return_entries_within_a_bounded_artifact() {
         .validate_all(&artifact.bytes)
         .unwrap();
 }
+
+const FLOAT_LOOP: [u8; 17] = [
+    0x75, 4, // jnz into the loop's second instruction
+    0xf3, 0x0f, 0x58, 0xc1, // addss xmm0, xmm1
+    0xf3, 0x0f, 0x59, 0xc2, // mulss xmm0, xmm2
+    0x83, 0xe9, 1, // sub ecx, 1
+    0x75, 0xf3, // jnz to addss
+    0xff, 0xe2, // jmp rdx
+];
+
+fn wasm_loop_count(bytes: &[u8]) -> usize {
+    wasmparser::Parser::new(0)
+        .parse_all(bytes)
+        .filter_map(|part| match part.unwrap() {
+            wasmparser::Payload::CodeSectionEntry(body) => Some(body),
+            _ => None,
+        })
+        .map(|body| {
+            body.get_operators_reader()
+                .unwrap()
+                .into_iter()
+                .filter(|op| matches!(op, Ok(wasmparser::Operator::Loop { .. })))
+                .count()
+        })
+        .sum()
+}
+
+#[test]
+fn float_backedge_uses_a_structured_loop_with_size_fallback() {
+    use crate::dbt::{Limits, compile};
+
+    let artifact = compiled_fixture(0x1000, &FLOAT_LOOP, 0x1000);
+    let expected_loops = 1 + usize::from(!cfg!(feature = "parallel"));
+    assert_eq!(wasm_loop_count(&artifact.bytes), expected_loops);
+    assert_eq!(
+        artifact.entries,
+        [0x1000, 0x1002, 0x1006, 0x100a, 0x100d, 0x100f]
+    );
+
+    let image =
+        crate::memory::Image::new(0x1000, FLOAT_LOOP.to_vec(), 0x8000, vec![0; 16]).unwrap();
+    let fallback = compile(
+        &image,
+        0x1000,
+        Limits {
+            max_instructions: 16,
+            max_source_bytes: 64,
+            max_artifact_bytes: artifact.bytes.len() as u32 - u32::from(expected_loops == 2),
+        },
+    )
+    .unwrap();
+    assert_eq!(wasm_loop_count(&fallback.bytes), 1);
+    assert_eq!(fallback.entries, artifact.entries);
+    let observed = crate::dbt::compile_with_context_observed(
+        &image,
+        &ExecutionContext::default(),
+        0x1000,
+        Limits {
+            max_instructions: 16,
+            max_source_bytes: 64,
+            max_artifact_bytes: 65536,
+        },
+        true,
+    )
+    .unwrap();
+    assert_eq!(wasm_loop_count(&observed.bytes), 1);
+}
+
+fn float_loop_state(packet: &mut Value, result: f32) {
+    let upper = 0x112233445566778899aabbcc00000000u128;
+    let data: [u128; 16] = std::array::from_fn(|bank| {
+        upper
+            | u128::from(if bank == 1 {
+                1.0f32.to_bits()
+            } else {
+                2.0f32.to_bits()
+            })
+    });
+    let mut expected = data;
+    expected[0] = upper | u128::from(result.to_bits());
+    packet["xmm"] = json!(data.map(|v| format!("{v:x}")));
+    packet["expected"]["xmm"] = json!(expected.map(|v| format!("{v:x}")));
+    packet["mxcsr"] = json!(0x1f80);
+    packet["expected"]["mxcsr"] = json!(0x1f80);
+}
+
+#[test]
+fn float_backedge_preserves_retirement_stops_and_alternate_entry() {
+    let artifact = compiled_fixture(0x1000, &FLOAT_LOOP, 0x1000);
+    let mut cases = Vec::new();
+    for (entry, flags, budget, stop, ecx, next, result, final_flags, reason, remaining) in [
+        (0x1002, 2, 1, None, 2, 0x1006, 3.0, 2, BUDGET, 0),
+        (0x1002, 2, 2, None, 2, 0x100a, 6.0, 2, BUDGET, 0),
+        (0x1002, 2, 3, None, 1, 0x100d, 6.0, 2, BUDGET, 0),
+        (0x1002, 2, 4, None, 1, 0x1002, 6.0, 2, BUDGET, 0),
+        (0x1002, 2, 8, Some(0x100d), 1, 0x100d, 6.0, 2, STOP, 5),
+        (0x1002, 2, 8, None, 0, 0x100f, 14.0, 0x46, BUDGET, 0),
+        (0x1006, 2, 2, None, 1, 0x100d, 4.0, 2, BUDGET, 0),
+        (0x1000, 2, 3, None, 1, 0x100d, 4.0, 2, BUDGET, 0),
+        (0x1000, 0x42, 2, None, 2, 0x1006, 3.0, 0x42, BUDGET, 0),
+        (0x100f, 2, 3, None, 1, 0x100d, 4.0, 2, BUDGET, 0),
+    ] {
+        let mut packet = execution_case(
+            &artifact.bytes,
+            &artifact.entries,
+            &[(1, 2), (2, 0x1006)],
+            flags,
+            entry,
+            budget,
+            (&[(1, ecx)], final_flags, next, reason as u32, remaining),
+        );
+        if let Some(stop) = stop {
+            packet["stop"] = json!(format!("{stop:x}"));
+        }
+        float_loop_state(&mut packet, result);
+        cases.push(packet);
+    }
+
+    let mut numeric_fault = execution_case(
+        &artifact.bytes,
+        &artifact.entries,
+        &[(1, 2)],
+        2,
+        0x1002,
+        8,
+        (
+            &[],
+            2,
+            0x1006,
+            crate::embedding::layout::SIMD_EXCEPTION as u32,
+            7,
+        ),
+    );
+    float_loop_state(&mut numeric_fault, 3.0);
+    numeric_fault["xmm"][2] = json!("7f800001");
+    numeric_fault["expected"]["xmm"][2] = json!("7f800001");
+    numeric_fault["mxcsr"] = json!(0x1f00);
+    numeric_fault["expected"]["mxcsr"] = json!(0x1f01);
+    let multiply = crate::x86::float::Op {
+        kind: crate::x86::float::Kind::Mul,
+        format: crate::x86::float::Format::F32,
+        scalar: true,
+        integer64: false,
+        predicate: 0,
+    };
+    numeric_fault["accesses"] = json!([{
+        "kind": "float",
+        "args": [multiply.encode(), "99aabbcc40400000", "1122334455667788", "7f800001", "0"],
+        "result": {"reason": crate::embedding::layout::SIMD_EXCEPTION, "value": "0", "mxcsr": 0x1f01}
+    }]);
+    cases.push(numeric_fault);
+
+    let mut memory = FLOAT_LOOP;
+    memory[9] = 0x02; // mulss xmm0, [rdx]
+    let artifact = compiled_fixture(0x1000, &memory, 0x1000);
+    let mut denied = execution_case(
+        &artifact.bytes,
+        &artifact.entries,
+        &[(1, 2), (2, 0x8000)],
+        2,
+        0x1002,
+        8,
+        (&[], 2, 0x1006, crate::embedding::layout::DATA as u32, 7),
+    );
+    float_loop_state(&mut denied, 3.0);
+    denied["accesses"] = json!([
+        {"kind":"vector_load","args":["8000",4,Segment::Ds as u32,1],"result":null},
+        {"kind":"access_reason","args":[],"result":crate::embedding::layout::DATA}
+    ]);
+    cases.push(denied);
+    run_cases(cases);
+}

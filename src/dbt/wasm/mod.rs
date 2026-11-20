@@ -59,6 +59,8 @@ mod state;
 mod streaming;
 #[path = "memory/strings.rs"]
 mod strings;
+#[path = "execution/structured_loop.rs"]
+mod structured_loop;
 #[path = "system/system_flags.rs"]
 mod system_flags;
 #[path = "integer/unary.rs"]
@@ -82,6 +84,7 @@ use super::unit::Unit;
 use crate::embedding::layout::DISPATCH;
 use crate::x86::context::{ExecutionContext, Segment};
 use crate::x86::instruction::{Alu, Instruction, Location, MemoryAluOperands, Operation, Repeat};
+use structured_loop::StructuredLoop;
 
 const ENTRY_INDEX: u32 = 4;
 const GPR: u32 = 5;
@@ -119,6 +122,7 @@ struct Emitter {
     body: Function,
     entries: BTreeMap<u64, u32>,
     current_index: u32,
+    structured_loop: Option<StructuredLoop>,
     entry_lookup: Option<u32>,
     multiply_high: Option<u32>,
     divide: Option<u32>,
@@ -516,7 +520,7 @@ pub(crate) fn emit(unit: &Unit) -> Vec<u8> {
 
 #[cfg(test)]
 pub(crate) fn emit_observed(unit: &Unit, observed: bool) -> Vec<u8> {
-    emit_profile(unit, observed, false)
+    emit_profile(unit, observed, false, usize::MAX)
 }
 
 fn add_function_type<const PARAMS: usize, const RESULTS: usize>(
@@ -529,8 +533,31 @@ fn add_function_type<const PARAMS: usize, const RESULTS: usize>(
     index
 }
 
-pub(crate) fn emit_profile(unit: &Unit, observed: bool, paged: bool) -> Vec<u8> {
+pub(crate) fn emit_profile(
+    unit: &Unit,
+    observed: bool,
+    paged: bool,
+    max_artifact_bytes: usize,
+) -> Vec<u8> {
     let observed = observed || paged;
+    if !observed
+        && !cfg!(feature = "parallel")
+        && let Some(loop_body) = StructuredLoop::select(&unit.instructions)
+    {
+        let bytes = emit_placement(unit, observed, paged, Some(loop_body));
+        if bytes.len() <= max_artifact_bytes {
+            return bytes;
+        }
+    }
+    emit_placement(unit, observed, paged, None)
+}
+
+fn emit_placement(
+    unit: &Unit,
+    observed: bool,
+    paged: bool,
+    loop_body: Option<StructuredLoop>,
+) -> Vec<u8> {
     let vector_banks = vector::Banks::for_unit(unit);
     let has_repeat = unit
         .instructions
@@ -1426,6 +1453,7 @@ pub(crate) fn emit_profile(unit: &Unit, observed: bool, paged: bool) -> Vec<u8> 
         #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
         parallel_memo_address: false,
         current_index: 0,
+        structured_loop: None,
         entry_lookup: dynamic_targets.then_some(run_index + 1),
         multiply_high,
         divide,
@@ -1527,10 +1555,27 @@ pub(crate) fn emit_profile(unit: &Unit, observed: bool, paged: bool) -> Vec<u8> 
         {
             emitter.parallel_memo_address = false;
         }
+        let loop_depth = count - index as u32;
+        if let Some(loop_body) = loop_body.filter(|body| body.head == index as u32) {
+            emitter.structured_loop = Some(loop_body);
+            emitter.op(Op::Loop(BlockType::Empty));
+            for ordinal in index..=loop_body.tail as usize {
+                emitter.current_index = ordinal as u32;
+                emitter.instruction(
+                    unit.instructions[ordinal],
+                    unit.instructions.get(ordinal + 1),
+                    loop_depth + 1,
+                    write_segment_base,
+                );
+            }
+            emitter.op(Op::End);
+            emitter.structured_loop = None;
+            continue;
+        }
         emitter.instruction(
             *instruction,
             unit.instructions.get(index + 1),
-            count - index as u32,
+            loop_depth,
             write_segment_base,
         );
     }
