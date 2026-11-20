@@ -2,17 +2,11 @@
 
 an x86 and x86-64 cpu emulator for the browser
 
-## build
-
-build from the repository with Node.js 22.12 or newer and rustup.
+## install
 
 ```sh
-npm ci
-npm run build
-npm pack ./build/npm/ring64 --pack-destination ./build
+npm install ring64
 ```
-
-in your app, run `npm install /path/to/ring64/build/ring64-0.1.0.tgz`.
 
 ## usage
 
