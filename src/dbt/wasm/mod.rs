@@ -81,7 +81,7 @@ use wasm_encoder::{
 use super::unit::Unit;
 use crate::embedding::layout::DISPATCH;
 use crate::x86::context::{ExecutionContext, Segment};
-use crate::x86::instruction::{Location, MemoryAluOperands, Operation, Repeat};
+use crate::x86::instruction::{Alu, Location, MemoryAluOperands, Operation, Repeat};
 
 const ENTRY_INDEX: u32 = 4;
 const GPR: u32 = 5;
@@ -1352,7 +1352,28 @@ pub(crate) fn emit_profile(unit: &Unit, observed: bool, paged: bool) -> Vec<u8> 
                 dst,
                 src,
                 width,
-            } => emitter.integer(kind, dst, src, width),
+            } => {
+                let overwrite = !observed
+                    && !cfg!(feature = "parallel")
+                    && matches!(kind, Alu::Add | Alu::Sub)
+                    && unit.instructions.get(index + 1).is_some_and(|next| {
+                        next.pc == instruction.next_pc
+                            && matches!(
+                                next.operation,
+                                Operation::Alu {
+                                    kind: Alu::Cmp | Alu::Test,
+                                    ..
+                                }
+                            )
+                    });
+                emitter.integer(
+                    kind,
+                    dst,
+                    src,
+                    width,
+                    overwrite.then_some(instruction.next_pc),
+                );
+            }
             Operation::MemoryAlu {
                 kind,
                 address,

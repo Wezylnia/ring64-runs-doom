@@ -347,3 +347,44 @@ fn conditional_target_frontiers_keep_budget_stop_and_target_validation_order() {
     }
     run_cases(cases);
 }
+
+#[test]
+fn arithmetic_flags_are_visible_when_the_compare_is_not_admitted() {
+    use crate::embedding::layout::{BUDGET, STOP};
+    let entry = 0x1000;
+    let compare = entry + 3;
+    let end = compare + 3;
+    let artifact = compiled_fixture(entry, &[0x83, 0xc0, 1, 0x83, 0xf8, 1], entry);
+    let mut cases = Vec::new();
+    for (budget, stop, flags, rip, reason, remaining) in [
+        (1, None, 0x657, compare, BUDGET, 0),
+        (1, Some(compare), 0x657, compare, BUDGET, 0),
+        (2, Some(compare), 0x657, compare, STOP, 1),
+        (2, None, 0x697, end, BUDGET, 0),
+        (2, Some(end), 0x697, end, BUDGET, 0),
+    ] {
+        let mut packet = execution_case(
+            &artifact.bytes,
+            &artifact.entries,
+            &[(0, 0xffff_ffff)],
+            0x602,
+            entry,
+            budget,
+            (&[(0, 0)], flags, rip, reason as u32, remaining),
+        );
+        if let Some(stop) = stop {
+            packet["stop"] = json!(format!("{stop:x}"));
+        }
+        cases.push(packet);
+    }
+    cases.push(execution_case(
+        &artifact.bytes,
+        &artifact.entries,
+        &[(0, 0)],
+        0x602,
+        compare,
+        1,
+        (&[], 0x697, end, BUDGET as u32, 0),
+    ));
+    run_cases(cases);
+}

@@ -1,6 +1,6 @@
-use super::{Emitter, FLAGS, GPR, LHS, RESULT, RHS, VALUE};
+use super::{Emitter, FLAGS, GPR, LHS, REMAINING, RESULT, RHS, VALUE};
 use crate::x86::instruction::{Alu, DataOperand, Operand, RegisterView, Width};
-use wasm_encoder::Instruction as Op;
+use wasm_encoder::{BlockType, Instruction as Op};
 
 impl Emitter {
     pub(super) fn narrow(&mut self, width: Width) {
@@ -79,16 +79,30 @@ impl Emitter {
         }
     }
 
-    pub(super) fn integer(&mut self, kind: Alu, dst: RegisterView, src: DataOperand, width: Width) {
+    pub(super) fn integer(
+        &mut self,
+        kind: Alu,
+        dst: RegisterView,
+        src: DataOperand,
+        width: Width,
+        overwritten_at: Option<u64>,
+    ) {
         match kind {
             Alu::And | Alu::Or | Alu::Xor | Alu::Test => self.logical(kind, dst, src, width),
             Alu::Add | Alu::Sub | Alu::Cmp | Alu::Adc | Alu::Sbb => {
-                self.arithmetic(kind, dst, src, width)
+                self.arithmetic(kind, dst, src, width, overwritten_at)
             }
         }
     }
 
-    fn arithmetic(&mut self, kind: Alu, dst: RegisterView, src: DataOperand, width: Width) {
+    fn arithmetic(
+        &mut self,
+        kind: Alu,
+        dst: RegisterView,
+        src: DataOperand,
+        width: Width,
+        overwritten_at: Option<u64>,
+    ) {
         self.data_register(dst, width);
         self.op(Op::LocalSet(LHS));
         self.data_operand(src, width);
@@ -98,7 +112,25 @@ impl Emitter {
             self.carry_flags(kind, width);
         } else {
             self.arithmetic_result(kind, width);
+            if let Some(next) = overwritten_at {
+                // A nonfaulting successor overwrites these flags unless its entry gate exits.
+                self.op(Op::Block(BlockType::Empty))
+                    .op(Op::LocalGet(REMAINING))
+                    .op(Op::I64Const(1))
+                    .op(Op::I64GtU)
+                    .op(Op::LocalGet(3))
+                    .op(Op::LocalGet(2))
+                    .op(Op::I64Const(next as i64))
+                    .op(Op::I64Eq)
+                    .op(Op::I32And)
+                    .op(Op::I32Eqz)
+                    .op(Op::I32And)
+                    .op(Op::BrIf(0));
+            }
             self.arithmetic_flags(kind, width);
+            if overwritten_at.is_some() {
+                self.op(Op::End);
+            }
         }
         if kind != Alu::Cmp {
             self.op(Op::LocalGet(RESULT));
