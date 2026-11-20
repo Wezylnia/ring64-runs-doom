@@ -335,6 +335,55 @@ fn register_loop_reuses_the_checked_entries_for_partial_laps() {
 }
 
 #[test]
+fn register_loop_keeps_carry_live_through_zero_count_and_partial_writers() {
+    let code = [
+        0xd1, 0xe0, // shl eax, 1 (sets CF)
+        0x89, 0xd1, // mov ecx, edx
+        0xd3, 0xe0, // shl eax, cl (masked zero)
+        0xd1, 0xd3, // rcl ebx, 1 (reads and sets CF)
+        0x31, 0xc0, // xor eax, eax (clears CF)
+        0x83, 0xd7, 0, // adc edi, 0 (reads CF)
+        0x83, 0xee, 1, // sub esi, 1
+        0x75, 0xee, // jne head
+    ];
+    let artifact = compiled_fixture(0x1000, &code, 0x1000);
+    let input = [
+        (0, 0x80000000),
+        (1, 9),
+        (2, 32),
+        (3, 0x80000000),
+        (6, 1),
+        (7, 7),
+    ];
+    run_cases(vec![
+        execution_case(
+            &artifact.bytes,
+            &artifact.entries,
+            &input,
+            2,
+            0x1000,
+            3,
+            (&[(0, 0), (1, 32)], 0x847, 0x1006, BUDGET as u32, 0),
+        ),
+        execution_case(
+            &artifact.bytes,
+            &artifact.entries,
+            &input,
+            2,
+            0x1000,
+            8,
+            (
+                &[(0, 0), (1, 32), (3, 1), (6, 0)],
+                0x46,
+                0x1012,
+                BUDGET as u32,
+                0,
+            ),
+        ),
+    ]);
+}
+
+#[test]
 fn float_backedge_uses_a_structured_loop_with_size_fallback() {
     use crate::dbt::{Limits, compile};
 

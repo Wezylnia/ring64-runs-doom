@@ -63,6 +63,9 @@ impl Emitter {
         }
         self.op(Op::End);
         self.write_location(dst, width, exit_depth);
+        if self.omit_result_status {
+            return;
+        }
         self.op(Op::LocalGet(RHS))
             .op(Op::I64Const(0))
             .op(Op::I64Ne)

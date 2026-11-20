@@ -3,7 +3,10 @@ use wasm_encoder::{BlockType, Instruction as Op};
 
 use crate::x86::{
     float::{Format, Kind},
-    instruction::{Address, Instruction, Location, Operation, VectorInstruction, Width},
+    instruction::{
+        Address, Alu, Count, Instruction, Location, Operation, Shift, Unary, VectorInstruction,
+        Width,
+    },
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -196,6 +199,36 @@ fn inside_integer_read_body(operation: Operation) -> bool {
         )
 }
 
+#[derive(PartialEq, Eq)]
+enum StatusEffect {
+    Preserve,
+    Replace,
+    NeedsPrior,
+}
+
+fn status_effect(operation: Operation) -> StatusEffect {
+    match operation {
+        Operation::Alu {
+            kind: Alu::Adc | Alu::Sbb,
+            ..
+        } => StatusEffect::NeedsPrior,
+        Operation::Alu { .. } => StatusEffect::Replace,
+        Operation::Shift {
+            kind: Shift::Shl | Shift::Shr | Shift::Sar,
+            dst: Location::Register(_),
+            count: Count::Immediate(count),
+            width,
+        } if count & (if width == Width::W64 { 63 } else { 31 }) != 0 => StatusEffect::Replace,
+        Operation::Mov { .. }
+        | Operation::Lea { .. }
+        | Operation::Nop
+        | Operation::Unary {
+            kind: Unary::Not, ..
+        } => StatusEffect::Preserve,
+        _ => StatusEffect::NeedsPrior,
+    }
+}
+
 // Leave stores, control transfers and context-changing operations on the
 // ordinary path. The clone still uses the original lowering and fault exits.
 fn inside_float_body(operation: Operation) -> bool {
@@ -325,6 +358,15 @@ impl Emitter {
         }
         for ordinal in body.head as usize..=body.tail as usize {
             self.current_index = ordinal as u32;
+            // The complete-lap guard and the no-fault body rule hide intermediate status.
+            self.omit_result_status = body.kind == LoopKind::Registers
+                && self.loop_gates_prechecked
+                && status_effect(instructions[ordinal].operation) == StatusEffect::Replace
+                && instructions[ordinal + 1..body.tail as usize + 1]
+                    .iter()
+                    .map(|i| status_effect(i.operation))
+                    .find(|effect| *effect != StatusEffect::Preserve)
+                    == Some(StatusEffect::Replace);
             self.instruction(
                 instructions[ordinal],
                 instructions.get(ordinal + 1),
@@ -342,6 +384,7 @@ impl Emitter {
         {
             self.zero_upper_xmm = 0;
         }
+        self.omit_result_status = false;
         self.op(Op::End);
         self.structured_loop = None;
     }

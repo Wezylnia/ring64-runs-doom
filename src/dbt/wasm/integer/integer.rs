@@ -118,7 +118,9 @@ impl Emitter {
             self.carry_flags(kind, width);
         } else {
             self.arithmetic_result(kind, width);
-            if let Some(next) = overwritten_at {
+            if !self.omit_result_status
+                && let Some(next) = overwritten_at
+            {
                 // A nonfaulting successor overwrites these flags unless its entry gate exits.
                 self.op(Op::Block(BlockType::Empty))
                     .op(Op::LocalGet(REMAINING))
@@ -133,9 +135,11 @@ impl Emitter {
                     .op(Op::I32And)
                     .op(Op::BrIf(0));
             }
-            self.arithmetic_flags(kind, width);
-            if overwritten_at.is_some() {
-                self.op(Op::End);
+            if !self.omit_result_status {
+                self.arithmetic_flags(kind, width);
+                if overwritten_at.is_some() {
+                    self.op(Op::End);
+                }
             }
         }
         if kind != Alu::Cmp {
@@ -260,7 +264,9 @@ impl Emitter {
             self.data_operand(src, width);
             self.logical_result(kind);
         }
-        self.logical_flags(width);
+        if !self.omit_result_status {
+            self.logical_flags(width);
+        }
         if kind != Alu::Test {
             self.op(Op::LocalGet(RESULT));
             self.write_register(dst, width);
