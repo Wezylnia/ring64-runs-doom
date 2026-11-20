@@ -160,10 +160,27 @@ impl Emitter {
         next_pc: u64,
         exit_depth: u32,
     ) {
-        let helper = self.vector_load.expect("vector load import");
         self.address(address, next_pc);
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if bytes == 4 && !aligned {
+            let [_, vector, _] = self.vector_temps();
+            if self.direct_load(Width::W32, Some(vector), exit_depth, |emitter, depth| {
+                emitter.op(Op::LocalGet(ADDRESS));
+                emitter.vector_load_offset(bytes, aligned, depth);
+                emitter.op(Op::LocalSet(vector));
+            }) {
+                self.op(Op::LocalGet(vector));
+                return;
+            }
+        }
+        self.vector_load_offset(bytes, aligned, exit_depth);
+    }
+
+    fn vector_load_offset(&mut self, bytes: u8, aligned: bool, exit_depth: u32) {
+        let helper = self.vector_load.expect("vector load import");
+        let segment = self.segment as i32;
         self.op(Op::I32Const(i32::from(bytes)))
-            .op(Op::I32Const(address.segment as i32))
+            .op(Op::I32Const(segment))
             .op(Op::I32Const(if aligned { 16 } else { 1 }))
             .op(Op::Call(helper))
             .op(Op::LocalTee(STORE_STATUS))

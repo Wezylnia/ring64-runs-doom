@@ -159,7 +159,11 @@ impl Emitter {
 
     pub(super) fn load_address_value(&mut self, width: Width, for_write: bool, exit_depth: u32) {
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-        if !for_write && self.direct_load(width, exit_depth) {
+        if !for_write
+            && self.direct_load(width, None, exit_depth, |emitter, depth| {
+                emitter.load_address_slow(width, false, depth);
+            })
+        {
             return;
         }
         #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
@@ -170,7 +174,13 @@ impl Emitter {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    fn direct_load(&mut self, width: Width, exit_depth: u32) -> bool {
+    pub(super) fn direct_load(
+        &mut self,
+        width: Width,
+        vector_result: Option<u32>,
+        exit_depth: u32,
+        load_slow: impl FnOnce(&mut Self, u32),
+    ) -> bool {
         let Some(span) = self.read_span else {
             return false;
         };
@@ -191,6 +201,10 @@ impl Emitter {
             }
             Some(i64::from(self.context.segment(self.segment).limit) + 1 - i64::from(bytes))
         };
+        if vector_result.is_some() {
+            // Scalar SIMD passes its original effective offset on the stack.
+            self.op(Op::LocalSet(ADDRESS));
+        }
         self.op(Op::Block(BlockType::Empty));
         self.linear_address();
         self.op(Op::LocalGet(span.base))
@@ -221,7 +235,7 @@ impl Emitter {
             .op(Op::LocalTee(span.descriptor))
             .op(Op::I32Eqz)
             .op(Op::If(BlockType::Empty));
-        self.load_address_slow(width, false, exit_depth + 3);
+        load_slow(self, exit_depth + 3);
         self.op(Op::Br(2)).op(Op::End);
         use crate::memory::ReadSpan as Descriptor;
         let field = |offset, align| MemArg {
@@ -257,14 +271,19 @@ impl Emitter {
             .op(Op::I32WrapI64)
             .op(Op::I32Add);
         let memory = field(0, 0);
-        self.op(match width {
-            Width::W8 => Op::I64Load8U(memory),
-            Width::W16 => Op::I64Load16U(memory),
-            Width::W32 => Op::I64Load32U(memory),
-            Width::W64 => Op::I64Load(memory),
-        })
-        .op(Op::LocalSet(VALUE))
-        .op(Op::End);
+        if let Some(vector) = vector_result {
+            debug_assert_eq!(width, Width::W32);
+            self.op(Op::V128Load32Zero(memory)).op(Op::LocalSet(vector));
+        } else {
+            self.op(match width {
+                Width::W8 => Op::I64Load8U(memory),
+                Width::W16 => Op::I64Load16U(memory),
+                Width::W32 => Op::I64Load32U(memory),
+                Width::W64 => Op::I64Load(memory),
+            })
+            .op(Op::LocalSet(VALUE));
+        }
+        self.op(Op::End);
         true
     }
 

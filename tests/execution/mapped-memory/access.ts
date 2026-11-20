@@ -4,6 +4,58 @@ import { BASE, RW, RX, backing, input, mapping, using } from './fixture.js';
 export function accessScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [
     {
+      name: 'scalar vector reads share a warm RAM span and retain split-operand faults and lanes',
+      run: async () => {
+        const code = '8a03f30f590bf30f1001ebf4'; // mov al,[rbx]; mulss xmm1,[rbx]; movss xmm0,[rcx]; jmp start
+        const initial = 0x112233445566778899aabbcc3fc00000n;
+        const originals = Array.from({ length: 16 }, (_, index) => initial + BigInt(index));
+        originals[1] = initial;
+        const upper = initial & ~0xffffffffn;
+        for (const profile of ['fast', 'split', 'unmapped', 'permission'] as const) {
+          const maps = [mapping(BASE, 'code', 12, RX), mapping(0x4000n, 'data', 8, RW)];
+          if (profile === 'split' || profile === 'permission') {
+            maps.push(mapping(0x4008n, 'next', 3, { ...RW, read: profile === 'split' }));
+          }
+          await using(
+            compiler,
+            [backing('code', code), backing('data', '0000803f00000040'), backing('next', '00803f')],
+            maps,
+            async (cpu) => {
+              const before = input({ 1: profile === 'fast' ? 0x4000n : 0x4007n, 3: 0x4004n });
+              cpu.setState(before);
+              cpu.setXmmState(originals);
+              const result = await cpu.run({ budget: 3n });
+              const faults = profile === 'unmapped' || profile === 'permission';
+              exit(
+                result,
+                faults ? 'data-fault' : 'budget',
+                3n,
+                faults ? 2n : 3n,
+                changed(before, BASE + (faults ? 6n : 10n), { 0: 0x1122334455667700n }),
+              );
+              if (faults) {
+                fault(result, {
+                  instructionPc: BASE + 6n,
+                  address: 0x4007n,
+                  failingAddress: 0x4008n,
+                  width: 4,
+                  access: 'read',
+                  cause: profile,
+                });
+              }
+              const expected = originals.slice();
+              expected[0] = faults ? initial : profile === 'fast' ? 0x3f800000n : 0x3f800040n;
+              expected[1] = upper | 0x40400000n;
+              cpu
+                .readXmmState()
+                .forEach((value, index) => equal(value, expected[index], `XMM${index}`));
+              equal(cpu.readMxcsr(), 0x1f80, 'exact product and MOVSS preserve MXCSR');
+            },
+          );
+        }
+      },
+    },
+    {
       name: 'warm scalar reads enforce both ends of each mapped span',
       run: async () => {
         for (const [start, failing, cause] of [
