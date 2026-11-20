@@ -55,12 +55,17 @@ impl Emitter {
                     crate::x86::instruction::Operation::String { .. }
                 );
         }
+        let dword = address.size == Width::W32;
+        let add = if dword { Op::I32Add } else { Op::I64Add };
         let has_base = if let AddressBase::Register(base) = address.base {
             self.op(Op::LocalGet(if base == 4 {
                 pending_stack.unwrap_or(GPR + 4)
             } else {
                 GPR + u32::from(base)
             }));
+            if dword {
+                self.op(Op::I32WrapI64);
+            }
             true
         } else {
             false
@@ -71,12 +76,19 @@ impl Emitter {
             } else {
                 GPR + u32::from(index.register)
             }));
+            if dword {
+                self.op(Op::I32WrapI64);
+            }
             if index.scale != 1 {
-                self.op(Op::I64Const(i64::from(index.scale.trailing_zeros())))
-                    .op(Op::I64Shl);
+                let shift = index.scale.trailing_zeros();
+                if dword {
+                    self.op(Op::I32Const(shift as i32)).op(Op::I32Shl);
+                } else {
+                    self.op(Op::I64Const(i64::from(shift))).op(Op::I64Shl);
+                }
             }
             if has_base {
-                self.op(Op::I64Add);
+                self.op(add.clone());
             }
         }
         let constant = if address.base == AddressBase::NextPc {
@@ -85,12 +97,20 @@ impl Emitter {
             address.displacement as u64
         };
         if constant != 0 || address.index.is_none() {
-            self.op(Op::I64Const(constant as i64));
+            self.op(if dword {
+                Op::I32Const(constant as i32)
+            } else {
+                Op::I64Const(constant as i64)
+            });
             if has_base || address.index.is_some() {
-                self.op(Op::I64Add);
+                self.op(add);
             }
         }
-        self.narrow(address.size);
+        if dword {
+            self.op(Op::I64ExtendI32U);
+        } else {
+            self.narrow(address.size);
+        }
     }
 
     pub(super) fn linear_address(&mut self) {
