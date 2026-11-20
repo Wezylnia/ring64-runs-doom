@@ -197,9 +197,31 @@ impl Emitter {
     }
 
     fn logical(&mut self, kind: Alu, dst: RegisterView, src: DataOperand, width: Width) {
-        self.data_register(dst, width);
-        self.data_operand(src, width);
-        self.logical_result(kind);
+        if width == Width::W32 {
+            self.data_register(dst, Width::W64);
+            self.op(Op::I32WrapI64);
+            match src {
+                DataOperand::Register(register) => {
+                    self.data_register(register, Width::W64);
+                    self.op(Op::I32WrapI64);
+                }
+                DataOperand::Immediate(value) => {
+                    self.op(Op::I32Const(value as i32));
+                }
+            }
+            self.op(match kind {
+                Alu::And | Alu::Test => Op::I32And,
+                Alu::Or => Op::I32Or,
+                Alu::Xor => Op::I32Xor,
+                _ => unreachable!(),
+            })
+            .op(Op::I64ExtendI32U)
+            .op(Op::LocalSet(RESULT));
+        } else {
+            self.data_register(dst, width);
+            self.data_operand(src, width);
+            self.logical_result(kind);
+        }
         self.logical_flags(width);
         if kind != Alu::Test {
             self.op(Op::LocalGet(RESULT));
