@@ -1,3 +1,6 @@
+use super::Emitter;
+use wasm_encoder::{BlockType, Instruction as Op};
+
 use crate::x86::{
     float::{Format, Kind},
     instruction::{Instruction, Operation, VectorInstruction},
@@ -10,6 +13,14 @@ pub(super) struct StructuredLoop {
 }
 
 impl StructuredLoop {
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn read_proof(self, unit: &super::Unit) -> Option<super::read_loop::ReadLoop> {
+        super::read_loop::ReadLoop::recognize(
+            &unit.context,
+            &unit.instructions[self.head as usize..=self.tail as usize],
+        )
+    }
+
     pub(super) fn select(instructions: &[Instruction]) -> Option<Self> {
         let mut first = 0;
         let mut best = None::<Self>;
@@ -68,4 +79,29 @@ fn scalar_f32(operation: Operation) -> bool {
     matches!(operation, Operation::Float(float)
         if float.op.scalar && float.op.format == Format::F32
             && matches!(float.op.kind, Kind::Add | Kind::Mul))
+}
+
+impl Emitter {
+    pub(super) fn emit_structured_loop(
+        &mut self,
+        instructions: &[Instruction],
+        body: StructuredLoop,
+        loop_depth: u32,
+        write_segment_base: Option<u32>,
+    ) {
+        let inner_depth = loop_depth + 1;
+        self.structured_loop = Some((body, inner_depth));
+        self.op(Op::Loop(BlockType::Empty));
+        for ordinal in body.head as usize..=body.tail as usize {
+            self.current_index = ordinal as u32;
+            self.instruction(
+                instructions[ordinal],
+                instructions.get(ordinal + 1),
+                inner_depth,
+                write_segment_base,
+            );
+        }
+        self.op(Op::End);
+        self.structured_loop = None;
+    }
 }

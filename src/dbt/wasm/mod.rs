@@ -549,12 +549,21 @@ pub(crate) fn emit_profile(
         && !cfg!(feature = "parallel")
         && let Some(loop_body) = StructuredLoop::select(&unit.instructions)
     {
-        let bytes = emit_placement(unit, observed, paged, Some(loop_body));
+        let bytes = emit_placement(unit, observed, paged, Some(loop_body), true);
         if bytes.len() <= max_artifact_bytes {
             return bytes;
         }
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if loop_body.read_proof(unit).is_some() {
+            // Keep the checked placement when only the extra guarded body
+            // would exhaust the user's generated artifact limit.
+            let bytes = emit_placement(unit, observed, paged, Some(loop_body), false);
+            if bytes.len() <= max_artifact_bytes {
+                return bytes;
+            }
+        }
     }
-    emit_placement(unit, observed, paged, None)
+    emit_placement(unit, observed, paged, None, false)
 }
 
 fn emit_placement(
@@ -562,6 +571,7 @@ fn emit_placement(
     observed: bool,
     paged: bool,
     loop_body: Option<StructuredLoop>,
+    _guard_reads: bool,
 ) -> Vec<u8> {
     let vector_banks = vector::Banks::for_unit(unit);
     let has_repeat = unit
@@ -1396,10 +1406,7 @@ fn emit_placement(
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let proved_reads = loop_body.and_then(|body| {
         let span = read_span?;
-        let proof = read_loop::ReadLoop::recognize(
-            &unit.context,
-            &unit.instructions[body.head as usize..=body.tail as usize],
-        )?;
+        let proof = _guard_reads.then(|| body.read_proof(unit)).flatten()?;
         let first_bias = next_local;
         let guard_failed = first_bias + read_loop::ReadLoop::BIAS_LOCALS;
         locals.push((read_loop::ReadLoop::BIAS_LOCALS + 1, ValType::I32));
@@ -1582,35 +1589,22 @@ fn emit_placement(
                 emitter.guard_read_loop(proof, span, first_bias, guard_failed);
                 emitter.op(Op::If(BlockType::Empty));
                 emitter.proved_reads = Some((proof, first_bias));
-            }
-            #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-            let guarded = proved_reads.is_some();
-            #[cfg(not(all(not(feature = "parallel"), target_arch = "wasm32")))]
-            let guarded = false;
-            let inner_depth = loop_depth + 1 + u32::from(guarded);
-            emitter.structured_loop = Some((loop_body, inner_depth));
-            emitter.op(Op::Loop(BlockType::Empty));
-            for ordinal in index..=loop_body.tail as usize {
-                emitter.current_index = ordinal as u32;
-                emitter.instruction(
-                    unit.instructions[ordinal],
-                    unit.instructions.get(ordinal + 1),
-                    inner_depth,
+                emitter.emit_structured_loop(
+                    &unit.instructions,
+                    loop_body,
+                    loop_depth + 1,
                     write_segment_base,
                 );
-            }
-            emitter.op(Op::End);
-            emitter.structured_loop = None;
-            if !guarded {
-                continue;
-            }
-            #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-            {
                 emitter.proved_reads = None;
+                emitter.op(Op::End);
             }
-            // An unproved range enters the original checked body at its head.
-            emitter.op(Op::End);
-            emitter.current_index = index as u32;
+            emitter.emit_structured_loop(
+                &unit.instructions,
+                loop_body,
+                loop_depth,
+                write_segment_base,
+            );
+            continue;
         }
         emitter.instruction(
             *instruction,
