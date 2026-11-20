@@ -1,6 +1,6 @@
 {
   "name": "ring64",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "An x86 and x86-64 CPU emulator for JavaScript runtimes",
   "type": "module",
