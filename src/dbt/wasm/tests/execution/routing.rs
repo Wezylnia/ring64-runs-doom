@@ -999,6 +999,175 @@ fn rotated_loop_preserves_both_backedges_and_original_entry_boundaries() {
 }
 
 #[test]
+fn memory_compare_predicate_keeps_flags_at_faults_and_checked_entries() {
+    use super::super::loop_cfg::{compare_predicates, select};
+    use crate::embedding::layout::DATA;
+
+    let decrement = |bank| Operation::Alu {
+        kind: Alu::Sub,
+        dst: RegisterView::low(bank),
+        src: DataOperand::Immediate(1),
+        width: Width::W32,
+    };
+    let mut cases = Vec::new();
+    for width in [Width::W32, Width::W64] {
+        let operations = [
+            Operation::MemoryAlu {
+                kind: Alu::Cmp,
+                address: Address {
+                    base: AddressBase::Register(3),
+                    ..Address::default()
+                },
+                operands: MemoryAluOperands::MemoryFirst(DataOperand::Immediate(2)),
+                width,
+            },
+            Operation::Jcc {
+                condition: Condition::Below,
+                target: 0x1010,
+            },
+            Operation::Mov {
+                dst: RegisterView::low(0),
+                src: DataOperand::Immediate(7),
+                width: Width::W32,
+            },
+            decrement(1),
+            decrement(5),
+            Operation::Jcc {
+                condition: Condition::NotEqual,
+                target: 0x1000,
+            },
+            Operation::Nop,
+        ];
+        let instructions: Vec<_> = operations
+            .into_iter()
+            .enumerate()
+            .map(|(i, operation)| Instruction {
+                pc: 0x1000 + i as u64 * 4,
+                next_pc: 0x1004 + i as u64 * 4,
+                operation,
+            })
+            .collect();
+        let (order, max_lap) = select(&instructions).unwrap();
+        assert_eq!(max_lap, 6);
+        let context = crate::x86::context::ExecutionContext::default();
+        assert_eq!(
+            compare_predicates(&instructions, order, &context)[1],
+            Some(width)
+        );
+        let mut faulting = instructions.clone();
+        faulting[4].operation = Operation::Load {
+            dst: RegisterView::low(1),
+            address: Address::default(),
+            width: Width::W32,
+        };
+        assert_eq!(compare_predicates(&faulting, order, &context)[1], None);
+        let mut joined = instructions.clone();
+        joined[5].operation = Operation::Jcc {
+            condition: Condition::NotEqual,
+            target: 0x0ffc,
+        };
+        joined.insert(
+            0,
+            Instruction {
+                pc: 0x0ffc,
+                next_pc: 0x1000,
+                operation: Operation::Jcc {
+                    condition: Condition::Parity,
+                    target: 0x1004,
+                },
+            },
+        );
+        let (joined_order, _) = select(&joined).unwrap();
+        assert_eq!(compare_predicates(&joined, joined_order, &context)[2], None);
+        let unit = unit(instructions);
+        let bytes = emit(&unit);
+        assert_eq!(
+            wasm_loop_count(&bytes),
+            1 + usize::from(!cfg!(feature = "parallel"))
+        );
+        let entries: Vec<_> = unit.instructions.iter().map(|i| i.pc).collect();
+
+        let wide_not_taken = width == Width::W64;
+        let expected_taken = [(5, 0)];
+        let expected_not_taken = [(0, 7), (1, 1), (5, 0)];
+        let (wide_result, wide_remaining) = if wide_not_taken {
+            (expected_not_taken.as_slice(), 1)
+        } else {
+            (expected_taken.as_slice(), 3)
+        };
+        for (entry, budget, stop, read, expected, flags, rip, reason, remaining) in [
+            (
+                0x1000,
+                7,
+                Some(0x1018),
+                Some("1"),
+                expected_taken.as_slice(),
+                0x46,
+                0x1018,
+                STOP,
+                3,
+            ),
+            (
+                0x1000,
+                7,
+                Some(0x1018),
+                Some("ffffffff00000001"),
+                wide_result,
+                0x46,
+                0x1018,
+                STOP,
+                wide_remaining,
+            ),
+            (0x1000, 1, None, Some("1"), &[], 0x97, 0x1004, BUDGET, 0),
+            (
+                0x1000,
+                7,
+                Some(0x1004),
+                Some("1"),
+                &[],
+                0x97,
+                0x1004,
+                STOP,
+                6,
+            ),
+            (
+                0x1004,
+                7,
+                Some(0x1018),
+                None,
+                expected_taken.as_slice(),
+                0x46,
+                0x1018,
+                STOP,
+                4,
+            ),
+            (0x1000, 7, None, Some("0"), &[], 0x803, 0x1000, DATA, 7),
+        ] {
+            let mut packet = execution_case(
+                &bytes,
+                &entries,
+                &[(0, 0), (1, 2), (3, 0x8000), (5, 1)],
+                0x803,
+                entry,
+                budget,
+                (expected, flags, rip, reason as u32, remaining),
+            );
+            if let Some(stop) = stop {
+                packet["stop"] = json!(format!("{stop:x}"));
+            }
+            if let Some(read) = read {
+                packet["accesses"] = json!([
+                    {"kind":"load","args":["8000",width.bytes()],"result":read},
+                    {"kind":"access_failed","args":[],"result":if reason == DATA { DATA } else { 0 }}
+                ]);
+            }
+            cases.push(packet);
+        }
+    }
+    run_cases(cases);
+}
+
+#[test]
 fn guarded_read_loop_publishes_preceding_add_flags_on_load_fault_and_budget() {
     use crate::embedding::layout::DATA;
 

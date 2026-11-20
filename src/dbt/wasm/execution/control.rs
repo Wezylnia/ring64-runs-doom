@@ -1,4 +1,4 @@
-use super::{ENTRY, Emitter, FLAGS, REASON, REMAINING, RESULT, RHS, RIP, STORE_STATUS, VALUE};
+use super::{ENTRY, Emitter, FLAGS, LHS, REASON, REMAINING, RESULT, RHS, RIP, STORE_STATUS, VALUE};
 use crate::embedding::layout::{BUDGET, DISPATCH, RunState, SEGMENT, STOP, TARGET};
 use crate::memory::canonical48;
 use crate::x86::context::Segment;
@@ -151,6 +151,32 @@ impl Emitter {
         ) {
             self.op(Op::I32Eqz);
         }
+    }
+
+    pub(super) fn compare_condition(&mut self, condition: Condition, width: Width) {
+        use Condition::*;
+        let predicate = match (width, condition) {
+            (Width::W32, Below) => Op::I32LtU,
+            (Width::W32, AboveOrEqual) => Op::I32GeU,
+            (Width::W32, Equal) => Op::I32Eq,
+            (Width::W32, NotEqual) => Op::I32Ne,
+            (Width::W32, BelowOrEqual) => Op::I32LeU,
+            (Width::W32, Above) => Op::I32GtU,
+            (Width::W64, Below) => Op::I64LtU,
+            (Width::W64, AboveOrEqual) => Op::I64GeU,
+            (Width::W64, Equal) => Op::I64Eq,
+            (Width::W64, NotEqual) => Op::I64Ne,
+            (Width::W64, BelowOrEqual) => Op::I64LeU,
+            (Width::W64, Above) => Op::I64GtU,
+            _ => unreachable!("admitted unsigned or equality comparison"),
+        };
+        for operand in [LHS, RHS] {
+            self.op(Op::LocalGet(operand));
+            if width == Width::W32 {
+                self.op(Op::I32WrapI64);
+            }
+        }
+        self.op(predicate);
     }
 
     fn flag_bits_clear(&mut self, mask: i64) {

@@ -34,6 +34,9 @@ impl Emitter {
                 self.op(Op::LocalSet(RHS));
             }
         }
+        if kind == Alu::Cmp && self.omit_result_status {
+            return;
+        }
         match kind {
             Alu::Add | Alu::Sub | Alu::Cmp => self.arithmetic_result(kind, width),
             Alu::Adc | Alu::Sbb => self.carry_result(kind, width),

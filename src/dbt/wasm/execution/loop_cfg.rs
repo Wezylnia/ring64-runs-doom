@@ -1,4 +1,6 @@
-use crate::x86::instruction::{Alu, Instruction, Location, Operation};
+use crate::memory::canonical48;
+use crate::x86::context::ExecutionContext;
+use crate::x86::instruction::{Alu, Condition, Instruction, Location, Operation, Width};
 
 #[derive(Clone, Copy)]
 pub(super) struct LoopOrder {
@@ -91,6 +93,81 @@ fn branch_target(operation: Operation) -> Option<u64> {
         Operation::Jump { target } | Operation::Jcc { target, .. } => Some(target),
         _ => None,
     }
+}
+
+// Indexed by emitted position. A predicate at position i also authorizes the
+// immediately preceding memory CMP to keep its operands without setting flags.
+pub(super) fn compare_predicates(
+    instructions: &[Instruction],
+    order: LoopOrder,
+    context: &ExecutionContext,
+) -> Vec<Option<Width>> {
+    let source = &instructions[order.earlier as usize..=order.tail as usize];
+    let position_at = |pc| {
+        let offset = source.binary_search_by_key(&pc, |i| i.pc).ok()?;
+        Some(order.position(order.earlier + offset as u32)? as usize)
+    };
+    let len = order.len() as usize;
+    let mut explicit_entry = vec![false; len];
+    for position in source
+        .iter()
+        .filter_map(|i| branch_target(i.operation))
+        .filter_map(position_at)
+    {
+        explicit_entry[position] = true;
+    }
+
+    // Any fault, FLAGS read, or edge out of this lap keeps preceding flags live.
+    let mut replaces = vec![false; len];
+    let mut predicates = vec![None; len];
+    for position in (1..len).rev() {
+        let index = order.at(position as u32) as usize;
+        let instruction = instructions[index];
+        let next_overwrites = |pc| {
+            position_at(pc).is_some_and(|successor| successor > position && replaces[successor])
+        };
+        let Operation::Jcc { condition, target } = instruction.operation else {
+            replaces[position] = match instruction.operation {
+                Operation::Alu { kind, .. } => !matches!(kind, Alu::Adc | Alu::Sbb),
+                Operation::Mov { .. } | Operation::Lea { .. } | Operation::Nop => {
+                    next_overwrites(instruction.next_pc)
+                }
+                _ => false,
+            };
+            continue;
+        };
+        if explicit_entry[position]
+            || !matches!(
+                condition,
+                Condition::Below
+                    | Condition::AboveOrEqual
+                    | Condition::Equal
+                    | Condition::NotEqual
+                    | Condition::BelowOrEqual
+                    | Condition::Above
+            )
+            || !(if context.is_long64() {
+                canonical48(target)
+            } else {
+                target <= context.code_limit()
+            })
+            || !next_overwrites(target)
+            || !next_overwrites(instruction.next_pc)
+        {
+            continue;
+        }
+        let producer = instructions[order.at(position as u32 - 1) as usize];
+        if producer.next_pc == instruction.pc
+            && let Operation::MemoryAlu {
+                kind: Alu::Cmp,
+                width: width @ (Width::W32 | Width::W64),
+                ..
+            } = producer.operation
+        {
+            predicates[position] = Some(width);
+        }
+    }
+    predicates
 }
 
 fn iteration_bound(instructions: &[Instruction], order: LoopOrder) -> Option<u32> {

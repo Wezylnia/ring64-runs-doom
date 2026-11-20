@@ -433,6 +433,11 @@ impl Emitter {
             }
         }
         let order = body.order();
+        let predicates = if self.loop_gates_prechecked && body.forward_edges() {
+            super::loop_cfg::compare_predicates(instructions, order, &self.context)
+        } else {
+            Vec::new()
+        };
         if body.forward_edges() {
             // Each later cloned instruction has an enclosing forward label.
             for _ in 1..order.len() {
@@ -463,11 +468,15 @@ impl Emitter {
                 (self.omit_result_status, flags_on_next_read_fault) =
                     can_omit_flags(&instructions[ordinal..=body.tail as usize]);
             }
+            self.omit_result_status |= predicates
+                .get(position as usize + 1)
+                .is_some_and(Option::is_some);
             self.instruction(
                 instructions[ordinal],
                 instructions.get(ordinal + 1),
                 depth,
                 write_segment_base,
+                predicates.get(position as usize).copied().flatten(),
             );
             #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
             if prove_zero_upper {

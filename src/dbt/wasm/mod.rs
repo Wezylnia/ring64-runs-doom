@@ -88,7 +88,9 @@ use wasm_encoder::{
 use super::unit::Unit;
 use crate::embedding::layout::DISPATCH;
 use crate::x86::context::{ExecutionContext, Segment};
-use crate::x86::instruction::{Alu, Instruction, Location, MemoryAluOperands, Operation, Repeat};
+use crate::x86::instruction::{
+    Alu, Instruction, Location, MemoryAluOperands, Operation, Repeat, Width,
+};
 use structured_loop::StructuredLoop;
 
 const ENTRY_INDEX: u32 = 4;
@@ -222,6 +224,7 @@ impl Emitter {
         next: Option<&Instruction>,
         loop_depth: u32,
         write_segment_base: Option<u32>,
+        compare_width: Option<Width>,
     ) {
         self.current_pc = instruction.pc;
         self.current_operation = instruction.operation;
@@ -529,7 +532,11 @@ impl Emitter {
                 return;
             }
             Operation::Jcc { condition, target } => {
-                self.condition(condition);
+                if let Some(width) = compare_width {
+                    self.compare_condition(condition, width);
+                } else {
+                    self.condition(condition);
+                }
                 self.op(Op::If(BlockType::Empty));
                 self.target(target, loop_depth + 1, exit_depth + 1);
                 self.op(Op::End);
@@ -1781,6 +1788,7 @@ fn emit_body(
             unit.instructions.get(index + 1),
             loop_depth,
             write_segment_base,
+            None,
         );
     }
     emitter.op(Op::End);
