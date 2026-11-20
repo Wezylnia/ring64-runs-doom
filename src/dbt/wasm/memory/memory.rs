@@ -6,7 +6,7 @@ use wasm_encoder::{BlockType, Instruction as Op, MemArg};
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 #[derive(Clone, Copy)]
-// Mapping edits happen between invocations, so the cached span lives in Wasm locals.
+// Mapping edits and source publication happen between invocations, so spans live in Wasm locals.
 pub(super) struct SpanCache {
     pub(super) resolve: u32,
     base: u32,
@@ -220,7 +220,14 @@ impl Emitter {
     ) -> bool {
         use crate::memory::{Access, DirectSpan as Descriptor};
         let (span, access) = match operand {
-            DirectOperand::Load(_) => (self.read_span, Access::Read),
+            DirectOperand::Load(_) => {
+                let span = if self.segment == Segment::Ss {
+                    self.stack_read_span.or(self.read_span)
+                } else {
+                    self.read_span
+                };
+                (span, Access::Read)
+            }
             DirectOperand::Store => (self.write_span(), Access::Write),
         };
         let Some(span) = span else {

@@ -113,6 +113,8 @@ struct Emitter {
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     read_span: Option<memory::SpanCache>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    stack_read_span: Option<memory::SpanCache>,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     write_spans: [Option<memory::SpanCache>; 2],
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     proved_reads: Option<(read_loop::ReadLoop, u32)>,
@@ -595,8 +597,8 @@ fn emit_placement(
     guard_reads: bool,
     max_artifact_bytes: usize,
 ) -> Vec<u8> {
-    let (bytes, write_spans) = emit_body(unit, observed, paged, loop_body, guard_reads, true);
-    if write_spans && bytes.len() > max_artifact_bytes {
+    let (bytes, extra_spans) = emit_body(unit, observed, paged, loop_body, guard_reads, true);
+    if extra_spans && bytes.len() > max_artifact_bytes {
         return emit_body(unit, observed, paged, loop_body, guard_reads, false).0;
     }
     bytes
@@ -608,7 +610,7 @@ fn emit_body(
     paged: bool,
     loop_body: Option<StructuredLoop>,
     _guard_reads: bool,
-    _write_spans: bool,
+    _extra_spans: bool,
 ) -> (Vec<u8>, bool) {
     let vector_banks = vector::Banks::for_unit(unit);
     let has_repeat = unit
@@ -1382,7 +1384,7 @@ fn emit_body(
         index
     });
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    let read_span_cycles: Vec<_> = unit
+    let span_cycles: Vec<_> = unit
         .instructions
         .iter()
         .filter_map(|instruction| {
@@ -1413,14 +1415,21 @@ fn emit_body(
         index
     };
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    let read_span = (!observed && !read_span_cycles.is_empty()).then(|| span_import("read_span"));
+    let read_span = (!observed && !span_cycles.is_empty()).then(|| span_import("read_span"));
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let stack_read_span = read_span.filter(|_| {
+        _extra_spans && unit.instructions.iter().any(|instruction| {
+            matches!(instruction.operation, Operation::Load { address, .. } if address.segment == Segment::Ss)
+                && span_cycles.iter().any(|range| range.contains(&instruction.pc))
+        })
+    });
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let write_segments = {
         let mut segments = [false; 2];
-        if !observed && _write_spans {
+        if !observed && _extra_spans {
             for instruction in &unit.instructions {
                 if let Operation::Store { address, .. } = instruction.operation
-                    && read_span_cycles
+                    && span_cycles
                         .iter()
                         .any(|range| range.contains(&instruction.pc))
                 {
@@ -1465,6 +1474,8 @@ fn emit_body(
     };
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let read_span = read_span.map(&mut span_cache);
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let stack_read_span = stack_read_span.map(&mut span_cache);
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let write_caches = write_segments.map(|used| write_span.filter(|_| used).map(&mut span_cache));
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -1531,6 +1542,8 @@ fn emit_body(
         paged,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         read_span: None,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        stack_read_span: None,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         write_spans: [None; 2],
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -1640,11 +1653,12 @@ fn emit_body(
         emitter.current_index = index as u32;
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         {
-            // Keep one-shot loads out of the span cache even in an artifact with a hot loop.
-            let in_cycle = read_span_cycles
+            // Keep one-shot accesses out of the span caches even in an artifact with a hot loop.
+            let in_cycle = span_cycles
                 .iter()
                 .any(|range| range.contains(&instruction.pc));
             emitter.read_span = read_span.filter(|_| in_cycle);
+            emitter.stack_read_span = stack_read_span.filter(|_| in_cycle);
             emitter.write_spans = if in_cycle { write_caches } else { [None; 2] };
         }
         #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
@@ -1705,10 +1719,10 @@ fn emit_body(
         .section(&exports)
         .section(&code);
     #[cfg(any(feature = "parallel", not(target_arch = "wasm32")))]
-    let write_spans = false;
+    let extra_spans = false;
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    let write_spans = write_span.is_some();
-    (module.finish(), write_spans)
+    let extra_spans = write_span.is_some() || stack_read_span.is_some();
+    (module.finish(), extra_spans)
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]

@@ -202,3 +202,53 @@ test('SIMD read loops wrap address32 independently of the full counter and backi
     cpu.dispose();
   }
 });
+
+test('a read loop interleaving stack and data still faults at the first denied stack operand', async () => {
+  const code = hex('8b048c8b1e48ffc14839d175f3f4');
+  // MOV EAX,[RSP+RCX*4]; MOV EBX,[RSI]; INC RCX; CMP RCX,RDX; JNE head; HLT
+  const cpu = await createCpu({
+    compiler,
+    entry: head,
+    limits: LIMITS,
+    memory: {
+      backings: [
+        { id: 'code', bytes: code },
+        { id: 'stack', bytes: hex('1122334444556677') },
+        { id: 'data', bytes: hex('12345678') },
+      ],
+      mappings: [
+        {
+          ...mapping(head, 'code', code.length),
+          permissions: { ...readOnly, execute: true },
+        },
+        mapping(row, 'stack', 4),
+        {
+          ...mapping(row + 4n, 'stack', 4),
+          offset: 4,
+          permissions: { read: false, write: true, execute: false },
+        },
+        mapping(column, 'data', 4),
+      ],
+    },
+    memoryLimits: { maxBackings: 3, maxMappings: 4, maxBackingBytes: code.length + 12 },
+  });
+  try {
+    cpu.setState(initial(head, { 1: 0n, 2: 2n, 4: row, 6: column }));
+    const denied = await cpu.run({ budget: 20n });
+    assert.equal(denied.reason, 'data-fault');
+    assert.equal(denied.retired, 5n);
+    assert.equal(denied.state.registers[0], 0x44332211n);
+    assert.equal(denied.state.registers[3], 0x78563412n);
+    fault(denied, {
+      instructionPc: head,
+      address: row + 4n,
+      width: 4,
+      access: 'read',
+      cause: 'permission',
+      failingAddress: row + 4n,
+      segment: 'ss',
+    });
+  } finally {
+    cpu.dispose();
+  }
+});
