@@ -47,6 +47,9 @@ mod processor;
 mod protection;
 #[path = "system/protection_keys.rs"]
 mod protection_keys;
+#[cfg(any(test, all(not(feature = "parallel"), target_arch = "wasm32")))]
+#[path = "memory/read_loop.rs"]
+mod read_loop;
 #[path = "system/software_events.rs"]
 mod software_events;
 #[path = "numeric/ssse3.rs"]
@@ -109,6 +112,8 @@ struct Emitter {
     paged: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     read_span: Option<memory::ReadSpan>,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    proved_reads: Option<(read_loop::ReadLoop, u32)>,
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     parallel_atomic: Option<parallel::Atomic>,
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
@@ -122,7 +127,7 @@ struct Emitter {
     body: Function,
     entries: BTreeMap<u64, u32>,
     current_index: u32,
-    structured_loop: Option<StructuredLoop>,
+    structured_loop: Option<(StructuredLoop, u32)>,
     entry_lookup: Option<u32>,
     multiply_high: Option<u32>,
     divide: Option<u32>,
@@ -1388,6 +1393,19 @@ fn emit_placement(
         next_local += 4;
         memory::ReadSpan::new(resolve, first)
     });
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let proved_reads = loop_body.and_then(|body| {
+        let span = read_span?;
+        let proof = read_loop::ReadLoop::recognize(
+            &unit.context,
+            &unit.instructions[body.head as usize..=body.tail as usize],
+        )?;
+        let first_bias = next_local;
+        let guard_failed = first_bias + read_loop::ReadLoop::BIAS_LOCALS;
+        locals.push((read_loop::ReadLoop::BIAS_LOCALS + 1, ValType::I32));
+        next_local = guard_failed + 1;
+        Some((proof, span, first_bias, guard_failed))
+    });
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     let parallel_atomic = parallel_atomic.map(|begin| {
         let token = next_local;
@@ -1442,6 +1460,8 @@ fn emit_placement(
         paged,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         read_span: None,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        proved_reads: None,
         #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
         parallel_atomic,
         #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
@@ -1557,20 +1577,40 @@ fn emit_placement(
         }
         let loop_depth = count - index as u32;
         if let Some(loop_body) = loop_body.filter(|body| body.head == index as u32) {
-            emitter.structured_loop = Some(loop_body);
+            #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+            if let Some((proof, span, first_bias, guard_failed)) = proved_reads {
+                emitter.guard_read_loop(proof, span, first_bias, guard_failed);
+                emitter.op(Op::If(BlockType::Empty));
+                emitter.proved_reads = Some((proof, first_bias));
+            }
+            #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+            let guarded = proved_reads.is_some();
+            #[cfg(not(all(not(feature = "parallel"), target_arch = "wasm32")))]
+            let guarded = false;
+            let inner_depth = loop_depth + 1 + u32::from(guarded);
+            emitter.structured_loop = Some((loop_body, inner_depth));
             emitter.op(Op::Loop(BlockType::Empty));
             for ordinal in index..=loop_body.tail as usize {
                 emitter.current_index = ordinal as u32;
                 emitter.instruction(
                     unit.instructions[ordinal],
                     unit.instructions.get(ordinal + 1),
-                    loop_depth + 1,
+                    inner_depth,
                     write_segment_base,
                 );
             }
             emitter.op(Op::End);
             emitter.structured_loop = None;
-            continue;
+            if !guarded {
+                continue;
+            }
+            #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+            {
+                emitter.proved_reads = None;
+            }
+            // An unproved range enters the original checked body at its head.
+            emitter.op(Op::End);
+            emitter.current_index = index as u32;
         }
         emitter.instruction(
             *instruction,

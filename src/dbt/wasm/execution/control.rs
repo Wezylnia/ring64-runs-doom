@@ -209,11 +209,9 @@ impl Emitter {
         }
         self.code_write_boundary(exit_depth);
         if let Some(&index) = self.entries.get(&target) {
-            let placement = if let Some(body) = self.structured_loop {
+            let placement = if let Some((body, inner_depth)) = self.structured_loop {
                 if self.current_index == body.tail && index == body.head {
-                    self.op(Op::Br(
-                        loop_depth - (self.entries.len() as u32 - body.head + 1),
-                    ));
+                    self.op(Op::Br(loop_depth - inner_depth));
                     return;
                 }
                 if self.current_index < body.tail && index == self.current_index + 1 {

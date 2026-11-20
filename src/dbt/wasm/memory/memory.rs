@@ -8,7 +8,7 @@ use wasm_encoder::{BlockType, Instruction as Op, MemArg};
 #[derive(Clone, Copy)]
 // Mapping edits happen between invocations, so the cached span lives in Wasm locals.
 pub(super) struct ReadSpan {
-    resolve: u32,
+    pub(super) resolve: u32,
     base: u32,
     length: u32,
     host: u32,
@@ -181,6 +181,21 @@ impl Emitter {
         exit_depth: u32,
         load_slow: impl FnOnce(&mut Self, u32),
     ) -> bool {
+        if let (Some(vector), Some((proof, first_bias))) = (vector_result, self.proved_reads)
+            && let Some(stream) = proof.stream_for(self.current_operation)
+        {
+            debug_assert_eq!(width, Width::W32);
+            self.op(Op::I32WrapI64)
+                .op(Op::LocalGet(first_bias + stream))
+                .op(Op::I32Add)
+                .op(Op::V128Load32Zero(MemArg {
+                    offset: 0,
+                    align: 0,
+                    memory_index: 0,
+                }))
+                .op(Op::LocalSet(vector));
+            return true;
+        }
         let Some(span) = self.read_span else {
             return false;
         };
