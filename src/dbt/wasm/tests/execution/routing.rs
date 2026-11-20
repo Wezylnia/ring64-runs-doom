@@ -479,3 +479,86 @@ fn float_backedge_preserves_retirement_stops_and_alternate_entry() {
     cases.push(denied);
     run_cases(cases);
 }
+
+#[test]
+fn read_only_integer_backedge_hoists_gates_without_changing_load_faults() {
+    use crate::embedding::layout::DATA;
+
+    let artifact = compiled_fixture(
+        0x1000,
+        &[
+            0x0f, 0xb6, 0x06, // movzx eax,[rsi]
+            0x0f, 0xb6, 0x56, 0x01, // movzx edx,[rsi+1]
+            0x0f, 0xb6, 0x5e, 0x02, // movzx ebx,[rsi+2]
+            0x0f, 0xb6, 0x7e, 0x03, // movzx edi,[rsi+3]
+            0x48, 0x83, 0xc6, 0x04, // add rsi,4
+            0x48, 0x39, 0xce, // cmp rsi,rcx
+            0x75, 0xe8, // jne head
+            0x90,
+        ],
+        0x1000,
+    );
+    assert_eq!(
+        wasm_loop_count(&artifact.bytes),
+        1 + usize::from(!cfg!(feature = "parallel")),
+    );
+    let mut cases = Vec::new();
+    for (budget, retired, next, flags, reason, expected, stop) in [
+        (
+            7,
+            7,
+            0x1000,
+            0x97,
+            BUDGET,
+            vec![(0, 1), (2, 2), (3, 3), (7, 4), (6, 0x8004)],
+            None,
+        ),
+        (
+            14,
+            14,
+            0x1018,
+            0x46,
+            BUDGET,
+            vec![(0, 5), (2, 6), (3, 7), (7, 8), (6, 0x8008)],
+            None,
+        ),
+        (2, 2, 0x1007, 2, BUDGET, vec![(0, 1), (2, 2)], None),
+        (8, 1, 0x1003, 2, STOP, vec![(0, 1)], Some(0x1003)),
+        (
+            14,
+            8,
+            0x1003,
+            0x97,
+            DATA,
+            vec![(0, 5), (2, 2), (3, 3), (7, 4), (6, 0x8004)],
+            None,
+        ),
+    ] {
+        let mut packet = execution_case(
+            &artifact.bytes,
+            &artifact.entries,
+            &[(6, 0x8000), (1, 0x8008)],
+            2,
+            0x1000,
+            budget,
+            (&expected, flags, next, reason as u32, budget - retired),
+        );
+        if let Some(stop) = stop {
+            packet["stop"] = json!(format!("{stop:x}"));
+        }
+        let loads = match retired {
+            7 => 4,
+            14 => 8,
+            8 => 6,
+            n => n,
+        };
+        packet["accesses"] = json!((0..loads)
+            .flat_map(|i| [
+                json!({"kind":"load","args":[format!("{:x}",0x8000 + i),1],"result":format!("{:x}",i+1)}),
+                json!({"kind":"access_failed","args":[],"result": if reason == DATA && i == 5 { DATA } else { 0 }}),
+            ])
+            .collect::<Vec<_>>());
+        cases.push(packet);
+    }
+    run_cases(cases);
+}

@@ -1681,7 +1681,7 @@ fn emit_body(
         }
         let loop_depth = count - index as u32;
         if let Some(loop_body) = loop_body.filter(|body| body.head == index as u32) {
-            if loop_body.register_only {
+            if loop_body.precheck_gates_without_read_proof() {
                 // Partial laps and in-loop stops use the original entry labels.
                 emitter.exclude_loop_stop(&unit.instructions, loop_body);
                 emitter.emit_prechecked_loop(

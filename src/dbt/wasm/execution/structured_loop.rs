@@ -6,16 +6,23 @@ use crate::x86::{
     instruction::{Address, Instruction, Location, Operation, VectorInstruction, Width},
 };
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LoopKind {
+    Float,
+    Registers,
+    IntegerReads,
+}
+
 #[derive(Clone, Copy)]
 pub(super) struct StructuredLoop {
     pub(super) head: u32,
     pub(super) tail: u32,
-    pub(super) register_only: bool,
+    kind: LoopKind,
 }
 
 impl StructuredLoop {
     pub(super) fn dword_writes(self, unit: &super::Unit) -> u16 {
-        if !self.register_only || unit.context.is_long64() {
+        if self.kind != LoopKind::Registers || unit.context.is_long64() {
             return 0;
         }
         let mut writes = 0;
@@ -65,7 +72,7 @@ impl StructuredLoop {
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     pub(super) fn read_proof(self, unit: &super::Unit) -> Option<super::read_loop::ReadLoop> {
-        if self.register_only {
+        if self.precheck_gates_without_read_proof() {
             return None;
         }
         super::read_loop::ReadLoop::recognize(
@@ -74,15 +81,21 @@ impl StructuredLoop {
         )
     }
 
-    pub(super) fn select(instructions: &[Instruction]) -> Option<Self> {
-        Self::select_body(instructions, false).or_else(|| Self::select_body(instructions, true))
+    pub(super) fn precheck_gates_without_read_proof(self) -> bool {
+        self.kind != LoopKind::Float
     }
 
-    fn select_body(instructions: &[Instruction], register_only: bool) -> Option<Self> {
-        let inside = if register_only {
-            inside_register_body
-        } else {
-            inside_float_body
+    pub(super) fn select(instructions: &[Instruction]) -> Option<Self> {
+        Self::select_body(instructions, LoopKind::Float)
+            .or_else(|| Self::select_body(instructions, LoopKind::IntegerReads))
+            .or_else(|| Self::select_body(instructions, LoopKind::Registers))
+    }
+
+    fn select_body(instructions: &[Instruction], kind: LoopKind) -> Option<Self> {
+        let inside = match kind {
+            LoopKind::Float => inside_float_body,
+            LoopKind::Registers => inside_register_body,
+            LoopKind::IntegerReads => inside_integer_read_body,
         };
         let mut first = 0;
         let mut best = None::<Self>;
@@ -95,15 +108,27 @@ impl StructuredLoop {
                 let head = first + offset;
                 let length = index - head;
                 if best.is_none_or(|previous| length > (previous.tail - previous.head) as usize)
-                    && (register_only
-                        || instructions[head..index]
+                    && match kind {
+                        LoopKind::Registers => true,
+                        LoopKind::Float => instructions[head..index]
                             .iter()
-                            .any(|i| scalar_f32(i.operation)))
+                            .any(|i| scalar_f32(i.operation)),
+                        LoopKind::IntegerReads => {
+                            // Amortize the extra body and translation cost across several loads.
+                            const MIN_READS: usize = 4;
+                            instructions[head..index]
+                                .iter()
+                                .filter(|i| integer_read(i.operation))
+                                .take(MIN_READS)
+                                .count()
+                                == MIN_READS
+                        }
+                    }
                 {
                     best = Some(Self {
                         head: head as u32,
                         tail: index as u32,
-                        register_only,
+                        kind,
                     });
                 }
             }
@@ -139,6 +164,36 @@ fn inside_register_body(operation: Operation) -> bool {
                 ..
             }
     )
+}
+
+fn integer_read(operation: Operation) -> bool {
+    matches!(
+        operation,
+        Operation::Load { .. }
+            | Operation::Extend {
+                src: Location::Memory(_),
+                ..
+            }
+    )
+}
+
+fn inside_integer_read_body(operation: Operation) -> bool {
+    integer_read(operation)
+        || matches!(
+            operation,
+            Operation::Alu { .. }
+                | Operation::Lea { .. }
+                | Operation::Mov { .. }
+                | Operation::Nop
+                | Operation::Extend {
+                    src: Location::Register(_),
+                    ..
+                }
+                | Operation::Imul {
+                    src: Location::Register(_),
+                    ..
+                }
+        )
 }
 
 // Leave stores, control transfers and context-changing operations on the
