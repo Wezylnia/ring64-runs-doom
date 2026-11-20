@@ -121,6 +121,8 @@ struct Emitter {
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     proved_reads: Option<(read_loop::ReadLoop, u32)>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    proved_read_retry: Option<(u32, u32)>, // tail ordinal and one-shot retry local
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     zero_upper_xmm: u16,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     normal_low_f32: u16,
@@ -531,6 +533,14 @@ impl Emitter {
                 self.op(Op::If(BlockType::Empty));
                 self.target(target, loop_depth + 1, exit_depth + 1);
                 self.op(Op::End);
+                #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+                if let Some((tail, retry)) = self.proved_read_retry
+                    && self.current_index == tail
+                    && self.structured_loop.is_none()
+                {
+                    // Falling out of the resumed lap loses its stream proof.
+                    self.op(Op::I32Const(0)).op(Op::LocalSet(retry));
+                }
             }
             Operation::CountBranch {
                 condition,
@@ -1540,9 +1550,10 @@ fn emit_body(
         let proof = _guard_reads.then(|| body.read_proof(unit)).flatten()?;
         let first_bias = next_local;
         let guard_failed = first_bias + read_loop::ReadLoop::BIAS_LOCALS;
-        locals.push((read_loop::ReadLoop::BIAS_LOCALS + 1, ValType::I32));
-        next_local = guard_failed + 1;
-        Some((proof, span, first_bias, guard_failed))
+        let retry = guard_failed + 1;
+        locals.push((read_loop::ReadLoop::BIAS_LOCALS + 2, ValType::I32));
+        next_local = retry + 1;
+        Some((proof, span, first_bias, guard_failed, (body.tail, retry)))
     });
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     let parallel_atomic = parallel_atomic.map(|begin| {
@@ -1604,6 +1615,8 @@ fn emit_body(
         write_spans: [None; 2],
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         proved_reads: None,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        proved_read_retry: proved_reads.map(|(_, _, _, _, retry)| retry),
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         zero_upper_xmm: 0,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -1741,8 +1754,8 @@ fn emit_body(
                 );
             } else {
                 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-                if let Some((proof, span, first_bias, guard_failed)) = proved_reads {
-                    emitter.guard_read_loop(proof, span, first_bias, guard_failed);
+                if let Some((proof, span, first_bias, guard_failed, (_, retry))) = proved_reads {
+                    emitter.guard_read_loop(proof, span, first_bias, guard_failed, retry);
                     emitter.exclude_loop_stop(&unit.instructions, loop_body);
                     emitter.op(Op::I32And);
                     emitter.proved_reads = Some((proof, first_bias));

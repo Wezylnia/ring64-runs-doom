@@ -111,6 +111,8 @@ impl Emitter {
             if self.current_index == body.head {
                 self.op(Op::Br(2));
             } else {
+                let (_, retry) = self.proved_read_retry.expect("proved read retry local");
+                self.op(Op::I32Const(1)).op(Op::LocalSet(retry));
                 self.op(Op::I32Const(self.current_index as i32))
                     .op(Op::LocalSet(super::ENTRY))
                     .op(Op::Br(exit_depth));

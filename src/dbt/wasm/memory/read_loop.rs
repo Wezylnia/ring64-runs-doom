@@ -196,10 +196,19 @@ impl Emitter {
         span: SpanCache,
         first_bias: u32,
         guard_failed: u32,
+        retry: u32,
     ) {
         use crate::memory::DirectSpan as Descriptor;
 
         self.op(Op::Block(BlockType::Result(ValType::I32)))
+            // A checked retry reaches this header only through the same
+            // induction step, with its proved stream bindings still live.
+            .op(Op::I32Const(1))
+            .op(Op::LocalGet(retry))
+            .op(Op::I32Const(0))
+            .op(Op::LocalSet(retry))
+            .op(Op::BrIf(0))
+            .op(Op::Drop)
             .op(Op::I32Const(0));
         // A later LDMXCSR can change rounding within this artifact. Only a
         // mapping or address proof failure latches the checked placement.

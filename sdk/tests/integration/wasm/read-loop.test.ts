@@ -136,6 +136,40 @@ test('SIMD read loops resume from interior PCs and validate every backing after 
     assert.equal(denormalFault.state.rip, head + 22n);
     assert.equal(cpu.readMxcsr(), 0x1e82);
     assert.deepEqual(cpu.readXmmState().slice(0, 3), [0x00400000n, 0x40c00000n, beforeDenormal[2]]);
+
+    reset();
+    cpu.setMxcsr(0x1f80);
+    const partialLap = await cpu.run({ budget: 10n, stop });
+    assert.equal(partialLap.reason, 'budget');
+    assert.equal(partialLap.retired, 10n);
+    assert.equal(partialLap.state.rip, head + 5n);
+    assert.deepEqual(cpu.readXmmState().slice(0, 3), [
+      0x40400000n,
+      0x40c00000n,
+      upper | 0x40c00000n,
+    ]);
+    const completedLap = await cpu.run({ budget: 20n, stop });
+    assert.equal(completedLap.reason, 'stop');
+    assert.equal(completedLap.retired, 8n);
+    assert.deepEqual(cpu.readXmmState().slice(0, 3), [
+      0x41400000n,
+      0x41a00000n,
+      upper | 0x42180000n,
+    ]);
+    assert.equal(cpu.readMxcsr(), 0x1fa2);
+
+    reset();
+    cpu.setMxcsr(0x1f80);
+    const uninterrupted = await cpu.run({ budget: 20n, stop });
+    assert.equal(uninterrupted.reason, 'stop');
+    assert.equal(uninterrupted.retired, 18n);
+    assert.deepEqual(uninterrupted.state, completedLap.state);
+    assert.deepEqual(cpu.readXmmState().slice(0, 3), [
+      0x41400000n,
+      0x41a00000n,
+      upper | 0x42180000n,
+    ]);
+    assert.equal(cpu.readMxcsr(), 0x1fa2);
     cpu.setMxcsr(0x1f80);
 
     const split = [...fixed, mapping(column, 'column', 15)];
@@ -266,6 +300,50 @@ test('a rejected float at the guarded loop head executes once through the checke
     assert.equal(invalid.state.rip, head);
     assert.equal(cpu.readXmmState()[0], upper | 0x7f800001n);
     assert.equal(cpu.readMxcsr(), 0x1f01);
+  } finally {
+    cpu.dispose();
+  }
+});
+
+test('an outlined float retry loses its proof when the resumed lap exits', async () => {
+  const loop = body();
+  // DEC R10; JZ stop; MOV RAX,R8; MOV RBX,R9; XOR ECX,ECX; JMP head.
+  const code = Uint8Array.of(...loop, ...hex('49ffca740a4c89c04c89cb31c9ebca'));
+  const missing = row + 0x8000n;
+  const cpu = await createCpu({
+    compiler,
+    entry: head,
+    limits: LIMITS,
+    memory: {
+      backings: [
+        { id: 'code', bytes: code },
+        { id: 'row', bytes: floats(2 ** -149, 2) },
+        { id: 'column', bytes: floats(1, 1) },
+      ],
+      mappings: [
+        { ...mapping(head, 'code', code.length), permissions: { ...readOnly, execute: true } },
+        mapping(row, 'row', 8),
+        mapping(column, 'column', 8),
+      ],
+    },
+    memoryLimits: { maxBackings: 3, maxMappings: 3, maxBackingBytes: code.length + 16 },
+  });
+  try {
+    cpu.setState(initial(head, { 0: row, 1: 0n, 2: 2n, 3: column, 8: missing, 9: column, 10: 2n }));
+    const denied = await cpu.run({ budget: 40n, stop: head + BigInt(code.length) });
+    assert.equal(denied.reason, 'data-fault');
+    assert.equal(denied.retired, 15n);
+    assert.equal(denied.state.rip, head);
+    assert.equal(denied.state.registers[10], 1n);
+    fault(denied, {
+      instructionPc: head,
+      address: missing,
+      width: 4,
+      access: 'read',
+      cause: 'unmapped',
+      failingAddress: missing,
+      segment: 'ds',
+    });
   } finally {
     cpu.dispose();
   }
