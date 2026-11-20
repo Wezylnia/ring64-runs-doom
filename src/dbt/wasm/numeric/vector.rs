@@ -315,12 +315,13 @@ impl Emitter {
                     (VectorOperand::Register(register), operand)
                 };
                 self.vector_operand(src, bytes, aligned, next_pc, exit_depth);
-                self.op(Op::LocalSet(right));
                 match dst {
                     VectorOperand::Register(dst) => {
-                        if bytes == 16 {
-                            self.op(Op::LocalGet(right));
-                        } else {
+                        // Narrow memory loads already zero-fill the rest of the vector.
+                        if bytes != 16
+                            && (preserve_upper || matches!(src, VectorOperand::Register(_)))
+                        {
+                            self.op(Op::LocalSet(right));
                             if preserve_upper {
                                 self.op(Op::LocalGet(self.xmm(dst)));
                             } else {
@@ -338,6 +339,7 @@ impl Emitter {
                         self.op(Op::LocalSet(self.xmm(dst)));
                     }
                     VectorOperand::Memory(address) => {
+                        self.op(Op::LocalSet(right));
                         self.vector_store_value(address, bytes, aligned, right, next_pc, exit_depth)
                     }
                 }
