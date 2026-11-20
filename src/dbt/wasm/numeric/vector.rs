@@ -318,8 +318,11 @@ impl Emitter {
                 match dst {
                     VectorOperand::Register(dst) => {
                         // Narrow memory loads already zero-fill the rest of the vector.
+                        // The temporary keeps generated moves faster in the shared core.
                         if bytes != 16
-                            && (preserve_upper || matches!(src, VectorOperand::Register(_)))
+                            && (cfg!(feature = "parallel")
+                                || preserve_upper
+                                || matches!(src, VectorOperand::Register(_)))
                         {
                             self.op(Op::LocalSet(right));
                             if preserve_upper {
@@ -335,6 +338,8 @@ impl Emitter {
                                     i as u8
                                 }
                             })));
+                        } else if cfg!(feature = "parallel") {
+                            self.op(Op::LocalSet(right)).op(Op::LocalGet(right));
                         }
                         self.op(Op::LocalSet(self.xmm(dst)));
                     }
