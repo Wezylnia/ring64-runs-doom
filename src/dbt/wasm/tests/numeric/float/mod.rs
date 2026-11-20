@@ -146,7 +146,7 @@ fn numeric_calls_capture_live_banks_publish_only_successful_results_and_keep_fau
     let a = 0x0123456789abcdeffedcba9876543210u128;
     let b = 0xaaaaaaaa55555555bbbbbbbb66666666u128;
     let value = 0xfedcba980123456789abcdef76543210u128;
-    let op = numeric(Kind::Add);
+    let op = numeric(Kind::Div);
     let operations = vec![
         Operation::Vector(VectorInstruction::Move {
             register: 0,
@@ -181,7 +181,7 @@ fn numeric_calls_capture_live_banks_publish_only_successful_results_and_keep_fau
     };
     let mut p = packet(
         vec![Operation::Float(FloatInstruction {
-            op,
+            op: numeric(Kind::Add),
             dst: 0,
             src: Location::Memory(address),
         })],
@@ -348,7 +348,7 @@ fn numeric_memory_sources_use_actual_declared_spans_before_calling_the_numeric_a
     };
     let mut cases = vec![];
     for (kind, format, scalar, integer64, width) in [
-        (Kind::Add, Format::F32, true, false, 4),
+        (Kind::Div, Format::F32, true, false, 4),
         (Kind::Add, Format::F64, true, false, 8),
         (Kind::Add, Format::F32, false, false, 16),
         (Kind::FloatConvert, Format::F32, false, false, 8),
