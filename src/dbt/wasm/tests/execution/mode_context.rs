@@ -1,7 +1,7 @@
 use super::*;
 use crate::embedding::layout::{BUDGET, DATA, DISPATCH, SEGMENT};
 use crate::x86::context::{ExecutionContext, Segment};
-use crate::x86::instruction::{Address, AddressBase, Bit, BitIndex, Location};
+use crate::x86::instruction::{Address, AddressBase, Bit, BitIndex, Condition, Location};
 
 fn context(code32: bool, stack32: bool) -> ExecutionContext {
     let mut segments = serde_json::Map::new();
@@ -56,6 +56,55 @@ fn non64_register_writes_preserve_inactive_banks_and_high_dword() {
             1,
             (&[(0, 0xfedcba9889abcdef)], 2, 0x1005, BUDGET as u32, 0),
         ));
+    }
+    run_cases(cases);
+}
+
+#[test]
+fn cmov_select_writes_the_high_dword_according_to_mode_for_both_predicates() {
+    let mut cases = Vec::new();
+    for context in [
+        ExecutionContext::default(),
+        context(true, true),
+        context(false, true),
+    ] {
+        let mut u = unit(vec![Instruction {
+            pc: 0x1000,
+            next_pc: 0x1003,
+            operation: Operation::Cmov {
+                dst: RegisterView::low(0),
+                src: Location::Register(RegisterView::low(1)),
+                width: Width::W32,
+                condition: Condition::Equal,
+            },
+        }]);
+        let upper = if context.is_long64() {
+            0
+        } else {
+            0xfedcba9800000000
+        };
+        u.context = context;
+        let bytes = emit(&u);
+        assert!(wasmparser::Parser::new(0).parse_all(&bytes).any(|part| {
+            let wasmparser::Payload::CodeSectionEntry(body) = part.unwrap() else {
+                return false;
+            };
+            body.get_operators_reader()
+                .unwrap()
+                .into_iter()
+                .any(|op| matches!(op.unwrap(), wasmparser::Operator::Select))
+        }));
+        for (flags, low) in [(2, 0x76543210), (0x42, 0x89abcdef)] {
+            cases.push(execution_case(
+                &bytes,
+                &[0x1000],
+                &[(0, 0xfedcba9876543210), (1, 0x0123456789abcdef)],
+                flags,
+                0x1000,
+                1,
+                (&[(0, upper | low)], flags, 0x1003, BUDGET as u32, 0),
+            ));
+        }
     }
     run_cases(cases);
 }

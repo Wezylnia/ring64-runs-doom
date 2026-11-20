@@ -1,6 +1,6 @@
 use super::{ADDRESS, Emitter, RESULT, VALUE};
 use crate::x86::instruction::{Condition, Location, RegisterView, Width};
-use wasm_encoder::{BlockType, Instruction as Op};
+use wasm_encoder::Instruction as Op;
 
 impl Emitter {
     fn source(&mut self, src: Location, width: Width, next_pc: u64, exit_depth: u32) {
@@ -83,15 +83,9 @@ impl Emitter {
     ) {
         // Even a false condition must complete the source read before writes.
         self.source(src, width, next_pc, exit_depth);
-        self.op(Op::LocalSet(VALUE));
+        self.data_register(dst, width);
         self.condition(condition);
-        self.op(Op::If(BlockType::Empty)).op(Op::LocalGet(VALUE));
+        self.op(Op::Select);
         self.write_register(dst, width);
-        if width == Width::W32 {
-            self.op(Op::Else);
-            self.data_register(dst, width);
-            self.write_register(dst, width);
-        }
-        self.op(Op::End);
     }
 }
