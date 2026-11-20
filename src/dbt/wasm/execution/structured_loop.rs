@@ -14,12 +14,14 @@ enum LoopKind {
     Float,
     Registers,
     IntegerReads,
+    ForwardEdges,
 }
 
 #[derive(Clone, Copy)]
 pub(super) struct StructuredLoop {
     pub(super) head: u32,
     pub(super) tail: u32,
+    max_lap_len: u32,
     kind: LoopKind,
 }
 
@@ -88,9 +90,29 @@ impl StructuredLoop {
         self.kind != LoopKind::Float
     }
 
+    pub(super) fn active_labels(self, ordinal: u32) -> u32 {
+        if self.forward_edges() {
+            self.tail - ordinal
+        } else {
+            0
+        }
+    }
+
+    pub(super) fn forward_edges(self) -> bool {
+        self.kind == LoopKind::ForwardEdges
+    }
+
     pub(super) fn select(instructions: &[Instruction]) -> Option<Self> {
         Self::select_body(instructions, LoopKind::Float)
             .or_else(|| Self::select_body(instructions, LoopKind::IntegerReads))
+            .or_else(|| {
+                super::loop_cfg::select(instructions).map(|(head, tail, max_lap_len)| Self {
+                    head,
+                    tail,
+                    max_lap_len,
+                    kind: LoopKind::ForwardEdges,
+                })
+            })
             .or_else(|| Self::select_body(instructions, LoopKind::Registers))
     }
 
@@ -99,6 +121,7 @@ impl StructuredLoop {
             LoopKind::Float => inside_float_body,
             LoopKind::Registers => inside_register_body,
             LoopKind::IntegerReads => inside_integer_read_body,
+            LoopKind::ForwardEdges => unreachable!("forward edges use graph admission"),
         };
         let mut first = 0;
         let mut best = None::<Self>;
@@ -126,11 +149,13 @@ impl StructuredLoop {
                                 .count()
                                 == MIN_READS
                         }
+                        LoopKind::ForwardEdges => unreachable!("forward edges use graph admission"),
                     }
                 {
                     best = Some(Self {
                         head: head as u32,
                         tail: index as u32,
+                        max_lap_len: length as u32 + 1,
                         kind,
                     });
                 }
@@ -339,14 +364,13 @@ impl Emitter {
         write_segment_base: Option<u32>,
     ) {
         let inner_depth = loop_depth + 1;
-        self.structured_loop = Some((body, inner_depth));
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         let prove_zero_upper = self.proved_reads.is_some();
         self.op(Op::Loop(BlockType::Empty));
         if self.loop_gates_prechecked {
             // Leave the guarded clone for the checked clone before a partial lap.
             self.op(Op::LocalGet(REMAINING))
-                .op(Op::I64Const(i64::from(body.tail - body.head + 1)))
+                .op(Op::I64Const(i64::from(body.max_lap_len)))
                 .op(Op::I64LtU);
             if self.register_upper_dwords.iter().any(Option::is_some) {
                 self.op(Op::If(BlockType::Empty));
@@ -356,8 +380,19 @@ impl Emitter {
                 self.op(Op::BrIf(1));
             }
         }
+        if body.forward_edges() {
+            // Each later cloned instruction has an enclosing forward label.
+            for _ in body.head..body.tail {
+                self.op(Op::Block(BlockType::Empty));
+            }
+        }
         for ordinal in body.head as usize..=body.tail as usize {
+            if body.forward_edges() && ordinal as u32 != body.head {
+                self.op(Op::End);
+            }
             self.current_index = ordinal as u32;
+            let depth = inner_depth + body.active_labels(self.current_index);
+            self.structured_loop = Some((body, depth));
             // The complete-lap guard and the no-fault body rule hide intermediate status.
             self.omit_result_status = body.kind == LoopKind::Registers
                 && self.loop_gates_prechecked
@@ -370,7 +405,7 @@ impl Emitter {
             self.instruction(
                 instructions[ordinal],
                 instructions.get(ordinal + 1),
-                inner_depth,
+                depth,
                 write_segment_base,
             );
             #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]

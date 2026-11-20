@@ -31,6 +31,8 @@ mod integer;
 mod integer_memory;
 #[path = "system/io.rs"]
 mod io;
+#[path = "execution/loop_cfg.rs"]
+mod loop_cfg;
 #[path = "memory/memory.rs"]
 mod memory;
 #[path = "numeric/mmx.rs"]

@@ -216,11 +216,17 @@ impl Emitter {
         self.code_write_boundary(exit_depth);
         if let Some(&index) = self.entries.get(&target) {
             let placement = if let Some((body, inner_depth)) = self.structured_loop {
-                if self.current_index == body.tail && index == body.head {
-                    self.op(Op::Br(loop_depth - inner_depth));
+                // Count transient scopes (such as Jcc's If) on top of the
+                // cloned forward labels that still enclose the source.
+                let extra_depth = loop_depth - inner_depth;
+                if index == body.head && (body.forward_edges() || self.current_index == body.tail) {
+                    self.op(Op::Br(body.active_labels(self.current_index) + extra_depth));
                     return;
                 }
-                if self.current_index < body.tail && index == self.current_index + 1 {
+                if self.current_index < index && index <= body.tail {
+                    if index != self.current_index + 1 || extra_depth != 0 {
+                        self.op(Op::Br(index - self.current_index - 1 + extra_depth));
+                    }
                     return;
                 }
                 // The clone lives at its head's original label. Other edges

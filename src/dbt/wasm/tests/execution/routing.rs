@@ -611,3 +611,171 @@ fn read_only_integer_backedge_hoists_gates_without_changing_load_faults() {
     }
     run_cases(cases);
 }
+
+#[test]
+fn natural_loop_preserves_forward_branches_external_exits_and_store_order() {
+    use crate::embedding::layout::DATA;
+    let operations = [
+        Operation::Jump { target: 0x1008 },
+        Operation::Nop,
+        Operation::Jcc {
+            condition: Condition::Below,
+            target: 0x1014,
+        },
+        Operation::Alu {
+            kind: Alu::Add,
+            dst: RegisterView::low(0),
+            src: DataOperand::Immediate(7),
+            width: Width::W32,
+        },
+        Operation::Jcc {
+            condition: Condition::NotEqual,
+            target: 0x1014,
+        },
+        Operation::Store {
+            src: DataOperand::Immediate(0xab),
+            width: Width::W8,
+            address: Address {
+                base: AddressBase::Register(3),
+                ..Address::default()
+            },
+        },
+        Operation::Alu {
+            kind: Alu::Sub,
+            dst: RegisterView::low(1),
+            src: DataOperand::Immediate(1),
+            width: Width::W32,
+        },
+        Operation::Jcc {
+            condition: Condition::Equal,
+            target: 0x1004,
+        },
+        Operation::Jump { target: 0x1008 },
+        Operation::Nop,
+    ];
+    let instructions = operations
+        .into_iter()
+        .enumerate()
+        .map(|(i, operation)| Instruction {
+            pc: 0x1000 + i as u64 * 4,
+            next_pc: 0x1004 + i as u64 * 4,
+            operation,
+        })
+        .collect();
+    let unit = unit(instructions);
+    let bytes = emit(&unit);
+    assert_eq!(
+        wasm_loop_count(&bytes),
+        1 + usize::from(!cfg!(feature = "parallel"))
+    );
+    let limit = bytes.len() - usize::from(!cfg!(feature = "parallel"));
+    let fallback = emit_profile(&unit, false, false, limit);
+    assert!(fallback.len() <= limit);
+    assert_eq!(wasm_loop_count(&fallback), 1);
+    wasmparser::Validator::new()
+        .validate_all(&fallback)
+        .unwrap();
+    let entries: Vec<_> = unit.instructions.iter().map(|i| i.pc).collect();
+    let mut cases = Vec::new();
+    for (entry, budget, flags, counter, expected, rip, reason, remaining, after, stop, store) in [
+        (
+            0x1008,
+            7,
+            2,
+            2,
+            vec![(0, 7), (1, 1)],
+            0x1008,
+            BUDGET,
+            0,
+            2,
+            None,
+            Some(1),
+        ),
+        (
+            0x1008,
+            7,
+            3,
+            2,
+            vec![(0, 7), (1, 1)],
+            0x1010,
+            BUDGET,
+            0,
+            2,
+            None,
+            Some(1),
+        ),
+        (
+            0x1008,
+            7,
+            3,
+            1,
+            vec![(1, 0)],
+            0x1004,
+            STOP,
+            3,
+            0x46,
+            Some(0x1004),
+            Some(1),
+        ),
+        (
+            0x1008,
+            7,
+            2,
+            2,
+            vec![(0, 7)],
+            0x1018,
+            DISPATCH,
+            3,
+            2,
+            None,
+            Some(2),
+        ),
+        (
+            0x1008,
+            7,
+            2,
+            2,
+            vec![(0, 7)],
+            0x1014,
+            DATA,
+            4,
+            2,
+            None,
+            Some(0),
+        ),
+        (
+            0x1008,
+            7,
+            2,
+            2,
+            vec![(0, 7)],
+            0x1014,
+            STOP,
+            4,
+            2,
+            Some(0x1014),
+            None,
+        ),
+        (0x1010, 1, 2, 2, vec![], 0x1014, BUDGET, 0, 2, None, None),
+    ] {
+        let mut packet = execution_case(
+            &bytes,
+            &entries,
+            &[(0, 0), (1, counter), (3, 0x8000)],
+            flags,
+            entry,
+            budget,
+            (&expected, after, rip, reason as u32, remaining),
+        );
+        if let Some(stop) = stop {
+            packet["stop"] = json!(format!("{stop:x}"));
+        }
+        if let Some(status) = store {
+            packet["accesses"] = json!([
+                {"kind":"store","args":["8000",1,"ab"],"result":status}
+            ]);
+        }
+        cases.push(packet);
+    }
+    run_cases(cases);
+}

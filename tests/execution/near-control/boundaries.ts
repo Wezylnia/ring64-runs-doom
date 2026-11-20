@@ -30,6 +30,29 @@ function segmentFault(result: RunResult, expected: SegmentFault): void {
 export function boundaryScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [
     {
+      name: 'a watched store inside a guarded loop exits before fetching changed successor code',
+      async run() {
+        const code = 'eb0190720583c0077500c6030283e90174f0ebef90';
+        await using(
+          compiler,
+          code,
+          LONG,
+          async (cpu) => {
+            const before = input(0x1003n, { 0: 0n, 1: 2n, 3: 0x100fn }, 2n);
+            cpu.setState(before);
+            const result = await cpu.run({ budget: 7n, stop: 0x1002n, repeatBudget: 0n });
+            outcome(result, 'stop', 7n, 6n, {
+              ...changed(before, 0x1002n, { 0: 7n, 1: 0n }),
+              flags: 0x46n,
+            });
+            equal(result.resources.compilations, 2, 'changed successor is retranslated');
+            memory(cpu, 0x100dn, '83e902');
+          },
+          { entry: 0x1003n, codeBase: 0x1000n, codeWrite: true },
+        );
+      },
+    },
+    {
       name: 'memory transfer and stack forms preserve source target and destination fault order',
       async run() {
         for (const row of [
