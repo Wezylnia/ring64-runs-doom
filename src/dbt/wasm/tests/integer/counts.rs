@@ -1,6 +1,33 @@
 use super::*;
 
 #[test]
+fn dword_shifts_use_native_wasm_i32_values() {
+    use wasmparser::{Operator, Parser, Payload};
+
+    for (selector, expected) in [
+        (4, Operator::I32Shl),
+        (5, Operator::I32ShrU),
+        (7, Operator::I32ShrS),
+    ] {
+        let artifact = compiled_fixture(0x1000, &[0xd3, 0xc0 | selector << 3], 0x1000);
+        let body = Parser::new(0)
+            .parse_all(&artifact.bytes)
+            .find_map(|item| match item.unwrap() {
+                Payload::CodeSectionEntry(body) => Some(body),
+                _ => None,
+            })
+            .unwrap();
+        assert!(
+            body.get_operators_reader()
+                .unwrap()
+                .into_iter()
+                .any(|op| op.unwrap() == expected),
+            "{expected:?}"
+        );
+    }
+}
+
+#[test]
 fn count_literals_distinguish_masked_effective_and_full_width_counts() {
     let mut cases = Vec::new();
     for (code, a, c, result, mask, flags) in [

@@ -32,6 +32,19 @@ impl Emitter {
             .op(Op::I64Ne)
             .op(Op::If(BlockType::Empty));
         match kind {
+            Shift::Shl | Shift::Shr | Shift::Sar if width == Width::W32 => {
+                self.op(Op::LocalGet(LHS))
+                    .op(Op::I32WrapI64)
+                    .op(Op::LocalGet(RHS))
+                    .op(Op::I32WrapI64)
+                    .op(match kind {
+                        Shift::Shl => Op::I32Shl,
+                        Shift::Shr => Op::I32ShrU,
+                        _ => Op::I32ShrS,
+                    })
+                    .op(Op::I64ExtendI32U)
+                    .op(Op::LocalSet(RESULT));
+            }
             Shift::Shl | Shift::Shr | Shift::Sar => {
                 self.op(Op::LocalGet(LHS));
                 if kind == Shift::Sar {
