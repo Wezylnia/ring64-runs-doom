@@ -203,6 +203,61 @@ test('SIMD read loops wrap address32 independently of the full counter and backi
   }
 });
 
+test('a rejected float at the guarded loop head executes once through the checked head', async () => {
+  const code = hex('f30f59048bf30f100c88f30f590c8bf30f10548804f30f58c14883c1024839d175de');
+  // MULSS XMM0,[RBX+RCX*4]; MOVSS XMM1,[RAX+RCX*4]; MULSS XMM1,[RBX+RCX*4];
+  // MOVSS XMM2,[RAX+RCX*4+4]; ADDSS XMM0,XMM1; ADD RCX,2; CMP RCX,RDX; JNE head.
+  const stop = head + BigInt(code.length);
+  const cpu = await createCpu({
+    compiler,
+    entry: head,
+    limits: LIMITS,
+    memory: {
+      backings: [
+        { id: 'code', bytes: code },
+        { id: 'row', bytes: floats(1, 2) },
+        { id: 'column', bytes: floats(2) },
+      ],
+      mappings: [
+        { ...mapping(head, 'code', code.length), permissions: { ...readOnly, execute: true } },
+        mapping(row, 'row', 8),
+        mapping(column, 'column', 4),
+      ],
+    },
+    memoryLimits: { maxBackings: 3, maxMappings: 3, maxBackingBytes: code.length + 12 },
+  });
+  try {
+    const input = initial(head, { 0: row, 1: 0n, 2: 2n, 3: column });
+    cpu.setState(input);
+    const upper = 0x123456789012345678901234n << 32n;
+    cpu.setXmmState([upper | 0x3f800000n, ...Array<bigint>(15).fill(0n)]);
+    cpu.setMxcsr(0x3f80); // Round down forces the precise helper, including at the loop head.
+    const rounded = await cpu.run({ budget: 8n, stop });
+    assert.equal(rounded.reason, 'budget');
+    assert.equal(rounded.retired, 8n);
+    assert.equal(rounded.state.rip, stop);
+    assert.equal(rounded.state.registers[1], 2n);
+    assert.deepEqual(cpu.readXmmState().slice(0, 3), [
+      upper | 0x40800000n,
+      0x40000000n,
+      0x40000000n,
+    ]);
+    assert.equal(cpu.readMxcsr(), 0x3f80);
+
+    cpu.setState(input);
+    cpu.setXmmState([upper | 0x7f800001n, ...Array<bigint>(15).fill(0n)]);
+    cpu.setMxcsr(0x1f00); // Unmasked invalid operation on the signaling NaN at the loop head.
+    const invalid = await cpu.run({ budget: 20n, stop });
+    assert.equal(invalid.reason, 'simd-exception');
+    assert.equal(invalid.retired, 0n);
+    assert.equal(invalid.state.rip, head);
+    assert.equal(cpu.readXmmState()[0], upper | 0x7f800001n);
+    assert.equal(cpu.readMxcsr(), 0x1f01);
+  } finally {
+    cpu.dispose();
+  }
+});
+
 test('a read loop interleaving stack and data still faults at the first denied stack operand', async () => {
   const code = hex('8b048c8b1e48ffc14839d175f3f4');
   // MOV EAX,[RSP+RCX*4]; MOV EBX,[RSI]; INC RCX; CMP RCX,RDX; JNE head; HLT

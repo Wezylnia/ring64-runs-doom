@@ -59,7 +59,7 @@ impl Emitter {
             let wide = None;
             self.float_f32(instruction.op.kind, left, right, wide);
             self.op(Op::Br(1)).op(Op::End);
-            self.float_helper(instruction, left, right, exit_depth + 1);
+            self.float_f32_fallback(instruction, left, right, exit_depth);
             self.op(Op::End);
         } else {
             self.float_helper(instruction, left, right, exit_depth);
@@ -86,6 +86,31 @@ impl Emitter {
             let destination = self.xmm(instruction.dst);
             self.op(Op::LocalGet(result)).op(Op::LocalSet(destination));
         }
+    }
+
+    fn float_f32_fallback(
+        &mut self,
+        instruction: FloatInstruction,
+        left: u32,
+        right: u32,
+        exit_depth: u32,
+    ) {
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if self.proved_reads.is_some() {
+            let (body, _) = self.structured_loop.expect("proved read loop placement");
+            debug_assert!(self.loop_gates_prechecked);
+            // The rejected op has published neither its result nor retirement.
+            // A header retry skips the guarded copy and reaches the checked loop.
+            if self.current_index == body.head {
+                self.op(Op::Br(2));
+            } else {
+                self.op(Op::I32Const(self.current_index as i32))
+                    .op(Op::LocalSet(super::ENTRY))
+                    .op(Op::Br(exit_depth));
+            }
+            return;
+        }
+        self.float_helper(instruction, left, right, exit_depth + 1);
     }
 
     fn float_helper(
