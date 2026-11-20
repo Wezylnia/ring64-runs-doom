@@ -1,9 +1,9 @@
-use super::{Emitter, REMAINING};
+use super::{Emitter, GPR, REMAINING};
 use wasm_encoder::{BlockType, Instruction as Op};
 
 use crate::x86::{
     float::{Format, Kind},
-    instruction::{Instruction, Location, Operation, VectorInstruction},
+    instruction::{Address, Instruction, Location, Operation, VectorInstruction, Width},
 };
 
 #[derive(Clone, Copy)]
@@ -14,6 +14,55 @@ pub(super) struct StructuredLoop {
 }
 
 impl StructuredLoop {
+    pub(super) fn dword_writes(self, unit: &super::Unit) -> u16 {
+        if !self.register_only || unit.context.is_long64() {
+            return 0;
+        }
+        let mut writes = 0;
+        for instruction in &unit.instructions[self.head as usize..self.tail as usize] {
+            let (dst, width) = match instruction.operation {
+                Operation::Alu {
+                    width: Width::W64, ..
+                }
+                | Operation::Lea {
+                    address:
+                        Address {
+                            size: Width::W64, ..
+                        },
+                    ..
+                } => return 0,
+                Operation::Alu {
+                    kind, dst, width, ..
+                } if kind.writes_result() => (dst, width),
+                Operation::Mov { dst, width, .. }
+                | Operation::Lea { dst, width, .. }
+                | Operation::Shift {
+                    dst: Location::Register(dst),
+                    width,
+                    ..
+                }
+                | Operation::DoubleShift {
+                    dst: Location::Register(dst),
+                    width,
+                    ..
+                }
+                | Operation::Unary {
+                    dst: Location::Register(dst),
+                    width,
+                    ..
+                } => (dst, width),
+                _ => continue,
+            };
+            if width == Width::W64 {
+                return 0;
+            }
+            if width == Width::W32 {
+                writes |= 1 << dst.bank;
+            }
+        }
+        writes
+    }
+
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     pub(super) fn read_proof(self, unit: &super::Unit) -> Option<super::read_loop::ReadLoop> {
         if self.register_only {
@@ -165,11 +214,33 @@ impl Emitter {
     ) {
         let current_index = self.current_index;
         self.op(Op::If(BlockType::Empty));
+        for (bank, upper) in self.register_upper_dwords.into_iter().enumerate() {
+            if let Some(upper) = upper {
+                self.op(Op::LocalGet(GPR + bank as u32))
+                    .op(Op::I64Const(!i64::from(u32::MAX)))
+                    .op(Op::I64And)
+                    .op(Op::LocalSet(upper));
+                self.register(bank as u8, Width::W32);
+                self.op(Op::LocalSet(GPR + bank as u32));
+            }
+        }
         self.loop_gates_prechecked = true;
         self.emit_structured_loop(instructions, body, loop_depth + 1, write_segment_base);
         self.loop_gates_prechecked = false;
         self.current_index = current_index;
         self.op(Op::End);
+    }
+
+    pub(super) fn restore_loop_registers(&mut self) {
+        for (bank, upper) in self.register_upper_dwords.into_iter().enumerate() {
+            if let Some(upper) = upper {
+                let bank = GPR + bank as u32;
+                self.op(Op::LocalGet(bank))
+                    .op(Op::LocalGet(upper))
+                    .op(Op::I64Or)
+                    .op(Op::LocalSet(bank));
+            }
+        }
     }
 
     pub(super) fn emit_structured_loop(
@@ -188,8 +259,14 @@ impl Emitter {
             // Leave the guarded clone for the checked clone before a partial lap.
             self.op(Op::LocalGet(REMAINING))
                 .op(Op::I64Const(i64::from(body.tail - body.head + 1)))
-                .op(Op::I64LtU)
-                .op(Op::BrIf(1));
+                .op(Op::I64LtU);
+            if self.register_upper_dwords.iter().any(Option::is_some) {
+                self.op(Op::If(BlockType::Empty));
+                self.restore_loop_registers();
+                self.op(Op::Br(2)).op(Op::End);
+            } else {
+                self.op(Op::BrIf(1));
+            }
         }
         for ordinal in body.head as usize..=body.tail as usize {
             self.current_index = ordinal as u32;

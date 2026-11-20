@@ -135,6 +135,7 @@ struct Emitter {
     current_index: u32,
     structured_loop: Option<(StructuredLoop, u32)>,
     loop_gates_prechecked: bool,
+    register_upper_dwords: [Option<u32>; 16],
     entry_lookup: Option<u32>,
     multiply_high: Option<u32>,
     divide: Option<u32>,
@@ -1464,6 +1465,18 @@ fn emit_body(
     }
     let mut vector_registers = [None; 16];
     let mut next_local = 35 + 2 * u32::from(has_repeat);
+    let dword_writes = loop_body.map_or(0, |body| body.dword_writes(unit));
+    let register_upper_dwords = std::array::from_fn(|bank| {
+        if dword_writes & (1 << bank) == 0 {
+            return None;
+        }
+        let local = next_local;
+        next_local += 1;
+        Some(local)
+    });
+    if dword_writes != 0 {
+        locals.push((dword_writes.count_ones(), ValType::I64));
+    }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let mut span_cache = |resolve| {
         let first = next_local;
@@ -1563,6 +1576,7 @@ fn emit_body(
         current_index: 0,
         structured_loop: None,
         loop_gates_prechecked: false,
+        register_upper_dwords,
         entry_lookup: dynamic_targets.then_some(run_index + 1),
         multiply_high,
         divide,

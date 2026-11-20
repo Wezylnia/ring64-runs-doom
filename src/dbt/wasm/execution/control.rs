@@ -195,6 +195,12 @@ impl Emitter {
     }
 
     pub(super) fn commit(&mut self, next: u64) {
+        if self.loop_gates_prechecked
+            && let crate::x86::instruction::Operation::Jcc { target, .. } = self.current_operation
+            && next != target
+        {
+            self.restore_loop_registers();
+        }
         self.op(Op::I64Const(next as i64))
             .op(Op::LocalSet(RIP))
             .op(Op::LocalGet(REMAINING))

@@ -110,6 +110,98 @@ fn cmov_select_writes_the_high_dword_according_to_mode_for_both_predicates() {
 }
 
 #[test]
+fn protected_register_loop_preserves_imported_dwords_through_every_exit() {
+    let head = 0x1000;
+    let mut u = unit(
+        [
+            Operation::Alu {
+                kind: Alu::Add,
+                dst: RegisterView::low(0),
+                src: DataOperand::Immediate(1),
+                width: Width::W32,
+            },
+            Operation::Mov {
+                dst: RegisterView::high_byte(0),
+                src: DataOperand::Immediate(0x54),
+                width: Width::W8,
+            },
+            Operation::Alu {
+                kind: Alu::Sub,
+                dst: RegisterView::low(1),
+                src: DataOperand::Immediate(1),
+                width: Width::W32,
+            },
+            Operation::Jcc {
+                condition: Condition::NotEqual,
+                target: head,
+            },
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(index, operation)| Instruction {
+            pc: head + index as u64,
+            next_pc: head + index as u64 + 1,
+            operation,
+        })
+        .collect(),
+    );
+    u.context = context(true, true);
+    let bytes = emit(&u);
+    let entries = [head, head + 1, head + 2, head + 3];
+    let mut cases = Vec::new();
+    for (rax_high, rcx_high) in [
+        (0x1122334400000000, 0x8877665500000000),
+        (0, u64::MAX << 32),
+    ] {
+        let input = [(0, rax_high | 0x89abcdef), (1, rcx_high | 2)];
+        for (start, budget, stop, eax, ecx, flags, next, reason, remaining) in [
+            (head, 2, None, 0x89ab54f0, 2, 0x96, head + 2, BUDGET, 0),
+            (head, 5, None, 0x89ab54f1, 1, 0x82, head + 1, BUDGET, 0),
+            (head, 8, None, 0x89ab54f1, 0, 0x46, head + 4, BUDGET, 0),
+            (
+                head,
+                9,
+                Some(head + 4),
+                0x89ab54f1,
+                0,
+                0x46,
+                head + 4,
+                crate::embedding::layout::STOP,
+                1,
+            ),
+            (
+                head,
+                9,
+                Some(head + 1),
+                0x89abcdf0,
+                2,
+                0x96,
+                head + 1,
+                crate::embedding::layout::STOP,
+                8,
+            ),
+            (head + 1, 1, None, 0x89ab54ef, 2, 2, head + 2, BUDGET, 0),
+        ] {
+            let writes = [(0, rax_high | eax), (1, rcx_high | ecx)];
+            let mut packet = execution_case(
+                &bytes,
+                &entries,
+                &input,
+                2,
+                start,
+                budget,
+                (&writes, flags, next, reason as u32, remaining),
+            );
+            if let Some(stop) = stop {
+                packet["stop"] = json!(format!("{stop:x}"));
+            }
+            cases.push(packet);
+        }
+    }
+    run_cases(cases);
+}
+
+#[test]
 fn offsets_are_truncated_before_segment_helpers_or_long64_bases() {
     let mut cases = vec![];
     let mut p = packet(
