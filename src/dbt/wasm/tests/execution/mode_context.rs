@@ -202,6 +202,115 @@ fn protected_register_loop_preserves_imported_dwords_through_every_exit() {
 }
 
 #[test]
+fn protected_unit_publishes_low_registers_on_faults_and_profile_exit() {
+    let first = 0x1000;
+    let operations = [
+        Operation::Mov {
+            dst: RegisterView::low(0),
+            src: DataOperand::Immediate(0x89abcdef),
+            width: Width::W32,
+        },
+        Operation::Load {
+            dst: RegisterView::low(1),
+            address: Address {
+                base: AddressBase::Register(3),
+                size: Width::W32,
+                ..Address::default()
+            },
+            width: Width::W32,
+        },
+        Operation::Return {
+            cleanup: 8,
+            width: Width::W32,
+        },
+    ];
+    let mut u = unit(
+        operations
+            .into_iter()
+            .enumerate()
+            .map(|(index, operation)| Instruction {
+                pc: first + index as u64,
+                next_pc: first + index as u64 + 1,
+                operation,
+            })
+            .collect(),
+    );
+    u.context = context(true, true);
+    let entries = [first, first + 1, first + 2];
+    let writes_low_registers = |bytes: &[u8]| {
+        wasmparser::Parser::new(0).parse_all(bytes).any(|part| {
+            let wasmparser::Payload::CodeSectionEntry(body) = part.unwrap() else {
+                return false;
+            };
+            body.get_operators_reader().unwrap().into_iter().any(|op| {
+                matches!(op.unwrap(), wasmparser::Operator::I64Store32 { memarg }
+                    if memarg.offset == std::mem::offset_of!(RunState, registers) as u64)
+            })
+        })
+    };
+    let bytes = emit(&u);
+    assert_eq!(writes_low_registers(&bytes), !cfg!(feature = "parallel"));
+    assert!(!writes_low_registers(&emit_observed(&u, true)));
+    assert!(!writes_low_registers(&emit_profile(
+        &u,
+        false,
+        true,
+        usize::MAX
+    )));
+
+    let input = [(3, 0x332211ff00007000), (4, 0x8877665500008000)];
+    let new_accumulator = [(0, 0x1122334489abcdef)];
+    let mut load_fault = execution_case(
+        &bytes,
+        &entries,
+        &input,
+        2,
+        first,
+        3,
+        (&new_accumulator, 2, first + 1, DATA as u32, 2),
+    );
+    load_fault["accesses"] = json!([
+        {"kind":"segmented_load","args":["7000",4,2],"result":"0"},
+        {"kind":"segmented_access_failed","args":[],"result":1},
+        {"kind":"access_reason","args":[],"result":DATA}]);
+    let mut return_fault = execution_case(
+        &bytes,
+        &entries,
+        &input,
+        2,
+        first,
+        3,
+        (
+            &[(0, 0x1122334489abcdef), (1, 0x1122334401020304)],
+            2,
+            first + 2,
+            SEGMENT as u32,
+            1,
+        ),
+    );
+    return_fault["accesses"] = json!([
+        {"kind":"segmented_load","args":["7000",4,2],"result":"1020304"},
+        {"kind":"segmented_access_failed","args":[],"result":0},
+        {"kind":"segmented_load","args":["8000",4,1],"result":"9000"},
+        {"kind":"segmented_access_failed","args":[],"result":0},
+        {"kind":"target_check","args":["9000"],"result":0}]);
+    let profile_mismatch = execution_case(
+        &bytes,
+        &entries,
+        &input,
+        0x102,
+        first,
+        3,
+        (&[], 0x102, first, DISPATCH as u32, 3),
+    );
+    run_cases(vec![load_fault, return_fault, profile_mismatch]);
+
+    // The processor bridge can replace full banks even in protected mode.
+    u.instructions[2].operation = Operation::Processor(crate::x86::processor::Instruction::Cpuid);
+    assert!(!writes_low_registers(&emit(&u)));
+}
+
+#[test]
 fn offsets_are_truncated_before_segment_helpers_or_long64_bases() {
     let mut cases = vec![];
     let mut p = packet(

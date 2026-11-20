@@ -1,8 +1,12 @@
 use super::{
-    DIRECTION, Emitter, FLAGS, GPR, REMAINING, REPEAT_REMAINING, RESULT, RIP, SHADOW, SYSTEM,
+    DIRECTION, Emitter, FLAGS, GPR, REMAINING, REPEAT_REMAINING, RESULT, RIP, SHADOW, SYSTEM, Unit,
 };
 use crate::embedding::layout::RunState;
-use crate::x86::processor::TimeState;
+use crate::x86::{
+    context::Mode,
+    instruction::{Location, Operand, Operation, Width},
+    processor::TimeState,
+};
 use std::mem::{offset_of, size_of};
 use wasm_encoder::{Instruction as Op, MemArg};
 
@@ -11,6 +15,83 @@ fn memory(offset: usize) -> MemArg {
         offset: offset as u64,
         align: 3,
         memory_index: 0,
+    }
+}
+
+pub(super) fn narrow_gprs(unit: &Unit) -> bool {
+    unit.context.mode() == Mode::Protected
+        && unit.context.code32()
+        && unit.instructions.iter().all(|i| match i.operation {
+            Operation::Nop | Operation::Jump { .. } | Operation::Jcc { .. } => true,
+            Operation::Mov { width, .. }
+            | Operation::Alu { width, .. }
+            | Operation::Pop { width, .. }
+            | Operation::Leave { width }
+            | Operation::Return { width, .. }
+            | Operation::JumpRegister { width, .. }
+            | Operation::CountBranch {
+                count_width: width, ..
+            } => width != Width::W64,
+            Operation::Load { address, width, .. }
+            | Operation::Store { address, width, .. }
+            | Operation::Lea { address, width, .. }
+            | Operation::MemoryAlu { address, width, .. }
+            | Operation::PopMemory { address, width }
+            | Operation::JumpMemory { address, width } => {
+                width != Width::W64 && address.size != Width::W64
+            }
+            Operation::Unary {
+                dst: location,
+                width,
+                ..
+            }
+            | Operation::Shift {
+                dst: location,
+                width,
+                ..
+            }
+            | Operation::DoubleShift {
+                dst: location,
+                width,
+                ..
+            }
+            | Operation::Cmov {
+                src: location,
+                width,
+                ..
+            }
+            | Operation::Multiply {
+                src: location,
+                width,
+                ..
+            }
+            | Operation::Imul {
+                src: location,
+                width,
+                ..
+            } => width != Width::W64 && narrow_location(location),
+            Operation::Extend {
+                src,
+                source_width,
+                width,
+                ..
+            } => width != Width::W64 && source_width != Width::W64 && narrow_location(src),
+            Operation::Push { src, width } | Operation::Call { target: src, width } => {
+                width != Width::W64
+                    && !matches!(src, Operand::Memory(address) if address.size == Width::W64)
+            }
+            _ => false,
+        })
+}
+
+fn narrow_location(location: Location) -> bool {
+    !matches!(location, Location::Memory(address) if address.size == Width::W64)
+}
+
+fn gpr_memory(register: usize, narrow: bool) -> MemArg {
+    MemArg {
+        align: if narrow { 2 } else { 3 },
+        ..memory(offset_of!(RunState, registers) + register * size_of::<u64>())
     }
 }
 
@@ -57,11 +138,15 @@ impl Emitter {
     }
 
     pub(super) fn load_state(&mut self) {
+        let narrow = self.narrow_gprs;
         for register in 0..16 {
+            let field = gpr_memory(register, narrow);
             self.op(Op::LocalGet(0))
-                .op(Op::I64Load(memory(
-                    offset_of!(RunState, registers) + register * size_of::<u64>(),
-                )))
+                .op(if narrow {
+                    Op::I64Load32U(field)
+                } else {
+                    Op::I64Load(field)
+                })
                 .op(Op::LocalSet(GPR + register as u32));
         }
         for (local, offset) in [
@@ -117,12 +202,16 @@ impl Emitter {
             .op(Op::I64Load(memory(tsc)));
         self.retired();
         self.op(Op::I64Add).op(Op::I64Store(memory(tsc)));
+        let narrow = self.narrow_gprs;
         for register in 0..16 {
+            let field = gpr_memory(register, narrow);
             self.op(Op::LocalGet(0))
                 .op(Op::LocalGet(GPR + register as u32))
-                .op(Op::I64Store(memory(
-                    offset_of!(RunState, registers) + register * size_of::<u64>(),
-                )));
+                .op(if narrow {
+                    Op::I64Store32(field)
+                } else {
+                    Op::I64Store(field)
+                });
         }
         for (local, offset) in [
             (FLAGS, offset_of!(RunState, flags)),

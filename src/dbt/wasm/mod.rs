@@ -140,6 +140,7 @@ struct Emitter {
     structured_loop: Option<(StructuredLoop, u32)>,
     loop_gates_prechecked: bool,
     register_upper_dwords: [Option<u32>; 16],
+    narrow_gprs: bool,
     omit_result_status: bool,
     flags_on_read_fault: Option<(Alu, crate::x86::instruction::Width)>,
     entry_lookup: Option<u32>,
@@ -1471,7 +1472,13 @@ fn emit_body(
     }
     let mut vector_registers = [None; 16];
     let mut next_local = 35 + 2 * u32::from(has_repeat);
-    let dword_writes = loop_body.map_or(0, |body| body.dword_writes(unit));
+    // The admitted helpers leave the high dwords in the backing RunState.
+    let narrow_gprs = !observed && !cfg!(feature = "parallel") && state::narrow_gprs(unit);
+    let dword_writes = if narrow_gprs {
+        0
+    } else {
+        loop_body.map_or(0, |body| body.dword_writes(unit))
+    };
     let register_upper_dwords = std::array::from_fn(|bank| {
         if dword_writes & (1 << bank) == 0 {
             return None;
@@ -1585,6 +1592,7 @@ fn emit_body(
         structured_loop: None,
         loop_gates_prechecked: false,
         register_upper_dwords,
+        narrow_gprs,
         omit_result_status: false,
         flags_on_read_fault: None,
         entry_lookup: dynamic_targets.then_some(run_index + 1),

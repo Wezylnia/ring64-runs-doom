@@ -66,8 +66,9 @@ impl Emitter {
 
     pub(super) fn merge_register(&mut self, register: RegisterView, width: Width) {
         if width == Width::W32
-            && self.loop_gates_prechecked
-            && self.register_upper_dwords[usize::from(register.bank)].is_some()
+            && (self.narrow_gprs
+                || (self.loop_gates_prechecked
+                    && self.register_upper_dwords[usize::from(register.bank)].is_some()))
         {
             return;
         }
