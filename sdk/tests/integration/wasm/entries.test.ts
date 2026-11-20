@@ -103,3 +103,34 @@ test('a cached middle entry imports fresh state and executes only its resumed su
     cpu.dispose();
   }
 });
+
+test('a scalar FP loop can use a smaller translation when its specialized body exceeds the cache', async () => {
+  // ADDSS xmm0,xmm1; SUB ecx,1; JNE back to ADDSS.
+  const code = Uint8Array.of(0xf3, 0x0f, 0x58, 0xc1, 0x83, 0xe9, 1, 0x75, 0xf7);
+  async function execute(maxCachedBytes: number) {
+    const cpu = await createCpu({
+      compiler,
+      code: { base: CODE, bytes: code },
+      ram: { base: RAM, bytes: new Uint8Array(8) },
+      limits: { ...limits, maxCachedBytes },
+    });
+    try {
+      const input = state(CODE);
+      input.registers[1] = 3n;
+      cpu.setState(input);
+      cpu.setXmmState([0x3f800000n, 0x3f800000n, ...Array<bigint>(14).fill(0n)]);
+      const result = await cpu.run({ budget: 10n, stop: CODE + BigInt(code.length) });
+      assert.equal(result.reason, 'stop');
+      assert.equal(result.retired, 9n);
+      assert.equal(cpu.readXmmState()[0], 0x40800000n);
+      assert.ok(result.resources.cachedBytes <= maxCachedBytes);
+      return { bytes: result.resources.generatedBytes, state: result.state };
+    } finally {
+      cpu.dispose();
+    }
+  }
+  const specialized = await execute(limits.maxCachedBytes);
+  const fallback = await execute(specialized.bytes - 1);
+  assert.deepEqual(fallback.state, specialized.state);
+  assert.ok(fallback.bytes < specialized.bytes);
+});

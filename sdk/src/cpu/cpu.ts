@@ -225,7 +225,10 @@ export class Cpu {
   ) {
     if (token !== CONSTRUCTION) throw new TypeError('use the createCpu factory');
     this.#core = core;
-    this.#limits = { ...limits };
+    this.#limits = {
+      ...limits,
+      maxArtifactBytes: Math.min(limits.maxArtifactBytes, limits.maxCachedBytes),
+    };
     this.#memoryLimits = { ...memoryLimits };
     this.#memoryModel = memoryModel;
     this.#backings = backings;
