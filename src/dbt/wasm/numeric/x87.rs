@@ -28,7 +28,7 @@ impl Emitter {
         if operation.writes_flags() {
             self.full_flags();
         } else {
-            self.op(Wasm::LocalGet(FLAGS));
+            self.status_flags();
         }
         self.op(Wasm::LocalGet(GPR))
             .op(Wasm::Call(helper))

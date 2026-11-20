@@ -1,4 +1,6 @@
-use super::{DIRECTION, Emitter, FLAGS, GPR, REMAINING, REPEAT_REMAINING, RIP, SHADOW, SYSTEM};
+use super::{
+    DIRECTION, Emitter, FLAGS, GPR, REMAINING, REPEAT_REMAINING, RESULT, RIP, SHADOW, SYSTEM,
+};
 use crate::embedding::layout::RunState;
 use crate::x86::processor::TimeState;
 use std::mem::{offset_of, size_of};
@@ -12,7 +14,42 @@ fn memory(offset: usize) -> MemArg {
     }
 }
 
+const PARITY_SHIFT: i64 = 56;
+const PARITY_INPUTS: i64 = ((0xffu64 << PARITY_SHIFT) as i64) | 4;
+
 impl Emitter {
+    // XOR bit 2 with the parity of the high byte to recover PF.
+    // All other status bits retain their architectural positions.
+    pub(super) fn defer_result_parity(&mut self) {
+        self.op(Op::LocalGet(RESULT))
+            .op(Op::I64Const(PARITY_SHIFT))
+            .op(Op::I64Shl)
+            .op(Op::I64Const(4))
+            .op(Op::I64Or);
+    }
+
+    pub(super) fn parity_clear(&mut self) {
+        self.op(Op::LocalGet(FLAGS))
+            .op(Op::I64Const(PARITY_INPUTS))
+            .op(Op::I64And)
+            .op(Op::I64Popcnt)
+            .op(Op::I64Const(1))
+            .op(Op::I64And)
+            .op(Op::I64Eqz);
+    }
+
+    pub(super) fn status_flags(&mut self) {
+        self.op(Op::LocalGet(FLAGS))
+            .op(Op::I64Const(!PARITY_INPUTS))
+            .op(Op::I64And);
+        self.parity_clear();
+        self.op(Op::I32Eqz)
+            .op(Op::I64ExtendI32U)
+            .op(Op::I64Const(2))
+            .op(Op::I64Shl)
+            .op(Op::I64Or);
+    }
+
     pub(super) fn retired(&mut self) {
         self.op(Op::LocalGet(1))
             .op(Op::LocalGet(REMAINING))
@@ -92,11 +129,11 @@ impl Emitter {
             (RIP, offset_of!(RunState, rip)),
             (REMAINING, offset_of!(RunState, remaining)),
         ] {
-            self.op(Op::LocalGet(0)).op(Op::LocalGet(local));
+            self.op(Op::LocalGet(0));
             if local == FLAGS {
-                self.op(Op::LocalGet(DIRECTION)).op(Op::I64Or);
-                self.system_bits();
-                self.op(Op::I64Or);
+                self.full_flags();
+            } else {
+                self.op(Op::LocalGet(local));
             }
             self.op(Op::I64Store(memory(offset)));
         }

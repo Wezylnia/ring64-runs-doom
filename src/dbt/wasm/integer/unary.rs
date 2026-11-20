@@ -111,8 +111,8 @@ impl Emitter {
     }
 
     pub(super) fn lahf(&mut self) {
-        self.op(Op::LocalGet(FLAGS))
-            .op(Op::I64Const(0xd5))
+        self.status_flags();
+        self.op(Op::I64Const(0xd5))
             .op(Op::I64And)
             .op(Op::I64Const(2))
             .op(Op::I64Or);
@@ -124,7 +124,7 @@ impl Emitter {
         self.op(Op::I64Const(0xd5))
             .op(Op::I64And)
             .op(Op::LocalGet(FLAGS))
-            .op(Op::I64Const(!0xd5))
+            .op(Op::I64Const(0x802))
             .op(Op::I64And)
             .op(Op::I64Or)
             .op(Op::LocalSet(FLAGS));

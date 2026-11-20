@@ -156,17 +156,8 @@ impl Emitter {
             self.op(Op::LocalGet(LHS)).op(Op::LocalGet(RHS));
         }
         self.op(Op::I64LtU).op(Op::I64ExtendI32U).op(Op::I64Or);
-        self.op(Op::LocalGet(RESULT))
-            .op(Op::I64Const(255))
-            .op(Op::I64And)
-            .op(Op::I64Popcnt)
-            .op(Op::I64Const(1))
-            .op(Op::I64And)
-            .op(Op::I64Eqz)
-            .op(Op::I64ExtendI32U)
-            .op(Op::I64Const(2))
-            .op(Op::I64Shl)
-            .op(Op::I64Or);
+        self.defer_result_parity();
+        self.op(Op::I64Or);
         self.op(Op::LocalGet(LHS))
             .op(Op::LocalGet(RHS))
             .op(Op::I64Xor)
@@ -227,18 +218,9 @@ impl Emitter {
     }
 
     pub(super) fn logical_flags(&mut self, width: Width) {
-        self.op(Op::I64Const(2))
-            .op(Op::LocalGet(RESULT))
-            .op(Op::I64Const(255))
-            .op(Op::I64And)
-            .op(Op::I64Popcnt)
-            .op(Op::I64Const(1))
-            .op(Op::I64And)
-            .op(Op::I64Eqz)
-            .op(Op::I64ExtendI32U)
-            .op(Op::I64Const(2))
-            .op(Op::I64Shl)
-            .op(Op::I64Or)
+        self.op(Op::I64Const(2));
+        self.defer_result_parity();
+        self.op(Op::I64Or)
             .op(Op::LocalGet(RESULT))
             .op(Op::I64Eqz)
             .op(Op::I64ExtendI32U)

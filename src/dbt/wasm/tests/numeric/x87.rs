@@ -58,9 +58,9 @@ fn x87_generated_boundaries_capture_live_operands_and_reload_only_written_projec
         (
             &[0xdf, 0xe0][..],
             helper(Kind::StoreStatus, Format::Ax, 0x7e0),
-            "46",
+            "2",
             json!({"reason":0,"rax":"deadaabb","flags":"2"}),
-            0x446,
+            0x402,
             vec![(0, 0xdeadaabb)],
         ),
         (
@@ -73,13 +73,13 @@ fn x87_generated_boundaries_capture_live_operands_and_reload_only_written_projec
                 ..Numeric::default()
             }
             .encode() as i32,
-            "446",
+            "402",
             json!({"reason":0,"flags":"47","rax":"1234"}),
             0x447,
             vec![(0, 0xdeadbeef)],
         ),
     ] {
-        let mut code = vec![0xb8, 0xef, 0xbe, 0xad, 0xde, 0x39, 0xc0];
+        let mut code = vec![0xb8, 0xef, 0xbe, 0xad, 0xde, 0x3c, 0xee];
         code.extend_from_slice(suffix);
         let mut p = packet(
             &code,

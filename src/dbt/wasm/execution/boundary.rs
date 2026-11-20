@@ -1,4 +1,4 @@
-use super::{DIRECTION, Emitter, FLAGS, REASON, REPEAT_REMAINING, RIP, SHADOW, SYSTEM};
+use super::{DIRECTION, Emitter, REASON, REPEAT_REMAINING, RIP, SHADOW, SYSTEM};
 use crate::embedding::layout::{DISPATCH, HALTED, RunState};
 use crate::x86::instruction::{Operation, ProtectionKind, Repeat, SystemFlagsKind};
 use std::mem::offset_of;
@@ -53,9 +53,8 @@ impl Emitter {
     }
 
     pub(super) fn full_flags(&mut self) {
-        self.op(Op::LocalGet(FLAGS))
-            .op(Op::LocalGet(DIRECTION))
-            .op(Op::I64Or);
+        self.status_flags();
+        self.op(Op::LocalGet(DIRECTION)).op(Op::I64Or);
         self.system_bits();
         self.op(Op::I64Or);
     }

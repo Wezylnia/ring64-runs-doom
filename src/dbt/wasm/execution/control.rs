@@ -137,7 +137,7 @@ impl Emitter {
             Equal | NotEqual => self.flag_bits_clear(0x40),
             BelowOrEqual | Above => self.flag_bits_clear(0x41),
             Sign | NotSign => self.flag_bits_clear(0x80),
-            Parity | NotParity => self.flag_bits_clear(4),
+            Parity | NotParity => self.parity_clear(),
             Less | GreaterOrEqual => self.signed_flags_equal(),
             LessOrEqual | Greater => {
                 self.flag_bits_clear(0x40);

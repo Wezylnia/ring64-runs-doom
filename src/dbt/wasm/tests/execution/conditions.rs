@@ -1,6 +1,142 @@
 use super::*;
 
 #[test]
+fn deferred_parity_is_visible_to_conditions_lahf_and_exact_stop() {
+    let artifact = compiled_fixture(
+        0x1000,
+        &[0x31, 0xc8, 0x9f, 0xf9, 0x7a, 2, 0xb2, 0x87, 0x90],
+        0x1000,
+    ); // xor eax,ecx; lahf; stc; jp +2; mov dl,0x87; nop
+    let mut cases = Vec::new();
+    for (result, status, taken) in [(1, 2, false), (3, 6, true), (0x800000ff, 0x86, true)] {
+        let input = [(0, result), (1, 0), (2, 0)];
+        let mut stop = execution_case(
+            &artifact.bytes,
+            &artifact.entries,
+            &input,
+            0x602,
+            0x1000,
+            10,
+            (&[], 0x600 | status, 0x1002, 2, 9),
+        );
+        stop["stop"] = json!("1002");
+        cases.push(stop);
+        let count = if taken { 5 } else { 6 };
+        cases.push(execution_case(
+            &artifact.bytes,
+            &artifact.entries,
+            &input,
+            0x602,
+            0x1000,
+            count,
+            (
+                &[
+                    (0, (result & !0xff00) | (status << 8)),
+                    (2, if taken { 0 } else { 0x87 }),
+                ],
+                0x601 | status,
+                0x1009,
+                1,
+                0,
+            ),
+        ));
+    }
+    run_cases(cases);
+}
+
+#[test]
+fn sahf_replaces_deferred_parity_and_preserves_overflow() {
+    let artifact = compiled_fixture(0x1000, &[0x01, 0xd1, 0x9e], 0x1000); // add ecx,edx; sahf
+    run_cases(vec![execution_case(
+        &artifact.bytes,
+        &artifact.entries,
+        &[(0, 0xd500), (1, 0x7fffffff), (2, 2)],
+        0x602,
+        0x1000,
+        2,
+        (&[(1, 0x80000001)], 0xed7, 0x1003, 1, 0),
+    )]);
+}
+
+#[test]
+fn scalar_float_compare_replaces_parity_only_on_success() {
+    use crate::embedding::layout::SIMD_EXCEPTION;
+    use crate::x86::float::{Format, Kind, Op as Numeric};
+    let artifact = compiled_fixture(0x1000, &[0x31, 0xc8, 0x0f, 0x2e, 0xc1], 0x1000);
+    let compare = Numeric {
+        kind: Kind::Ucomi,
+        format: Format::F32,
+        scalar: true,
+        integer64: false,
+        predicate: 0,
+    };
+    let mut cases = Vec::new();
+    for (status, next, result, remaining, flags) in [
+        (0, 0x1005, 1, 0, 0x647),
+        (SIMD_EXCEPTION, 0x1002, SIMD_EXCEPTION, 1, 0x602),
+    ] {
+        let mut packet = execution_case(
+            &artifact.bytes,
+            &artifact.entries,
+            &[(0, 1), (1, 0)],
+            0x602,
+            0x1000,
+            2,
+            (&[], flags, next, result as u32, remaining),
+        );
+        packet["accesses"] = json!([
+            {"kind":"float", "args":[compare.encode(),"0","0","0","0"],
+             "result":{"reason":status,"value":"45"}}
+        ]);
+        cases.push(packet);
+    }
+    run_cases(cases);
+}
+
+#[test]
+fn fault_and_debug_boundaries_publish_the_previous_retired_parity() {
+    use crate::embedding::layout::{DATA, DEBUG_EXCEPTION};
+    let artifact = compiled_fixture(0x1000, &[0x31, 0xc8, 0x8b, 0x03], 0x1000);
+    let mut fault = execution_case(
+        &artifact.bytes,
+        &artifact.entries,
+        &[(0, 3), (1, 0), (3, 0x4000)],
+        2,
+        0x1000,
+        2,
+        (&[], 6, 0x1002, DATA as u32, 1),
+    );
+    fault["accesses"] = json!([
+        {"kind":"load", "args":["4000",4], "result":"0"},
+        {"kind":"access_failed", "args":[], "result":1}
+    ]);
+
+    let alu = unit(vec![Instruction {
+        pc: 0x1000,
+        next_pc: 0x1002,
+        operation: Operation::Alu {
+            kind: Alu::Xor,
+            dst: RegisterView::low(0),
+            src: DataOperand::Register(RegisterView::low(1)),
+            width: Width::W32,
+        },
+    }]);
+    let mut debug = execution_case(
+        &emit_observed(&alu, true),
+        &[0x1000],
+        &[(0, 1), (1, 0)],
+        0x106,
+        0x1000,
+        2,
+        (&[], 0x102, 0x1002, DEBUG_EXCEPTION as u32, 1),
+    );
+    debug["accesses"] = json!([
+        {"kind":"debug_step", "args":["1000","1002",1,"102"], "result":DEBUG_EXCEPTION}
+    ]);
+    run_cases(vec![fault, debug]);
+}
+
+#[test]
 fn every_condition_matches_independent_truth_masks_and_preserves_all_flags() {
     use Condition::*;
     // Bit n gives the condition for CF/PF/ZF/SF/OF encoded in n's five bits.

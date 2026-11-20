@@ -58,7 +58,7 @@ impl Emitter {
         self.op(Op::LocalSet(result));
         if instruction.writes_flags() {
             self.op(Op::LocalGet(FLAGS))
-                .op(Op::I64Const(!0x8d5i64))
+                .op(Op::I64Const(2))
                 .op(Op::I64And)
                 .op(Op::LocalGet(result))
                 .op(Op::I64x2ExtractLane(0))
