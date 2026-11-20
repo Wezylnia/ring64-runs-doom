@@ -21,7 +21,7 @@ pub struct Limits {
 #[derive(Debug)]
 pub struct Artifact {
     pub bytes: Vec<u8>,
-    /// Each position is the entry index accepted by this artifact's `run`.
+    /// The index supplied to `run` must identify the current RIP in this list.
     pub entries: Vec<u64>,
     pub instruction_count: usize,
     pub block_count: usize,

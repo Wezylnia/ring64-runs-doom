@@ -1167,7 +1167,8 @@ pub(crate) fn emit_profile(unit: &Unit, observed: bool, paged: bool) -> Vec<u8> 
     emitter.gates(0);
     emitter.profile_guard(0);
     let count = unit.instructions.len() as u32;
-    // The artifact owner supplies the ordinal from Artifact::entries.
+    // The owner selects the entry ordinal for the loaded RIP. Every in-unit
+    // edge commits its destination RIP before routing to the next instruction.
     emitter
         .op(Op::LocalGet(ENTRY_INDEX))
         .op(Op::LocalSet(ENTRY));
@@ -1201,9 +1202,6 @@ pub(crate) fn emit_profile(unit: &Unit, observed: bool, paged: bool) -> Vec<u8> 
         emitter.stores = false;
         let loop_depth = count - index as u32;
         let exit_depth = loop_depth + 1;
-        emitter
-            .op(Op::I64Const(instruction.pc as i64))
-            .op(Op::LocalSet(RIP));
         emitter.gates(exit_depth);
         #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
         emitter.parallel_boundary(exit_depth);
