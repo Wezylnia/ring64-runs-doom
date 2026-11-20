@@ -1,4 +1,4 @@
-use super::{Emitter, GPR, REMAINING};
+use super::{Emitter, GPR, REMAINING, loop_cfg::LoopOrder};
 use wasm_encoder::{BlockType, Instruction as Op};
 
 use crate::x86::{
@@ -19,6 +19,7 @@ enum LoopKind {
 
 #[derive(Clone, Copy)]
 pub(super) struct StructuredLoop {
+    earlier: u32,
     pub(super) head: u32,
     pub(super) tail: u32,
     max_lap_len: u32,
@@ -92,7 +93,8 @@ impl StructuredLoop {
 
     pub(super) fn active_labels(self, ordinal: u32) -> u32 {
         if self.forward_edges() {
-            self.tail - ordinal
+            let order = self.order();
+            order.len() - 1 - order.position(ordinal).unwrap()
         } else {
             0
         }
@@ -102,13 +104,22 @@ impl StructuredLoop {
         self.kind == LoopKind::ForwardEdges
     }
 
+    pub(super) fn order(self) -> LoopOrder {
+        LoopOrder {
+            earlier: self.earlier,
+            head: self.head,
+            tail: self.tail,
+        }
+    }
+
     pub(super) fn select(instructions: &[Instruction]) -> Option<Self> {
         Self::select_body(instructions, LoopKind::Float)
             .or_else(|| Self::select_body(instructions, LoopKind::IntegerReads))
             .or_else(|| {
-                super::loop_cfg::select(instructions).map(|(head, tail, max_lap_len)| Self {
-                    head,
-                    tail,
+                super::loop_cfg::select(instructions).map(|(order, max_lap_len)| Self {
+                    earlier: order.earlier,
+                    head: order.head,
+                    tail: order.tail,
                     max_lap_len,
                     kind: LoopKind::ForwardEdges,
                 })
@@ -153,6 +164,7 @@ impl StructuredLoop {
                     }
                 {
                     best = Some(Self {
+                        earlier: head as u32,
                         head: head as u32,
                         tail: index as u32,
                         max_lap_len: length as u32 + 1,
@@ -344,7 +356,7 @@ fn normal_low_after(known: u16, operation: Operation) -> u16 {
 
 impl Emitter {
     pub(super) fn exclude_loop_stop(&mut self, instructions: &[Instruction], body: StructuredLoop) {
-        let first = instructions[body.head as usize].pc as i64;
+        let first = instructions[body.earlier as usize].pc as i64;
         let last = instructions[body.tail as usize].pc as i64;
         self.op(Op::LocalGet(3))
             .op(Op::LocalGet(2))
@@ -420,16 +432,18 @@ impl Emitter {
                 self.op(Op::BrIf(1));
             }
         }
+        let order = body.order();
         if body.forward_edges() {
             // Each later cloned instruction has an enclosing forward label.
-            for _ in body.head..body.tail {
+            for _ in 1..order.len() {
                 self.op(Op::Block(BlockType::Empty));
             }
         }
         let defer_read_flags = self.loop_gates_prechecked && body.kind == LoopKind::IntegerReads;
         let mut flags_on_next_read_fault = None;
-        for ordinal in body.head as usize..=body.tail as usize {
-            if body.forward_edges() && ordinal as u32 != body.head {
+        for position in 0..order.len() {
+            let ordinal = order.at(position) as usize;
+            if body.forward_edges() && position != 0 {
                 self.op(Op::End);
             }
             self.current_index = ordinal as u32;

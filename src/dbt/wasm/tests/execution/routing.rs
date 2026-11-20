@@ -781,6 +781,136 @@ fn natural_loop_preserves_forward_branches_external_exits_and_store_order() {
 }
 
 #[test]
+fn rotated_loop_preserves_both_backedges_and_original_entry_boundaries() {
+    use crate::embedding::layout::DATA;
+    use crate::x86::instruction::{Count, Location, Shift};
+
+    let decrement = Operation::Alu {
+        kind: Alu::Sub,
+        dst: RegisterView::low(1),
+        src: DataOperand::Immediate(1),
+        width: Width::W32,
+    };
+    let operations = [
+        Operation::Jump { target: 0x1010 },
+        Operation::Nop,
+        decrement,
+        Operation::Jcc {
+            condition: Condition::Equal,
+            target: 0x1004,
+        },
+        Operation::Load {
+            dst: RegisterView::low(0),
+            address: Address {
+                base: AddressBase::Register(3),
+                ..Address::default()
+            },
+            width: Width::W32,
+        },
+        Operation::Shift {
+            kind: Shift::Shr,
+            dst: Location::Register(RegisterView::low(0)),
+            count: Count::Immediate(1),
+            width: Width::W32,
+        },
+        Operation::Jcc {
+            condition: Condition::Equal,
+            target: 0x1008,
+        },
+        decrement,
+        Operation::Jcc {
+            condition: Condition::NotEqual,
+            target: 0x1010,
+        },
+        Operation::Nop,
+    ];
+    let instructions = operations
+        .into_iter()
+        .enumerate()
+        .map(|(i, operation)| Instruction {
+            pc: 0x1000 + i as u64 * 4,
+            next_pc: 0x1004 + i as u64 * 4,
+            operation,
+        })
+        .collect();
+    let unit = unit(instructions);
+    let bytes = emit(&unit);
+    assert_eq!(
+        wasm_loop_count(&bytes),
+        1 + usize::from(!cfg!(feature = "parallel"))
+    );
+    let entries: Vec<_> = unit.instructions.iter().map(|i| i.pc).collect();
+    let mut cases = Vec::new();
+    for (entry, budget, counter, load, eax, ecx, flags, rip, reason, remaining, stop) in [
+        (0x1010, 5, 2, Some("1"), 0, 1, 2, 0x1010, BUDGET, 0, None),
+        (0x1010, 5, 2, Some("2"), 1, 1, 2, 0x1010, BUDGET, 0, None),
+        (
+            0x1010,
+            6,
+            1,
+            Some("1"),
+            0,
+            0,
+            0x46,
+            0x1004,
+            STOP,
+            1,
+            Some(0x1004),
+        ),
+        (
+            0x1010,
+            6,
+            1,
+            Some("2"),
+            1,
+            0,
+            0x46,
+            0x1024,
+            STOP,
+            1,
+            Some(0x1024),
+        ),
+        (0x1010, 3, 2, Some("1"), 0, 2, 0x47, 0x1008, BUDGET, 0, None),
+        (
+            0x1010,
+            5,
+            2,
+            Some("1"),
+            0,
+            2,
+            0x47,
+            0x1008,
+            STOP,
+            2,
+            Some(0x1008),
+        ),
+        (0x1008, 2, 2, None, 7, 1, 2, 0x1010, BUDGET, 0, None),
+        (0x1010, 5, 2, Some("0"), 7, 2, 2, 0x1010, DATA, 5, None),
+    ] {
+        let mut packet = execution_case(
+            &bytes,
+            &entries,
+            &[(0, 7), (1, counter), (3, 0x8000)],
+            2,
+            entry,
+            budget,
+            (&[(0, eax), (1, ecx)], flags, rip, reason as u32, remaining),
+        );
+        if let Some(stop) = stop {
+            packet["stop"] = json!(format!("{stop:x}"));
+        }
+        if let Some(load) = load {
+            packet["accesses"] = json!([
+                {"kind":"load","args":["8000",4],"result":load},
+                {"kind":"access_failed","args":[],"result":if reason == DATA { DATA } else { 0 }}
+            ]);
+        }
+        cases.push(packet);
+    }
+    run_cases(cases);
+}
+
+#[test]
 fn guarded_read_loop_publishes_preceding_add_flags_on_load_fault_and_budget() {
     use crate::embedding::layout::DATA;
 

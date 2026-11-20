@@ -223,9 +223,13 @@ impl Emitter {
                     self.op(Op::Br(body.active_labels(self.current_index) + extra_depth));
                     return;
                 }
-                if self.current_index < index && index <= body.tail {
-                    if index != self.current_index + 1 || extra_depth != 0 {
-                        self.op(Op::Br(index - self.current_index - 1 + extra_depth));
+                let order = body.order();
+                let current = order.position(self.current_index).unwrap();
+                if let Some(target) = order.position(index)
+                    && target > current
+                {
+                    if target != current + 1 || extra_depth != 0 {
+                        self.op(Op::Br(target - current - 1 + extra_depth));
                     }
                     return;
                 }
