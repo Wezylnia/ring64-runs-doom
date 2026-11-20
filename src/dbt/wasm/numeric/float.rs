@@ -48,7 +48,7 @@ impl Emitter {
         {
             self.op(Op::Block(BlockType::Result(ValType::V128)))
                 .op(Op::Block(BlockType::Empty));
-            self.float_f32(instruction.op.kind, left, right, result);
+            self.float_f32(instruction.op.kind, left, right);
             self.op(Op::Br(1)).op(Op::End);
             self.float_helper(instruction, left, right, exit_depth + 1);
             self.op(Op::End);
@@ -106,7 +106,7 @@ impl Emitter {
             ))));
     }
 
-    fn float_f32(&mut self, kind: Kind, left: u32, right: u32, result: u32) {
+    fn float_f32(&mut self, kind: Kind, left: u32, right: u32) {
         let mxcsr = super::vector::memory(offset_of!(RunState, mxcsr));
         self.op(Op::LocalGet(0))
             .op(Op::I32Load(mxcsr))
@@ -136,12 +136,6 @@ impl Emitter {
         // Check before rounding so a tiny product that rounds to a normal f32 still falls back.
         self.reject_non_normal_f32(RESULT);
 
-        self.op(Op::LocalGet(left));
-        self.float_f64(RESULT);
-        self.op(Op::F32DemoteF64)
-            .op(Op::F32x4ReplaceLane(0))
-            .op(Op::LocalSet(result));
-
         let masked_sticky_precision = PRECISION_MASK | PRECISION_STATUS;
         self.op(Op::LocalGet(STORE_STATUS))
             .op(Op::I32Const(masked_sticky_precision))
@@ -149,31 +143,34 @@ impl Emitter {
             .op(Op::I32Const(masked_sticky_precision))
             .op(Op::I32Ne)
             .op(Op::If(BlockType::Empty));
-        self.op(Op::LocalGet(result))
-            .op(Op::F32x4ExtractLane(0))
-            .op(Op::F64PromoteF32);
-        self.float_f64(RESULT);
-        self.op(Op::F64Ne);
+        // A normal f64 result is representable in f32 exactly when the
+        // fractional bits below the f32 significand are all zero.
+        self.op(Op::LocalGet(RESULT))
+            .op(Op::I64Const(
+                (1 << (f64::MANTISSA_DIGITS - f32::MANTISSA_DIGITS)) - 1,
+            ))
+            .op(Op::I64And)
+            .op(Op::I64Eqz)
+            .op(Op::I32Eqz);
         if kind == Kind::Add {
-            // A product of two f32 significands fits in f64. An f32 sum may lose low bits
-            // in f64 only when the exponents are so far apart that it rounds back to the
-            // larger operand in f32. If both operands are nonzero that sum is inexact.
-            self.float_f64(RESULT);
-            self.float_f64(LHS);
-            self.op(Op::F64Eq);
-            self.float_f64(RHS);
-            self.op(Op::F64Const(0.0.into()))
-                .op(Op::F64Ne)
-                .op(Op::I32And);
-            self.float_f64(RESULT);
-            self.float_f64(RHS);
-            self.op(Op::F64Eq);
-            self.float_f64(LHS);
-            self.op(Op::F64Const(0.0.into()))
-                .op(Op::F64Ne)
-                .op(Op::I32And)
-                .op(Op::I32Or)
+            // A widened sum that loses a nonzero addend can look exact
+            // only when it has the larger addend's bit pattern.
+            self.op(Op::LocalGet(RESULT))
+                .op(Op::LocalGet(LHS))
+                .op(Op::I64Eq)
+                .op(Op::LocalGet(RESULT))
+                .op(Op::LocalGet(RHS))
+                .op(Op::I64Eq)
                 .op(Op::I32Or);
+            for summand in [LHS, RHS] {
+                self.op(Op::LocalGet(summand))
+                    .op(Op::I64Const(1))
+                    .op(Op::I64Shl)
+                    .op(Op::I64Eqz)
+                    .op(Op::I32Eqz)
+                    .op(Op::I32And);
+            }
+            self.op(Op::I32Or);
         }
         self.op(Op::If(BlockType::Empty))
             .op(Op::LocalGet(STORE_STATUS))
@@ -188,7 +185,9 @@ impl Emitter {
             .op(Op::I32Store(mxcsr))
             .op(Op::End)
             .op(Op::End)
-            .op(Op::LocalGet(result));
+            .op(Op::LocalGet(left));
+        self.float_f64(RESULT);
+        self.op(Op::F32DemoteF64).op(Op::F32x4ReplaceLane(0));
     }
 
     fn float_f64(&mut self, bits: u32) {
