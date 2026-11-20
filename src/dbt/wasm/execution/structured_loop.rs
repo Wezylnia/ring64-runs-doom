@@ -205,6 +205,36 @@ fn integer_read(operation: Operation) -> bool {
     )
 }
 
+// Register ADD/SUB can defer flags across one scalar read. That read preserves
+// the arithmetic operands and restores the flags only if it exits on a fault.
+fn can_omit_flags(instructions: &[Instruction]) -> (bool, Option<(Alu, Width)>) {
+    let [current, next, rest @ ..] = instructions else {
+        return (false, None);
+    };
+    let Operation::Alu {
+        kind: kind @ (Alu::Add | Alu::Sub),
+        width,
+        ..
+    } = current.operation
+    else {
+        return (false, None);
+    };
+    let overwrites = |instruction: &Instruction| {
+        matches!(
+            instruction.operation,
+            Operation::Alu {
+                kind: Alu::Add | Alu::Sub | Alu::Cmp | Alu::Test,
+                ..
+            }
+        )
+    };
+    if overwrites(next) {
+        return (true, None);
+    }
+    let defer = integer_read(next.operation) && rest.first().is_some_and(overwrites);
+    (defer, defer.then_some((kind, width)))
+}
+
 fn inside_integer_read_body(operation: Operation) -> bool {
     integer_read(operation)
         || matches!(
@@ -386,6 +416,8 @@ impl Emitter {
                 self.op(Op::Block(BlockType::Empty));
             }
         }
+        let defer_read_flags = self.loop_gates_prechecked && body.kind == LoopKind::IntegerReads;
+        let mut flags_on_next_read_fault = None;
         for ordinal in body.head as usize..=body.tail as usize {
             if body.forward_edges() && ordinal as u32 != body.head {
                 self.op(Op::End);
@@ -402,6 +434,11 @@ impl Emitter {
                     .map(|i| status_effect(i.operation))
                     .find(|effect| *effect != StatusEffect::Preserve)
                     == Some(StatusEffect::Replace);
+            if defer_read_flags {
+                self.flags_on_read_fault = flags_on_next_read_fault;
+                (self.omit_result_status, flags_on_next_read_fault) =
+                    can_omit_flags(&instructions[ordinal..=body.tail as usize]);
+            }
             self.instruction(
                 instructions[ordinal],
                 instructions.get(ordinal + 1),
@@ -420,6 +457,7 @@ impl Emitter {
             self.zero_upper_xmm = 0;
         }
         self.omit_result_status = false;
+        self.flags_on_read_fault = None;
         self.op(Op::End);
         self.structured_loop = None;
     }

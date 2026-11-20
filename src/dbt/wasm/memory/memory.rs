@@ -114,6 +114,9 @@ impl Emitter {
     }
 
     fn memory_failure(&mut self, exit_depth: u32) {
+        if let Some((kind, width)) = self.flags_on_read_fault {
+            self.arithmetic_flags(kind, width);
+        }
         if self.paged {
             self.record_fault_segment(self.segment);
         }

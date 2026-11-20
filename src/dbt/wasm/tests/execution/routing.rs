@@ -779,3 +779,61 @@ fn natural_loop_preserves_forward_branches_external_exits_and_store_order() {
     }
     run_cases(cases);
 }
+
+#[test]
+fn guarded_read_loop_publishes_preceding_add_flags_on_load_fault_and_budget() {
+    use crate::embedding::layout::DATA;
+
+    let artifact = compiled_fixture(
+        0x1000,
+        &[
+            0x0f, 0xb6, 0x06, // movzx eax,[rsi]
+            0x83, 0xc0, 0x01, // add eax,1; can defer flags until next load fails
+            0x0f, 0xb6, 0x56, 0x01, // movzx edx,[rsi+1]
+            0x83, 0xc2, 0x01, // add edx,1; overwrites flags
+            0x0f, 0xb6, 0x5e, 0x02, // movzx ebx,[rsi+2]
+            0x0f, 0xb6, 0x7e, 0x03, // movzx edi,[rsi+3]
+            0x48, 0x83, 0xc6, 0x04, // add rsi,4
+            0x48, 0x39, 0xce, // cmp rsi,rcx
+            0x75, 0xe2, // jne head
+            0x90,
+        ],
+        0x1000,
+    );
+    assert_eq!(
+        wasm_loop_count(&artifact.bytes),
+        1 + usize::from(!cfg!(feature = "parallel")),
+    );
+    let mut cases = Vec::new();
+    for (budget, stop, reason, load_fails) in [
+        (9, None, DATA, true),
+        (2, None, BUDGET, false),
+        (9, Some(0x1006), STOP, false),
+    ] {
+        let mut packet = execution_case(
+            &artifact.bytes,
+            &artifact.entries,
+            &[(6, 0x8000), (1, 0x8004)],
+            2,
+            0x1000,
+            budget,
+            (&[(0, 0x100)], 0x16, 0x1006, reason as u32, budget - 2),
+        );
+        if let Some(stop) = stop {
+            packet["stop"] = json!(format!("{stop:x}"));
+        }
+        let mut accesses = vec![
+            json!({"kind":"load","args":["8000",1],"result":"ff"}),
+            json!({"kind":"access_failed","args":[],"result":0}),
+        ];
+        if load_fails {
+            accesses.extend([
+                json!({"kind":"load","args":["8001",1],"result":"0"}),
+                json!({"kind":"access_failed","args":[],"result":DATA}),
+            ]);
+        }
+        packet["accesses"] = json!(accesses);
+        cases.push(packet);
+    }
+    run_cases(cases);
+}

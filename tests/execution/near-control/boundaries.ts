@@ -30,6 +30,52 @@ function segmentFault(result: RunResult, expected: SegmentFault): void {
 export function boundaryScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [
     {
+      name: 'guarded integer reads publish preceding arithmetic flags on direct-span miss and segment failure',
+      async run() {
+        const code = '0fb60683c0010fb6560183c2010fb65e020fb67e0383c60439ce75e490';
+        const limited = context('protected');
+        limited.segments.ds.limit = 0x8000;
+        for (const item of [
+          { mode: LONG, bytes: 'ff', reason: 'data-fault' },
+          { mode: limited, bytes: 'ff05', reason: 'segment-fault' },
+        ] as const) {
+          await using(
+            compiler,
+            code,
+            item.mode,
+            async (cpu) => {
+              const before = input(0x1000n, { 0: 0n, 1: 0x8004n, 6: 0x8000n }, 2n);
+              cpu.setState(before);
+              const result = await cpu.run({ budget: 9n, repeatBudget: 0n });
+              outcome(result, item.reason, 9n, 2n, changed(before, 0x1006n, { 0: 0x100n }, 0x16n));
+              if (item.reason === 'segment-fault') {
+                segmentFault(result, {
+                  segment: 'ds',
+                  offset: 0x8001n,
+                  width: 1,
+                  access: 'read',
+                  cause: 'limit',
+                  failingOffset: 0x8001n,
+                  instructionPc: 0x1006n,
+                });
+              } else {
+                fault(result, {
+                  instructionPc: 0x1006n,
+                  address: 0x8001n,
+                  width: 1,
+                  access: 'read',
+                  cause: 'unmapped',
+                  failingAddress: 0x8001n,
+                  segment: 'ds',
+                });
+              }
+            },
+            { data: [{ base: 0x8000n, bytes: item.bytes }] },
+          );
+        }
+      },
+    },
+    {
       name: 'a watched store inside a guarded loop exits before fetching changed successor code',
       async run() {
         const code = 'eb0190720583c0077500c6030283e90174f0ebef90';
