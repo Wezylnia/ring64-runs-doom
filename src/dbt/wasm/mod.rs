@@ -122,6 +122,8 @@ struct Emitter {
     proved_reads: Option<(read_loop::ReadLoop, u32)>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     zero_upper_xmm: u16,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    normal_low_f32: u16,
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     parallel_atomic: Option<parallel::Atomic>,
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
@@ -1567,6 +1569,8 @@ fn emit_body(
         proved_reads: None,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         zero_upper_xmm: 0,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        normal_low_f32: 0,
         #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
         parallel_atomic,
         #[cfg(all(feature = "parallel", target_arch = "wasm32"))]

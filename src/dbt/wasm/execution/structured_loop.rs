@@ -332,6 +332,16 @@ fn zero_upper_after(known: u16, operation: Operation) -> u16 {
     }
 }
 
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+fn normal_low_after(known: u16, operation: Operation) -> u16 {
+    match operation {
+        Operation::Float(instruction) if scalar_f32(operation) => known | (1 << instruction.dst),
+        Operation::Vector(VectorInstruction::Move { register, .. }) => known & !(1 << register),
+        Operation::Nop => known,
+        _ => 0,
+    }
+}
+
 impl Emitter {
     pub(super) fn exclude_loop_stop(&mut self, instructions: &[Instruction], body: StructuredLoop) {
         let first = instructions[body.head as usize].pc as i64;
@@ -450,11 +460,15 @@ impl Emitter {
                 // Each lap starts with unknown XMM values at its head.
                 self.zero_upper_xmm =
                     zero_upper_after(self.zero_upper_xmm, instructions[ordinal].operation);
+                // A failed classification leaves this body before committing the instruction.
+                self.normal_low_f32 =
+                    normal_low_after(self.normal_low_f32, instructions[ordinal].operation);
             }
         }
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         {
             self.zero_upper_xmm = 0;
+            self.normal_low_f32 = 0;
         }
         self.omit_result_status = false;
         self.flags_on_read_fault = None;

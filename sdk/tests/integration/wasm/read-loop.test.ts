@@ -61,10 +61,12 @@ test('SIMD read loops resume from interior PCs and validate every backing after 
         { id: 'column', bytes: floats(2, 3, 4, 5) },
         { id: 'tail', bytes: Uint8Array.of(0x41) },
         { id: 'fraction', bytes: floats(1 + 2 ** -23, 2, 3, 4) },
+        { id: 'tiny', bytes: floats(2 ** -126, 2, 3, 4) },
+        { id: 'half', bytes: floats(0.5, 3, 4, 5) },
       ],
       mappings: [...fixed, mapping(column, 'column', 16)],
     },
-    memoryLimits: { maxBackings: 5, maxMappings: 4, maxBackingBytes: code.length + 49 },
+    memoryLimits: { maxBackings: 7, maxMappings: 4, maxBackingBytes: code.length + 81 },
   });
   const input = initial(head, { 0: row, 1: 0n, 2: 4n, 3: column });
   const upper = 0x123456789012345678901234n << 32n;
@@ -119,6 +121,21 @@ test('SIMD read loops resume from interior PCs and validate every backing after 
     assert.equal(precisionFault.state.rip, head + 5n);
     assert.equal(cpu.readMxcsr(), 0x0fa0);
     assert.equal(cpu.readXmmState()[0], 0x3f800001n);
+
+    // The exact tiny multiplication succeeds through the helper. Its subnormal
+    // result is still checked as an operand by the next addition.
+    cpu.setMappings([fixed[0]!, mapping(row, 'tiny', 16), mapping(column, 'half', 16)]);
+    reset();
+    const beforeDenormal = cpu.readXmmState();
+    beforeDenormal[2] = upper | 0x3f800000n;
+    cpu.setXmmState(beforeDenormal);
+    cpu.setMxcsr(0x1e80);
+    const denormalFault = await cpu.run({ budget: 20n, stop });
+    assert.equal(denormalFault.reason, 'simd-exception');
+    assert.equal(denormalFault.retired, 4n);
+    assert.equal(denormalFault.state.rip, head + 22n);
+    assert.equal(cpu.readMxcsr(), 0x1e82);
+    assert.deepEqual(cpu.readXmmState().slice(0, 3), [0x00400000n, 0x40c00000n, beforeDenormal[2]]);
     cpu.setMxcsr(0x1f80);
 
     const split = [...fixed, mapping(column, 'column', 15)];

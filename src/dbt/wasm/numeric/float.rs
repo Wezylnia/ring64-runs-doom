@@ -57,7 +57,14 @@ impl Emitter {
             .then_some(result);
             #[cfg(not(all(not(feature = "parallel"), target_arch = "wasm32")))]
             let wide = None;
-            self.float_f32(instruction.op.kind, left, right, wide);
+            #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+            let normal = [
+                self.normal_low_f32 & (1 << instruction.dst) != 0,
+                matches!(instruction.src, Location::Register(src) if self.normal_low_f32 & (1 << src.bank) != 0),
+            ];
+            #[cfg(not(all(not(feature = "parallel"), target_arch = "wasm32")))]
+            let normal = [false; 2];
+            self.float_f32(instruction.op.kind, left, right, wide, normal);
             self.op(Op::Br(1)).op(Op::End);
             self.float_f32_fallback(instruction, left, right, exit_depth);
             self.op(Op::End);
@@ -140,7 +147,14 @@ impl Emitter {
             ))));
     }
 
-    fn float_f32(&mut self, kind: Kind, left: u32, right: u32, wide: Option<u32>) {
+    fn float_f32(
+        &mut self,
+        kind: Kind,
+        left: u32,
+        right: u32,
+        wide: Option<u32>,
+        normal: [bool; 2],
+    ) {
         let mxcsr = super::vector::memory(offset_of!(RunState, mxcsr));
         self.op(Op::LocalGet(0))
             .op(Op::I32Load(mxcsr))
@@ -149,7 +163,7 @@ impl Emitter {
             .op(Op::I32And)
             .op(Op::BrIf(0));
 
-        for (vector, bits) in [(left, LHS), (right, RHS)] {
+        for ((vector, bits), known_normal) in [(left, LHS), (right, RHS)].into_iter().zip(normal) {
             self.op(Op::LocalGet(vector));
             if let Some(wide) = wide {
                 self.op(Op::F64x2PromoteLowF32x4)
@@ -159,7 +173,9 @@ impl Emitter {
                 self.op(Op::F32x4ExtractLane(0)).op(Op::F64PromoteF32);
             }
             self.op(Op::I64ReinterpretF64).op(Op::LocalSet(bits));
-            self.reject_non_normal_f32(bits);
+            if !known_normal {
+                self.reject_non_normal_f32(bits);
+            }
             if let Some(wide) = wide {
                 // Retain the widened operand beneath the next operand's check.
                 self.op(Op::LocalGet(wide));
