@@ -156,12 +156,17 @@ impl Emitter {
         normal: [bool; 2],
     ) {
         let mxcsr = super::vector::memory(offset_of!(RunState, mxcsr));
-        self.op(Op::LocalGet(0))
-            .op(Op::I32Load(mxcsr))
-            .op(Op::LocalTee(STORE_STATUS))
-            .op(Op::I32Const(ROUNDING_CONTROL))
-            .op(Op::I32And)
-            .op(Op::BrIf(0));
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        let rounding_prechecked = self.proved_reads.is_some();
+        #[cfg(not(all(not(feature = "parallel"), target_arch = "wasm32")))]
+        let rounding_prechecked = false;
+        self.load_float_mxcsr();
+        if rounding_prechecked {
+            self.op(Op::LocalSet(STORE_STATUS));
+        } else {
+            self.op(Op::LocalTee(STORE_STATUS));
+            self.reject_non_nearest_fp32();
+        }
 
         for ((vector, bits), known_normal) in [(left, LHS), (right, RHS)].into_iter().zip(normal) {
             self.op(Op::LocalGet(vector));
@@ -260,6 +265,19 @@ impl Emitter {
             self.float_f64(RESULT);
             self.op(Op::F32DemoteF64).op(Op::F32x4ReplaceLane(0));
         }
+    }
+
+    pub(super) fn load_float_mxcsr(&mut self) {
+        self.op(Op::LocalGet(0))
+            .op(Op::I32Load(super::vector::memory(offset_of!(
+                RunState, mxcsr
+            ))));
+    }
+
+    pub(super) fn reject_non_nearest_fp32(&mut self) {
+        self.op(Op::I32Const(ROUNDING_CONTROL))
+            .op(Op::I32And)
+            .op(Op::BrIf(0));
     }
 
     fn float_f64(&mut self, bits: u32) {

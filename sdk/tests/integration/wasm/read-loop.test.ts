@@ -232,8 +232,8 @@ test('a rejected float at the guarded loop head executes once through the checke
     memory: {
       backings: [
         { id: 'code', bytes: code },
-        { id: 'row', bytes: floats(1, 2) },
-        { id: 'column', bytes: floats(2) },
+        { id: 'row', bytes: floats(0, 2) },
+        { id: 'column', bytes: floats(1 + 2 ** -23) },
       ],
       mappings: [
         { ...mapping(head, 'code', code.length), permissions: { ...readOnly, execute: true } },
@@ -247,19 +247,15 @@ test('a rejected float at the guarded loop head executes once through the checke
     const input = initial(head, { 0: row, 1: 0n, 2: 2n, 3: column });
     cpu.setState(input);
     const upper = 0x123456789012345678901234n << 32n;
-    cpu.setXmmState([upper | 0x3f800000n, ...Array<bigint>(15).fill(0n)]);
-    cpu.setMxcsr(0x3f80); // Round down forces the precise helper, including at the loop head.
+    cpu.setXmmState([upper | 0x3f800001n, ...Array<bigint>(15).fill(0n)]);
+    cpu.setMxcsr(0x5f80); // The exact product lies above 0x3f800002. Round upward to 0x3f800003.
     const rounded = await cpu.run({ budget: 8n, stop });
     assert.equal(rounded.reason, 'budget');
     assert.equal(rounded.retired, 8n);
     assert.equal(rounded.state.rip, stop);
     assert.equal(rounded.state.registers[1], 2n);
-    assert.deepEqual(cpu.readXmmState().slice(0, 3), [
-      upper | 0x40800000n,
-      0x40000000n,
-      0x40000000n,
-    ]);
-    assert.equal(cpu.readMxcsr(), 0x3f80);
+    assert.deepEqual(cpu.readXmmState().slice(0, 3), [upper | 0x3f800003n, 0n, 0x40000000n]);
+    assert.equal(cpu.readMxcsr(), 0x5fa0);
 
     cpu.setState(input);
     cpu.setXmmState([upper | 0x7f800001n, ...Array<bigint>(15).fill(0n)]);

@@ -200,6 +200,12 @@ impl Emitter {
         use crate::memory::DirectSpan as Descriptor;
 
         self.op(Op::Block(BlockType::Result(ValType::I32)))
+            .op(Op::I32Const(0));
+        // A later LDMXCSR can change rounding within this artifact. Only a
+        // mapping or address proof failure latches the checked placement.
+        self.load_float_mxcsr();
+        self.reject_non_nearest_fp32();
+        self.op(Op::Drop)
             .op(Op::Block(BlockType::Empty))
             .op(Op::LocalGet(guard_failed))
             .op(Op::BrIf(0));
