@@ -9,6 +9,21 @@ const compiler = await WebAssembly.compile(
   new Uint8Array(await readFile(new URL('../../../../build/ring64.wasm', import.meta.url))),
 );
 
+function lebSize(value: number): number {
+  let size = 1;
+  for (; value >= 128; value >>>= 7) size++;
+  return size;
+}
+
+function branchHintBytes(module: WebAssembly.Module): number {
+  const name = 'metadata.code.branch_hint';
+  const nameSize = lebSize(name.length) + name.length;
+  return WebAssembly.Module.customSections(module, name).reduce((size, data) => {
+    const payloadSize = nameSize + data.byteLength;
+    return size + 1 + lebSize(payloadSize) + payloadSize;
+  }, 0);
+}
+
 test('loop stores use private writable spans and fall back for faults and translated code', async () => {
   const head = 0x31000n;
   const data = 0x49000n;
@@ -44,7 +59,9 @@ test('loop stores use private writable spans and fall back for faults and transl
   const cpu = await createCpu(options);
   const instantiate = Core.prototype.instantiate;
   const imports: boolean[] = [];
+  let firstModule: WebAssembly.Module | undefined;
   Core.prototype.instantiate = function (module, observed) {
+    firstModule ??= module;
     imports.push(WebAssembly.Module.imports(module).some(({ name }) => name === 'write_span'));
     return instantiate.call(this, module, observed);
   };
@@ -93,9 +110,12 @@ test('loop stores use private writable spans and fall back for faults and transl
       segment: 'ds',
     });
 
+    assert.ok(firstModule);
+    // Optional annotations can be dropped before the executable fast path.
+    const guardedCodeBytes = guarded.byteLength - branchHintBytes(firstModule);
     const cap = await createCpu({
       ...options,
-      limits: { ...LIMITS, maxArtifactBytes: guarded.byteLength - 1 },
+      limits: { ...LIMITS, maxArtifactBytes: guardedCodeBytes - 1 },
     });
     try {
       cap.setState(input);

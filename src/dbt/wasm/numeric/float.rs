@@ -277,7 +277,7 @@ impl Emitter {
     pub(super) fn reject_non_nearest_fp32(&mut self) {
         self.op(Op::I32Const(ROUNDING_CONTROL))
             .op(Op::I32And)
-            .op(Op::BrIf(0));
+            .unlikely(Op::BrIf(0));
     }
 
     fn float_f64(&mut self, bits: u32) {
@@ -299,7 +299,7 @@ impl Emitter {
             .op(Op::I64Eqz)
             .op(Op::I32Eqz)
             .op(Op::I32And)
-            .op(Op::BrIf(0));
+            .unlikely(Op::BrIf(0));
     }
 
     pub(super) fn mxcsr(&mut self, address: Address, store: bool, next_pc: u64, exit_depth: u32) {

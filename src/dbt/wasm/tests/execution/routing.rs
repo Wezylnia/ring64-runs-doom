@@ -199,6 +199,92 @@ fn wasm_loop_count(bytes: &[u8]) -> usize {
         .sum()
 }
 
+fn executable_artifact_size(bytes: &[u8]) -> u32 {
+    use wasm_encoder::{RawSection, Section};
+    use wasmparser::{Parser, Payload};
+
+    let hints = Parser::new(0)
+        .parse_all(bytes)
+        .find_map(|item| match item.unwrap() {
+            Payload::CustomSection(section) if section.name() == "metadata.code.branch_hint" => {
+                Some(section.range())
+            }
+            _ => None,
+        });
+    let mut encoded = Vec::new();
+    if let Some(range) = hints {
+        RawSection {
+            id: 0,
+            data: &bytes[range.start as usize..range.end as usize],
+        }
+        .append_to(&mut encoded);
+    }
+    (bytes.len() - encoded.len()) as u32
+}
+
+#[test]
+#[cfg(not(feature = "parallel"))]
+fn branch_hints_point_to_code_and_fit_the_artifact_limit() {
+    use wasmparser::{KnownCustom, Operator, Parser, Payload};
+
+    let code = [0x90, 0x90];
+    let artifact = compiled_fixture(0x1000, &code, 0x1000);
+    let mut sections = Parser::new(0).parse_all(&artifact.bytes);
+    let hint_function = sections
+        .find_map(|item| match item.unwrap() {
+            Payload::CustomSection(section) => match section.as_known() {
+                KnownCustom::BranchHints(hints) => hints.into_iter().next().map(Result::unwrap),
+                _ => None,
+            },
+            _ => None,
+        })
+        .unwrap();
+    let run = sections
+        .find_map(|item| match item.unwrap() {
+            Payload::CodeSectionEntry(body) => Some(body),
+            _ => None,
+        })
+        .unwrap();
+    let mut ops = run.get_operators_reader().unwrap();
+    let mut branches = Vec::new();
+    while !ops.eof() {
+        let (op, offset) = ops.read_with_offset().unwrap();
+        if matches!(op, Operator::If { .. } | Operator::BrIf { .. }) {
+            branches.push(offset - run.range().start);
+        }
+    }
+    assert!(hint_function.hints.count() >= 2);
+    for hint in hint_function.hints {
+        let hint = hint.unwrap();
+        assert!(!hint.taken && branches.contains(&u64::from(hint.func_offset)));
+    }
+
+    let image = crate::memory::Image::new(0x1000, code.to_vec(), 0x8000, vec![0; 8]).unwrap();
+    let capped = crate::dbt::compile(
+        &image,
+        0x1000,
+        crate::dbt::Limits {
+            max_instructions: 64,
+            max_source_bytes: 256,
+            max_artifact_bytes: artifact.bytes.len() as u32 - 1,
+        },
+    )
+    .unwrap();
+    let capped_run = Parser::new(0)
+        .parse_all(&capped.bytes)
+        .find_map(|item| match item.unwrap() {
+            Payload::CustomSection(section) => {
+                assert_ne!(section.name(), "metadata.code.branch_hint");
+                None
+            }
+            Payload::CodeSectionEntry(body) => Some(body),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(artifact.entries, capped.entries);
+    assert_eq!(run.as_bytes(), capped_run.as_bytes());
+}
+
 #[test]
 fn register_loop_reuses_the_checked_entries_for_partial_laps() {
     let code = [
@@ -300,7 +386,7 @@ fn register_loop_reuses_the_checked_entries_for_partial_laps() {
     let limits = crate::dbt::Limits {
         max_instructions: 16,
         max_source_bytes: 64,
-        max_artifact_bytes: artifact.bytes.len() as u32 - u32::from(specialized),
+        max_artifact_bytes: executable_artifact_size(&artifact.bytes) - u32::from(specialized),
     };
     let fallback = crate::dbt::compile(&image, 0x1000, limits).unwrap();
     assert_eq!(wasm_loop_count(&fallback.bytes), 1);
@@ -403,7 +489,8 @@ fn float_backedge_uses_a_structured_loop_with_size_fallback() {
         Limits {
             max_instructions: 16,
             max_source_bytes: 64,
-            max_artifact_bytes: artifact.bytes.len() as u32 - u32::from(expected_loops == 2),
+            max_artifact_bytes: executable_artifact_size(&artifact.bytes)
+                - u32::from(expected_loops == 2),
         },
     )
     .unwrap();
@@ -668,7 +755,8 @@ fn natural_loop_preserves_forward_branches_external_exits_and_store_order() {
         wasm_loop_count(&bytes),
         1 + usize::from(!cfg!(feature = "parallel"))
     );
-    let limit = bytes.len() - usize::from(!cfg!(feature = "parallel"));
+    let limit =
+        executable_artifact_size(&bytes) as usize - usize::from(!cfg!(feature = "parallel"));
     let fallback = emit_profile(&unit, false, false, limit);
     assert!(fallback.len() <= limit);
     assert_eq!(wasm_loop_count(&fallback), 1);

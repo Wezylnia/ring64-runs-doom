@@ -181,7 +181,7 @@ impl Emitter {
     pub(super) fn gates(&mut self, exit_depth: u32) {
         self.op(Op::LocalGet(REMAINING))
             .op(Op::I64Eqz)
-            .op(Op::If(BlockType::Empty));
+            .unlikely(Op::If(BlockType::Empty));
         self.exit(BUDGET, exit_depth + 1);
         self.op(Op::End)
             .op(Op::LocalGet(3))
@@ -189,7 +189,7 @@ impl Emitter {
             .op(Op::LocalGet(2))
             .op(Op::I64Eq)
             .op(Op::I32And)
-            .op(Op::If(BlockType::Empty));
+            .unlikely(Op::If(BlockType::Empty));
         self.exit(STOP, exit_depth + 1);
         self.op(Op::End);
     }

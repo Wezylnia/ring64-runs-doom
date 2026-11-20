@@ -82,7 +82,7 @@ mod parallel;
 use std::collections::BTreeMap;
 use wasm_encoder::{
     BlockType, CodeSection, EntityType, ExportKind, ExportSection, Function, FunctionSection,
-    ImportSection, Instruction as Op, MemoryType, Module, TypeSection, ValType,
+    ImportSection, Instruction as Op, MemoryType, Module, Section, TypeSection, ValType,
 };
 
 use super::unit::Unit;
@@ -135,6 +135,7 @@ struct Emitter {
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     parallel_memo_address: bool,
     body: Function,
+    branch_hints: Vec<wasm_encoder::BranchHint>,
     entries: BTreeMap<u64, u32>,
     current_index: u32,
     structured_loop: Option<(StructuredLoop, u32)>,
@@ -200,6 +201,17 @@ impl Emitter {
     fn op(&mut self, instruction: Op<'_>) -> &mut Self {
         self.body.instruction(&instruction);
         self
+    }
+
+    fn unlikely(&mut self, branch: Op<'_>) -> &mut Self {
+        debug_assert!(matches!(branch, Op::If(_) | Op::BrIf(_)));
+        if !self.observed && !cfg!(feature = "parallel") {
+            self.branch_hints.push(wasm_encoder::BranchHint {
+                branch_func_offset: self.body.byte_len() as u32,
+                branch_hint_value: 0,
+            });
+        }
+        self.op(branch)
     }
 
     fn instruction(
@@ -605,9 +617,26 @@ fn emit_placement(
     guard_reads: bool,
     max_artifact_bytes: usize,
 ) -> Vec<u8> {
-    let (bytes, extra_spans) = emit_body(unit, observed, paged, loop_body, guard_reads, true);
+    let (bytes, extra_spans) = emit_body(
+        unit,
+        observed,
+        paged,
+        loop_body,
+        guard_reads,
+        true,
+        max_artifact_bytes,
+    );
     if extra_spans && bytes.len() > max_artifact_bytes {
-        return emit_body(unit, observed, paged, loop_body, guard_reads, false).0;
+        return emit_body(
+            unit,
+            observed,
+            paged,
+            loop_body,
+            guard_reads,
+            false,
+            max_artifact_bytes,
+        )
+        .0;
     }
     bytes
 }
@@ -619,6 +648,7 @@ fn emit_body(
     loop_body: Option<StructuredLoop>,
     _guard_reads: bool,
     _extra_spans: bool,
+    max_artifact_bytes: usize,
 ) -> (Vec<u8>, bool) {
     let vector_banks = vector::Banks::for_unit(unit);
     let has_repeat = unit
@@ -1654,6 +1684,7 @@ fn emit_body(
         current_pc: 0,
         current_operation: Operation::Nop,
         body: Function::new(locals),
+        branch_hints: Vec::new(),
         entries: unit
             .instructions
             .iter()
@@ -1756,13 +1787,25 @@ fn emit_body(
         .section(&types)
         .section(&imports)
         .section(&functions)
-        .section(&exports)
-        .section(&code);
+        .section(&exports);
+    let mut bytes = module.finish();
+    let hints_start = bytes.len();
+    if !emitter.branch_hints.is_empty() {
+        let mut hints = wasm_encoder::BranchHints::new();
+        hints.function_hints(run_index, emitter.branch_hints);
+        hints.append_to(&mut bytes);
+    }
+    let code_start = bytes.len();
+    code.append_to(&mut bytes);
+    if bytes.len() > max_artifact_bytes {
+        // Optional annotations never displace executable code under the owner's limit.
+        bytes.drain(hints_start..code_start);
+    }
     #[cfg(any(feature = "parallel", not(target_arch = "wasm32")))]
     let extra_spans = false;
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let extra_spans = write_span.is_some() || stack_read_span.is_some();
-    (module.finish(), extra_spans)
+    (bytes, extra_spans)
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]

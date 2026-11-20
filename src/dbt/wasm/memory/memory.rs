@@ -298,7 +298,7 @@ impl Emitter {
                 .op(Op::I64LeU)
                 .op(Op::I32And);
         }
-        self.op(Op::I32Eqz).op(Op::If(BlockType::Empty));
+        self.op(Op::I32Eqz).unlikely(Op::If(BlockType::Empty));
         let segment = last_offset.map_or(-1, |_| self.segment as i32);
         self.linear_address();
         self.op(Op::I32Const(bytes as i32))
@@ -306,7 +306,7 @@ impl Emitter {
             .op(Op::Call(span.resolve))
             .op(Op::LocalTee(span.descriptor))
             .op(Op::I32Eqz)
-            .op(Op::If(BlockType::Empty));
+            .unlikely(Op::If(BlockType::Empty));
         slow(self, exit_depth + 3);
         self.op(Op::Br(2)).op(Op::End);
         let field = |offset, align| MemArg {
