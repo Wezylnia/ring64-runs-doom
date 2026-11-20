@@ -3,18 +3,22 @@ use wasm_encoder::{BlockType, Instruction as Op};
 
 use crate::x86::{
     float::{Format, Kind},
-    instruction::{Instruction, Operation, VectorInstruction},
+    instruction::{Instruction, Location, Operation, VectorInstruction},
 };
 
 #[derive(Clone, Copy)]
 pub(super) struct StructuredLoop {
     pub(super) head: u32,
     pub(super) tail: u32,
+    pub(super) register_only: bool,
 }
 
 impl StructuredLoop {
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     pub(super) fn read_proof(self, unit: &super::Unit) -> Option<super::read_loop::ReadLoop> {
+        if self.register_only {
+            return None;
+        }
         super::read_loop::ReadLoop::recognize(
             &unit.context,
             &unit.instructions[self.head as usize..=self.tail as usize],
@@ -22,6 +26,15 @@ impl StructuredLoop {
     }
 
     pub(super) fn select(instructions: &[Instruction]) -> Option<Self> {
+        Self::select_body(instructions, false).or_else(|| Self::select_body(instructions, true))
+    }
+
+    fn select_body(instructions: &[Instruction], register_only: bool) -> Option<Self> {
+        let inside = if register_only {
+            inside_register_body
+        } else {
+            inside_float_body
+        };
         let mut first = 0;
         let mut best = None::<Self>;
         for (index, instruction) in instructions.iter().enumerate() {
@@ -33,17 +46,19 @@ impl StructuredLoop {
                 let head = first + offset;
                 let length = index - head;
                 if best.is_none_or(|previous| length > (previous.tail - previous.head) as usize)
-                    && instructions[head..index]
-                        .iter()
-                        .any(|i| scalar_f32(i.operation))
+                    && (register_only
+                        || instructions[head..index]
+                            .iter()
+                            .any(|i| scalar_f32(i.operation)))
                 {
                     best = Some(Self {
                         head: head as u32,
                         tail: index as u32,
+                        register_only,
                     });
                 }
             }
-            if !inside_body(instruction.operation)
+            if !inside(instruction.operation)
                 || instructions
                     .get(index + 1)
                     .is_none_or(|next| instruction.next_pc != next.pc || instruction.pc >= next.pc)
@@ -55,9 +70,31 @@ impl StructuredLoop {
     }
 }
 
+fn inside_register_body(operation: Operation) -> bool {
+    matches!(
+        operation,
+        Operation::Alu { .. }
+            | Operation::Lea { .. }
+            | Operation::Mov { .. }
+            | Operation::Nop
+            | Operation::Shift {
+                dst: Location::Register(_),
+                ..
+            }
+            | Operation::DoubleShift {
+                dst: Location::Register(_),
+                ..
+            }
+            | Operation::Unary {
+                dst: Location::Register(_),
+                ..
+            }
+    )
+}
+
 // Leave stores, control transfers and context-changing operations on the
 // ordinary path. The clone still uses the original lowering and fault exits.
-fn inside_body(operation: Operation) -> bool {
+fn inside_float_body(operation: Operation) -> bool {
     match operation {
         Operation::Float(_) => scalar_f32(operation),
         Operation::Alu { .. }
@@ -104,7 +141,6 @@ fn zero_upper_after(known: u16, operation: Operation) -> u16 {
 }
 
 impl Emitter {
-    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     pub(super) fn exclude_loop_stop(&mut self, instructions: &[Instruction], body: StructuredLoop) {
         let first = instructions[body.head as usize].pc as i64;
         let last = instructions[body.tail as usize].pc as i64;
@@ -118,6 +154,22 @@ impl Emitter {
             .op(Op::I64LeU)
             .op(Op::I32And)
             .op(Op::I32Eqz);
+    }
+
+    pub(super) fn emit_prechecked_loop(
+        &mut self,
+        instructions: &[Instruction],
+        body: StructuredLoop,
+        loop_depth: u32,
+        write_segment_base: Option<u32>,
+    ) {
+        let current_index = self.current_index;
+        self.op(Op::If(BlockType::Empty));
+        self.loop_gates_prechecked = true;
+        self.emit_structured_loop(instructions, body, loop_depth + 1, write_segment_base);
+        self.loop_gates_prechecked = false;
+        self.current_index = current_index;
+        self.op(Op::End);
     }
 
     pub(super) fn emit_structured_loop(

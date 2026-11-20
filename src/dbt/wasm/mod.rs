@@ -1667,30 +1667,38 @@ fn emit_body(
         }
         let loop_depth = count - index as u32;
         if let Some(loop_body) = loop_body.filter(|body| body.head == index as u32) {
-            #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-            if let Some((proof, span, first_bias, guard_failed)) = proved_reads {
-                emitter.guard_read_loop(proof, span, first_bias, guard_failed);
+            if loop_body.register_only {
+                // Partial laps and in-loop stops use the original entry labels.
                 emitter.exclude_loop_stop(&unit.instructions, loop_body);
-                emitter.op(Op::I32And).op(Op::If(BlockType::Empty));
-                emitter.proved_reads = Some((proof, first_bias));
-                emitter.loop_gates_prechecked = true;
+                emitter.emit_prechecked_loop(
+                    &unit.instructions,
+                    loop_body,
+                    loop_depth,
+                    write_segment_base,
+                );
+            } else {
+                #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+                if let Some((proof, span, first_bias, guard_failed)) = proved_reads {
+                    emitter.guard_read_loop(proof, span, first_bias, guard_failed);
+                    emitter.exclude_loop_stop(&unit.instructions, loop_body);
+                    emitter.op(Op::I32And);
+                    emitter.proved_reads = Some((proof, first_bias));
+                    emitter.emit_prechecked_loop(
+                        &unit.instructions,
+                        loop_body,
+                        loop_depth,
+                        write_segment_base,
+                    );
+                    emitter.proved_reads = None;
+                }
                 emitter.emit_structured_loop(
                     &unit.instructions,
                     loop_body,
-                    loop_depth + 1,
+                    loop_depth,
                     write_segment_base,
                 );
-                emitter.loop_gates_prechecked = false;
-                emitter.proved_reads = None;
-                emitter.op(Op::End);
+                continue;
             }
-            emitter.emit_structured_loop(
-                &unit.instructions,
-                loop_body,
-                loop_depth,
-                write_segment_base,
-            );
-            continue;
         }
         emitter.instruction(
             *instruction,

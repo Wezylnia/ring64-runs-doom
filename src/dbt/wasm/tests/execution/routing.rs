@@ -200,6 +200,141 @@ fn wasm_loop_count(bytes: &[u8]) -> usize {
 }
 
 #[test]
+fn register_loop_reuses_the_checked_entries_for_partial_laps() {
+    let code = [
+        0xd1, 0xe0, // shl eax, 1
+        0x31, 0xc3, // xor ebx, eax
+        0x83, 0xe9, 1, // sub ecx, 1
+        0x75, 0xf7, // jne head
+        0x90,
+    ];
+    let artifact = compiled_fixture(0x1000, &code, 0x1000);
+    let specialized = !cfg!(feature = "parallel");
+    assert_eq!(
+        wasm_loop_count(&artifact.bytes),
+        1 + usize::from(specialized)
+    );
+    let input = [(0, 0x40000001), (1, 2), (3, 0x40)];
+    let mut cases = Vec::new();
+    for (pc, budget, stop, writes, flags, next, reason, remaining) in [
+        (
+            0x1000,
+            3,
+            None,
+            [0x80000002, 1, 0x80000042],
+            2,
+            0x1007,
+            BUDGET,
+            0,
+        ),
+        (
+            0x1000,
+            4,
+            None,
+            [0x80000002, 1, 0x80000042],
+            2,
+            0x1000,
+            BUDGET,
+            0,
+        ),
+        (
+            0x1000,
+            5,
+            None,
+            [4, 1, 0x80000042],
+            0x803,
+            0x1002,
+            BUDGET,
+            0,
+        ),
+        (0x1000, 8, None, [4, 0, 0x80000046], 0x46, 0x1009, BUDGET, 0),
+        (
+            0x1000,
+            9,
+            Some(0x1009),
+            [4, 0, 0x80000046],
+            0x46,
+            0x1009,
+            STOP,
+            1,
+        ),
+        (
+            0x1000,
+            9,
+            Some(0x1002),
+            [0x80000002, 2, 0x40],
+            0x882,
+            0x1002,
+            STOP,
+            8,
+        ),
+        (
+            0x1002,
+            2,
+            None,
+            [0x40000001, 1, 0x40000041],
+            2,
+            0x1007,
+            BUDGET,
+            0,
+        ),
+    ] {
+        let writes = [(0, writes[0]), (1, writes[1]), (3, writes[2])];
+        let mut packet = execution_case(
+            &artifact.bytes,
+            &artifact.entries,
+            &input,
+            2,
+            pc,
+            budget,
+            (&writes, flags, next, reason as u32, remaining),
+        );
+        if let Some(stop) = stop {
+            packet["stop"] = json!(format!("{stop:x}"));
+        }
+        cases.push(packet);
+    }
+    run_cases(cases);
+
+    let image = crate::memory::Image::new(0x1000, code.to_vec(), 0x8000, vec![0; 16]).unwrap();
+    let limits = crate::dbt::Limits {
+        max_instructions: 16,
+        max_source_bytes: 64,
+        max_artifact_bytes: artifact.bytes.len() as u32 - u32::from(specialized),
+    };
+    let fallback = crate::dbt::compile(&image, 0x1000, limits).unwrap();
+    assert_eq!(wasm_loop_count(&fallback.bytes), 1);
+    assert_eq!(fallback.entries, artifact.entries);
+    let observed = crate::dbt::compile_with_context_observed(
+        &image,
+        &ExecutionContext::default(),
+        0x1000,
+        crate::dbt::Limits {
+            max_artifact_bytes: 65536,
+            ..limits
+        },
+        true,
+    )
+    .unwrap();
+    assert_eq!(wasm_loop_count(&observed.bytes), 1);
+
+    for excluded in [
+        [0xd1, 0x20], // shl dword [rax], 1
+        [0x01, 0x03], // add [rbx], eax
+        [0x89, 0x03], // mov [rbx], eax
+        [0x8b, 0x03], // mov eax, [rbx]
+        [0xf7, 0x18], // neg dword [rax]
+        [0xf7, 0xe0], // mul eax
+        [0xf7, 0xf0], // div eax
+    ] {
+        let mut other = code;
+        other[..2].copy_from_slice(&excluded);
+        let artifact = compiled_fixture(0x1000, &other, 0x1000);
+        assert_eq!(wasm_loop_count(&artifact.bytes), 1, "{excluded:02x?}");
+    }
+}
+
+#[test]
 fn float_backedge_uses_a_structured_loop_with_size_fallback() {
     use crate::dbt::{Limits, compile};
 
