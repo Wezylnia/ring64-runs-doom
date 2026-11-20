@@ -36,6 +36,8 @@ test(
     const [packed] = JSON.parse(stdout);
     const files = new Set(packed.files.map(({ path }) => path));
     for (const expected of [
+      'LICENSE',
+      'THIRD_PARTY_NOTICES.txt',
       'index.js',
       'index.d.ts',
       'machine.js',
@@ -64,6 +66,10 @@ test(
       ],
       { cwd: project },
     );
+    const installedManifest = JSON.parse(
+      await readFile(join(project, 'node_modules/ring64/package.json'), 'utf8'),
+    );
+    assert.equal(installedManifest.license, 'MIT');
     for (const file of ['consumer.ts', 'contracts.ts'])
       await copyFile(new URL(file, import.meta.url), join(project, file));
     await exec(

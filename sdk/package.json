@@ -3,6 +3,7 @@
   "version": "0.1.1",
   "private": true,
   "description": "An x86 and x86-64 CPU emulator for JavaScript runtimes",
+  "license": "MIT",
   "type": "module",
   "exports": {
     ".": {
@@ -17,7 +18,8 @@
   "files": [
     "**/*.js",
     "**/*.d.ts",
-    "*.wasm"
+    "*.wasm",
+    "THIRD_PARTY_NOTICES.txt"
   ],
   "engines": {
     "node": ">=22.12.0"

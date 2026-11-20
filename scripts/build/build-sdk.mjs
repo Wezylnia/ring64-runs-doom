@@ -22,3 +22,5 @@ const manifest = JSON.parse(await readFile('sdk/package.json', 'utf8'));
 delete manifest.private;
 await writeFile(`${packageRoot}/package.json`, JSON.stringify(manifest, null, 2) + '\n');
 await copyFile('README.md', `${packageRoot}/README.md`);
+await copyFile('LICENSE', `${packageRoot}/LICENSE`);
+await copyFile('sdk/THIRD_PARTY_NOTICES.txt', `${packageRoot}/THIRD_PARTY_NOTICES.txt`);
