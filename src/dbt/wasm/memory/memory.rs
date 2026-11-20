@@ -7,7 +7,7 @@ use wasm_encoder::{BlockType, Instruction as Op, MemArg};
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 #[derive(Clone, Copy)]
 // Mapping edits happen between invocations, so the cached span lives in Wasm locals.
-pub(super) struct ReadSpan {
+pub(super) struct SpanCache {
     pub(super) resolve: u32,
     base: u32,
     length: u32,
@@ -16,7 +16,7 @@ pub(super) struct ReadSpan {
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-impl ReadSpan {
+impl SpanCache {
     pub(super) fn new(resolve: u32, first: u32) -> Self {
         Self {
             resolve,
@@ -26,6 +26,12 @@ impl ReadSpan {
             descriptor: first + 3,
         }
     }
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+enum DirectOperand {
+    Load(Option<u32>),
+    Store,
 }
 
 impl Emitter {
@@ -196,7 +202,28 @@ impl Emitter {
                 .op(Op::LocalSet(vector));
             return true;
         }
-        let Some(span) = self.read_span else {
+        self.direct_access(
+            width,
+            DirectOperand::Load(vector_result),
+            exit_depth,
+            load_slow,
+        )
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    fn direct_access(
+        &mut self,
+        width: Width,
+        operand: DirectOperand,
+        exit_depth: u32,
+        slow: impl FnOnce(&mut Self, u32),
+    ) -> bool {
+        use crate::memory::{Access, DirectSpan as Descriptor};
+        let (span, access) = match operand {
+            DirectOperand::Load(_) => (self.read_span, Access::Read),
+            DirectOperand::Store => (self.write_span(), Access::Write),
+        };
+        let Some(span) = span else {
             return false;
         };
         let bytes = u32::from(width.bytes());
@@ -204,11 +231,11 @@ impl Emitter {
             None
         } else {
             // Activation checks the captured context, and segment-changing
-            // instructions leave the unit. Offset zero proves a readable,
+            // instructions leave the unit. Offset zero proves an accessible,
             // non-expand-down identity segment through its limit.
             if self
                 .context
-                .translate(0, bytes, self.segment, crate::memory::Access::Read, false)
+                .translate(0, bytes, self.segment, access, false)
                 .ok()
                 != Some(0)
             {
@@ -216,7 +243,7 @@ impl Emitter {
             }
             Some(i64::from(self.context.segment(self.segment).limit) + 1 - i64::from(bytes))
         };
-        if vector_result.is_some() {
+        if matches!(operand, DirectOperand::Load(Some(_))) {
             // Scalar SIMD passes its original effective offset on the stack.
             self.op(Op::LocalSet(ADDRESS));
         }
@@ -250,9 +277,8 @@ impl Emitter {
             .op(Op::LocalTee(span.descriptor))
             .op(Op::I32Eqz)
             .op(Op::If(BlockType::Empty));
-        load_slow(self, exit_depth + 3);
+        slow(self, exit_depth + 3);
         self.op(Op::Br(2)).op(Op::End);
-        use crate::memory::ReadSpan as Descriptor;
         let field = |offset, align| MemArg {
             offset,
             align,
@@ -286,17 +312,29 @@ impl Emitter {
             .op(Op::I32WrapI64)
             .op(Op::I32Add);
         let memory = field(0, 0);
-        if let Some(vector) = vector_result {
-            debug_assert_eq!(width, Width::W32);
-            self.op(Op::V128Load32Zero(memory)).op(Op::LocalSet(vector));
-        } else {
-            self.op(match width {
-                Width::W8 => Op::I64Load8U(memory),
-                Width::W16 => Op::I64Load16U(memory),
-                Width::W32 => Op::I64Load32U(memory),
-                Width::W64 => Op::I64Load(memory),
-            })
-            .op(Op::LocalSet(VALUE));
+        match operand {
+            DirectOperand::Load(Some(vector)) => {
+                debug_assert_eq!(width, Width::W32);
+                self.op(Op::V128Load32Zero(memory)).op(Op::LocalSet(vector));
+            }
+            DirectOperand::Load(None) => {
+                self.op(match width {
+                    Width::W8 => Op::I64Load8U(memory),
+                    Width::W16 => Op::I64Load16U(memory),
+                    Width::W32 => Op::I64Load32U(memory),
+                    Width::W64 => Op::I64Load(memory),
+                })
+                .op(Op::LocalSet(VALUE));
+            }
+            DirectOperand::Store => {
+                self.op(Op::LocalGet(RESULT)).op(match width {
+                    Width::W8 => Op::I64Store8(memory),
+                    Width::W16 => Op::I64Store16(memory),
+                    Width::W32 => Op::I64Store32(memory),
+                    Width::W64 => Op::I64Store(memory),
+                });
+                self.op(Op::I32Const(1)).op(Op::LocalSet(STORE_STATUS));
+            }
         }
         self.op(Op::End);
         true
@@ -340,6 +378,11 @@ impl Emitter {
         self.op(Op::End);
     }
 
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    fn write_span(&self) -> Option<SpanCache> {
+        self.write_spans[usize::from(self.segment == Segment::Ss)]
+    }
+
     pub(super) fn store(
         &mut self,
         src: DataOperand,
@@ -350,6 +393,17 @@ impl Emitter {
     ) {
         self.address(address, next_pc);
         self.op(Op::LocalSet(ADDRESS));
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if self.write_span().is_some() {
+            self.data_operand(src, width);
+            self.op(Op::LocalSet(RESULT));
+            if !self.direct_access(width, DirectOperand::Store, exit_depth, |emitter, depth| {
+                emitter.store_result_slow(width, depth);
+            }) {
+                self.store_result_slow(width, exit_depth);
+            }
+            return;
+        }
         #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
         if self.parallel_scalar.is_some() {
             self.data_operand(src, width);

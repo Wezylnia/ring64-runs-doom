@@ -113,7 +113,7 @@ struct Core {
     io_effect: bool,
     image: Image,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    read_span: crate::memory::ReadSpan,
+    direct_span: crate::memory::DirectSpan,
     fast_system: crate::x86::fast_system::State,
     paging: Option<crate::x86::paging::State>,
     physical_controls: bool,
@@ -187,7 +187,7 @@ impl Bridge {
             io_effect: false,
             image,
             #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-            read_span: Default::default(),
+            direct_span: Default::default(),
             fast_system,
             paging,
             physical_controls,
@@ -591,6 +591,17 @@ pub extern "C" fn core_load(address: u64, width: u32) -> u64 {
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 #[unsafe(no_mangle)]
 pub extern "C" fn core_read_span(address: u64, width: u32, segment: i32) -> u32 {
+    core_direct_span(address, width, segment, Access::Read)
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[unsafe(no_mangle)]
+pub extern "C" fn core_write_span(address: u64, width: u32, segment: i32) -> u32 {
+    core_direct_span(address, width, segment, Access::Write)
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+fn core_direct_span(address: u64, width: u32, segment: i32, access: Access) -> u32 {
     BRIDGE.with_borrow_mut(|bridge| {
         let core = bridge.core.as_mut().unwrap();
         if segment >= 0
@@ -600,7 +611,7 @@ pub extern "C" fn core_read_span(address: u64, width: u32, segment: i32) -> u32 
                     address,
                     width,
                     Segment::from_id(segment as u32),
-                    Access::Read,
+                    access,
                     false,
                 )
                 .ok()
@@ -608,11 +619,16 @@ pub extern "C" fn core_read_span(address: u64, width: u32, segment: i32) -> u32 
         {
             return 0;
         }
-        let Some(span) = core.image.direct_read_span(address, width) else {
+        let span = if access == Access::Write {
+            core.image.direct_write_span(address, width)
+        } else {
+            core.image.direct_read_span(address, width)
+        };
+        let Some(span) = span else {
             return 0;
         };
-        core.read_span = span;
-        &raw const core.read_span as u32
+        core.direct_span = span;
+        &raw const core.direct_span as u32
     })
 }
 

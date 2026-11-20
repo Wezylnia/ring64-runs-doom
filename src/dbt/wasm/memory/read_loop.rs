@@ -184,7 +184,7 @@ impl ReadLoop {
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-use super::{ADDRESS, Emitter, LHS, RHS, STORE_STATUS, VALUE, memory::ReadSpan};
+use super::{ADDRESS, Emitter, LHS, RHS, STORE_STATUS, VALUE, memory::SpanCache};
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 use wasm_encoder::{BlockType, Instruction as Op, MemArg, ValType};
 
@@ -193,11 +193,11 @@ impl Emitter {
     pub(super) fn guard_read_loop(
         &mut self,
         proof: ReadLoop,
-        span: ReadSpan,
+        span: SpanCache,
         first_bias: u32,
         guard_failed: u32,
     ) {
-        use crate::memory::ReadSpan as Descriptor;
+        use crate::memory::DirectSpan as Descriptor;
 
         self.op(Op::Block(BlockType::Result(ValType::I32)))
             .op(Op::Block(BlockType::Empty))

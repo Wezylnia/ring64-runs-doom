@@ -59,7 +59,7 @@ pub struct Image {
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 #[derive(Default)]
 #[repr(C)]
-pub(crate) struct ReadSpan {
+pub(crate) struct DirectSpan {
     pub(crate) base: u64,
     pub(crate) length: u32,
     pub(crate) host: u32,
@@ -322,7 +322,7 @@ impl Image {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(crate) fn direct_read_span(&self, address: u64, width: u32) -> Option<ReadSpan> {
+    pub(crate) fn direct_read_span(&self, address: u64, width: u32) -> Option<DirectSpan> {
         if self.physical {
             return None;
         }
@@ -333,10 +333,39 @@ impl Image {
         }
         // The installed mapping covers canonical addresses and a stable backing slice.
         let backing = &self.backings[mapping.backing];
-        Some(ReadSpan {
+        Some(DirectSpan {
             base: mapping.base,
             length: mapping.length,
             host: backing.bytes.as_ptr().wrapping_add(mapping.offset as usize) as u32,
+        })
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(crate) fn direct_write_span(&mut self, address: u64, width: u32) -> Option<DirectSpan> {
+        if self.physical {
+            return None;
+        }
+        let mapping = &self.mappings[self.locate_index(address)?];
+        let relative = address - mapping.base;
+        let backing = &mut self.backings[mapping.backing];
+        if !mapping.permissions.write
+            || u64::from(width) > u64::from(mapping.length) - relative
+            || backing.has_sources
+            || self
+                .mappings
+                .iter()
+                .any(|alias| alias.backing == mapping.backing && alias.permissions.execute)
+        {
+            return None;
+        }
+        // Writable aliases of code must use the path that publishes invalidation.
+        Some(DirectSpan {
+            base: mapping.base,
+            length: mapping.length,
+            host: backing
+                .bytes
+                .as_mut_ptr()
+                .wrapping_add(mapping.offset as usize) as u32,
         })
     }
 

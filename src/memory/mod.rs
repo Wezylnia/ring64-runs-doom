@@ -8,7 +8,7 @@ pub(crate) use address::check_span;
 
 pub use address::{Access, Cause, Fault, PHYSICAL_ADDRESS_END, canonical48};
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-pub(crate) use image::ReadSpan;
+pub(crate) use image::DirectSpan;
 pub use image::{Image, MappingInput, MemoryError, MemoryLimits, Permissions};
 
 #[cfg(test)]
