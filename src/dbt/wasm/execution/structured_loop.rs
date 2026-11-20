@@ -81,6 +81,28 @@ fn scalar_f32(operation: Operation) -> bool {
             && matches!(float.op.kind, Kind::Add | Kind::Mul))
 }
 
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+fn zero_upper_after(known: u16, operation: Operation) -> u16 {
+    match operation {
+        Operation::Vector(VectorInstruction::Move {
+            register,
+            bytes: 4,
+            preserve_upper: false,
+            store: false,
+            ..
+        }) => known | (1 << register),
+        Operation::Vector(VectorInstruction::Move {
+            bytes: 4,
+            preserve_upper: true,
+            store: false,
+            ..
+        })
+        | Operation::Nop => known,
+        operation if scalar_f32(operation) => known,
+        _ => 0,
+    }
+}
+
 impl Emitter {
     pub(super) fn emit_structured_loop(
         &mut self,
@@ -91,6 +113,8 @@ impl Emitter {
     ) {
         let inner_depth = loop_depth + 1;
         self.structured_loop = Some((body, inner_depth));
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        let prove_zero_upper = self.proved_reads.is_some();
         self.op(Op::Loop(BlockType::Empty));
         for ordinal in body.head as usize..=body.tail as usize {
             self.current_index = ordinal as u32;
@@ -100,6 +124,16 @@ impl Emitter {
                 inner_depth,
                 write_segment_base,
             );
+            #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+            if prove_zero_upper {
+                // Each lap starts with unknown XMM values at its head.
+                self.zero_upper_xmm =
+                    zero_upper_after(self.zero_upper_xmm, instructions[ordinal].operation);
+            }
+        }
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        {
+            self.zero_upper_xmm = 0;
         }
         self.op(Op::End);
         self.structured_loop = None;

@@ -48,7 +48,16 @@ impl Emitter {
         {
             self.op(Op::Block(BlockType::Result(ValType::V128)))
                 .op(Op::Block(BlockType::Empty));
-            self.float_f32(instruction.op.kind, left, right);
+            #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+            let wide = (self.zero_upper_xmm & (1 << instruction.dst) != 0
+                && match instruction.src {
+                    Location::Memory(_) => true,
+                    Location::Register(src) => self.zero_upper_xmm & (1 << src.bank) != 0,
+                })
+            .then_some(result);
+            #[cfg(not(all(not(feature = "parallel"), target_arch = "wasm32")))]
+            let wide = None;
+            self.float_f32(instruction.op.kind, left, right, wide);
             self.op(Op::Br(1)).op(Op::End);
             self.float_helper(instruction, left, right, exit_depth + 1);
             self.op(Op::End);
@@ -106,7 +115,7 @@ impl Emitter {
             ))));
     }
 
-    fn float_f32(&mut self, kind: Kind, left: u32, right: u32) {
+    fn float_f32(&mut self, kind: Kind, left: u32, right: u32, wide: Option<u32>) {
         let mxcsr = super::vector::memory(offset_of!(RunState, mxcsr));
         self.op(Op::LocalGet(0))
             .op(Op::I32Load(mxcsr))
@@ -116,23 +125,40 @@ impl Emitter {
             .op(Op::BrIf(0));
 
         for (vector, bits) in [(left, LHS), (right, RHS)] {
-            self.op(Op::LocalGet(vector))
-                .op(Op::F32x4ExtractLane(0))
-                .op(Op::F64PromoteF32)
-                .op(Op::I64ReinterpretF64)
-                .op(Op::LocalSet(bits));
+            self.op(Op::LocalGet(vector));
+            if let Some(wide) = wide {
+                self.op(Op::F64x2PromoteLowF32x4)
+                    .op(Op::LocalTee(wide))
+                    .op(Op::F64x2ExtractLane(0));
+            } else {
+                self.op(Op::F32x4ExtractLane(0)).op(Op::F64PromoteF32);
+            }
+            self.op(Op::I64ReinterpretF64).op(Op::LocalSet(bits));
             self.reject_non_normal_f32(bits);
+            if let Some(wide) = wide {
+                // Retain the widened operand beneath the next operand's check.
+                self.op(Op::LocalGet(wide));
+            }
         }
 
-        self.float_f64(LHS);
-        self.float_f64(RHS);
-        self.op(if kind == Kind::Add {
-            Op::F64Add
+        if let Some(wide) = wide {
+            self.op(if kind == Kind::Add {
+                Op::F64x2Add
+            } else {
+                Op::F64x2Mul
+            })
+            .op(Op::LocalTee(wide))
+            .op(Op::F64x2ExtractLane(0));
         } else {
-            Op::F64Mul
-        })
-        .op(Op::I64ReinterpretF64)
-        .op(Op::LocalSet(RESULT));
+            self.float_f64(LHS);
+            self.float_f64(RHS);
+            self.op(if kind == Kind::Add {
+                Op::F64Add
+            } else {
+                Op::F64Mul
+            });
+        }
+        self.op(Op::I64ReinterpretF64).op(Op::LocalSet(RESULT));
         // Check before rounding so a tiny product that rounds to a normal f32 still falls back.
         self.reject_non_normal_f32(RESULT);
 
@@ -184,10 +210,15 @@ impl Emitter {
             .op(Op::I32Or)
             .op(Op::I32Store(mxcsr))
             .op(Op::End)
-            .op(Op::End)
-            .op(Op::LocalGet(left));
-        self.float_f64(RESULT);
-        self.op(Op::F32DemoteF64).op(Op::F32x4ReplaceLane(0));
+            .op(Op::End);
+        if let Some(wide) = wide {
+            // The second lane started as positive zero in both operands.
+            self.op(Op::LocalGet(wide)).op(Op::F32x4DemoteF64x2Zero);
+        } else {
+            self.op(Op::LocalGet(left));
+            self.float_f64(RESULT);
+            self.op(Op::F32DemoteF64).op(Op::F32x4ReplaceLane(0));
+        }
     }
 
     fn float_f64(&mut self, bits: u32) {

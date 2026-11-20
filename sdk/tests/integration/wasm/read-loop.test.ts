@@ -60,10 +60,11 @@ test('SIMD read loops resume from interior PCs and validate every backing after 
         { id: 'row', bytes: floats(1, 2, 3, 4) },
         { id: 'column', bytes: floats(2, 3, 4, 5) },
         { id: 'tail', bytes: Uint8Array.of(0x41) },
+        { id: 'fraction', bytes: floats(1 + 2 ** -23, 2, 3, 4) },
       ],
       mappings: [...fixed, mapping(column, 'column', 16)],
     },
-    memoryLimits: { maxBackings: 4, maxMappings: 4, maxBackingBytes: code.length + 33 },
+    memoryLimits: { maxBackings: 5, maxMappings: 4, maxBackingBytes: code.length + 49 },
   });
   const input = initial(head, { 0: row, 1: 0n, 2: 4n, 3: column });
   const upper = 0x123456789012345678901234n << 32n;
@@ -96,6 +97,29 @@ test('SIMD read loops resume from interior PCs and validate every backing after 
       0x41a00000n,
       upper | 0x42200000n,
     ]);
+
+    reset();
+    const beforeMultiply = await cpu.run({ budget: 20n, stop: head + 5n });
+    assert.equal(beforeMultiply.reason, 'stop');
+    const interruptedXmm = cpu.readXmmState();
+    assert.equal(interruptedXmm[0], 0x3f800000n);
+    interruptedXmm[0] = upper | 0x3f800000n;
+    cpu.setXmmState(interruptedXmm);
+    const multiplyOnly = await cpu.run({ budget: 1n });
+    assert.equal(multiplyOnly.reason, 'budget');
+    assert.equal(multiplyOnly.state.rip, head + 10n);
+    assert.equal(cpu.readXmmState()[0], upper | 0x40000000n);
+
+    cpu.setMappings([fixed[0]!, mapping(row, 'fraction', 16), mapping(column, 'fraction', 16)]);
+    reset();
+    cpu.setMxcsr(0x0f80);
+    const precisionFault = await cpu.run({ budget: 20n, stop });
+    assert.equal(precisionFault.reason, 'simd-exception');
+    assert.equal(precisionFault.retired, 1n);
+    assert.equal(precisionFault.state.rip, head + 5n);
+    assert.equal(cpu.readMxcsr(), 0x0fa0);
+    assert.equal(cpu.readXmmState()[0], 0x3f800001n);
+    cpu.setMxcsr(0x1f80);
 
     const split = [...fixed, mapping(column, 'column', 15)];
     const tail = mapping(column + 15n, 'tail', 1);
