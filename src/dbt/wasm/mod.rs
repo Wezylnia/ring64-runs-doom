@@ -130,6 +130,7 @@ struct Emitter {
     entries: BTreeMap<u64, u32>,
     current_index: u32,
     structured_loop: Option<(StructuredLoop, u32)>,
+    loop_gates_prechecked: bool,
     entry_lookup: Option<u32>,
     multiply_high: Option<u32>,
     divide: Option<u32>,
@@ -200,7 +201,9 @@ impl Emitter {
         self.current_operation = instruction.operation;
         self.stores = false;
         let exit_depth = loop_depth + 1;
-        self.gates(exit_depth);
+        if !self.loop_gates_prechecked {
+            self.gates(exit_depth);
+        }
         #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
         self.parallel_boundary(exit_depth);
         self.begin(instruction.operation, exit_depth);
@@ -1485,6 +1488,7 @@ fn emit_placement(
         parallel_memo_address: false,
         current_index: 0,
         structured_loop: None,
+        loop_gates_prechecked: false,
         entry_lookup: dynamic_targets.then_some(run_index + 1),
         multiply_high,
         divide,
@@ -1591,14 +1595,17 @@ fn emit_placement(
             #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
             if let Some((proof, span, first_bias, guard_failed)) = proved_reads {
                 emitter.guard_read_loop(proof, span, first_bias, guard_failed);
-                emitter.op(Op::If(BlockType::Empty));
+                emitter.exclude_loop_stop(&unit.instructions, loop_body);
+                emitter.op(Op::I32And).op(Op::If(BlockType::Empty));
                 emitter.proved_reads = Some((proof, first_bias));
+                emitter.loop_gates_prechecked = true;
                 emitter.emit_structured_loop(
                     &unit.instructions,
                     loop_body,
                     loop_depth + 1,
                     write_segment_base,
                 );
+                emitter.loop_gates_prechecked = false;
                 emitter.proved_reads = None;
                 emitter.op(Op::End);
             }

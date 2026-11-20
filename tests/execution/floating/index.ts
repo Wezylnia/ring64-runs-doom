@@ -3,6 +3,7 @@ import { arithmeticScenarios } from './arithmetic.js';
 import { conversionScenarios } from './conversions.js';
 import { literalScenarios } from './literal-packets.js';
 import { reuseScenarios } from './reuse.js';
+import { loopBoundaryScenarios } from './loop-boundaries.js';
 import { controlScenarios } from './controls.js';
 import { relationScenarios } from './relations.js';
 import { accessScenarios } from './access.js';
@@ -13,6 +14,7 @@ export function floatingScenarios(compiler: WebAssembly.Module): Scenario[] {
     ...conversionScenarios(compiler),
     ...literalScenarios(compiler),
     ...reuseScenarios(compiler),
+    ...loopBoundaryScenarios(compiler),
     ...controlScenarios(compiler),
     ...relationScenarios(compiler),
     ...accessScenarios(compiler),

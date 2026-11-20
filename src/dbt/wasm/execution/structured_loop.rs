@@ -1,4 +1,4 @@
-use super::Emitter;
+use super::{Emitter, REMAINING};
 use wasm_encoder::{BlockType, Instruction as Op};
 
 use crate::x86::{
@@ -104,6 +104,22 @@ fn zero_upper_after(known: u16, operation: Operation) -> u16 {
 }
 
 impl Emitter {
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn exclude_loop_stop(&mut self, instructions: &[Instruction], body: StructuredLoop) {
+        let first = instructions[body.head as usize].pc as i64;
+        let last = instructions[body.tail as usize].pc as i64;
+        self.op(Op::LocalGet(3))
+            .op(Op::LocalGet(2))
+            .op(Op::I64Const(first))
+            .op(Op::I64GeU)
+            .op(Op::I32And)
+            .op(Op::LocalGet(2))
+            .op(Op::I64Const(last))
+            .op(Op::I64LeU)
+            .op(Op::I32And)
+            .op(Op::I32Eqz);
+    }
+
     pub(super) fn emit_structured_loop(
         &mut self,
         instructions: &[Instruction],
@@ -116,6 +132,13 @@ impl Emitter {
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         let prove_zero_upper = self.proved_reads.is_some();
         self.op(Op::Loop(BlockType::Empty));
+        if self.loop_gates_prechecked {
+            // Leave the guarded clone for the checked clone before a partial lap.
+            self.op(Op::LocalGet(REMAINING))
+                .op(Op::I64Const(i64::from(body.tail - body.head + 1)))
+                .op(Op::I64LtU)
+                .op(Op::BrIf(1));
+        }
         for ordinal in body.head as usize..=body.tail as usize {
             self.current_index = ordinal as u32;
             self.instruction(
