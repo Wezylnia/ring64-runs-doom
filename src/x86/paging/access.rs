@@ -345,12 +345,14 @@ impl<'a> Memory<'a> {
     fn read_prepared(&self, prepared: &Prepared, output: &mut [u8]) {
         let storage = self.storage.borrow();
         for fragment in &prepared.fragments {
-            let bytes = storage
+            storage
                 .image
-                .physical_read_bytes(fragment.physical, fragment.length)
+                .physical_read_into(
+                    fragment.physical,
+                    &mut output
+                        [fragment.offset as usize..(fragment.offset + fragment.length) as usize],
+                )
                 .expect("captured physical read admission");
-            output[fragment.offset as usize..(fragment.offset + fragment.length) as usize]
-                .copy_from_slice(&bytes);
         }
     }
 
@@ -398,14 +400,13 @@ impl<'a> Memory<'a> {
                 let begin = start.max(fragment.offset);
                 let end = (start + length).min(fragment.offset + fragment.length);
                 if begin < end {
-                    let bytes = storage
+                    storage
                         .image
-                        .physical_read_bytes(
+                        .physical_read_into(
                             fragment.physical + u64::from(begin - fragment.offset),
-                            end - begin,
+                            &mut output[begin as usize..end as usize],
                         )
                         .expect("admitted physical field read");
-                    output[begin as usize..end as usize].copy_from_slice(&bytes);
                 }
             }
         }

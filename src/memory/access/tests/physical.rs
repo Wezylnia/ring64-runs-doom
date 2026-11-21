@@ -61,6 +61,30 @@ fn physical_sparse_high_addresses_and_the_last_byte_are_not_linear_addresses() {
 }
 
 #[test]
+fn physical_read_into_checks_the_whole_span_before_copying_split_backings() {
+    let first = mapping(HOLE, 5, 2, all());
+    let second = mapping(HOLE + 2, 1, 3, all());
+    let mut image = physical((0..8).collect(), vec![first.clone(), second.clone()]);
+    let mut output = [0xff; 5];
+    image.physical_read_into(HOLE, &mut output).unwrap();
+    assert_eq!(output, [5, 6, 1, 2, 3]);
+    assert_eq!(image.physical_read_bytes(HOLE, 5).unwrap(), output);
+
+    let denied = MappingInput {
+        permissions: Permissions {
+            read: false,
+            ..all()
+        },
+        ..second
+    };
+    image.set_mappings(vec![first, denied]).unwrap();
+    let expected = image.physical_read_bytes(HOLE, 5).unwrap_err();
+    assert_eq!(expected.failing, u128::from(HOLE + 2));
+    assert_eq!(image.physical_read_into(HOLE, &mut output), Err(expected));
+    assert_eq!(output, [5, 6, 1, 2, 3]);
+}
+
+#[test]
 fn physical_mapping_replacement_rejects_domain_overflow_atomically() {
     let mut image = physical(vec![0x90; 8], vec![mapping(HOLE, 0, 8, all())]);
     for candidate in [

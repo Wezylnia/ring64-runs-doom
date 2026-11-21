@@ -44,6 +44,11 @@ impl Image {
         Ok(self.bytes_after_preflight(address, length, first))
     }
 
+    pub(crate) fn physical_read_into(&self, address: u64, output: &mut [u8]) -> Result<(), Fault> {
+        let width = u32::try_from(output.len()).expect("physical read length exceeds wasm32");
+        self.read_fields_profile::<true>(address, width, &[(0, width)], output)
+    }
+
     pub fn physical_write_bytes(&mut self, address: u64, bytes: &[u8]) -> Result<(), Fault> {
         let width = u32::try_from(bytes.len()).expect("memory copy length exceeds wasm32");
         let first = self.preflight::<true>(address, width, Access::Write, false, false)?;
@@ -255,8 +260,18 @@ impl Image {
         fields: &[(u32, u32)],
         output: &mut [u8],
     ) -> Result<(), Fault> {
+        self.read_fields_profile::<false>(address, width, fields, output)
+    }
+
+    fn read_fields_profile<const PHYSICAL: bool>(
+        &self,
+        address: u64,
+        width: u32,
+        fields: &[(u32, u32)],
+        output: &mut [u8],
+    ) -> Result<(), Fault> {
         Self::check_fields(width, fields, output.len());
-        let mut index = self.preflight::<false>(address, width, Access::Read, false, false)?;
+        let mut index = self.preflight::<PHYSICAL>(address, width, Access::Read, false, false)?;
         #[cfg(all(feature = "parallel", any(target_arch = "wasm32", test)))]
         if self.shared.is_some() {
             for &(start, length) in fields {
