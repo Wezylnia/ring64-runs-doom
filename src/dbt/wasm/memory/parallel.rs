@@ -4,8 +4,8 @@ use crate::x86::{
     context::Segment,
     float::{Format, Kind},
     instruction::{
-        Address, Alu, Instruction, Location, MemoryAluOperands, Operation, VectorInstruction,
-        VectorOperand, Width,
+        Address, AddressBase, Alu, Instruction, Location, MemoryAluOperands, Operation,
+        VectorInstruction, VectorOperand, Width,
     },
 };
 use wasm_encoder::{BlockType, Instruction as Op, MemArg, ValType};
@@ -166,7 +166,27 @@ impl DwordWindow {
                 width: Width::W32,
                 kind: Alu::Cmp | Alu::Test,
                 ..
-            } => address,
+            } => Some(address),
+            _ if allow_bytes => Self::byte_address(operation),
+            _ => None,
+        };
+        address.is_some_and(|address| Self::supports(address, wide) && address.index.is_some())
+    }
+
+    pub(super) fn eligible_base_byte(operation: Operation, wide: bool) -> bool {
+        Self::byte_address(operation).is_some_and(|address| {
+            Self::supports(address, wide)
+                && address.index.is_none()
+                && matches!(address.base, AddressBase::Register(_))
+        })
+    }
+
+    fn supports(address: Address, wide: bool) -> bool {
+        address.segment == Segment::Ds && (!wide || address.size == Width::W64)
+    }
+
+    fn byte_address(operation: Operation) -> Option<Address> {
+        match operation {
             Operation::Load {
                 address,
                 width: Width::W8,
@@ -176,12 +196,9 @@ impl DwordWindow {
                 src: Location::Memory(address),
                 source_width: Width::W8,
                 ..
-            } if allow_bytes => address,
-            _ => return false,
-        };
-        address.segment == Segment::Ds
-            && address.index.is_some()
-            && (!wide || address.size == Width::W64)
+            } => Some(address),
+            _ => None,
+        }
     }
 }
 
@@ -429,13 +446,17 @@ impl Emitter {
     }
 
     pub(super) fn parallel_load_dword_window(&mut self, width: Width, exit_depth: u32) -> bool {
-        let (Some(window), Some(scalar)) = (self.parallel_dword_window, self.parallel_scalar)
-        else {
+        let operation = self.current_operation;
+        let window = self
+            .parallel_dword_window
+            .filter(|window| DwordWindow::eligible(operation, window.allow_bytes, window.wide))
+            .or_else(|| {
+                self.parallel_base_byte_window
+                    .filter(|window| DwordWindow::eligible_base_byte(operation, window.wide))
+            });
+        let (Some(window), Some(scalar)) = (window, self.parallel_scalar) else {
             return false;
         };
-        if !DwordWindow::eligible(self.current_operation, window.allow_bytes, window.wide) {
-            return false;
-        }
         debug_assert!(self.parallel_retry.is_none());
         debug_assert!(matches!(width, Width::W8 | Width::W32));
         // Byte reads reuse the dword-start bounds. The checked read handles the tail.
