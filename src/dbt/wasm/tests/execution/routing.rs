@@ -1546,6 +1546,102 @@ fn conditional_move_preserves_sub_flags_across_an_intervening_scalar_load() {
 }
 
 #[test]
+fn guarded_backedge_uses_compare_operands_and_keeps_all_flags() {
+    use super::super::loop_cfg::{CompareAction, ConditionSource, compare_predicates, select};
+
+    let artifact = compiled_fixture(
+        0x1000,
+        &[
+            0x74, 0x03, // je compare
+            0x83, 0xc0, 1, // add eax,1
+            0x39, 0xd8, // compare: cmp eax,ebx
+            0x72, 0xf7, // jb head
+            0x90,
+        ],
+        0x1000,
+    );
+    let context = crate::x86::context::ExecutionContext::default();
+    let (order, _) = select(&artifact.instructions).unwrap();
+    assert_eq!(
+        compare_predicates(&artifact.instructions, order, &context)[2..4],
+        [
+            CompareAction::Ordinary,
+            CompareAction::Condition(ConditionSource::Operands(Width::W32)),
+        ],
+    );
+    let mut joined = artifact.instructions;
+    joined[0].operation = Operation::Jcc {
+        condition: Condition::Equal,
+        target: 0x1007,
+    };
+    assert_eq!(
+        compare_predicates(&joined, order, &context)[3],
+        CompareAction::Ordinary
+    );
+
+    let mut cases = Vec::new();
+    for (entry, eax, budget, stop, result, flags, rip, reason, remaining) in [
+        (
+            0x1000,
+            0x7fff_fffe,
+            4,
+            0x1009,
+            0x7fff_ffff,
+            0x887,
+            0x1000,
+            BUDGET,
+            0,
+        ),
+        (
+            0x1000,
+            0xffff_fffe,
+            5,
+            0x1009,
+            0xffff_ffff,
+            0x46,
+            0x1009,
+            STOP,
+            1,
+        ),
+        (
+            0x1000,
+            0x7fff_fffe,
+            5,
+            0x1007,
+            0x7fff_ffff,
+            0x887,
+            0x1007,
+            STOP,
+            2,
+        ),
+        (
+            0x1007,
+            0x7fff_ffff,
+            5,
+            0x1009,
+            0x7fff_ffff,
+            2,
+            0x1009,
+            STOP,
+            4,
+        ),
+    ] {
+        let mut packet = execution_case(
+            &artifact.bytes,
+            &artifact.entries,
+            &[(0, eax), (3, 0xffff_ffff)],
+            2,
+            entry,
+            budget,
+            (&[(0, result)], flags, rip, reason as u32, remaining),
+        );
+        packet["stop"] = json!(format!("{stop:x}"));
+        cases.push(packet);
+    }
+    run_cases(cases);
+}
+
+#[test]
 fn guarded_shift_restores_flags_on_a_read_fault_before_compare_branch() {
     use super::super::loop_cfg::{
         CompareAction, ConditionSource, ReadFaultFlags, compare_predicates, read_prefix_len, select,

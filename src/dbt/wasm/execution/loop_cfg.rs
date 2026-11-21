@@ -288,11 +288,6 @@ pub(super) fn compare_predicates(
         {
             continue;
         }
-        let fallthrough_overwrites = next_overwrites(instruction.next_pc);
-        let restore_taken = !next_overwrites(target);
-        if restore_taken && (position_at(target).is_some() || !fallthrough_overwrites) {
-            continue;
-        }
         let producer = instructions[order.at(position as u32 - 1) as usize];
         if producer.next_pc != instruction.pc {
             continue;
@@ -311,6 +306,21 @@ pub(super) fn compare_predicates(
             _ => continue,
         };
 
+        let head = instructions[order.head as usize].pc;
+        // Keeping both forms of the comparison slowed rotated loops.
+        if order.earlier == order.head
+            && matches!(producer.operation, Operation::Alu { .. })
+            && (target == head || instruction.next_pc == head)
+        {
+            // The backedge can use the operands even when later instructions
+            // or loop exits still need the full comparison flags.
+            predicates[position] = CompareAction::Condition(ConditionSource::Operands(width));
+        }
+        let fallthrough_overwrites = next_overwrites(instruction.next_pc);
+        let restore_taken = !next_overwrites(target);
+        if restore_taken && (position_at(target).is_some() || !fallthrough_overwrites) {
+            continue;
+        }
         if !fallthrough_overwrites {
             let Some(load_position) = position_at(instruction.next_pc)
                 .filter(|&i| i == position + 1 && !explicit_entry[i])
