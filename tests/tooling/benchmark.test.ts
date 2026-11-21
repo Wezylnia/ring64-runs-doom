@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { access, cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -173,6 +173,33 @@ WebAssembly.compile = async function(input, ...options) {
     await assert.rejects(access(nestedOutput), { code: 'ENOENT' });
   } finally {
     await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('freezing a second build preserves the existing snapshot', async () => {
+  const { freeze }: { freeze(path: string, name: string): Promise<{ path: string }> } =
+    await import(
+      new URL('../../scripts/verification/paging/paging-support.mjs', import.meta.url).href
+    );
+  const source = await mkdtemp(join(tmpdir(), 'ring64-snapshot-'));
+  try {
+    const binary = join(source, 'build/ring64.wasm');
+    await mkdir(join(source, 'build/host'), { recursive: true });
+    await writeFile(binary, 'first build');
+    await writeFile(join(source, 'paging-source.json'), '{"source":{"commit":"first"}}');
+    const name = `snapshot-test-${randomUUID()}`;
+    const snapshot = await freeze(source, name);
+    try {
+      await writeFile(binary, 'second build');
+      await assert.rejects(freeze(source, name), { code: 'EEXIST' });
+      assert.equal(await readFile(join(snapshot.path, 'build/ring64.wasm'), 'utf8'), 'first build');
+      const record = JSON.parse(await readFile(join(snapshot.path, 'paging-source.json'), 'utf8'));
+      assert.equal(record.source.commit, 'first');
+    } finally {
+      await rm(snapshot.path, { recursive: true, force: true });
+    }
+  } finally {
+    await rm(source, { recursive: true, force: true });
   }
 });
 

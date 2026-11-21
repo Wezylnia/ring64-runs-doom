@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { cp, mkdir, readFile, symlink, writeFile } from 'node:fs/promises';
+import { cp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { hostIdentity } from '../../bench/emitted-host.mjs';
@@ -49,43 +49,44 @@ export async function manifest(path) {
 export async function freeze(path, name) {
   const before = await manifest(path);
   const target = resolve(root, 'build/verification', name);
-  await mkdir(resolve(target, 'build'), { recursive: true });
-  await cp(resolve(path, 'build/host'), resolve(target, 'build/host'), { recursive: true });
-  await cp(resolve(path, 'build/ring64.wasm'), resolve(target, 'build/ring64.wasm'));
-  await cp(resolve(root, 'benchmarks'), resolve(target, 'benchmarks'), { recursive: true });
-  await Promise.all(
-    [
+  await mkdir(dirname(target), { recursive: true });
+  await mkdir(target);
+  try {
+    await mkdir(resolve(target, 'build'));
+    await cp(resolve(path, 'build/host'), resolve(target, 'build/host'), { recursive: true });
+    await cp(resolve(path, 'build/ring64.wasm'), resolve(target, 'build/ring64.wasm'));
+    await cp(resolve(root, 'benchmarks'), resolve(target, 'benchmarks'), { recursive: true });
+    for (const script of [
       'scripts/bench/benchmark.mjs',
       'scripts/bench/emitted-host.mjs',
       'scripts/support/browser.mjs',
-    ].map(async (name) => {
-      const destination = resolve(target, name);
+    ]) {
+      const destination = resolve(target, script);
       await mkdir(dirname(destination), { recursive: true });
-      await cp(resolve(root, name), destination);
-    }),
-  );
-  await writeFile(resolve(target, 'package.json'), '{"type":"module"}\n');
-  try {
+      await cp(resolve(root, script), destination);
+    }
+    await writeFile(resolve(target, 'package.json'), '{"type":"module"}\n');
     await symlink(
       resolve(root, 'node_modules'),
       resolve(target, 'node_modules'),
       process.platform === 'win32' ? 'junction' : 'dir',
     );
+    await writeFile(
+      resolve(target, 'paging-source.json'),
+      encode({ capturedAt: new Date().toISOString(), ...before }),
+    );
+    const after = await manifest(path),
+      copy = await manifest(target);
+    if (
+      before.coreSha256 !== after.coreSha256 ||
+      before.hostSha256 !== after.hostSha256 ||
+      before.coreSha256 !== copy.coreSha256 ||
+      before.hostSha256 !== copy.hostSha256
+    )
+      throw Error('build changed while freezing; retry after build completes');
+    return { ...copy, originalPath: path, source: before.source };
   } catch (error) {
-    if (error.code !== 'EEXIST') throw error;
+    await rm(target, { recursive: true, force: true });
+    throw error;
   }
-  await writeFile(
-    resolve(target, 'paging-source.json'),
-    encode({ capturedAt: new Date().toISOString(), ...before }),
-  );
-  const after = await manifest(path),
-    copy = await manifest(target);
-  if (
-    before.coreSha256 !== after.coreSha256 ||
-    before.hostSha256 !== after.hostSha256 ||
-    before.coreSha256 !== copy.coreSha256 ||
-    before.hostSha256 !== copy.hostSha256
-  )
-    throw Error('build changed while freezing; discard snapshot and retry after build completes');
-  return { ...copy, originalPath: path, source: before.source };
 }
