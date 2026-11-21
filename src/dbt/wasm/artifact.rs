@@ -718,227 +718,50 @@ fn emit_body(
         );
     }
     let mut run_index = 3 + u32::from(write_intent);
-    let multiply_high = multiply_type.map(|index| {
-        imports.import("env", "multiply_high", EntityType::Function(index));
-        let function = run_index;
+    let mut import_function = |name, signature| {
+        imports.import("env", name, EntityType::Function(signature));
+        let index = run_index;
         run_index += 1;
-        function
-    });
-    let divide = divide_type.map(|index| {
-        imports.import("env", "divide", EntityType::Function(index));
-        let function = run_index;
-        run_index += 1;
-        function
-    });
-    let divide_failed = wide_divide.then(|| {
-        imports.import("env", "divide_failed", EntityType::Function(2));
-        let function = run_index;
-        run_index += 1;
-        function
-    });
-    let access_reason = (segmented || paged).then(|| {
-        imports.import("env", "access_reason", EntityType::Function(2));
-        let function = run_index;
-        run_index += 1;
-        function
-    });
-    let target_check = segmented.then(|| {
-        imports.import("env", "target_check", EntityType::Function(4));
-        let function = run_index;
-        run_index += 1;
-        function
-    });
-    let vector_load = vector_load_type.map(|index| {
-        imports.import("env", "vector_load", EntityType::Function(index));
-        let function = run_index;
-        run_index += 1;
-        function
-    });
-    let block16_for_write = block16_for_write_type.map(|index| {
-        imports.import("env", "block16_for_write", EntityType::Function(index));
-        let function = run_index;
-        run_index += 1;
-        function
-    });
-    let vector_store = vector_store_type.map(|index| {
-        imports.import("env", "vector_store", EntityType::Function(index));
-        let function = run_index;
-        run_index += 1;
-        function
-    });
-    let float = float_type.map(|index| {
-        imports.import("env", "float", EntityType::Function(index));
-        let function = run_index;
-        run_index += 1;
-        function
-    });
-    let load_mxcsr = load_mxcsr_used.then(|| {
-        imports.import(
-            "env",
-            "load_mxcsr",
-            EntityType::Function(mxcsr_type.unwrap()),
-        );
-        let function = run_index;
-        run_index += 1;
-        function
-    });
-    let store_mxcsr = store_mxcsr_used.then(|| {
-        imports.import(
-            "env",
-            "store_mxcsr",
-            EntityType::Function(mxcsr_type.unwrap()),
-        );
-        let function = run_index;
-        run_index += 1;
-        function
-    });
-    let io = io_type.map(|index| {
-        imports.import("env", "io", EntityType::Function(index));
-        let function = run_index;
-        run_index += 1;
-        function
-    });
-    let x87 = x87_type.map(|index| {
-        imports.import("env", "x87", EntityType::Function(index));
-        let function = run_index;
-        run_index += 1;
-        function
-    });
-    let mmx = has_mmx.then(|| {
-        imports.import(
-            "env",
-            "mmx",
-            EntityType::Function(numeric_state_type.unwrap()),
-        );
-        let function = run_index;
-        run_index += 1;
-        function
-    });
-    let numeric_image = has_numeric_image.then(|| {
-        imports.import(
-            "env",
-            "numeric_image",
-            EntityType::Function(numeric_state_type.unwrap()),
-        );
-        let function = run_index;
-        run_index += 1;
-        function
-    });
-    let masked_store = masked_store_type.map(|index| {
-        imports.import("env", "masked_store", EntityType::Function(index));
-        let function = run_index;
-        run_index += 1;
-        function
-    });
-    let clflush = clflush_type.map(|index| {
-        imports.import("env", "clflush", EntityType::Function(index));
-        let function = run_index;
-        run_index += 1;
-        function
-    });
-    let protection = protection_type.map(|index| {
-        imports.import("env", "protection", EntityType::Function(index));
-        let function = run_index;
-        run_index += 1;
-        function
-    });
-    let compound_stack = compound_stack_type.map(|index| {
-        imports.import("env", "compound_stack", EntityType::Function(index));
-        let function = run_index;
-        run_index += 1;
-        function
-    });
-    let far_control = far_type.map(|index| {
-        imports.import("env", "far_control", EntityType::Function(index));
-        let function = run_index;
-        run_index += 1;
-        function
-    });
-    let software_event = software_event_type.map(|index| {
-        imports.import("env", "software_event", EntityType::Function(index));
-        let function = run_index;
-        run_index += 1;
-        function
-    });
-    let system_flags = system_flags_type.map(|index| {
-        imports.import("env", "flags", EntityType::Function(index));
-        let function = run_index;
-        run_index += 1;
-        function
-    });
-    let debug_register = debug_register_type.map(|index| {
-        imports.import("env", "debug_register", EntityType::Function(index));
-        let function = run_index;
-        run_index += 1;
-        function
-    });
-    let paging_control = paging_type.map(|index| {
-        imports.import("env", "paging_control", EntityType::Function(index));
-        let function = run_index;
-        run_index += 1;
-        function
-    });
-    let invpcid = invpcid_type.map(|index| {
-        imports.import("env", "invpcid", EntityType::Function(index));
-        let function = run_index;
-        run_index += 1;
-        function
-    });
-    let fast_system = fast_system_type.map(|index| {
-        imports.import("env", "fast_system", EntityType::Function(index));
-        let function = run_index;
-        run_index += 1;
-        function
-    });
-    let write_segment_base = write_segment_base_type.map(|index| {
-        imports.import("env", "write_segment_base", EntityType::Function(index));
-        let function = run_index;
-        run_index += 1;
-        function
-    });
-    let processor = processor_type.map(|index| {
-        imports.import("env", "processor", EntityType::Function(index));
-        let function = run_index;
-        run_index += 1;
-        function
-    });
-    let protection_key = protection_key_type.map(|index| {
-        imports.import("env", "protection_key", EntityType::Function(index));
-        let function = run_index;
-        run_index += 1;
-        function
-    });
-    let debug_begin = debug_begin_type.map(|index| {
-        imports.import("env", "debug_begin", EntityType::Function(index));
-        let function = run_index;
-        run_index += 1;
-        function
-    });
-    let debug_step = debug_type.map(|index| {
-        imports.import("env", "debug_finish", EntityType::Function(index));
-        let function = run_index;
-        run_index += 1;
-        function
-    });
-    let external_step = external_step_type.map(|index| {
-        imports.import("env", "external_step", EntityType::Function(index));
-        let function = run_index;
-        run_index += 1;
-        function
-    });
-    let halt = halt_type.map(|index| {
-        imports.import("env", "halt", EntityType::Function(index));
-        let function = run_index;
-        run_index += 1;
-        function
-    });
+        index
+    };
+    let multiply_high = multiply_type.map(|index| import_function("multiply_high", index));
+    let divide = divide_type.map(|index| import_function("divide", index));
+    let divide_failed = wide_divide.then(|| import_function("divide_failed", 2));
+    let access_reason = (segmented || paged).then(|| import_function("access_reason", 2));
+    let target_check = segmented.then(|| import_function("target_check", 4));
+    let vector_load = vector_load_type.map(|index| import_function("vector_load", index));
+    let block16_for_write =
+        block16_for_write_type.map(|index| import_function("block16_for_write", index));
+    let vector_store = vector_store_type.map(|index| import_function("vector_store", index));
+    let float = float_type.map(|index| import_function("float", index));
+    let load_mxcsr = load_mxcsr_used.then(|| import_function("load_mxcsr", mxcsr_type.unwrap()));
+    let store_mxcsr = store_mxcsr_used.then(|| import_function("store_mxcsr", mxcsr_type.unwrap()));
+    let io = io_type.map(|index| import_function("io", index));
+    let x87 = x87_type.map(|index| import_function("x87", index));
+    let mmx = has_mmx.then(|| import_function("mmx", numeric_state_type.unwrap()));
+    let numeric_image =
+        has_numeric_image.then(|| import_function("numeric_image", numeric_state_type.unwrap()));
+    let masked_store = masked_store_type.map(|index| import_function("masked_store", index));
+    let clflush = clflush_type.map(|index| import_function("clflush", index));
+    let protection = protection_type.map(|index| import_function("protection", index));
+    let compound_stack = compound_stack_type.map(|index| import_function("compound_stack", index));
+    let far_control = far_type.map(|index| import_function("far_control", index));
+    let software_event = software_event_type.map(|index| import_function("software_event", index));
+    let system_flags = system_flags_type.map(|index| import_function("flags", index));
+    let debug_register = debug_register_type.map(|index| import_function("debug_register", index));
+    let paging_control = paging_type.map(|index| import_function("paging_control", index));
+    let invpcid = invpcid_type.map(|index| import_function("invpcid", index));
+    let fast_system = fast_system_type.map(|index| import_function("fast_system", index));
+    let write_segment_base =
+        write_segment_base_type.map(|index| import_function("write_segment_base", index));
+    let processor = processor_type.map(|index| import_function("processor", index));
+    let protection_key = protection_key_type.map(|index| import_function("protection_key", index));
+    let debug_begin = debug_begin_type.map(|index| import_function("debug_begin", index));
+    let debug_step = debug_type.map(|index| import_function("debug_finish", index));
+    let external_step = external_step_type.map(|index| import_function("external_step", index));
+    let halt = halt_type.map(|index| import_function("halt", index));
     let vector_access_reason = if vector_banks.loads || vector_store.is_some() || store_mxcsr_used {
-        Some(access_reason.unwrap_or_else(|| {
-            imports.import("env", "access_reason", EntityType::Function(2));
-            let function = run_index;
-            run_index += 1;
-            function
-        }))
+        Some(access_reason.unwrap_or_else(|| import_function("access_reason", 2)))
     } else {
         None
     };
@@ -955,16 +778,10 @@ fn emit_body(
                 [ValType::I32],
             );
             let unguard_type = add_function_type(&mut types, [], []);
-            imports.import("env", "parallel_begin", EntityType::Function(2));
-            imports.import("env", "parallel_end", EntityType::Function(release_type));
-            imports.import("env", "parallel_guard", EntityType::Function(guard_type));
-            imports.import(
-                "env",
-                "parallel_unguard",
-                EntityType::Function(unguard_type),
-            );
-            let begin = run_index;
-            run_index += 4;
+            let begin = import_function("parallel_begin", 2);
+            import_function("parallel_end", release_type);
+            import_function("parallel_guard", guard_type);
+            import_function("parallel_unguard", unguard_type);
             begin
         });
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
@@ -974,10 +791,7 @@ fn emit_body(
             [ValType::I64, ValType::I32, ValType::I32, ValType::I32],
             [ValType::I32],
         );
-        imports.import("env", "parallel_resolve", EntityType::Function(signature));
-        let index = run_index;
-        run_index += 1;
-        index
+        import_function("parallel_resolve", signature)
     });
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     let parallel_vector_dword = (matches!(_guard_reads, GuardedReads::Shared { .. })
@@ -986,14 +800,7 @@ fn emit_body(
         .then(|| {
             let signature =
                 add_function_type(&mut types, [ValType::I64, ValType::I32], [ValType::I64]);
-            imports.import(
-                "env",
-                "parallel_vector_dword",
-                EntityType::Function(signature),
-            );
-            let index = run_index;
-            run_index += 1;
-            index
+            import_function("parallel_vector_dword", signature)
         });
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     let compact_shared_reads = matches!(_guard_reads, GuardedReads::Shared { compact: true, .. });
@@ -1028,14 +835,7 @@ fn emit_body(
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     let window_resolve = (has_indexed_window || has_base_byte_window).then(|| {
         let signature = add_function_type(&mut types, [ValType::I64], [ValType::I32]);
-        imports.import(
-            "env",
-            "parallel_dword_window",
-            EntityType::Function(signature),
-        );
-        let index = run_index;
-        run_index += 1;
-        index
+        import_function("parallel_dword_window", signature)
     });
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     let store_span_resolve = (matches!(
@@ -1050,14 +850,7 @@ fn emit_body(
         .any(|i| parallel::ByteStoreSpan::eligible(i.operation, unit.context.is_long64())))
     .then(|| {
         let signature = add_function_type(&mut types, [ValType::I64], [ValType::I64]);
-        imports.import(
-            "env",
-            "parallel_byte_store_span",
-            EntityType::Function(signature),
-        );
-        let index = run_index;
-        run_index += 1;
-        index
+        import_function("parallel_byte_store_span", signature)
     });
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     let vector_span_groups = loop_body
@@ -1070,14 +863,7 @@ fn emit_body(
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     let parallel_vector_span = vector_span_groups.iter().any(Option::is_some).then(|| {
         let signature = add_function_type(&mut types, [ValType::I64, ValType::I32], [ValType::I64]);
-        imports.import(
-            "env",
-            "parallel_vector_dword_span",
-            EntityType::Function(signature),
-        );
-        let index = run_index;
-        run_index += 1;
-        index
+        import_function("parallel_vector_dword_span", signature)
     });
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let span_cycles: Vec<_> = unit
@@ -1105,10 +891,7 @@ fn emit_body(
             [ValType::I64, ValType::I32, ValType::I32],
             [ValType::I32],
         );
-        imports.import("env", name, EntityType::Function(signature));
-        let index = run_index;
-        run_index += 1;
-        index
+        import_function(name, signature)
     };
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let read_span = (!observed && !span_cycles.is_empty()).then(|| span_import("read_span"));
