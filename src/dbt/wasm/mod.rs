@@ -126,6 +126,8 @@ struct Emitter {
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     stack_read_span: Option<memory::SpanCache>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    read_loop_diamond: Option<loop_cfg::ReadLoopDiamond>,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     write_spans: [Option<memory::SpanCache>; 2],
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     proved_stack: Option<(stack_slots::StackSlots, u32)>,
@@ -735,6 +737,7 @@ fn emit_placement(
         GuardedReads::Outlined {
             sticky: true,
             dyadic: true,
+            diamond: true,
         }
     } else {
         GuardedReads::Inline
@@ -793,6 +796,7 @@ enum GuardedReads {
     Outlined {
         sticky: bool,
         dyadic: bool,
+        diamond: bool,
     },
 }
 
@@ -1766,6 +1770,15 @@ fn emit_body(
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let write_caches = write_segments.map(|used| write_span.filter(|_| used).map(&mut span_cache));
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let read_loop_diamond = loop_body.and_then(|body| {
+        if !matches!(_guard_reads, GuardedReads::Outlined { diamond: true, .. })
+            || !body.forward_edges()
+        {
+            return None;
+        }
+        loop_cfg::ReadLoopDiamond::recognize(&unit.instructions, body.order(), &unit.context)
+    });
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let proved_stack = loop_body.and_then(|body| {
         let proof = (_guard_reads != GuardedReads::Checked)
             .then(|| body.stack_proof(unit))
@@ -1898,7 +1911,7 @@ fn emit_body(
         [next_local, next_local + 1, next_local + 2]
     });
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    let float_outline = if let GuardedReads::Outlined { sticky, dyadic } = _guard_reads {
+    let float_outline = if let GuardedReads::Outlined { sticky, dyadic, .. } = _guard_reads {
         loop_body
             .zip(proved_reads)
             .and_then(|(body, (proof, _, first_bias, _, _))| {
@@ -1951,6 +1964,8 @@ fn emit_body(
         read_span: None,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         stack_read_span: None,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        read_loop_diamond,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         write_spans: [None; 2],
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -2333,6 +2348,26 @@ fn emit_body(
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if bytes.len() > max_artifact_bytes
+        && read_loop_diamond.is_some()
+        && let GuardedReads::Outlined { sticky, dyadic, .. } = _guard_reads
+    {
+        // Keep the original loop placement when only the merged latch is too large.
+        return emit_body(
+            unit,
+            observed,
+            paged,
+            loop_body,
+            GuardedReads::Outlined {
+                sticky,
+                dyadic,
+                diamond: false,
+            },
+            _extra_spans,
+            max_artifact_bytes,
+        );
+    }
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    if bytes.len() > max_artifact_bytes
         && let Some(outline) = &float_outline
         && let GuardedReads::Outlined { sticky, .. } = _guard_reads
         && (outline.dyadic.is_some() || sticky)
@@ -2346,6 +2381,7 @@ fn emit_body(
             GuardedReads::Outlined {
                 sticky: sticky && outline.dyadic.is_some(),
                 dyadic: false,
+                diamond: false,
             },
             _extra_spans,
             max_artifact_bytes,

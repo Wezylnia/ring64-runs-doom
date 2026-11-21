@@ -3,6 +3,11 @@ use super::{
     control::InstructionRetirement,
     loop_cfg::{CompareAction, LoopOrder, ReadFaultFlags},
 };
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+use super::{
+    RIP, STORE_STATUS,
+    loop_cfg::{ConditionSource, ReadLoopDiamond},
+};
 use wasm_encoder::{BlockType, Instruction as Op};
 
 use crate::x86::{
@@ -570,6 +575,74 @@ impl Emitter {
         }
     }
 
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    fn emit_read_loop_diamond(
+        &mut self,
+        diamond: ReadLoopDiamond,
+        body: StructuredLoop,
+        depth: u32,
+    ) {
+        use crate::x86::instruction::{Condition, DataOperand};
+        let ReadLoopDiamond {
+            condition,
+            low,
+            high,
+            advance,
+            replace,
+            head,
+            exit,
+            ..
+        } = diamond;
+        let width = Width::W32;
+        self.cloned_condition(condition, Some(ConditionSource::Operands(width)));
+        // Keep the original data-dependent branch. Each arm commits only
+        // its selected register update and its original retirement count.
+        self.op(Op::LocalTee(STORE_STATUS))
+            .op(Op::If(BlockType::Empty));
+        self.data_operand(replace, width);
+        self.write_register(high, width);
+        self.retire_instructions(4); // selector + MOV + CMP + Jcc
+        self.op(Op::Else);
+        self.data_register(low, width);
+        self.op(Op::I32WrapI64);
+        self.data_operand(advance, width);
+        self.op(Op::I32WrapI64)
+            .op(Op::I32Add)
+            .op(Op::I32Const(1))
+            .op(Op::I32Add)
+            .op(Op::I64ExtendI32U);
+        self.write_register(low, width);
+        self.retire_instructions(5); // selector + ADD + INC + CMP + Jcc
+        self.op(Op::End);
+        self.omit_result_status = false;
+        self.stores = false;
+        self.op(Op::I64Const(head as i64)).op(Op::LocalSet(RIP));
+        self.data_register(low, width);
+        self.op(Op::I32WrapI64);
+        self.data_register(high, width);
+        let loop_label = body.active_labels(self.current_index);
+        self.op(Op::I32WrapI64)
+            .op(Op::I32LtU)
+            .op(Op::LocalGet(REMAINING))
+            .op(Op::I64Const(i64::from(body.max_lap_len)))
+            .op(Op::I64GeU)
+            .op(Op::I32And)
+            .op(Op::BrIf(loop_label));
+        // Both real exits and the checked budget handoff expose the last CMP.
+        self.integer(Alu::Cmp, low, DataOperand::Register(high), width, None);
+        self.condition(Condition::Below);
+        self.op(Op::BrIf(loop_label + 1));
+
+        self.restore_loop_registers();
+        self.op(Op::LocalGet(STORE_STATUS))
+            .op(Op::If(BlockType::Empty));
+        self.op(Op::I64Const(exit[1] as i64)).op(Op::LocalSet(RIP));
+        self.route(exit[1], depth + 1, depth + 2);
+        self.op(Op::End);
+        self.op(Op::I64Const(exit[0] as i64)).op(Op::LocalSet(RIP));
+        self.route(exit[0], depth, depth + 1);
+    }
+
     pub(super) fn emit_structured_loop(
         &mut self,
         instructions: &[Instruction],
@@ -586,8 +659,23 @@ impl Emitter {
         if let Some(reduction) = dyadic {
             self.admit_dyadic_accumulator(reduction);
         }
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        let diamond = self
+            .read_loop_diamond
+            .filter(|_| self.loop_gates_prechecked);
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        let precheck_entry = diamond.is_some();
+        #[cfg(any(feature = "parallel", not(target_arch = "wasm32")))]
+        let precheck_entry = false;
+        if precheck_entry {
+            // Fund the first lap here and later laps at their merged latch.
+            self.op(Op::LocalGet(REMAINING))
+                .op(Op::I64Const(i64::from(body.max_lap_len)))
+                .op(Op::I64LtU)
+                .op(Op::BrIf(0));
+        }
         self.op(Op::Loop(BlockType::Empty));
-        if self.loop_gates_prechecked {
+        if self.loop_gates_prechecked && !precheck_entry {
             // Leave the guarded clone before a partial lap.
             let minimum = Op::I64Const(i64::from(body.max_lap_len));
             #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
@@ -658,6 +746,17 @@ impl Emitter {
                 depth
             };
             self.structured_loop = Some((body, depth));
+            #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+            if let Some(diamond) = diamond.filter(|diamond| diamond.read + 1 == self.current_index)
+            {
+                self.current_operation = instructions[ordinal].operation;
+                self.current_pc = instructions[ordinal].pc;
+                self.emit_read_loop_diamond(diamond, body, depth);
+                for _ in 0..body.active_labels(self.current_index) {
+                    self.op(Op::End);
+                }
+                break;
+            }
             let compare = predicates
                 .get(position as usize)
                 .copied()
@@ -699,6 +798,10 @@ impl Emitter {
             };
             self.omit_result_status |=
                 outlined_float && matches!(body.tail - self.current_index, 1 | 2);
+            #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+            if diamond.is_some_and(|diamond| diamond.read == self.current_index) {
+                self.omit_result_status = true;
+            }
             self.instruction_retirement = if outlined_float && self.current_index == body.tail {
                 // The guard funded the complete lap. A numeric rejection
                 // publishes its own prefix before unwinding the child.

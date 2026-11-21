@@ -150,6 +150,157 @@ pub(super) fn read_prefix_len(instructions: &[Instruction], order: LoopOrder) ->
     0
 }
 
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[derive(Clone, Copy)]
+pub(super) struct ReadLoopDiamond {
+    pub(super) read: u32,
+    pub(super) condition: Condition,
+    pub(super) low: crate::x86::instruction::RegisterView,
+    pub(super) high: crate::x86::instruction::RegisterView,
+    pub(super) advance: crate::x86::instruction::DataOperand,
+    pub(super) replace: crate::x86::instruction::DataOperand,
+    pub(super) head: u64,
+    pub(super) exit: [u64; 2],
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+impl ReadLoopDiamond {
+    pub(super) fn recognize(
+        instructions: &[Instruction],
+        order: LoopOrder,
+        context: &ExecutionContext,
+    ) -> Option<Self> {
+        use crate::x86::{context::Mode, instruction::DataOperand};
+        if context.mode() != Mode::Protected || !context.code32() || order.earlier == order.head {
+            return None;
+        }
+        let [replace, taken_cmp, taken_latch]: [Instruction; 3] = instructions
+            [order.earlier as usize..order.head as usize]
+            .try_into()
+            .ok()?;
+        let read = order.tail.checked_sub(5)?;
+        let position = read.checked_sub(order.head)?;
+        if position == 0 || read_prefix_len(instructions, order) != position {
+            return None;
+        }
+        let [operand, selector, advance, inc, other_cmp, other_latch]: [Instruction; 6] =
+            instructions[read as usize..=order.tail as usize]
+                .try_into()
+                .ok()?;
+        if !matches!(
+            operand.operation,
+            Operation::MemoryAlu {
+                kind: Alu::Cmp,
+                width: Width::W32,
+                ..
+            }
+        ) {
+            return None;
+        }
+        let Operation::Jcc { condition, target } = selector.operation else {
+            return None;
+        };
+        if target != replace.pc
+            || target > context.code_limit()
+            || !matches!(condition, Condition::Below | Condition::AboveOrEqual)
+        {
+            return None;
+        }
+        let Operation::Mov {
+            dst: high,
+            src: replace,
+            width: Width::W32,
+        } = replace.operation
+        else {
+            return None;
+        };
+        let Operation::Alu {
+            kind: Alu::Add,
+            dst: low,
+            src: advance,
+            width: Width::W32,
+        } = advance.operation
+        else {
+            return None;
+        };
+        if low.bank == high.bank
+            || matches!(advance, DataOperand::Register(src) if src.bank == high.bank)
+            || inc.operation
+                != (Operation::Unary {
+                    kind: Unary::Inc,
+                    dst: Location::Register(low),
+                    width: Width::W32,
+                })
+        {
+            return None;
+        }
+        let compare = Operation::Alu {
+            kind: Alu::Cmp,
+            dst: low,
+            src: DataOperand::Register(high),
+            width: Width::W32,
+        };
+        if taken_cmp.operation != compare || other_cmp.operation != compare {
+            return None;
+        }
+        let head = instructions[order.head as usize].pc;
+        let Operation::Jcc {
+            condition: Condition::AboveOrEqual,
+            target,
+        } = taken_latch.operation
+        else {
+            return None;
+        };
+        let loop_pcs = instructions[order.earlier as usize].pc..=other_latch.pc;
+        if taken_latch.next_pc != head
+            || head > context.code_limit()
+            || other_latch.operation
+                != (Operation::Jcc {
+                    condition: Condition::Below,
+                    target: head,
+                })
+            || target > context.code_limit()
+            || loop_pcs.contains(&target)
+            || loop_pcs.contains(&other_latch.next_pc)
+        {
+            return None;
+        }
+        // LoopOrder already proves contiguous instructions and the lap budget.
+        // All three taken targets now have a valid code-segment offset as
+        // head and the selector target are decoded instructions in this unit.
+        // The next funded lap replaces all status before its first read.
+        // A carry consumer or a partially flag-writing shift cannot prove that.
+        let first_effect = instructions[order.head as usize..read as usize]
+            .iter()
+            .map(|instruction| instruction.operation)
+            .find(|operation| {
+                !matches!(
+                    operation,
+                    Operation::Mov { .. } | Operation::Lea { .. } | Operation::Nop
+                )
+            });
+        if !matches!(
+            first_effect,
+            Some(Operation::Alu {
+                kind: Alu::Add | Alu::Sub | Alu::Cmp,
+                ..
+            })
+        ) {
+            return None;
+        }
+        Some(Self {
+            read,
+            condition,
+            low,
+            high,
+            advance,
+            replace,
+            head,
+            exit: [other_latch.next_pc, target],
+        })
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ConditionSource {
     Operands(Width),
