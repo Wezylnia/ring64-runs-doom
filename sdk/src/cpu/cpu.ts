@@ -785,6 +785,7 @@ export class Cpu {
         }
         servicingEvent = eventKind === 'pending' || eventKind === 'pending-interrupt';
       }
+      let dispatchedPc: bigint | undefined;
       execution: for (;;) {
         if (
           eventKind === 'shutdown' &&
@@ -792,7 +793,9 @@ export class Cpu {
         )
           return finish('shutdown');
         const boundaryObserved = eventKind === 'ready' && this.#engine.prepareEntry();
-        const pc = this.#engine.current().rip;
+        // boundary preparation clears diagnostics without changing rip.
+        const pc = dispatchedPc ?? this.#engine.current().rip;
+        dispatchedPc = undefined;
         if (!servicingEvent) {
           if (remaining === 0n) return finish('budget');
           if (stop !== undefined && pc === stop) return finish('stop');
@@ -992,6 +995,7 @@ export class Cpu {
         }
         this.pruneTranslations();
         resources.dispatches++;
+        dispatchedPc = current.rip;
       }
     } catch (cause) {
       return this[FAIL_RUN](cause);
