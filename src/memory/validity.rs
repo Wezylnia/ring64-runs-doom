@@ -45,6 +45,21 @@ impl Default for Validity {
 }
 
 impl Validity {
+    fn index_source(&mut self, source: &SourceSlice) {
+        let key = Rc::as_ptr(&source.incarnation) as usize;
+        let ranges = self.sources.entry(key).or_default();
+        let start = source.offset;
+        let end = u64::from(start) + u64::from(source.length);
+        let first = ranges.partition_point(|range| range.1 < u64::from(start));
+        let after = ranges.partition_point(|range| u64::from(range.0) <= end);
+        if first == after {
+            ranges.insert(first, (start, end));
+            return;
+        }
+        ranges[first] = (start.min(ranges[first].0), end.max(ranges[after - 1].1));
+        ranges.drain(first + 1..after);
+    }
+
     fn rebuild_sources(&mut self) {
         self.completed_write = None;
         self.sources.clear();
@@ -201,6 +216,13 @@ impl Image {
         let next = owner.checked_add(1).ok_or(MemoryError::Capacity(
             "artifact identity capacity exhausted",
         ))?;
+        // source writes can leave stale intervals until the index is rebuilt.
+        if self.validity.completed_write.is_some() {
+            self.validity.rebuild_sources();
+        }
+        for source in &sources {
+            self.validity.index_source(source);
+        }
         self.validity.owners.insert(
             owner,
             Owner {
@@ -209,7 +231,6 @@ impl Image {
             },
         );
         self.validity.next = next;
-        self.validity.rebuild_sources();
         self.refresh_watchers();
         Ok(owner)
     }
@@ -458,6 +479,7 @@ mod tests {
         assert!(!image.owner_valid(separate));
         let replacement = image.register_source([(0x1010, 4)]).unwrap();
         assert!(image.validity.completed_write.is_none());
+        assert!(!image.backings[1].has_sources);
         image.write(0x1011, 1, 10).unwrap();
         assert!(!image.owner_valid(replacement));
         image.release(replacement);
