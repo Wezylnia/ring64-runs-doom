@@ -38,6 +38,8 @@ pub(super) struct StructuredLoop {
     kind: LoopKind,
     project_dwords: bool,
     pub(super) paged_fetch_bytes: Option<u32>,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) paged_read_span: Option<super::read_loop::ReadLoop>,
 }
 
 impl StructuredLoop {
@@ -229,6 +231,22 @@ impl StructuredLoop {
         widths
     }
 
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn with_paged_read_span(mut self, unit: &super::Unit) -> Option<Self> {
+        if self.paged_read_widths(unit) != [true, false] {
+            return None;
+        }
+        let proof = super::read_loop::ReadLoop::recognize_integer(
+            &unit.context,
+            &unit.instructions[self.head as usize..=self.tail as usize],
+        )?;
+        if !proof.one_stream() {
+            return None;
+        }
+        self.paged_read_span = Some(proof);
+        Some(self)
+    }
+
     #[cfg(not(feature = "parallel"))]
     pub(super) fn within_paged_fetch(mut self, unit: &super::Unit) -> Option<Self> {
         let head = unit.instructions[self.head as usize].pc;
@@ -345,6 +363,8 @@ impl StructuredLoop {
             kind: LoopKind::ForwardEdges,
             project_dwords: true,
             paged_fetch_bytes: None,
+            #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+            paged_read_span: None,
         }
     }
 
@@ -402,6 +422,8 @@ impl StructuredLoop {
                         kind,
                         project_dwords: true,
                         paged_fetch_bytes: None,
+                        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+                        paged_read_span: None,
                     });
                 }
             }
@@ -702,7 +724,7 @@ impl Emitter {
     ) {
         let (proof, span, first_bias) = guard;
         self.op(Op::If(BlockType::Empty));
-        self.guard_integer_read_loop(proof, span, first_bias);
+        self.guard_integer_read_loop(proof, span.resolve, first_bias);
         self.op(Op::If(BlockType::Empty));
         self.proved_reads = Some((proof, first_bias));
         self.emit_prechecked_body(instructions, body, loop_depth + 2, write_segment_base);
@@ -741,6 +763,20 @@ impl Emitter {
             .op(Op::I32Const(0))
             .op(Op::LocalSet(REASON));
         self.guarded_paged_lap = true;
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if let Some((proof, resolve, bias)) = self.paged_read_span {
+            self.guard_integer_read_loop(proof, resolve, bias);
+            self.op(Op::If(BlockType::Empty));
+            self.proved_reads = Some((proof, bias));
+            self.emit_prechecked_body(instructions, body, loop_depth + 4, None);
+            self.proved_reads = None;
+            self.op(Op::Else);
+            self.emit_prechecked_body(instructions, body, loop_depth + 4, None);
+            self.op(Op::End);
+        } else {
+            self.emit_prechecked_body(instructions, body, loop_depth + 3, None);
+        }
+        #[cfg(any(feature = "parallel", not(target_arch = "wasm32")))]
         self.emit_prechecked_body(instructions, body, loop_depth + 3, None);
         self.guarded_paged_lap = false;
         // Later visits can revalidate after a successful clone. A cold failure

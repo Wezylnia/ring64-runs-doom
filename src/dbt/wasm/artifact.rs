@@ -60,6 +60,20 @@ pub(crate) fn emit_profile(
     }
     #[cfg(not(feature = "parallel"))]
     if paged && let Some(body) = StructuredLoop::select_paged_reads(unit) {
+        #[cfg(target_arch = "wasm32")]
+        if let Some(span) = body.with_paged_read_span(unit) {
+            let bytes = emit_placement(
+                unit,
+                observed,
+                (paged, false),
+                Some(span),
+                false,
+                max_artifact_bytes,
+            );
+            if bytes.len() <= max_artifact_bytes {
+                return bytes;
+            }
+        }
         let bytes = emit_placement(
             unit,
             observed,
@@ -1026,6 +1040,10 @@ fn emit_body(
         import_function(name, signature)
     };
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let paged_read_span = loop_body
+        .and_then(|body| body.paged_read_span)
+        .map(|proof| (proof, span_import("paged_loop_read_span")));
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let read_span = (!observed && !span_cycles.is_empty()).then(|| span_import("read_span"));
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let stack_read_span = read_span.filter(|_| {
@@ -1269,6 +1287,13 @@ fn emit_body(
         locals.push((1, ValType::I32));
         (guard, attempts)
     });
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let paged_read_span = paged_read_span.map(|(proof, resolve)| {
+        let bias = next_local;
+        locals.push((1, ValType::I32));
+        next_local += 1;
+        (proof, resolve, bias)
+    });
     let boundary_locals = observed.then(|| {
         let result = [next_local, next_local + 1, next_local + 2, next_local + 3];
         locals.push((4, ValType::I32));
@@ -1388,6 +1413,8 @@ fn emit_body(
         loop_gates_prechecked: false,
         guarded_paged_lap: false,
         paged_loop_guard,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        paged_read_span,
         paged_loop_read_byte,
         paged_loop_read_dword,
         register_upper_dwords,

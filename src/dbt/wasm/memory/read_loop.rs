@@ -164,6 +164,11 @@ impl ReadLoop {
         Self::recognize_body(context, instructions, true)
     }
 
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn one_stream(self) -> bool {
+        self.streams[1].is_none()
+    }
+
     fn recognize_body(
         context: &ExecutionContext,
         instructions: &[Instruction],
@@ -474,7 +479,7 @@ impl Emitter {
             .op(Op::Block(BlockType::Empty))
             .op(Op::LocalGet(guard_failed))
             .op(Op::BrIf(0));
-        self.guard_read_span(proof, span, first_bias);
+        self.guard_read_span(proof, span.resolve, first_bias);
         self.op(Op::I32Const(1))
             .op(Op::Br(1))
             .op(Op::End)
@@ -489,16 +494,16 @@ impl Emitter {
     pub(super) fn guard_integer_read_loop(
         &mut self,
         proof: ReadLoop,
-        span: SpanCache,
+        resolve: u32,
         first_bias: u32,
     ) {
         self.op(Op::Block(BlockType::Result(ValType::I32)))
             .op(Op::I32Const(0));
-        self.guard_read_span(proof, span, first_bias);
+        self.guard_read_span(proof, resolve, first_bias);
         self.op(Op::Drop).op(Op::I32Const(1)).op(Op::End);
     }
 
-    fn guard_read_span(&mut self, proof: ReadLoop, span: SpanCache, first_bias: u32) {
+    fn guard_read_span(&mut self, proof: ReadLoop, resolve: u32, first_bias: u32) {
         use crate::memory::DirectSpan as Descriptor;
 
         match proof.end {
@@ -556,7 +561,7 @@ impl Emitter {
                 .op(Op::LocalGet(VALUE))
                 .op(Op::I32WrapI64)
                 .op(Op::I32Const(stream.first.segment as i32))
-                .op(Op::Call(span.resolve))
+                .op(Op::Call(resolve))
                 .op(Op::LocalTee(STORE_STATUS))
                 .op(Op::I32Eqz)
                 .op(Op::BrIf(0));

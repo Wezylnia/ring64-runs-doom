@@ -336,6 +336,20 @@ impl Image {
         if self.physical {
             return None;
         }
+        self.readable_direct_span(address, width)
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(crate) fn physical_direct_read_pointer(&self, address: u64, width: u32) -> Option<u32> {
+        if !self.physical {
+            return None;
+        }
+        let span = self.readable_direct_span(address, width)?;
+        Some(span.host + (address - span.base) as u32)
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    fn readable_direct_span(&self, address: u64, width: u32) -> Option<DirectSpan> {
         let mapping = &self.mappings[self.locate_index(address)?];
         let relative = address - mapping.base;
         if !mapping.permissions.read || u64::from(width) > u64::from(mapping.length) - relative {

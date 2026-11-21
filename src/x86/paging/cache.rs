@@ -200,6 +200,7 @@ impl Cache {
         request: Request,
         keys: &ProtectionKeys,
         width: u32,
+        local_only: bool,
         read: impl FnOnce(u64) -> Option<u32>,
     ) -> Option<u32> {
         let mut entries = self.entries.borrow_mut();
@@ -209,6 +210,10 @@ impl Cache {
             .hint
             .filter(|&index| entries.slots[index].is_some())?;
         let (data, physical) = entries.readable_span(state, request, keys, width)?;
+        // A local entry can shadow the interior of a retained global span.
+        if local_only && entries.slots[data].unwrap().global {
+            return None;
+        }
         let value = read(physical)?;
         entries.touch(data);
         if fetch != data {

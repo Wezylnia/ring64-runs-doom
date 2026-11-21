@@ -354,6 +354,7 @@ fn paged_loop_read<const WIDTH: u32>(address: u64) -> u64 {
                 request,
                 &state.protection_keys,
                 WIDTH,
+                false,
                 |physical| {
                     core.image
                         .physical_read(physical, WIDTH)
@@ -364,6 +365,51 @@ fn paged_loop_read<const WIDTH: u32>(address: u64) -> u64 {
         })
     };
     read().map_or(u64::MAX, u64::from)
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[unsafe(no_mangle)]
+pub extern "C" fn core_paged_loop_read_span(address: u64, bytes: u32, segment: u32) -> u32 {
+    if segment != Segment::Ds as u32
+        || bytes == 0
+        || crate::memory::check_span(address, bytes, Access::Read).is_err()
+    {
+        return 0;
+    }
+    BRIDGE.with_borrow_mut(|bridge| {
+        let core = bridge.core.as_mut().unwrap();
+        if !core.context.is_long64() {
+            return 0;
+        }
+        let Some(paging) = core.paging.as_ref() else {
+            return 0;
+        };
+        let state = unsafe { &*core.state.get() };
+        let request = paging::walk::Request {
+            linear: address,
+            access: Access::Read,
+            class: paging::walk::AccessClass::operand(
+                core.context.cpl(),
+                state.flags & crate::x86::flags::AC != 0,
+            ),
+        };
+        let Some(host) = core.translation_cache.read_then_fetch(
+            paging,
+            request,
+            &state.protection_keys,
+            bytes,
+            true,
+            |physical| core.image.physical_direct_read_pointer(physical, bytes),
+        ) else {
+            return 0;
+        };
+        core.direct_span = crate::memory::DirectSpan {
+            base: address,
+            host,
+            length: bytes,
+        };
+        &raw const core.direct_span as u32
+    })
 }
 
 #[unsafe(no_mangle)]

@@ -292,6 +292,68 @@ export function pagingBoundaryReviewScenarios(compiler: WebAssembly.Module): Sce
       },
     },
     {
+      name: 'paged affine byte loop agrees across direct and checked span boundaries',
+      async run() {
+        const head = 0x400000n;
+        // Preload, then four indexed MOVZX loads and a four-byte induction step.
+        const code = '0fb60731c90fb6040f0fb6540f010fb65c0f020fb6740f034101c04883c1044883f90875e0';
+        const bytes = Uint8Array.of(0xff, 1, 2, 3, 4, 5, 6, 7);
+        for (const layout of ['local', 'split-ram', 'split-tlb', 'global', 'denied'] as const) {
+          const splitTlb = layout === 'split-tlb';
+          const denied = layout === 'denied';
+          const global = layout === 'global';
+          const splitRam = denied || layout === 'split-ram';
+          await usingPaged(
+            compiler,
+            {
+              code,
+              bank: { ...BANK, cr4: global ? BANK.cr4 | 0x80n : BANK.cr4 },
+              words: [
+                [0x1000n, 0x2027n],
+                [0x2000n, 0x3027n],
+                [0x3010n, 0x4027n],
+                [0x4000n, 0x9027n],
+                [0x4008n, global ? 0xa127n : 0xa027n],
+                [0x4010n, 0xb027n],
+              ],
+              spans:
+                splitRam || splitTlb
+                  ? [
+                      { physical: splitTlb ? 0xaffcn : 0xa000n, bytes: bytes.slice(0, 4) },
+                      {
+                        physical: splitTlb ? 0xb000n : 0xa004n,
+                        bytes: bytes.slice(4),
+                        read: !denied,
+                      },
+                    ]
+                  : [{ physical: 0xa000n, bytes }],
+            },
+            async (cpu) => {
+              const start = initial(head, { 7: splitTlb ? 0x401ffcn : 0x401000n, 8: 0n }, 2n);
+              cpu.setState(start);
+              const result = await cpu.run({ budget: 20n, stop: head + 37n });
+              equal(result.reason, denied ? 'physical-memory-fault' : 'stop', layout);
+              equal(result.retired, denied ? 10n : 18n, `${layout} retirement`);
+              equal(result.state.rip, head + (denied ? 5n : 37n), `${layout} next PC`);
+              equal(result.state.registers[0], denied ? 0xffn : 4n, 'failed byte does not publish');
+              equal(result.state.registers[1], denied ? 4n : 8n, 'induction counter');
+              equal(result.state.registers[6], denied ? 3n : 7n, 'last successful byte');
+              equal(result.state.registers[8], denied ? 255n : 259n, 'exact sum with byte 0xff');
+              equal(result.state.flags, denied ? 0x97n : 0x46n, 'last comparison decides flags');
+              if (layout !== 'local') return;
+              cpu.setState(start);
+              const partial = await cpu.run({ budget: 11n });
+              equal(partial.reason, 'budget', 'partial second lap takes the checked entry');
+              equal(partial.retired, 11n, 'one partial-lap byte retires');
+              equal(partial.state.rip, head + 9n, 'resume after the checked byte');
+              equal(partial.state.registers[0], 4n, 'partial-lap byte is visible');
+              equal(partial.state.flags, 0x97n, 'partial lap preserves the prior comparison');
+            },
+          );
+        }
+      },
+    },
+    {
       name: 'paging review native cross-page fetch discards an owner invalidated by its one accessed-bit update',
       async run() {
         await usingPaged(

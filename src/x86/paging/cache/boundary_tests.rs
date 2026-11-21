@@ -92,17 +92,18 @@ fn guarded_read_ages_data_then_code_only_on_success() {
                 missing,
                 &ProtectionKeys::ZERO,
                 4,
+                false,
                 |_| unreachable!()
             ),
             None
         );
         assert_eq!(
-            cache.read_then_fetch(&state, data, &ProtectionKeys::ZERO, 4, |_| None),
+            cache.read_then_fetch(&state, data, &ProtectionKeys::ZERO, 4, false, |_| None),
             None
         );
         assert_eq!(cache.entries.borrow().clock, clock);
         assert_eq!(
-            cache.read_then_fetch(&state, data, &ProtectionKeys::ZERO, 4, |physical| {
+            cache.read_then_fetch(&state, data, &ProtectionKeys::ZERO, 4, false, |physical| {
                 assert_eq!(physical, 0xa234);
                 Some(u32::MAX)
             }),
@@ -126,6 +127,44 @@ fn guarded_read_ages_data_then_code_only_on_success() {
                 .is_some()
         );
     }
+}
+
+#[cfg(not(feature = "parallel"))]
+#[test]
+fn guarded_read_span_rejects_global_or_split_without_touching_retained_ages() {
+    let (mut image, mut state, data) = fixture();
+    state.cr4 |= 1 << 7;
+    image.physical_write(0x4008, 8, 0xa167).unwrap();
+    image.physical_write(0x4010, 8, 0xb067).unwrap();
+    let cache = Cache::with_capacity(2);
+    let code = Request {
+        linear: 0x2234,
+        access: Access::Execute,
+        ..data
+    };
+    insert(&cache, &mut image, &state, data);
+    insert(&cache, &mut image, &state, code);
+    assert!(cache.touch_current_fetch(&state, code, 0xb234));
+    let clock = cache.entries.borrow().clock;
+    let split = Request {
+        linear: 0x2ffc,
+        ..data
+    };
+    for (request, local_only) in [(data, true), (split, false)] {
+        assert_eq!(
+            cache.read_then_fetch(
+                &state,
+                request,
+                &ProtectionKeys::ZERO,
+                8,
+                local_only,
+                |_| { unreachable!("unproved spans never reach the physical backing") }
+            ),
+            None
+        );
+    }
+    assert_eq!(cache.entries.borrow().clock, clock);
+    assert!(!cache.take_changed());
 }
 
 #[test]
