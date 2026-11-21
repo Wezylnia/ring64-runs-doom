@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Core, type GeneratedRun } from '../../../src/wasm/core.js';
+import { Core } from '../../../src/wasm/core.js';
+import type { GeneratedRun } from '../../../src/wasm/abi.js';
 import { createCpu } from '../../../src/cpu/cpu.js';
 import type { State } from '../../../src/state/execution/registers.js';
 

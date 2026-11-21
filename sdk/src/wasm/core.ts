@@ -12,7 +12,6 @@ import {
   readNumericSource,
   writeNumericSource,
   validateNumericSourceLayout,
-  type NumericSourceLayout,
   type NumericFault,
 } from '../state/numeric/numeric-controls.js';
 import {
@@ -23,7 +22,6 @@ import {
   writeDebugContinuation,
   validateDebugLayout,
   type DebugState,
-  type DebugLayout,
 } from '../state/execution/debug.js';
 import {
   contextFromJson,
@@ -39,16 +37,10 @@ import {
   pagingStateFromJson,
   type PagingState,
 } from '../state/system/paging.js';
-import {
-  captureTimeState,
-  validateTimeLayout,
-  type TimeLayout,
-  type TimeState,
-} from '../state/system/time.js';
+import { captureTimeState, validateTimeLayout, type TimeState } from '../state/system/time.js';
 import {
   captureProtectionKeysState,
   validateProtectionKeysLayout,
-  type ProtectionKeysLayout,
   type ProtectionKeysState,
 } from '../state/system/protection-keys.js';
 import {
@@ -67,10 +59,7 @@ import {
   validateInterruptLayout,
   writeEvent,
   writeInterrupts,
-  type EventLayout,
   type EventState,
-  type InterruptLayout,
-  type PagingSourceLayout,
 } from '../state/execution/events.js';
 import {
   captureX87State,
@@ -79,8 +68,9 @@ import {
   validateX87Layout,
   type X87State,
   type X87Exception,
-  type X87Layout,
 } from '../state/numeric/x87.js';
+
+import type { CoreExports, CoreStateLayout, GeneratedRun } from './abi.js';
 
 // The standard Module declaration is structural. The intersection excludes primitives.
 export type CompilerSource = Uint8Array | (WebAssembly.Module & object);
@@ -246,227 +236,6 @@ export interface UnitMetadata {
   byteLength: number;
 }
 
-interface Layout {
-  time: TimeLayout;
-  protectionKeys: ProtectionKeysLayout;
-  xcr0?: number;
-  pagingSource?: PagingSourceLayout;
-  numericSource?: NumericSourceLayout;
-  debug: DebugLayout;
-  size: number;
-  scalarSize: number;
-  xmm: number;
-  xmmBytes: number;
-  vectorScratch: number;
-  mxcsr: number;
-  mxcsrBytes: number;
-  x87: X87Layout;
-  event: EventLayout;
-  interrupts: InterruptLayout;
-  deliveryEnabled: number;
-  registers: number;
-  flags: number;
-  rip: number;
-  remaining: number;
-  repeatRemaining: number;
-  interruptibility: number;
-  interruptibilityBytes: number;
-  reasons: string[];
-}
-
-type CoreExports = WebAssembly.Exports & {
-  memory: WebAssembly.Memory;
-  core_input(length: number): number;
-  core_init(codeBase: bigint, codeLen: number, ramBase: bigint, ramLen: number): number;
-  core_init_mapped(entry: bigint, metadataLength: number): number;
-  core_add_backing(metadataLength: number): number;
-  core_remove_backing(): number;
-  core_set_mappings(): number;
-  core_validity(owner: bigint): number;
-  core_publish(owner: bigint): number;
-  core_activate(owner: bigint): number;
-  core_release(owner: bigint): void;
-  core_context_info(): void;
-  core_context_version(): bigint;
-  core_boundary_observed(): number;
-  core_set_context(): number;
-  core_paging_state(): number;
-  core_import_paging(): number;
-  core_fast_system_state(): number;
-  core_import_fast_system(): number;
-  core_write_segment_base?(segment: number, base: bigint): number;
-  core_fast_system(
-    kind: number,
-    wide: number,
-    next: bigint,
-    sp: bigint,
-    rcx: bigint,
-    rdx: bigint,
-    r11: bigint,
-    flags: bigint,
-  ): number;
-  core_paging_control(
-    kind: number,
-    register: number,
-    value: bigint,
-    pc: bigint,
-    flags: bigint,
-    retired: bigint,
-  ): number;
-  core_invpcid(segment: number, offset: bigint, kind: bigint, flags: bigint): number;
-  core_processor(kind: number, eax: number, ecx: number, retired: bigint): number;
-  core_protection_key(kind: number, eax: number, ecx: number, edx: number): number;
-  core_io(
-    descriptor: number,
-    port: number,
-    offset: bigint,
-    value: bigint,
-    segment: number,
-    flags: bigint,
-  ): number;
-  core_io_observed: CoreExports['core_io'];
-  core_io_configure(present: number): number;
-  core_io_effect_active(): number;
-  core_segmented_load(offset: bigint, width: number, segment: number): bigint;
-  core_segmented_load_for_write(offset: bigint, width: number, segment: number): bigint;
-  core_segmented_store(offset: bigint, width: number, value: bigint, segment: number): number;
-  core_segmented_access_failed(): number;
-  core_access_reason(): number;
-  core_target_check(target: bigint): number;
-  core_state_ptr(): number;
-  core_import_state(): number;
-  core_load_observed: CoreExports['core_load'];
-  core_load_for_write_observed: CoreExports['core_load_for_write'];
-  core_store_observed: CoreExports['core_store'];
-  core_segmented_load_observed: CoreExports['core_segmented_load'];
-  core_segmented_load_for_write_observed: CoreExports['core_segmented_load_for_write'];
-  core_segmented_store_observed: CoreExports['core_segmented_store'];
-  core_vector_load_observed: CoreExports['core_vector_load'];
-  core_vector_store_observed: CoreExports['core_vector_store'];
-  core_load_mxcsr_observed: CoreExports['core_load_mxcsr'];
-  core_store_mxcsr_observed: CoreExports['core_store_mxcsr'];
-  core_x87_observed: CoreExports['core_x87'];
-  core_mmx_observed: CoreExports['core_mmx'];
-  core_numeric_image_observed: CoreExports['core_numeric_image'];
-  core_masked_store_observed: CoreExports['core_masked_store'];
-  core_protection_observed: CoreExports['core_protection'];
-  core_far_control_observed: CoreExports['core_far_control'];
-  core_compound_stack_observed: CoreExports['core_compound_stack'];
-  core_software_event_observed: CoreExports['core_software_event'];
-  core_debug_finish(
-    pc: bigint,
-    resume: bigint,
-    completed: number,
-    flags: bigint,
-    decision: number,
-  ): number;
-  core_debug_begin(pc: bigint, flags: bigint, shadow: number): number;
-  core_debug_register(operation: number, input: bigint, pc: bigint, flags: bigint): number;
-  core_import_debug(): number;
-  core_import_xmm(): number;
-  core_import_mxcsr(): number;
-  core_import_x87(): number;
-  core_mmx(operation: number, operand: bigint, segment: number): number;
-  core_numeric_image(operation: number, offset: bigint, segment: number): number;
-  core_masked_store(
-    offset: bigint,
-    width: number,
-    data: number,
-    mask: number,
-    segment: number,
-  ): number;
-  core_far_control(
-    descriptor: number,
-    offset: bigint,
-    selector: number,
-    inputSp: bigint,
-    nextPc: bigint,
-    segment: number,
-  ): number;
-  core_compound_stack(descriptor: number): number;
-  core_flags(operation: number, flags: bigint, input: bigint): number;
-  core_software_event(operation: number, inputSp: bigint, flags: bigint, nextPc: bigint): number;
-  core_debug_step(
-    instructionPc: bigint,
-    resumePc: bigint,
-    instructionCompleted: number,
-    flags: bigint,
-  ): number;
-  core_configure_delivery(enabled: number): number;
-  core_stage_exception(reason: number): number;
-  core_complete_task(): number;
-  core_deliver_exception(): number;
-  core_request_interrupt(vector: number): number;
-  core_request_nmi(): number;
-  core_external_boundary(): number;
-  core_shutdown_can_wake(): number;
-  core_external_step(pc: bigint, flags: bigint, shadow: number): number;
-  core_halt(flags: bigint): number;
-  core_protection(descriptor: number, offset: bigint, input: bigint, segment: number): number;
-  core_clflush(offset: bigint, segment: number): number;
-  core_x87(
-    operation: number,
-    offset: bigint,
-    segment: number,
-    pc: bigint,
-    flags: bigint,
-    rax: bigint,
-  ): number;
-  core_float(
-    operation: number,
-    leftLo: bigint,
-    leftHi: bigint,
-    rightLo: bigint,
-    rightHi: bigint,
-  ): number;
-  core_load_mxcsr(offset: bigint, segment: number): number;
-  core_store_mxcsr(offset: bigint, segment: number): number;
-  core_block16_for_write(offset: bigint, segment: number): number;
-  core_vector_load(offset: bigint, width: number, segment: number, alignment: number): number;
-  core_vector_store(
-    offset: bigint,
-    width: number,
-    segment: number,
-    alignment: number,
-    value: number,
-  ): number;
-  core_clear_fault(): number;
-  core_probe(pc: bigint): number;
-  core_compile(
-    pc: bigint,
-    maxInstructions: number,
-    maxSourceBytes: number,
-    maxArtifactBytes: number,
-  ): number;
-  core_load(address: bigint, width: number): bigint;
-  core_read_span?(address: bigint, width: number, segment: number): number;
-  core_write_span?(address: bigint, width: number, segment: number): number;
-  core_load_for_write(address: bigint, width: number): bigint;
-  core_store(address: bigint, width: number, value: bigint): number;
-  core_access_failed(): number;
-  core_multiply_high(left: bigint, right: bigint, signed: number): bigint;
-  core_divide(high: bigint, low: bigint, divisor: bigint, signed: number): bigint;
-  core_divide_failed(): number;
-  core_fault_info(reason: number): void;
-  core_read_memory(address: bigint, length: number): number;
-  core_write_memory(address: bigint): number;
-  core_output_ptr(): number;
-  core_output_len(): number;
-  core_info_ptr(): number;
-  core_info_len(): number;
-  core_dispose(): void;
-  core_reset(): number;
-  core_numeric_fault_info?(): void;
-};
-
-export type GeneratedRun = (
-  state: number,
-  budget: bigint,
-  stop: bigint,
-  hasStop: number,
-  entryIndex: number,
-) => number;
-
 function backingKey(name: string): string {
   // JSON's Unicode strings cannot carry lone UTF-16 surrogates into Rust.
   let key = '';
@@ -559,7 +328,7 @@ export class Core {
     return this.#taskRetry;
   }
   readonly #exports: CoreExports;
-  readonly #layout: Layout;
+  readonly #layout: CoreStateLayout;
   readonly #statePointer: number;
   #stateDataView?: DataView;
 
@@ -570,7 +339,7 @@ export class Core {
     private readonly io?: IoBridge,
   ) {
     this.#exports = exports;
-    this.#layout = this.info<Layout>();
+    this.#layout = this.info<CoreStateLayout>();
     this.#statePointer = exports.core_state_ptr() >>> 0;
     for (const name of [
       'size',

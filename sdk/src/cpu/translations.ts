@@ -1,4 +1,5 @@
-import type { GeneratedRun, UnitMetadata } from '../wasm/core.js';
+import type { GeneratedRun } from '../wasm/abi.js';
+import type { UnitMetadata } from '../wasm/core.js';
 
 export interface Artifact {
   run: GeneratedRun;

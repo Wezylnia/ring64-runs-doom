@@ -8,7 +8,8 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { createCpu } from '../../../src/index.js';
-import { Core, type GeneratedRun } from '../../../src/wasm/core.js';
+import { Core } from '../../../src/wasm/core.js';
+import type { GeneratedRun } from '../../../src/wasm/abi.js';
 import { LIMITS, initial } from '../../../../tests/support/fixture.js';
 
 const compiler = await WebAssembly.compile(
