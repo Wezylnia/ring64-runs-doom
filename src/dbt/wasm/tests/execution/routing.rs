@@ -1169,7 +1169,9 @@ fn memory_compare_predicate_keeps_flags_at_faults_and_checked_entries() {
 
 #[test]
 fn compare_predicate_restores_flags_only_on_its_fallthrough_load_fault() {
-    use super::super::loop_cfg::{CompareAction, ConditionSource, compare_predicates, select};
+    use super::super::loop_cfg::{
+        CompareAction, ConditionSource, ReadFaultFlags, compare_predicates, select,
+    };
     use crate::embedding::layout::DATA;
 
     let operations = [
@@ -1225,7 +1227,7 @@ fn compare_predicate_restores_flags_only_on_its_fallthrough_load_fault() {
         [
             CompareAction::SkipStatus,
             CompareAction::Condition(ConditionSource::Operands(Width::W32)),
-            CompareAction::RestoreOnLoadFault(Alu::Cmp, Width::W32),
+            CompareAction::RestoreOnLoadFault(ReadFaultFlags::Arithmetic(Alu::Cmp, Width::W32)),
         ]
     );
 
@@ -1426,7 +1428,9 @@ fn compare_predicate_restores_status_on_a_taken_loop_exit() {
 
 #[test]
 fn conditional_move_preserves_sub_flags_across_an_intervening_scalar_load() {
-    use super::super::loop_cfg::{CompareAction, ConditionSource, compare_predicates, select};
+    use super::super::loop_cfg::{
+        CompareAction, ConditionSource, ReadFaultFlags, compare_predicates, select,
+    };
     use crate::embedding::layout::DATA;
 
     let artifact = compiled_fixture(
@@ -1451,7 +1455,7 @@ fn conditional_move_preserves_sub_flags_across_an_intervening_scalar_load() {
         predicates(&artifact.instructions)[1..4],
         [
             CompareAction::SkipStatus,
-            CompareAction::RestoreOnLoadFault(Alu::Sub, Width::W32),
+            CompareAction::RestoreOnLoadFault(ReadFaultFlags::Arithmetic(Alu::Sub, Width::W32)),
             CompareAction::Condition(ConditionSource::Operands(Width::W32)),
         ],
     );
@@ -1533,6 +1537,145 @@ fn conditional_move_preserves_sub_flags_across_an_intervening_scalar_load() {
         if let Some(status) = read {
             packet["accesses"] = json!([
                 {"kind":"load","args":["8000",1],"result":"ff"},
+                {"kind":"access_failed","args":[],"result":status}
+            ]);
+        }
+        cases.push(packet);
+    }
+    run_cases(cases);
+}
+
+#[test]
+fn guarded_shift_restores_flags_on_a_read_fault_before_compare_branch() {
+    use super::super::loop_cfg::{
+        CompareAction, ConditionSource, ReadFaultFlags, compare_predicates, select,
+    };
+    use crate::embedding::layout::DATA;
+    use crate::x86::instruction::{Count, Location, Shift};
+
+    let head = 0x1009;
+    let read_pc = 0x100e;
+    let stop = 0x1017;
+    let artifact = compiled_fixture(
+        0x1000,
+        &[
+            0xeb, 0x07, // jmp head
+            0x89, 0xc1, // below: mov ecx,eax
+            0x83, 0xee, 1, // sub esi,1
+            0x74, 0x0e, // je stop
+            0xd1, 0xe8, // head: shr eax,1
+            0x8d, 0x50, 1, // lea edx,[rax+1]
+            0x39, 0x1f, // cmp [rdi],ebx
+            0x72, 0xf0, // jb below
+            0x83, 0xee, 1, // sub esi,1
+            0x75, 0xf2, // jne head
+            0x90,
+        ],
+        head,
+    );
+    let context = crate::x86::context::ExecutionContext::default();
+    let (order, _) = select(&artifact.instructions).unwrap();
+    let predicates =
+        |instructions: &[Instruction]| compare_predicates(instructions, order, &context);
+    let plan = predicates(&artifact.instructions);
+    assert_eq!(plan[0], CompareAction::SkipStatus);
+    assert_eq!(
+        plan[2],
+        CompareAction::SkipStatusAndRestoreOnLoadFault(ReadFaultFlags::Shift(
+            Shift::Shr,
+            Width::W32,
+        ))
+    );
+    assert_eq!(
+        plan[3],
+        CompareAction::Condition(ConditionSource::Operands(Width::W32))
+    );
+
+    let mut rejected = artifact.instructions;
+    rejected[order.head as usize].operation = Operation::Shift {
+        kind: Shift::Shr,
+        dst: Location::Register(RegisterView::low(0)),
+        width: Width::W32,
+        count: Count::Immediate(32),
+    };
+    assert_eq!(predicates(&rejected)[0], CompareAction::Ordinary);
+    let head_index = order.head as usize;
+    rejected[head_index].operation = Operation::Shift {
+        kind: Shift::Shr,
+        dst: Location::Register(RegisterView::low(0)),
+        width: Width::W32,
+        count: Count::Immediate(1),
+    };
+    for target in [head + 2, read_pc] {
+        rejected[order.at(3) as usize].operation = Operation::Jcc {
+            condition: Condition::Below,
+            target,
+        };
+        assert_eq!(predicates(&rejected)[0], CompareAction::Ordinary);
+    }
+
+    let shifted = [(0, 0x4000_0000), (2, 0x4000_0001)];
+    let below = [shifted[0], (1, 0x4000_0000), shifted[1], (6, 0)];
+    let equal = [shifted[0], shifted[1], (6, 0)];
+    let mut cases = Vec::new();
+    for (entry, budget, stop_at, read, expected) in [
+        (
+            head,
+            20,
+            stop,
+            Some(("1", 0)),
+            (&below[..], 0x46, stop, STOP, 13),
+        ),
+        (
+            head,
+            20,
+            stop,
+            Some(("2", 0)),
+            (&equal[..], 0x46, stop, STOP, 14),
+        ),
+        (
+            head,
+            20,
+            stop,
+            Some(("1", DATA)),
+            (&shifted[..], 0x807, read_pc, DATA, 18),
+        ),
+        (
+            head,
+            2,
+            stop,
+            None,
+            (&shifted[..], 0x807, read_pc, BUDGET, 0),
+        ),
+        (
+            head,
+            20,
+            read_pc,
+            None,
+            (&shifted[..], 0x807, read_pc, STOP, 18),
+        ),
+        (
+            read_pc,
+            20,
+            stop,
+            Some(("1", DATA)),
+            (&[][..], 0x803, read_pc, DATA, 20),
+        ),
+    ] {
+        let (registers, flags, rip, reason, remaining) = expected;
+        let mut packet = execution_case(
+            &artifact.bytes,
+            &artifact.entries,
+            &[(0, 0x8000_0001), (3, 2), (6, 1), (7, 0x8000)],
+            0x803,
+            entry,
+            budget,
+            (registers, flags, rip, reason as u32, remaining),
+        );
+        packet["stop"] = json!(format!("{stop_at:x}"));
+        if let Some((value, status)) = read {
+            packet["accesses"] = json!([
+                {"kind":"load","args":["8000",4],"result":value},
                 {"kind":"access_failed","args":[],"result":status}
             ]);
         }

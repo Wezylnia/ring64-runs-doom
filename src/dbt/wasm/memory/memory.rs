@@ -134,11 +134,17 @@ impl Emitter {
     }
 
     fn memory_failure(&mut self, exit_depth: u32) {
-        if let Some((kind, width)) = self.flags_on_read_fault {
-            if kind == crate::x86::instruction::Alu::Cmp {
-                self.arithmetic_result(kind, width);
+        match self.flags_on_read_fault {
+            Some(super::loop_cfg::ReadFaultFlags::Arithmetic(kind, width)) => {
+                if kind == crate::x86::instruction::Alu::Cmp {
+                    self.arithmetic_result(kind, width);
+                }
+                self.arithmetic_flags(kind, width);
             }
-            self.arithmetic_flags(kind, width);
+            Some(super::loop_cfg::ReadFaultFlags::Shift(kind, width)) => {
+                self.shift_flags(kind, width)
+            }
+            None => {}
         }
         if self.paged {
             self.record_fault_segment(self.segment);

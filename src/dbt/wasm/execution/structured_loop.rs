@@ -1,6 +1,6 @@
 use super::{
     Emitter, GPR, REMAINING,
-    loop_cfg::{CompareAction, LoopOrder},
+    loop_cfg::{CompareAction, LoopOrder, ReadFaultFlags},
 };
 use wasm_encoder::{BlockType, Instruction as Op};
 
@@ -253,7 +253,7 @@ fn integer_read(operation: Operation) -> bool {
 
 // Register ADD/SUB can defer flags across one scalar read. That read preserves
 // the arithmetic operands and restores the flags only if it exits on a fault.
-fn can_omit_flags(instructions: &[Instruction]) -> (bool, Option<(Alu, Width)>) {
+fn can_omit_flags(instructions: &[Instruction]) -> (bool, Option<ReadFaultFlags>) {
     let [current, next, rest @ ..] = instructions else {
         return (false, None);
     };
@@ -278,7 +278,10 @@ fn can_omit_flags(instructions: &[Instruction]) -> (bool, Option<(Alu, Width)>) 
         return (true, None);
     }
     let defer = integer_read(next.operation) && rest.first().is_some_and(overwrites);
-    (defer, defer.then_some((kind, width)))
+    (
+        defer,
+        defer.then_some(ReadFaultFlags::Arithmetic(kind, width)),
+    )
 }
 
 fn inside_integer_read_body(operation: Operation) -> bool {
@@ -547,7 +550,8 @@ impl Emitter {
                 .copied()
                 .unwrap_or_default();
             self.flags_on_read_fault = match compare {
-                CompareAction::RestoreOnLoadFault(kind, width) => Some((kind, width)),
+                CompareAction::RestoreOnLoadFault(flags)
+                | CompareAction::SkipStatusAndRestoreOnLoadFault(flags) => Some(flags),
                 _ => None,
             };
             // The complete-lap guard and the no-fault body rule hide intermediate status.
@@ -566,7 +570,10 @@ impl Emitter {
                 (self.omit_result_status, flags_on_next_read_fault) =
                     can_omit_flags(&instructions[ordinal..=body.tail as usize]);
             }
-            self.omit_result_status |= compare == CompareAction::SkipStatus;
+            self.omit_result_status |= matches!(
+                compare,
+                CompareAction::SkipStatus | CompareAction::SkipStatusAndRestoreOnLoadFault(_)
+            );
             self.instruction(
                 instructions[ordinal],
                 instructions.get(ordinal + 1),

@@ -66,6 +66,10 @@ impl Emitter {
         if self.omit_result_status {
             return;
         }
+        self.shift_flags(kind, width);
+    }
+
+    pub(super) fn shift_flags(&mut self, kind: Shift, width: Width) {
         self.op(Op::LocalGet(RHS))
             .op(Op::I64Const(0))
             .op(Op::I64Ne)

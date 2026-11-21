@@ -1,6 +1,8 @@
 use crate::memory::canonical48;
 use crate::x86::context::ExecutionContext;
-use crate::x86::instruction::{Alu, Condition, Instruction, Location, Operation, Unary, Width};
+use crate::x86::instruction::{
+    Alu, Condition, Count, Instruction, Location, Operation, Shift, Unary, Width,
+};
 
 #[derive(Clone, Copy)]
 pub(super) struct LoopOrder {
@@ -108,7 +110,14 @@ pub(super) enum CompareAction {
     Ordinary,
     SkipStatus,
     Condition(ConditionSource),
-    RestoreOnLoadFault(Alu, Width),
+    RestoreOnLoadFault(ReadFaultFlags),
+    SkipStatusAndRestoreOnLoadFault(ReadFaultFlags),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ReadFaultFlags {
+    Arithmetic(Alu, Width),
+    Shift(Shift, Width),
 }
 
 pub(super) fn compare_predicates(
@@ -197,14 +206,25 @@ pub(super) fn compare_predicates(
                 if let Some((source, kind, width)) = source {
                     predicates[producer_position] = CompareAction::SkipStatus;
                     if across_load {
-                        predicates[previous_position] =
-                            CompareAction::RestoreOnLoadFault(kind, width);
+                        predicates[previous_position] = CompareAction::RestoreOnLoadFault(
+                            ReadFaultFlags::Arithmetic(kind, width),
+                        );
                     }
                     predicates[position] = CompareAction::Condition(source);
                 }
             }
         }
         let Operation::Jcc { condition, target } = instruction.operation else {
+            if let Some((producer, flags)) =
+                shift_before_read(instructions, order, position, &explicit_entry)
+            {
+                predicates[producer] = CompareAction::SkipStatus;
+                predicates[position] = if predicates[position] == CompareAction::SkipStatus {
+                    CompareAction::SkipStatusAndRestoreOnLoadFault(flags)
+                } else {
+                    CompareAction::RestoreOnLoadFault(flags)
+                };
+            }
             replaces[position] = match instruction.operation {
                 Operation::Alu { kind, .. } => !matches!(kind, Alu::Adc | Alu::Sbb),
                 Operation::Mov { .. }
@@ -273,7 +293,8 @@ pub(super) fn compare_predicates(
             }
             // This load owns its fallthrough entry, and the load path leaves
             // the compare operands in LHS and RHS until any access fault.
-            predicates[load_position] = CompareAction::RestoreOnLoadFault(Alu::Cmp, width);
+            predicates[load_position] =
+                CompareAction::RestoreOnLoadFault(ReadFaultFlags::Arithmetic(Alu::Cmp, width));
         }
         predicates[position - 1] = CompareAction::SkipStatus;
         predicates[position] = CompareAction::Condition(if restore_taken {
@@ -285,6 +306,50 @@ pub(super) fn compare_predicates(
         });
     }
     predicates
+}
+
+fn shift_before_read(
+    instructions: &[Instruction],
+    order: LoopOrder,
+    position: usize,
+    explicit_entry: &[bool],
+) -> Option<(usize, ReadFaultFlags)> {
+    let at = |i| instructions[order.at(i as u32) as usize];
+    let mut next = at(position);
+    if explicit_entry[position]
+        || !matches!(
+            next.operation,
+            Operation::MemoryAlu {
+                kind: Alu::Cmp | Alu::Test,
+                ..
+            }
+        )
+    {
+        return None;
+    }
+    let mut producer = position - 1;
+    if matches!(at(producer).operation, Operation::Lea { .. }) {
+        // LEA and the comparison's memory helpers leave the shift's input,
+        // count and result in their locals through a possible read fault.
+        if explicit_entry[producer] || at(producer).next_pc != next.pc {
+            return None;
+        }
+        next = at(producer);
+        producer = producer.checked_sub(1)?;
+    }
+    let shift = at(producer);
+    let Operation::Shift {
+        kind: kind @ (Shift::Shl | Shift::Shr | Shift::Sar),
+        dst: Location::Register(_),
+        count: Count::Immediate(count),
+        width: width @ (Width::W32 | Width::W64),
+    } = shift.operation
+    else {
+        return None;
+    };
+    let mask = if width == Width::W64 { 63 } else { 31 };
+    (shift.next_pc == next.pc && count & mask != 0)
+        .then_some((producer, ReadFaultFlags::Shift(kind, width)))
 }
 
 fn iteration_bound(instructions: &[Instruction], order: LoopOrder) -> Option<u32> {

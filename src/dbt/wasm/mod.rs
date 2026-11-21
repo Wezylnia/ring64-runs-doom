@@ -157,7 +157,7 @@ struct Emitter {
     register_upper_dwords: [Option<u32>; 16],
     narrow_gprs: bool,
     omit_result_status: bool,
-    flags_on_read_fault: Option<(Alu, crate::x86::instruction::Width)>,
+    flags_on_read_fault: Option<loop_cfg::ReadFaultFlags>,
     entry_lookup: Option<u32>,
     multiply_high: Option<u32>,
     divide: Option<u32>,
