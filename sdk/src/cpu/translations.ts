@@ -11,12 +11,20 @@ export interface InstalledEntry {
   readonly index: number;
 }
 
+interface Recency {
+  readonly artifact: Artifact;
+  older: Recency | undefined;
+  newer: Recency | undefined;
+}
+
 const EMPTY: readonly InstalledEntry[] = Object.freeze([]);
 
 export class Translations {
   readonly #entries = new Map<bigint, readonly InstalledEntry[]>();
   readonly #observedEntries = new Map<bigint, readonly InstalledEntry[]>();
-  readonly #artifacts = new Map<Artifact, true>();
+  readonly #artifacts = new Map<Artifact, Recency>();
+  #oldest: Recency | undefined;
+  #newest: Recency | undefined;
   #bytes = 0;
 
   constructor(
@@ -31,7 +39,35 @@ export class Translations {
   }
 
   touch(artifact: Artifact): void {
-    if (this.#artifacts.delete(artifact)) this.#artifacts.set(artifact, true);
+    const entry = this.#artifacts.get(artifact);
+    if (!entry || entry === this.#newest) return;
+    this.#detach(entry);
+    this.#append(entry);
+  }
+
+  #append(entry: Recency): void {
+    entry.older = this.#newest;
+    entry.newer = undefined;
+    if (this.#newest) this.#newest.newer = entry;
+    else this.#oldest = entry;
+    this.#newest = entry;
+  }
+
+  #detach(entry: Recency): void {
+    const { older, newer } = entry;
+    if (older) older.newer = newer;
+    else this.#oldest = newer;
+    if (newer) newer.older = older;
+    else this.#newest = older;
+  }
+
+  *#ordered(): IterableIterator<Artifact> {
+    let entry = this.#oldest;
+    while (entry) {
+      const { newer, artifact } = entry;
+      yield artifact;
+      entry = newer;
+    }
   }
 
   canFit(bytes: number): boolean {
@@ -68,11 +104,13 @@ export class Translations {
       this.#artifacts.size >= this.maxArtifacts ||
       this.#bytes + artifact.metadata.byteLength > this.maxBytes
     ) {
-      const oldest = this.#artifacts.keys().next().value;
+      const oldest = this.#oldest?.artifact;
       if (!oldest) throw new Error('cache accounting failed');
       this.remove(oldest);
     }
-    this.#artifacts.set(artifact, true);
+    const recency: Recency = { artifact, older: undefined, newer: undefined };
+    this.#artifacts.set(artifact, recency);
+    this.#append(recency);
     this.#bytes += artifact.metadata.byteLength;
     const entries = artifact.metadata.boundaryObserved ? this.#observedEntries : this.#entries;
     artifact.metadata.entries.forEach((pc, index) => {
@@ -86,7 +124,7 @@ export class Translations {
   }
 
   inspect(): UnitMetadata[] {
-    return Array.from(this.#artifacts.keys(), (artifact) => ({
+    return Array.from(this.#ordered(), (artifact) => ({
       ...artifact.metadata,
       entries: [...artifact.metadata.entries],
       dependencies: artifact.metadata.dependencies.map((range) => ({ ...range })),
@@ -94,7 +132,10 @@ export class Translations {
   }
 
   remove(artifact: Artifact): void {
-    if (!this.#artifacts.delete(artifact)) return;
+    const entry = this.#artifacts.get(artifact);
+    if (!entry) return;
+    this.#artifacts.delete(artifact);
+    this.#detach(entry);
     this.#bytes -= artifact.metadata.byteLength;
     const entries = artifact.metadata.boundaryObserved ? this.#observedEntries : this.#entries;
     for (const pc of artifact.metadata.entries) {
@@ -106,12 +147,12 @@ export class Translations {
   }
 
   prune(valid: (artifact: Artifact) => boolean): void {
-    for (const artifact of this.#artifacts.keys()) {
+    for (const artifact of this.#ordered()) {
       if (!valid(artifact)) this.remove(artifact);
     }
   }
 
   clear(): void {
-    for (const artifact of this.#artifacts.keys()) this.remove(artifact);
+    while (this.#oldest) this.remove(this.#oldest.artifact);
   }
 }
