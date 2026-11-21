@@ -1,4 +1,7 @@
-use super::{Emitter, GPR, REMAINING, loop_cfg::LoopOrder};
+use super::{
+    Emitter, GPR, REMAINING,
+    loop_cfg::{CompareAction, LoopOrder},
+};
 use wasm_encoder::{BlockType, Instruction as Op};
 
 use crate::x86::{
@@ -463,6 +466,14 @@ impl Emitter {
             self.current_index = ordinal as u32;
             let depth = inner_depth + body.active_labels(self.current_index);
             self.structured_loop = Some((body, depth));
+            let compare = predicates
+                .get(position as usize)
+                .copied()
+                .unwrap_or_default();
+            self.flags_on_read_fault = match compare {
+                CompareAction::RestoreOnLoadFault(width) => Some((Alu::Cmp, width)),
+                _ => None,
+            };
             // The complete-lap guard and the no-fault body rule hide intermediate status.
             // A worker signal can publish flags at any instruction entry.
             self.omit_result_status = !cfg!(feature = "parallel")
@@ -479,15 +490,16 @@ impl Emitter {
                 (self.omit_result_status, flags_on_next_read_fault) =
                     can_omit_flags(&instructions[ordinal..=body.tail as usize]);
             }
-            self.omit_result_status |= predicates
-                .get(position as usize + 1)
-                .is_some_and(Option::is_some);
+            self.omit_result_status |= compare == CompareAction::KeepOperands;
             self.instruction(
                 instructions[ordinal],
                 instructions.get(ordinal + 1),
                 depth,
                 write_segment_base,
-                predicates.get(position as usize).copied().flatten(),
+                match compare {
+                    CompareAction::Branch(width) => Some(width),
+                    _ => None,
+                },
             );
             #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
             if prove_zero_upper {

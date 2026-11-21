@@ -994,7 +994,7 @@ fn rotated_loop_preserves_both_backedges_and_original_entry_boundaries() {
 
 #[test]
 fn memory_compare_predicate_keeps_flags_at_faults_and_checked_entries() {
-    use super::super::loop_cfg::{compare_predicates, select};
+    use super::super::loop_cfg::{CompareAction, compare_predicates, select};
     use crate::embedding::layout::DATA;
 
     let decrement = |bank| Operation::Alu {
@@ -1046,7 +1046,7 @@ fn memory_compare_predicate_keeps_flags_at_faults_and_checked_entries() {
         let context = crate::x86::context::ExecutionContext::default();
         assert_eq!(
             compare_predicates(&instructions, order, &context)[1],
-            Some(width)
+            CompareAction::Branch(width)
         );
         let mut faulting = instructions.clone();
         faulting[4].operation = Operation::Load {
@@ -1054,7 +1054,10 @@ fn memory_compare_predicate_keeps_flags_at_faults_and_checked_entries() {
             address: Address::default(),
             width: Width::W32,
         };
-        assert_eq!(compare_predicates(&faulting, order, &context)[1], None);
+        assert_eq!(
+            compare_predicates(&faulting, order, &context)[1],
+            CompareAction::Ordinary
+        );
         let mut joined = instructions.clone();
         joined[5].operation = Operation::Jcc {
             condition: Condition::NotEqual,
@@ -1072,7 +1075,10 @@ fn memory_compare_predicate_keeps_flags_at_faults_and_checked_entries() {
             },
         );
         let (joined_order, _) = select(&joined).unwrap();
-        assert_eq!(compare_predicates(&joined, joined_order, &context)[2], None);
+        assert_eq!(
+            compare_predicates(&joined, joined_order, &context)[2],
+            CompareAction::Ordinary
+        );
         let unit = unit(instructions);
         let bytes = emit(&unit);
         assert_eq!(
@@ -1159,6 +1165,163 @@ fn memory_compare_predicate_keeps_flags_at_faults_and_checked_entries() {
         }
     }
     run_cases(cases);
+}
+
+#[test]
+fn compare_predicate_restores_flags_only_on_its_fallthrough_load_fault() {
+    use super::super::loop_cfg::{CompareAction, compare_predicates, select};
+    use crate::embedding::layout::DATA;
+
+    let operations = [
+        Operation::Alu {
+            kind: Alu::Cmp,
+            dst: RegisterView::low(0),
+            src: DataOperand::Immediate(1),
+            width: Width::W32,
+        },
+        Operation::Jcc {
+            condition: Condition::Below,
+            target: 0x1010,
+        },
+        Operation::Load {
+            dst: RegisterView::low(0),
+            address: Address {
+                base: AddressBase::Register(3),
+                ..Address::default()
+            },
+            width: Width::W32,
+        },
+        Operation::Mov {
+            dst: RegisterView::low(1),
+            src: DataOperand::Register(RegisterView::low(0)),
+            width: Width::W32,
+        },
+        Operation::Alu {
+            kind: Alu::Sub,
+            dst: RegisterView::low(5),
+            src: DataOperand::Immediate(1),
+            width: Width::W32,
+        },
+        Operation::Jcc {
+            condition: Condition::NotEqual,
+            target: 0x1000,
+        },
+        Operation::Nop,
+    ];
+    let instructions: Vec<_> = operations
+        .into_iter()
+        .enumerate()
+        .map(|(i, operation)| Instruction {
+            pc: 0x1000 + i as u64 * 4,
+            next_pc: 0x1004 + i as u64 * 4,
+            operation,
+        })
+        .collect();
+    let (order, _) = select(&instructions).unwrap();
+    let context = crate::x86::context::ExecutionContext::default();
+    let plan = compare_predicates(&instructions, order, &context);
+    assert_eq!(
+        plan[..3],
+        [
+            CompareAction::KeepOperands,
+            CompareAction::Branch(Width::W32),
+            CompareAction::RestoreOnLoadFault(Width::W32),
+        ]
+    );
+
+    let mut joined = instructions.clone();
+    joined[5].operation = Operation::Jcc {
+        condition: Condition::NotEqual,
+        target: 0x0ffc,
+    };
+    joined.insert(
+        0,
+        Instruction {
+            pc: 0x0ffc,
+            next_pc: 0x1000,
+            operation: Operation::Jcc {
+                condition: Condition::Parity,
+                target: 0x1008,
+            },
+        },
+    );
+    let (joined_order, _) = select(&joined).unwrap();
+    assert_eq!(
+        compare_predicates(&joined, joined_order, &context)[2],
+        CompareAction::Ordinary
+    );
+
+    let bytes = emit(&unit(instructions.to_vec()));
+    let entries: Vec<_> = instructions.iter().map(|i| i.pc).collect();
+    let mut packets = Vec::new();
+    for (entry, eax, budget, stop, read, expected, flags, reason, remaining) in [
+        (
+            0x1000,
+            0x80000000,
+            7,
+            0x1018,
+            Some(DATA),
+            &[][..],
+            0x816,
+            DATA,
+            5,
+        ),
+        (
+            0x1000,
+            0x80000000,
+            7,
+            0x1018,
+            Some(0),
+            &[(0, 0x1234), (1, 0x1234), (5, 0)][..],
+            0x46,
+            STOP,
+            1,
+        ),
+        (0x1000, 0, 7, 0x1018, None, &[(5, 0)][..], 0x46, STOP, 3),
+        (0x1000, 0x80000000, 7, 0x1008, None, &[][..], 0x816, STOP, 5),
+        (
+            0x1000,
+            0x80000000,
+            2,
+            0x1018,
+            None,
+            &[][..],
+            0x816,
+            BUDGET,
+            0,
+        ),
+        (
+            0x1008,
+            0x80000000,
+            7,
+            0x1018,
+            Some(DATA),
+            &[][..],
+            0x803,
+            DATA,
+            7,
+        ),
+    ] {
+        let rip = if reason == STOP { stop } else { 0x1008 };
+        let mut packet = execution_case(
+            &bytes,
+            &entries,
+            &[(0, eax), (3, 0x8000), (5, 1)],
+            0x803,
+            entry,
+            budget,
+            (expected, flags, rip, reason as u32, remaining),
+        );
+        packet["stop"] = json!(format!("{stop:x}"));
+        if let Some(status) = read {
+            packet["accesses"] = json!([
+                {"kind":"load","args":["8000",4],"result":"1234"},
+                {"kind":"access_failed","args":[],"result":status}
+            ]);
+        }
+        packets.push(packet);
+    }
+    run_cases(packets);
 }
 
 #[test]

@@ -95,13 +95,20 @@ fn branch_target(operation: Operation) -> Option<u64> {
     }
 }
 
-// Indexed by emitted position. A predicate at position i also authorizes the
-// immediately preceding CMP to keep its operands without setting flags.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum CompareAction {
+    #[default]
+    Ordinary,
+    KeepOperands,
+    Branch(Width),
+    RestoreOnLoadFault(Width),
+}
+
 pub(super) fn compare_predicates(
     instructions: &[Instruction],
     order: LoopOrder,
     context: &ExecutionContext,
-) -> Vec<Option<Width>> {
+) -> Vec<CompareAction> {
     let source = &instructions[order.earlier as usize..=order.tail as usize];
     let position_at = |pc| {
         let offset = source.binary_search_by_key(&pc, |i| i.pc).ok()?;
@@ -119,7 +126,7 @@ pub(super) fn compare_predicates(
 
     // Any fault, FLAGS read, or edge out of this lap keeps preceding flags live.
     let mut replaces = vec![false; len];
-    let mut predicates = vec![None; len];
+    let mut predicates = vec![CompareAction::Ordinary; len];
     for position in (1..len).rev() {
         let index = order.at(position as u32) as usize;
         let instruction = instructions[index];
@@ -152,7 +159,6 @@ pub(super) fn compare_predicates(
                 target <= context.code_limit()
             })
             || !next_overwrites(target)
-            || !next_overwrites(instruction.next_pc)
         {
             continue;
         }
@@ -160,7 +166,7 @@ pub(super) fn compare_predicates(
         if producer.next_pc != instruction.pc {
             continue;
         }
-        match producer.operation {
+        let width = match producer.operation {
             Operation::Alu {
                 kind: Alu::Cmp,
                 width: width @ (Width::W32 | Width::W64),
@@ -170,9 +176,28 @@ pub(super) fn compare_predicates(
                 kind: Alu::Cmp,
                 width: width @ (Width::W32 | Width::W64),
                 ..
-            } => predicates[position] = Some(width),
-            _ => {}
+            } => width,
+            _ => continue,
+        };
+
+        if !next_overwrites(instruction.next_pc) {
+            let Some(load_position) = position_at(instruction.next_pc)
+                .filter(|&i| i == position + 1 && !explicit_entry[i])
+            else {
+                continue;
+            };
+            let load = instructions[order.at(load_position as u32) as usize];
+            if !matches!(load.operation, Operation::Load { .. })
+                || !position_at(load.next_pc).is_some_and(|i| i > load_position && replaces[i])
+            {
+                continue;
+            }
+            // This load owns its fallthrough entry, and the load path leaves
+            // the compare operands in LHS and RHS until any access fault.
+            predicates[load_position] = CompareAction::RestoreOnLoadFault(width);
         }
+        predicates[position - 1] = CompareAction::KeepOperands;
+        predicates[position] = CompareAction::Branch(width);
     }
     predicates
 }
