@@ -37,7 +37,7 @@ try {
   const [canvas, controls] = await Promise.all(
     ['canvas.html', 'controls.html'].map((name) => readFile(join(wetInk, name), 'utf8')),
   );
-  for (const page of ['index.html']) {
+  for (const page of ['index.html', 'under-the-ink/index.html']) {
     const html = await readFile(join(source, page), 'utf8');
     const destination = join(staged, page);
     await mkdir(dirname(destination), { recursive: true });
@@ -58,6 +58,7 @@ try {
 
   await copyFile(join(root, 'assets/logo.svg'), join(assets, 'logo.svg'));
   await copyFile(join(wetInk, 'grain.png'), join(demo, 'grain.png'));
+  await copyFile(join(wetInk, 'ink.c'), join(guestAssets, 'ink.c.txt'));
   for (const name of ['ring64.wasm', 'LICENSE', 'THIRD_PARTY_NOTICES.txt'])
     await copyFile(join(sdk, name), join(demo, name));
   await build({

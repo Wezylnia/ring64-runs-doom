@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#faeee1" />
+    <meta name="description" content="the story behind wet ink, a live x86-64 artwork." />
+    <title>under the ink</title>
+    <link rel="icon" href="../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../style.css" />
+  </head>
+  <body>
+    <div class="shell ink-essay">
+      <header class="masthead">
+        <a class="wordmark" href="../">
+          <img src="../assets/logo.svg" width="300" height="146" alt="ring64" />
+        </a>
+      </header>
+      <main class="ink-essay-content">
+        <article>
+          <h1 class="ink-essay-title">under the ink</h1>
+          <figure aria-label="wet ink">
+            <!-- wet-ink-canvas -->
+            <div class="ink-toolbar">
+              <p class="ink-essay-caption">wet ink</p>
+              <!-- wet-ink-controls -->
+            </div>
+          </figure>
+
+          <div class="ink-essay-story">
+            <section class="ink-essay-section">
+              <h2>where it began</h2>
+              <div class="ink-essay-prose">
+                <p>
+                  i’d spent a lot of time measuring ring64. this time i wanted to make a little
+                  piece of art with it. the demoscene gave me the idea of letting a program make the
+                  whole image.
+                </p>
+                <p>
+                  i kept thinking about ink in water and the way shapes in a lava lamp pull apart
+                  and meet again. i took ring64’s red and near-black and let them spread across
+                  cream. you can stir the ink just by passing through it. it keeps going when you
+                  move away.
+                </p>
+              </div>
+            </section>
+
+            <section class="ink-essay-section">
+              <h2>from c to canvas</h2>
+              <div class="ink-essay-prose">
+                <p>
+                  wet ink is a c program. i could compile the same source straight to webassembly
+                  for the browser. clang builds the version on this page as x86-64 machine code.
+                  running that file in a web page takes a cpu emulator. ring64 translates its
+                  instructions into webassembly as the program runs.
+                </p>
+                <p>
+                  each frame, the browser passes the pointer position to the program. the program
+                  moves two layers of pigment across a grid. the renderer smooths the grid, gives
+                  the pigment its colors and paints it on the canvas.
+                </p>
+                <div class="ink-essay-files">
+                  <a href="../assets/wet-ink/ink.c.txt">read ink.c</a>
+                  <a href="../assets/wet-ink/wet-ink.bin" download="wet-ink.x86-64.bin">
+                    download the x86-64 binary
+                  </a>
+                </div>
+              </div>
+            </section>
+          </div>
+        </article>
+      </main>
+    </div>
+    <script type="module" src="../wet-ink/index.js"></script>
+  </body>
+</html>
