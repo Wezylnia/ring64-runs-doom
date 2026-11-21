@@ -59,8 +59,12 @@ pub(super) fn select_natural_read_shifts(instructions: &[Instruction]) -> Option
         Layout::NaturalReadShifts,
         instructions.len(),
         |body| {
-            body.iter()
-                .all(|i| !matches!(i.operation, Operation::Store { .. }))
+            body.iter().all(|i| {
+                !matches!(
+                    i.operation,
+                    Operation::Store { .. } | Operation::NonTemporalStore { .. }
+                )
+            })
         },
     )
 }
@@ -74,7 +78,12 @@ pub(super) fn select_shared_rotated_reads(
     let (order, bound) = select_layout(instructions, Layout::Rotated, 64)?;
     instructions[order.earlier as usize..=order.tail as usize]
         .iter()
-        .all(|instruction| !matches!(instruction.operation, Operation::Store { .. }))
+        .all(|instruction| {
+            !matches!(
+                instruction.operation,
+                Operation::Store { .. } | Operation::NonTemporalStore { .. }
+            )
+        })
         .then_some((order, bound))
 }
 
@@ -84,9 +93,12 @@ pub(super) fn select_shared_natural_memory(
 ) -> Option<(LoopOrder, u32)> {
     select_layout_filtered(instructions, Layout::Natural, 64, |body| {
         body.iter().any(|i| reads_memory(i.operation))
-            && body
-                .iter()
-                .any(|i| matches!(i.operation, Operation::Store { .. }))
+            && body.iter().any(|i| {
+                matches!(
+                    i.operation,
+                    Operation::Store { .. } | Operation::NonTemporalStore { .. }
+                )
+            })
             && !body.iter().any(|i| i.shared_atomic())
     })
 }
@@ -715,6 +727,7 @@ fn inside_body(operation: Operation, layout: Layout) -> bool {
             | Operation::Mov { .. }
             | Operation::Nop
             | Operation::Store { .. }
+            | Operation::NonTemporalStore { .. }
             | Operation::Unary {
                 dst: Location::Register(_),
                 ..

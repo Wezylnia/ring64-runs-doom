@@ -90,6 +90,8 @@ export type CoreExports = WebAssembly.Exports & {
   core_io_observed: CoreExports['core_io'];
   core_io_configure(present: number): number;
   core_io_effect_active(): number;
+  core_mmio_effect_active?(): number;
+  core_mmio_operand?(descriptor: number, offset: bigint, value: bigint, segment: number): number;
   core_segmented_load(offset: bigint, width: number, segment: number): bigint;
   core_segmented_load_for_write(offset: bigint, width: number, segment: number): bigint;
   core_segmented_store(offset: bigint, width: number, value: bigint, segment: number): number;

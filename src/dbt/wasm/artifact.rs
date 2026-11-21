@@ -38,7 +38,14 @@ pub(crate) fn emit_profile(
             .or_else(|| StructuredLoop::select_shared_natural_memory(&unit.instructions))
     {
         // Every shared placement retains its exact per-instruction signal check.
-        let bytes = emit_placement(unit, observed, paged, Some(body), false, max_artifact_bytes);
+        let bytes = emit_placement(
+            unit,
+            observed,
+            (paged, false),
+            Some(body),
+            false,
+            max_artifact_bytes,
+        );
         if bytes.len() <= max_artifact_bytes {
             return bytes;
         }
@@ -47,7 +54,7 @@ pub(crate) fn emit_profile(
         let bytes = emit_placement(
             unit,
             observed,
-            paged,
+            (paged, false),
             Some(loop_body),
             true,
             max_artifact_bytes,
@@ -60,7 +67,7 @@ pub(crate) fn emit_profile(
             let bytes = emit_placement(
                 unit,
                 observed,
-                paged,
+                (paged, false),
                 Some(loop_body.without_dword_projection()),
                 true,
                 max_artifact_bytes,
@@ -79,7 +86,7 @@ pub(crate) fn emit_profile(
             let bytes = emit_placement(
                 unit,
                 observed,
-                paged,
+                (paged, false),
                 Some(loop_body),
                 false,
                 max_artifact_bytes,
@@ -89,13 +96,45 @@ pub(crate) fn emit_profile(
             }
         }
     }
-    emit_placement(unit, observed, paged, None, false, max_artifact_bytes)
+    emit_placement(
+        unit,
+        observed,
+        (paged, false),
+        None,
+        false,
+        max_artifact_bytes,
+    )
+}
+
+#[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+pub(crate) fn emit_mmio_profile(
+    unit: &Unit,
+    observed: bool,
+    paged: bool,
+    max_artifact_bytes: usize,
+) -> Vec<u8> {
+    if !unit.instructions.iter().any(|instruction| {
+        matches!(
+            instruction.operation,
+            Operation::Load { .. } | Operation::Store { .. }
+        )
+    }) {
+        return emit_profile(unit, observed, paged, max_artifact_bytes);
+    }
+    emit_placement(
+        unit,
+        observed || paged,
+        (paged, true),
+        None,
+        false,
+        max_artifact_bytes,
+    )
 }
 
 fn emit_placement(
     unit: &Unit,
     observed: bool,
-    paged: bool,
+    (paged, mmio): (bool, bool),
     loop_body: Option<StructuredLoop>,
     guard_reads: bool,
     max_artifact_bytes: usize,
@@ -141,7 +180,7 @@ fn emit_placement(
     let (bytes, extra_spans) = emit_body(
         unit,
         observed,
-        paged,
+        (paged, mmio),
         loop_body,
         reads,
         true,
@@ -160,7 +199,7 @@ fn emit_placement(
         return emit_body(
             unit,
             observed,
-            paged,
+            (paged, mmio),
             loop_body,
             reads,
             false,
@@ -202,7 +241,7 @@ enum GuardedReads {
 fn emit_body(
     unit: &Unit,
     observed: bool,
-    paged: bool,
+    (paged, mmio): (bool, bool),
     loop_body: Option<StructuredLoop>,
     _guard_reads: GuardedReads,
     _extra_spans: bool,
@@ -307,6 +346,13 @@ fn emit_body(
         .any(|i| matches!(i.operation, Operation::CompareExchange16b { .. }));
     let block16_for_write_type = wide_compare
         .then(|| add_function_type(&mut types, [ValType::I64, ValType::I32], [ValType::I32]));
+    let mmio_type = mmio.then(|| {
+        add_function_type(
+            &mut types,
+            [ValType::I32, ValType::I64, ValType::I64, ValType::I32],
+            [ValType::I32],
+        )
+    });
     let vector_store_type = (vector_banks.stores || wide_compare).then(|| {
         add_function_type(
             &mut types,
@@ -728,6 +774,7 @@ fn emit_body(
     let divide = divide_type.map(|index| import_function("divide", index));
     let divide_failed = wide_divide.then(|| import_function("divide_failed", 2));
     let access_reason = (segmented || paged).then(|| import_function("access_reason", 2));
+    let mmio_operand = mmio_type.map(|index| import_function("mmio_operand", index));
     let target_check = segmented.then(|| import_function("target_check", 4));
     let vector_load = vector_load_type.map(|index| import_function("vector_load", index));
     let block16_for_write =
@@ -907,7 +954,8 @@ fn emit_body(
         let mut segments = [false; 2];
         if !observed && _extra_spans {
             for instruction in &unit.instructions {
-                if let Operation::Store { address, .. } = instruction.operation
+                if let Operation::Store { address, .. }
+                | Operation::NonTemporalStore { address, .. } = instruction.operation
                     && span_cycles
                         .iter()
                         .any(|range| range.contains(&instruction.pc))
@@ -1262,6 +1310,7 @@ fn emit_body(
         context: unit.context.clone(),
         segment: Segment::Ds,
         access_reason,
+        mmio_operand,
         target_check,
         vector_registers,
         vector_written: vector_banks.written,
@@ -1561,7 +1610,7 @@ fn emit_body(
             return emit_body(
                 unit,
                 observed,
-                paged,
+                (paged, mmio),
                 loop_body,
                 GuardedReads::Shared {
                     indexed,
@@ -1578,7 +1627,7 @@ fn emit_body(
         return emit_body(
             unit,
             observed,
-            paged,
+            (paged, mmio),
             loop_body,
             _guard_reads,
             false,
@@ -1595,7 +1644,7 @@ fn emit_body(
         return emit_body(
             unit,
             observed,
-            paged,
+            (paged, mmio),
             loop_body,
             GuardedReads::Checked,
             _extra_spans,
@@ -1616,7 +1665,7 @@ fn emit_body(
         return emit_body(
             unit,
             observed,
-            paged,
+            (paged, mmio),
             loop_body,
             GuardedReads::Outlined {
                 sticky,
@@ -1641,7 +1690,7 @@ fn emit_body(
         return emit_body(
             unit,
             observed,
-            paged,
+            (paged, mmio),
             loop_body,
             GuardedReads::Outlined {
                 sticky,
@@ -1663,7 +1712,7 @@ fn emit_body(
         return emit_body(
             unit,
             observed,
-            paged,
+            (paged, mmio),
             loop_body,
             GuardedReads::Outlined {
                 sticky: sticky && outline.dyadic.is_some(),
@@ -1684,7 +1733,7 @@ fn emit_body(
         return emit_body(
             unit,
             observed,
-            paged,
+            (paged, mmio),
             loop_body,
             GuardedReads::Inline,
             _extra_spans,

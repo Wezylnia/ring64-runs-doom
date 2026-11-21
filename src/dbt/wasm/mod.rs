@@ -1,5 +1,7 @@
 // Group source files by responsibility while keeping the emitter modules in one scope.
 mod artifact;
+#[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+pub(crate) use artifact::emit_mmio_profile;
 pub(crate) use artifact::emit_profile;
 #[path = "integer/bits.rs"]
 mod bits;
@@ -45,6 +47,8 @@ mod io;
 mod loop_cfg;
 #[path = "memory/memory.rs"]
 mod memory;
+#[path = "memory/mmio.rs"]
+mod mmio;
 #[path = "numeric/mmx.rs"]
 mod mmx;
 #[path = "integer/multiply_divide.rs"]
@@ -190,6 +194,7 @@ struct Emitter {
     context: ExecutionContext,
     segment: Segment,
     access_reason: Option<u32>,
+    mmio_operand: Option<u32>,
     target_check: Option<u32>,
     vector_registers: [Option<u32>; 16],
     vector_written: u16,

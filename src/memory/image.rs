@@ -45,6 +45,8 @@ impl MemoryError {
 pub struct Image {
     pub(super) backings: Vec<Backing>,
     pub(super) mappings: Vec<Mapping>,
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    pub(super) mmio: Vec<super::MmioRange>,
     limits: MemoryLimits,
     physical: bool,
     pub(super) validity: Validity,
@@ -175,6 +177,8 @@ impl Image {
         let mut image = Self {
             backings: Vec::new(),
             mappings: Vec::new(),
+            #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+            mmio: Vec::new(),
             limits,
             physical,
             validity: Validity::default(),
@@ -256,13 +260,15 @@ impl Image {
         Ok(())
     }
 
-    #[cfg(any(target_arch = "wasm32", test))]
     pub(crate) fn mapping_capacity(&self) -> usize {
-        self.limits.max_mappings as usize
+        let capacity = self.limits.max_mappings as usize;
+        #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+        let capacity = capacity - self.mmio.len();
+        capacity
     }
 
     pub fn set_mappings(&mut self, inputs: Vec<MappingInput>) -> Result<(), MemoryError> {
-        if inputs.len() > self.limits.max_mappings as usize {
+        if inputs.len() > self.mapping_capacity() {
             return Err(MemoryError::Capacity("mapping capacity exceeded"));
         }
         let mut mappings = Vec::new();
@@ -285,6 +291,10 @@ impl Image {
                 } else {
                     "mapping must be a nonempty canonical nonwrapping backing slice"
                 }));
+            }
+            #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+            if self.overlaps_mmio(input.base, input.length) {
+                return Err(MemoryError::Invalid("RAM mapping overlaps MMIO"));
             }
             mappings.push(Mapping {
                 base: input.base,

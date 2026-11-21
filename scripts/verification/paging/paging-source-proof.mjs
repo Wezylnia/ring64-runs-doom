@@ -52,7 +52,8 @@ for (const [path, anchors] of Object.entries({
   'src/embedding/exports.rs': ['macro_rules! guest_access', 'macro_rules! guest_semantics'],
   'src/dbt/mod.rs': [
     'compile_with_paging(image, context, None, entry, limits, observed)',
-    'let bytes = wasm::emit_profile(\n        &unit,\n        observed,\n        paging.is_some(),',
+    'let emit = if image.has_mmio() {\n        wasm::emit_mmio_profile\n    } else {\n        wasm::emit_profile',
+    'let bytes = emit(\n        &unit,\n        observed,\n        paging.is_some(),',
   ],
   'src/dbt/wasm/artifact.rs': [
     'let observed = observed || paged;',

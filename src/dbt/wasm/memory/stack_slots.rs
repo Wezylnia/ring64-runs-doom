@@ -32,7 +32,8 @@ impl StackSlots {
                     width,
                     ..
                 } => (address, width, false),
-                Operation::Store { address, width, .. } => (address, width, true),
+                Operation::Store { address, width, .. }
+                | Operation::NonTemporalStore { address, width, .. } => (address, width, true),
                 _ => continue,
             };
             if !stack_slot(address) {
@@ -97,7 +98,8 @@ fn preserves_stack_pointer(operation: Operation) -> bool {
             ..
         }
         | Operation::Nop
-        | Operation::Store { .. } => true,
+        | Operation::Store { .. }
+        | Operation::NonTemporalStore { .. } => true,
         _ => false,
     }
 }

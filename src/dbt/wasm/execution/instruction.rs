@@ -198,12 +198,43 @@ impl Emitter {
                 dst,
                 address,
                 width,
-            } => self.load(dst, address, width, instruction.next_pc, exit_depth),
+            } => {
+                if self.mmio_operand.is_some() {
+                    self.mmio_move(
+                        super::mmio::Move::Read(dst),
+                        address,
+                        width,
+                        instruction.next_pc,
+                        exit_depth,
+                    );
+                } else {
+                    self.load(dst, address, width, instruction.next_pc, exit_depth);
+                }
+            }
             Operation::Store {
                 src,
                 address,
                 width,
-            } => self.store(src, address, width, instruction.next_pc, exit_depth),
+            } => {
+                if self.mmio_operand.is_some() {
+                    self.mmio_move(
+                        super::mmio::Move::Write(src),
+                        address,
+                        width,
+                        instruction.next_pc,
+                        exit_depth,
+                    );
+                } else {
+                    self.store(src, address, width, instruction.next_pc, exit_depth);
+                }
+            }
+            Operation::NonTemporalStore {
+                src,
+                address,
+                width,
+            } => {
+                self.store(src, address, width, instruction.next_pc, exit_depth);
+            }
             Operation::Lea {
                 dst,
                 address,

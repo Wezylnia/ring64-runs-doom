@@ -267,6 +267,14 @@ async function transport(compiler) {
           throw Error('unexpected layout-probe I/O');
         },
       },
+      mmio: {
+        read() {
+          throw Error('unexpected layout-probe MMIO');
+        },
+        write() {
+          throw Error('unexpected layout-probe MMIO');
+        },
+      },
     })
   ).exports;
   const pointer = api.core_input(2);

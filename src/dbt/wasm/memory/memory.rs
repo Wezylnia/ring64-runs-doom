@@ -29,7 +29,7 @@ impl SpanCache {
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-enum DirectOperand {
+pub(super) enum DirectOperand {
     Load(Option<u32>),
     Store,
 }
@@ -426,7 +426,7 @@ impl Emitter {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    fn direct_access(
+    pub(super) fn direct_access(
         &mut self,
         width: Width,
         operand: DirectOperand,

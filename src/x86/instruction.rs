@@ -129,6 +129,11 @@ pub enum Operation {
         address: Address,
         width: Width,
     },
+    NonTemporalStore {
+        src: DataOperand,
+        address: Address,
+        width: Width,
+    },
     Alu {
         kind: Alu,
         /// First register operand; Cmp and Test do not write it.

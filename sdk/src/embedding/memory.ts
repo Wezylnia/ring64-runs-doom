@@ -159,16 +159,25 @@ export function captureMappings(
     if (length === 0) throw new TypeError('mappings must be nonempty');
     if ([read, write, execute].some((permission) => typeof permission !== 'boolean'))
       throw new TypeError('mapping permissions must be booleans');
-    const end = base + BigInt(length);
-    const lowEnd = 0x800000000000n;
-    const highStart = 0xffff800000000000n;
-    if (memoryModel !== 'linear' && end > 1n << 52n)
-      throw new TypeError('physical mapping must have a nonwrapping unsigned52 address range');
-    if (memoryModel === 'linear' && (end > 1n << 64n || !(end <= lowEnd || base >= highStart)))
-      throw new TypeError('mapping must have a nonwrapping canonical48 address range');
+    validateMappedSpan(base, length, memoryModel, 'mapping');
     result.push({ base, backing, offset, length, permissions: { read, write, execute } });
   }
   return result;
+}
+
+export function validateMappedSpan(
+  base: bigint,
+  length: number,
+  memoryModel: MemoryModel,
+  name: string,
+): void {
+  const end = base + BigInt(length);
+  const lowEnd = 0x800000000000n;
+  const highStart = 0xffff800000000000n;
+  if (memoryModel !== 'linear' && end > 1n << 52n)
+    throw new TypeError(`physical ${name} must have a nonwrapping unsigned52 address range`);
+  if (memoryModel === 'linear' && (end > 1n << 64n || !(end <= lowEnd || base >= highStart)))
+    throw new TypeError(`${name} must have a nonwrapping canonical48 address range`);
 }
 
 export function validateMappings(
@@ -229,7 +238,7 @@ export type MemoryOptions =
       ram?: never;
     };
 
-export function captureInitialMemory(options: MemoryOptions): InitialMemory {
+export function captureInitialMemory(options: MemoryOptions, mmioRangeCount = 0): InitialMemory {
   const memoryModel = 'memoryModel' in options ? options.memoryModel : 'linear';
   if (memoryModel !== 'linear' && memoryModel !== 'ia32e-paged' && memoryModel !== 'physical')
     throw new TypeError('memoryModel must be linear, ia32e-paged or physical');
@@ -264,7 +273,8 @@ export function captureInitialMemory(options: MemoryOptions): InitialMemory {
     if (!Array.isArray(mappingInput)) throw new TypeError('mappings must be an array');
     const mappingCount = mappingInput.length;
     byteLength(mappingCount, 'mapping count');
-    if (mappingCount > memoryLimits.maxMappings) throw new RangeError('mapping capacity exceeded');
+    if (mappingCount + mmioRangeCount > memoryLimits.maxMappings)
+      throw new RangeError('mapping capacity exceeded');
     backings = captureBackings(backingInput, memoryLimits);
     mappings = captureMappings(mappingInput, memoryLimits, memoryModel);
   } else {
@@ -283,10 +293,11 @@ export function captureInitialMemory(options: MemoryOptions): InitialMemory {
       supplied ?? {
         maxBackingBytes: actualLength(codeBytes) + actualLength(ramBytes),
         maxBackings: 2,
-        maxMappings: 2,
+        maxMappings: 2 + mmioRangeCount,
       },
     );
-    if (memoryLimits.maxMappings < 2) throw new RangeError('mapping capacity exceeded');
+    if (memoryLimits.maxMappings < 2 + mmioRangeCount)
+      throw new RangeError('mapping capacity exceeded');
     backings = captureBackings(
       [
         { id: 'code', bytes: codeBytes },

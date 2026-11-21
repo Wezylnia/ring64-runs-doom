@@ -34,6 +34,7 @@ pub(super) fn narrow_gprs(unit: &Unit) -> bool {
             } => width != Width::W64,
             Operation::Load { address, width, .. }
             | Operation::Store { address, width, .. }
+            | Operation::NonTemporalStore { address, width, .. }
             | Operation::Lea { address, width, .. }
             | Operation::MemoryAlu { address, width, .. }
             | Operation::PopMemory { address, width }

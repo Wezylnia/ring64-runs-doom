@@ -111,7 +111,7 @@ fn streaming_movi_uses_32_bits_even_under_16_bit_code_defaults() {
     .unwrap();
     assert!(matches!(
         instruction.operation,
-        Operation::Store {
+        Operation::NonTemporalStore {
             width: Width::W32,
             ..
         }
@@ -236,7 +236,7 @@ fn streaming_forms_follow_all_fourteen_imported_profiles_without_word_data_views
                 })
                 .unwrap();
                 assert_eq!(decoded.next_pc, 0x1000 + bytes.len() as u64);
-                if let Operation::Store { width, .. } = decoded.operation {
+                if let Operation::NonTemporalStore { width, .. } = decoded.operation {
                     assert_eq!(width, Width::W32)
                 }
                 if let Operation::MaskedStore { address, .. } = decoded.operation {

@@ -102,7 +102,15 @@ fn compile_profile(
     observed: bool,
 ) -> Result<Artifact, CompileError> {
     let unit = discovery::discover_with_profile(image, context, paging, cache, entry, limits)?;
-    let bytes = wasm::emit_profile(
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    let emit = if image.has_mmio() {
+        wasm::emit_mmio_profile
+    } else {
+        wasm::emit_profile
+    };
+    #[cfg(not(all(not(feature = "parallel"), any(target_arch = "wasm32", test))))]
+    let emit = wasm::emit_profile;
+    let bytes = emit(
         &unit,
         observed,
         paging.is_some(),

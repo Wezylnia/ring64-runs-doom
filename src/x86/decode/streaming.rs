@@ -70,7 +70,7 @@ where
         }
         let address = operands.address(cursor, prefixes)?;
         if opcode == 0xc3 {
-            return Ok(Operation::Store {
+            return Ok(Operation::NonTemporalStore {
                 src: DataOperand::Register(RegisterView::low(operands.register)),
                 address,
                 width: if prefixes.long64 && prefixes.rex.width() == Width::W64 {

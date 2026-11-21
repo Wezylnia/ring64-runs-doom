@@ -64,6 +64,7 @@ export type { TimeState } from './state/system/time.js';
 export type { ProtectionKeysState } from './state/system/protection-keys.js';
 
 export type { IoProvider, IoWidth } from './embedding/io.js';
+export type { MmioProvider, MmioRange, MmioWidth } from './embedding/mmio.js';
 export type {
   DeviceNotAvailable,
   NumericControlFault,

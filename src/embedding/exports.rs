@@ -68,6 +68,9 @@ mod invalidation;
 mod io;
 #[path = "exports/memory/mapped.rs"]
 mod mapped;
+#[cfg(not(feature = "parallel"))]
+#[path = "exports/memory/mmio.rs"]
+mod mmio;
 #[path = "exports/numeric/mmx.rs"]
 mod mmx;
 #[path = "exports/numeric/numeric.rs"]
@@ -112,6 +115,8 @@ struct Core {
     io_present: bool,
     io_configured: bool,
     io_effect: bool,
+    #[cfg(not(feature = "parallel"))]
+    mmio_effect: bool,
     image: Image,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     direct_span: crate::memory::DirectSpan,
@@ -186,6 +191,8 @@ impl Bridge {
             io_present: false,
             io_configured: false,
             io_effect: false,
+            #[cfg(not(feature = "parallel"))]
+            mmio_effect: false,
             image,
             #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
             direct_span: Default::default(),

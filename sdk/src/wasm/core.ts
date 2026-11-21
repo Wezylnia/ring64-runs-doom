@@ -1,5 +1,6 @@
 import { IoBridge, type IoBinding } from '../embedding/io.js';
 import { byteLength, U64_MAX, unsigned64 } from '../embedding/input.js';
+import { MmioBridge, type MmioBinding, unconfiguredMmioImports } from '../embedding/mmio.js';
 import {
   captureMxcsr,
   captureState,
@@ -370,6 +371,7 @@ export class Core {
     readonly isPaged = false,
     readonly physicalControls = false,
     private readonly io?: IoBridge,
+    private readonly mmio?: MmioBridge,
   ) {
     this.#exports = exports;
     this.#layout = this.info<CoreStateLayout>();
@@ -483,6 +485,7 @@ export class Core {
     memory: InitialMemory,
     context?: ExecutionContext,
     ioBinding?: IoBinding,
+    mmioBinding?: MmioBinding,
   ): Promise<Core> {
     const { isPaged, physicalControls, metadata } = captureMemoryProfile(memory, context);
     let module: WebAssembly.Module;
@@ -493,10 +496,22 @@ export class Core {
       module = await WebAssembly.compile(new Uint8Array(compiler));
     }
     const io = new IoBridge(ioBinding);
+    const mmio = mmioBinding && new MmioBridge(mmioBinding, io);
     try {
-      const instance = await WebAssembly.instantiate(module, { io: io.imports });
+      const instance = await WebAssembly.instantiate(module, {
+        io: io.imports,
+        mmio: mmio?.imports ?? unconfiguredMmioImports,
+      });
       const exports = instance.exports as CoreExports;
       Core.validateExports(exports, isPaged, physicalControls);
+      if (mmio) {
+        if (
+          typeof exports.core_mmio_effect_active !== 'function' ||
+          typeof exports.core_mmio_operand !== 'function'
+        )
+          throw new TypeError('compiler does not support MMIO');
+        mmio.effectActive = exports.core_mmio_effect_active;
+      }
       const metadataLength = writeInput(
         exports,
         {
@@ -507,6 +522,7 @@ export class Core {
             length: bytes.length,
           })),
           mappings: mappingInput(memory.mappings),
+          ...(mmioBinding ? { mmioRanges: mmioBinding.ranges } : {}),
         },
         memory.backings.map(({ bytes }) => bytes),
       );
@@ -516,10 +532,11 @@ export class Core {
         metadataLength,
         io,
         physicalControls ? undefined : context,
-        () => new Core(exports, isPaged, physicalControls, io),
+        () => new Core(exports, isPaged, physicalControls, io, mmio),
       );
     } catch (error) {
       io.release();
+      mmio?.release();
       throw error;
     }
   }
@@ -1241,6 +1258,8 @@ export class Core {
     };
     if (this.#exports.core_read_span) env.read_span = this.#exports.core_read_span;
     if (this.#exports.core_write_span) env.write_span = this.#exports.core_write_span;
+    if (this.mmio && this.#exports.core_mmio_operand)
+      env.mmio_operand = this.#exports.core_mmio_operand;
     if (this.isPaged) {
       env.fast_system = this.#exports.core_fast_system;
       if (this.#exports.core_write_segment_base)
@@ -1572,6 +1591,7 @@ export class Core {
 
   releaseIo(): void {
     this.io?.release();
+    this.mmio?.release();
   }
 
   reset(): void {

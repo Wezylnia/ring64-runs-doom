@@ -139,7 +139,7 @@ fn initial_image(input: &[u8], metadata_len: u32) -> Result<InitialImage, Memory
             Image::$standalone(backings, maps, limits)
         }};
     }
-    match config.get("memoryModel") {
+    let initial = match config.get("memoryModel") {
         None | Some(Value::String(_))
             if config.get("memoryModel").is_none_or(|v| v == "linear") =>
         {
@@ -189,6 +189,36 @@ fn initial_image(input: &[u8], metadata_len: u32) -> Result<InitialImage, Memory
             })
         }
         _ => Err(invalid()),
+    }?;
+    match config.get("mmioRanges") {
+        None => Ok(initial),
+        #[cfg(feature = "parallel")]
+        Some(_) => Err(MemoryError::Invalid("parallel MMIO is unsupported")),
+        #[cfg(not(feature = "parallel"))]
+        Some(value) => {
+            let entries = array(value)?;
+            if entries.len() > limits.max_mappings as usize {
+                return Err(MemoryError::Capacity("mapping capacity exceeded"));
+            }
+            let mut ranges = Vec::new();
+            ranges
+                .try_reserve_exact(entries.len())
+                .map_err(|_| MemoryError::Capacity("MMIO allocation refused"))?;
+            for entry in entries {
+                let base = entry["base"]
+                    .as_str()
+                    .and_then(|value| value.strip_prefix("0x"))
+                    .and_then(|value| u64::from_str_radix(value, 16).ok())
+                    .ok_or_else(invalid)?;
+                ranges.push(crate::memory::MmioRange {
+                    base,
+                    length: word(&entry["length"])?,
+                });
+            }
+            let mut initial = initial;
+            initial.image.install_mmio(ranges)?;
+            Ok(initial)
+        }
     }
 }
 

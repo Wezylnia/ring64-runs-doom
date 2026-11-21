@@ -29,6 +29,7 @@ interface Common {
   memory: { backings: MemoryBackingInput[]; mappings: MemoryMapping[] };
   memoryLimits: MemoryLimits;
   io?: IoProvider;
+  mmio?: never;
 }
 
 interface LinearCpu {
@@ -67,6 +68,7 @@ export type CpuInput = {
 };
 
 export function captureMachine(options: MachineOptions) {
+  if ('mmio' in options) throw new TypeError('MMIO requires a standalone CPU');
   const memoryModel = options.memoryModel;
   if (memoryModel !== 'linear' && memoryModel !== 'ia32e-paged' && memoryModel !== 'physical')
     throw new TypeError('memoryModel must be linear, ia32e-paged or physical');

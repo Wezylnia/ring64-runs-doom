@@ -1,5 +1,6 @@
 import { captureIo, type IoProvider } from '../embedding/io.js';
 import { copyMemoryInput, unsigned64 } from '../embedding/input.js';
+import { captureMmio, captureMmioRanges, type MmioProvider } from '../embedding/mmio.js';
 import type { DeviceNotAvailable, NumericControlFault } from '../state/numeric/numeric-controls.js';
 import { captureDebugState, type DebugState } from '../state/execution/debug.js';
 import { capturePagingState, type PagingState } from '../state/system/paging.js';
@@ -65,6 +66,7 @@ export interface Limits extends CompileLimits {
 
 interface CommonOptions {
   io?: IoProvider;
+  mmio?: MmioProvider;
   compiler: CompilerSource;
   limits: Limits;
   context?: ExecutionContext;
@@ -284,20 +286,30 @@ export async function createCpu(options: Options): Promise<Cpu> {
   requireSimd();
   const limits = checkedLimits(options.limits);
   const io = captureIo(options);
-  const memory = captureInitialMemory(options);
+  const mmioInput = captureMmio(options);
+  const memory = captureInitialMemory(options, mmioInput?.count);
+  const mmio = mmioInput && captureMmioRanges(mmioInput, memory.memoryModel ?? 'linear');
   if (memory.memoryModel !== 'linear') {
     memory.paging = capturePagingState(options.paging!);
     memory.fastSystem =
       'fastSystem' in options ? captureFastSystemState(options.fastSystem!) : zeroFastSystemState();
   }
   const context = captureInitialContext(options.context, memory.memoryModel);
-  const core = await Core.create(options.compiler, memory, context, io);
+  const core =
+    mmio === undefined
+      ? await Core.create(options.compiler, memory, context, io)
+      : await Core.create(options.compiler, memory, context, io, mmio);
   return new Cpu(
     CONSTRUCTION,
     core,
     limits,
     performance.now() - began,
-    memory.memoryLimits,
+    mmio
+      ? {
+          ...memory.memoryLimits,
+          maxMappings: memory.memoryLimits.maxMappings - mmio.ranges.length,
+        }
+      : memory.memoryLimits,
     new Map(memory.backings.map(({ id, bytes }) => [id, bytes.length])),
     memory.memoryModel,
   );

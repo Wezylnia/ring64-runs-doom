@@ -81,6 +81,85 @@ fn protection_fault(address: u64, access: Access, error_code: u32) -> AccessFail
     }))
 }
 
+#[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+#[test]
+fn mmio_move_uses_guest_permissions_and_commits_dirty_before_the_effect() {
+    use crate::memory::{MmioOperand, MmioRange};
+
+    let mut bytes = vec![0; 0x5000];
+    for (address, word) in [
+        (0x1000, 0x2027u64),
+        (0x2000, 0x3027),
+        (0x3000, 0x4027),
+        (0x4008, 0xa027),
+    ] {
+        bytes[address..address + 8].copy_from_slice(&word.to_le_bytes());
+    }
+    let page_tables = |write| MappingInput {
+        base: 0,
+        backing: "tables".into(),
+        offset: 0,
+        length: 0x5000,
+        permissions: Permissions {
+            read: true,
+            write,
+            execute: false,
+        },
+    };
+    let mut image = Image::physical_mapped(
+        vec![("tables".into(), bytes)],
+        vec![page_tables(false)],
+        MemoryLimits {
+            max_backing_bytes: 0x5000,
+            max_backings: 1,
+            max_mappings: 2,
+        },
+    )
+    .unwrap();
+    image
+        .install_mmio(vec![MmioRange {
+            base: 0xa000,
+            length: 8,
+        }])
+        .unwrap();
+    let state = State {
+        cr3: 0x1000,
+        ..State::default()
+    };
+    let mut work = AccessState::default();
+    let mut memory = Memory::new(&mut image, &state, 3, 0, &mut work, &Keys::ZERO);
+    assert!(matches!(
+        memory.read_move(0x1000, 8),
+        Ok(MmioOperand::Device(0xa000))
+    ));
+    assert!(matches!(
+        memory.write_move(0x1000, 8, 0xff),
+        Err(AccessFailure::Paging(Failure::Physical(ref fault)))
+            if fault.phase == PhysicalPhase::DirtyWrite
+    ));
+    assert!(memory.read_move(0x1001, 2).is_err());
+    assert!(memory.write(0x1000, 1, 1).is_err());
+    assert_eq!(image.physical_read(0x4008, 8), Ok(0xa027));
+
+    image.set_mappings(vec![page_tables(true)]).unwrap();
+    let memory = Memory::new(&mut image, &state, 3, 0, &mut work, &Keys::ZERO);
+    assert!(matches!(
+        memory.write_move(0x1000, 8, 0xff),
+        Ok(MmioOperand::Device(0xa000))
+    ));
+    assert_eq!(image.physical_read(0x4008, 8), Ok(0xa067));
+
+    image.physical_write(0x4008, 8, 0xa025).unwrap();
+    let memory = Memory::new(&mut image, &state, 3, 0, &mut work, &Keys::ZERO);
+    assert!(matches!(
+        memory.write_move(0x1000, 8, 0xff),
+        Err(AccessFailure::Paging(Failure::Page(PageFault {
+            error_code: 7,
+            ..
+        })))
+    ));
+}
+
 fn write_probe_fixture(leaf: u64, data_write: bool) -> (Image, State) {
     let mut bytes = vec![0; 0xa000];
     for (address, entry) in [
@@ -379,7 +458,7 @@ fn fragment_storage_fits_empty_and_single_fragment_accesses() {
     let memory = Memory::new(&mut image, &state, 3, 2, &mut work, &Keys::ZERO);
     for (width, slots) in [(0, 0), (4, 1)] {
         let prepared = memory
-            .prepare(
+            .prepare_aligned(
                 0x1000,
                 width,
                 Access::Read,
@@ -402,7 +481,7 @@ fn publication_geometry_read_and_execute_do_not_allocate() {
         .into_iter()
         .map(|access| {
             let prepared = memory
-                .prepare(0x1000, 8, access, false, memory.class, Intent::Exempt)
+                .prepare_aligned(0x1000, 8, access, false, memory.class, Intent::Exempt)
                 .unwrap();
             (access, prepared.fields.capacity(), prepared.fields.len())
         })
@@ -421,7 +500,7 @@ fn publication_geometry_write_rmw_and_sparse_intent_stays_exact() {
     let mut memory = Memory::new(&mut image, &state, 3, 2, &mut work, &Keys::ZERO);
     for rmw in [false, true] {
         let prepared = memory
-            .prepare(0x1000, 8, Access::Write, rmw, memory.class, Intent::Exempt)
+            .prepare_aligned(0x1000, 8, Access::Write, rmw, memory.class, Intent::Exempt)
             .unwrap();
         assert_eq!(prepared.fields, [(0, 8)], "write/rmw{rmw} geometry");
     }

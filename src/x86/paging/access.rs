@@ -143,14 +143,15 @@ impl<'a> Memory<'a> {
         false
     }
 
-    fn prepare(
+    fn prepare<const MMIO: bool>(
         &self,
-        address: u64,
-        width: u32,
+        (address, width): (u64, u32),
         access: Access,
         rmw: bool,
         class: AccessClass,
         intent: Intent,
+        #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+        mut device: Option<&mut Option<u64>>,
     ) -> Result<Prepared, AccessFailure> {
         check_span(address, width, access).map_err(AccessFailure::Linear)?;
         let mut prepared = Prepared {
@@ -203,7 +204,20 @@ impl<'a> Memory<'a> {
                 }
             };
             let length = u64::from(width - offset).min(remaining) as u32;
-            let write = if access == Access::Write {
+            #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+            let mmio = MMIO
+                && length == width
+                && address & u64::from(width - 1) == 0
+                && storage.image.scalar_mmio(physical, width);
+            #[cfg(not(all(not(feature = "parallel"), any(target_arch = "wasm32", test))))]
+            let mmio = false;
+            let write = if mmio {
+                #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+                {
+                    **device.as_mut().expect("MMIO access result") = Some(physical);
+                }
+                Ok(None)
+            } else if access == Access::Write {
                 storage
                     .image
                     .prepare_physical_write(physical, length, rmw)
@@ -269,7 +283,63 @@ impl<'a> Memory<'a> {
         class: AccessClass,
         intent: Intent,
     ) -> Result<Prepared, AccessFailure> {
-        self.prepare(address, width, access, rmw, class, intent)
+        self.prepare::<false>(
+            (address, width),
+            access,
+            rmw,
+            class,
+            intent,
+            #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+            None,
+        )
+    }
+
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    pub(crate) fn read_move(
+        &self,
+        address: u64,
+        width: u32,
+    ) -> Result<crate::memory::MmioOperand, AccessFailure> {
+        let mut device = None;
+        let prepared = self.prepare::<true>(
+            (address, width),
+            Access::Read,
+            false,
+            self.class,
+            Intent::Natural(width),
+            Some(&mut device),
+        )?;
+        if let Some(address) = device {
+            return Ok(crate::memory::MmioOperand::Device(address));
+        }
+        let mut bytes = [0; 8];
+        self.read_prepared(&prepared, &mut bytes);
+        Ok(crate::memory::MmioOperand::Ram(u64::from_le_bytes(bytes)))
+    }
+
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    pub(crate) fn write_move(
+        &self,
+        address: u64,
+        width: u32,
+        value: u64,
+    ) -> Result<crate::memory::MmioOperand, AccessFailure> {
+        let mut device = None;
+        let prepared = self.prepare::<true>(
+            (address, width),
+            Access::Write,
+            false,
+            self.class,
+            Intent::Natural(width),
+            Some(&mut device),
+        )?;
+        let fields = [(0, width)];
+        self.publish_write_metadata(&prepared, &fields)?;
+        if let Some(address) = device {
+            return Ok(crate::memory::MmioOperand::Device(address));
+        }
+        self.publish_write_payload(&prepared, &fields, &value.to_le_bytes());
+        Ok(crate::memory::MmioOperand::Ram(value))
     }
 
     fn read_prepared(&self, prepared: &Prepared, output: &mut [u8]) {
@@ -423,11 +493,25 @@ impl<'a> Memory<'a> {
             Some(p) => p,
             None => self.prepare_aligned(address, width, Access::Write, false, class, intent)?,
         };
+        self.publish_write_metadata(&prepared, fields)?;
+        self.publish_write_payload(&prepared, fields, bytes);
+        Ok(())
+    }
+
+    fn publish_write_metadata(
+        &self,
+        prepared: &Prepared,
+        fields: &[(u32, u32)],
+    ) -> Result<(), AccessFailure> {
         if !prepared.published {
-            let updates = self.dirty_admission(&prepared, fields)?;
+            let updates = self.dirty_admission(prepared, fields)?;
             self.dirty_publish(&updates);
-            self.mark_dirty(&prepared, fields);
+            self.mark_dirty(prepared, fields);
         }
+        Ok(())
+    }
+
+    fn publish_write_payload(&self, prepared: &Prepared, fields: &[(u32, u32)], bytes: &[u8]) {
         let mut storage = self.storage.borrow_mut();
         for fragment in &prepared.fragments {
             for &(start, length) in fields {
@@ -445,7 +529,6 @@ impl<'a> Memory<'a> {
                 }
             }
         }
-        Ok(())
     }
 }
 
