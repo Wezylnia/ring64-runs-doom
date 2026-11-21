@@ -26,6 +26,9 @@ mod fast_system;
 #[path = "numeric/float.rs"]
 mod float;
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[path = "execution/float_dyadic.rs"]
+mod float_dyadic;
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 #[path = "execution/float_loop.rs"]
 mod float_loop;
 #[path = "integer/integer.rs"]
@@ -138,6 +141,8 @@ struct Emitter {
     float_outline_params: u32,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     float_raw_sticky: bool,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    float_dyadic: Option<float_dyadic::DyadicReduction>,
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     parallel_atomic: Option<parallel::Atomic>,
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
@@ -1771,6 +1776,8 @@ fn emit_body(
         float_outline_params: 0,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         float_raw_sticky: false,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        float_dyadic: None,
         #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
         parallel_atomic,
         #[cfg(all(feature = "parallel", target_arch = "wasm32"))]

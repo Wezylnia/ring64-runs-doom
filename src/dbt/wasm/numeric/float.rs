@@ -122,7 +122,7 @@ impl Emitter {
                 };
                 self.op(Op::I32Const(continuation))
                     .op(Op::LocalSet(super::ENTRY))
-                    .op(Op::Br(2));
+                    .op(Op::Br(exit_depth));
             } else if self.current_index == body.head {
                 self.op(Op::Br(2));
             } else {

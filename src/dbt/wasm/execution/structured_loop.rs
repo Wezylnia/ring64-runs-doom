@@ -507,6 +507,12 @@ impl Emitter {
         let inner_depth = loop_depth + 1;
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         let prove_zero_upper = self.proved_reads.is_some();
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        let dyadic = self.float_dyadic;
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if let Some(reduction) = dyadic {
+            self.admit_dyadic_accumulator(reduction);
+        }
         self.op(Op::Loop(BlockType::Empty));
         if self.loop_gates_prechecked {
             // Leave the guarded clone for the checked clone before a partial lap.
@@ -520,6 +526,11 @@ impl Emitter {
             } else {
                 self.op(Op::BrIf(1));
             }
+        }
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if let Some(reduction) = dyadic {
+            self.op(Op::Block(BlockType::Empty));
+            self.try_dyadic_prefix(reduction);
         }
         let order = body.order();
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -561,6 +572,15 @@ impl Emitter {
             }
             self.current_index = ordinal as u32;
             let depth = inner_depth + body.active_labels(self.current_index);
+            #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+            let depth = if dyadic.is_some() {
+                if self.current_index == body.tail - 2 {
+                    self.op(Op::End);
+                }
+                depth + u32::from(self.current_index < body.tail - 2)
+            } else {
+                depth
+            };
             self.structured_loop = Some((body, depth));
             let compare = predicates
                 .get(position as usize)

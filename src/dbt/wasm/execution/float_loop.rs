@@ -1,6 +1,7 @@
 use super::{
     ENTRY, Emitter, FLAGS, GPR, REMAINING, RIP, StructuredLoop, Unit,
-    float::MASKED_STICKY_PRECISION, read_loop::ReadLoop, vector::Banks,
+    float::MASKED_STICKY_PRECISION, float_dyadic::DyadicReduction, read_loop::ReadLoop,
+    vector::Banks,
 };
 use crate::memory::canonical48;
 use crate::x86::instruction::{Alu, Operation};
@@ -113,11 +114,22 @@ impl Emitter {
         // here correspond to the parent function's leading parameters.
         let mut declarations = vec![(1, ValType::I32), (2, ValType::I64), (2, ValType::I32)];
         declarations.extend_from_slice(locals);
+        let dyadic = if sticky {
+            None
+        } else {
+            let (proof, _) = self.proved_reads.expect("outlined Float read proof");
+            let first_local = declarations.iter().map(|(count, _)| count).sum();
+            DyadicReduction::recognize(proof, loop_body, instructions, first_local)
+        };
+        if dyadic.is_some() {
+            declarations.extend_from_slice(&DyadicReduction::LOCALS);
+        }
         let function = Function::new(declarations);
         let parent = std::mem::replace(&mut self.body, function);
         let parent_hints = std::mem::take(&mut self.branch_hints);
         self.float_outline_params = outline.inputs.len() as u32;
         self.float_raw_sticky = sticky;
+        self.float_dyadic = dyadic;
         for (argument, (local, _)) in outline.inputs.iter().enumerate() {
             self.body.instruction(&Op::LocalGet(argument as u32));
             self.op(Op::LocalSet(*local));
@@ -131,6 +143,9 @@ impl Emitter {
         self.emit_structured_loop(instructions, loop_body, 0, None);
         self.loop_gates_prechecked = false;
         self.op(Op::End);
+        if let Some(reduction) = dyadic {
+            self.flush_dyadic_prefixes(reduction);
+        }
         let (parameter, induction) = outline.induction_input;
         // An unchanged induction register means no complete lap retired.
         // Otherwise the final visible status belongs to its latch compare.
@@ -155,6 +170,7 @@ impl Emitter {
         self.op(Op::End);
         self.float_outline_params = 0;
         self.float_raw_sticky = false;
+        self.float_dyadic = None;
         self.current_index = current_index;
         self.current_pc = current_pc;
         self.current_operation = current_operation;

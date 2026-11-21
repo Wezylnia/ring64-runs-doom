@@ -331,6 +331,17 @@ use wasm_encoder::{BlockType, Instruction as Op, MemArg, ValType};
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 impl Emitter {
+    pub(super) fn proved_read_laps(&mut self, proof: ReadLoop) {
+        let ReadLimit::Register(end) = proof.end else {
+            unreachable!("outlined Float loop register bound");
+        };
+        self.register(end, proof.count_width);
+        self.register(proof.index, proof.count_width);
+        self.op(Op::I64Sub)
+            .op(Op::I64Const(i64::from(proof.step.trailing_zeros())))
+            .op(Op::I64ShrU);
+    }
+
     pub(super) fn multiple_read_laps(&mut self, proof: ReadLoop) {
         // The existing span proof establishes a positive aligned trip count.
         // Reload both bounds because a checked retry can reuse the span biases.
