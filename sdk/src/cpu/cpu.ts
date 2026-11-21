@@ -893,7 +893,7 @@ export class Cpu {
           let installed = false;
           try {
             at = performance.now();
-            const module = await WebAssembly.compile(new Uint8Array(output.bytes));
+            const module = await WebAssembly.compile(output.bytes);
             timings.browserCompileMs += performance.now() - at;
             const artifact = this.#cache.installCompiled(
               this.#engine,

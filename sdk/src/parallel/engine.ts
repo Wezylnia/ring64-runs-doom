@@ -266,7 +266,7 @@ export class ParallelCpu extends Cpu {
           let installed = false;
           try {
             at = performance.now();
-            const module = await binding.compile(new Uint8Array(output.bytes));
+            const module = await binding.compile(output.bytes);
             if (module === undefined || (await binding.checkpoint(core))) return finish('paused');
             queuedInterrupts = core.hasQueuedInterrupts();
             timings.browserCompileMs += performance.now() - at;

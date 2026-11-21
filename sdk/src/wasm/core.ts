@@ -722,7 +722,7 @@ export class Core {
     return JSON.parse(new TextDecoder().decode(bytes)) as T;
   }
 
-  protected output(): Uint8Array {
+  protected output(): Uint8Array<ArrayBuffer> {
     return new Uint8Array(
       this.#exports.memory.buffer,
       this.#exports.core_output_ptr() >>> 0,
@@ -1155,7 +1155,7 @@ export class Core {
   compile(
     pc: bigint,
     limits: CompileLimits,
-  ): { bytes: Uint8Array; metadata: UnitMetadata } | undefined {
+  ): { bytes: Uint8Array<ArrayBuffer>; metadata: UnitMetadata } | undefined {
     const status = this.#exports.core_compile(
       pc,
       limits.maxInstructions,
