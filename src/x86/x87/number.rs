@@ -308,30 +308,43 @@ fn add(a: Num, b: Num, round: u16) -> Num {
         scale: ea - 66,
     }
 }
+fn quotient_bit(remainder: &mut u64, divisor: u64) -> u64 {
+    let carry = *remainder >> 63 != 0;
+    let doubled = *remainder << 1;
+    let subtract = carry || doubled >= divisor;
+    *remainder = if subtract {
+        doubled.wrapping_sub(divisor)
+    } else {
+        doubled
+    };
+    u64::from(subtract)
+}
+
 fn divide(a: Num, b: Num) -> Num {
-    let (mut sa, ea) = normalized(a);
+    let (sa, ea) = normalized(a);
     let (sb, eb) = normalized(b);
+    let sa = sa as u64;
+    let sb = sb as u64;
     let mut e = ea - eb;
-    if sa < sb {
-        sa <<= 1;
-        e -= 1
+    let mut rem = if sa < sb {
+        e -= 1;
+        (sa << 1).wrapping_sub(sb)
+    } else {
+        sa - sb
+    };
+    // The remainder stays below the 64-bit divisor. Only the doubled
+    // remainder needs a carry, and only the complete quotient needs 67 bits.
+    let mut q = 1u64;
+    for _ in 0..63 {
+        q = (q << 1) | quotient_bit(&mut rem, sb);
     }
-    let mut rem = sa - sb;
-    let mut q = 1u128;
-    for _ in 0..66 {
-        rem <<= 1;
-        q <<= 1;
-        if rem >= sb {
-            rem -= sb;
-            q |= 1
-        }
-    }
-    if rem != 0 {
-        q |= 1
+    let mut tail = 0u64;
+    for _ in 0..3 {
+        tail = (tail << 1) | quotient_bit(&mut rem, sb);
     }
     Num {
         negative: a.negative ^ b.negative,
-        sig: q,
+        sig: (u128::from(q) << 3) | u128::from(tail | u64::from(rem != 0)),
         scale: e - 66,
     }
 }
