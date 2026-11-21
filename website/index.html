@@ -97,6 +97,20 @@
             <span id="ink-guide" class="visually-hidden">
               stir with the pointer or arrow keys. press space on the canvas to pause or resume.
             </span>
+          </figcaption>
+          <div class="ink-display">
+            <div id="ink-stage" class="ink-stage">
+              <canvas
+                id="ink"
+                width="3840"
+                height="2160"
+                tabindex="0"
+                aria-label="interactive flowing ink"
+                aria-describedby="ink-guide"
+              ></canvas>
+              <p id="status" class="ink-status" role="status"></p>
+              <noscript><p class="ink-status">enable javascript to run the ink.</p></noscript>
+            </div>
             <div class="ink-controls">
               <button
                 type="button"
@@ -165,18 +179,6 @@
                 </svg>
               </button>
             </div>
-          </figcaption>
-          <div id="ink-stage" class="ink-stage">
-            <canvas
-              id="ink"
-              width="3840"
-              height="2160"
-              tabindex="0"
-              aria-label="interactive flowing ink"
-              aria-describedby="ink-guide"
-            ></canvas>
-            <p id="status" class="ink-status" role="status"></p>
-            <noscript><p class="ink-status">enable javascript to run the ink.</p></noscript>
           </div>
         </figure>
       </main>
