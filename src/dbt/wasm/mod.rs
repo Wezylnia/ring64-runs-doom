@@ -653,6 +653,7 @@ pub(crate) fn emit_profile(
     if !observed
         && let Some(body) = StructuredLoop::select_shared_float(&unit.instructions)
             .or_else(|| StructuredLoop::select_shared_rotated_reads(unit))
+            .or_else(|| StructuredLoop::select_shared_natural_memory(&unit.instructions))
     {
         // Every shared placement retains its exact per-instruction signal check.
         let bytes = emit_placement(unit, observed, paged, Some(body), false, max_artifact_bytes);
@@ -2349,6 +2350,13 @@ fn emit_body(
     }
     let code_start = bytes.len();
     code.append_to(&mut bytes);
+    #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+    if bytes.len() > max_artifact_bytes
+        && loop_body.is_some_and(StructuredLoop::natural_forward_loop)
+    {
+        // Retry the original placement before trading a memory window for the clone.
+        return (bytes, false);
+    }
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     if bytes.len() > max_artifact_bytes
         && let GuardedReads::Shared {

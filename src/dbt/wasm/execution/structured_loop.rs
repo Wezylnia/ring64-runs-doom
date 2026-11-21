@@ -152,6 +152,7 @@ impl StructuredLoop {
     pub(super) fn precheck_gates_without_read_proof(self) -> bool {
         if cfg!(feature = "parallel") {
             matches!(self.kind, LoopKind::Float | LoopKind::Registers)
+                || (cfg!(target_arch = "wasm32") && self.natural_forward_loop())
         } else {
             self.kind != LoopKind::Float
         }
@@ -168,6 +169,10 @@ impl StructuredLoop {
 
     pub(super) fn forward_edges(self) -> bool {
         self.kind == LoopKind::ForwardEdges
+    }
+
+    pub(super) fn natural_forward_loop(self) -> bool {
+        self.forward_edges() && self.earlier == self.head
     }
 
     pub(super) fn order(self) -> LoopOrder {
@@ -194,6 +199,11 @@ impl StructuredLoop {
             return None;
         }
         super::loop_cfg::select_shared_rotated_reads(&unit.instructions).map(Self::forward)
+    }
+
+    #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+    pub(super) fn select_shared_natural_memory(instructions: &[Instruction]) -> Option<Self> {
+        super::loop_cfg::select_shared_natural_memory(instructions).map(Self::forward)
     }
 
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]

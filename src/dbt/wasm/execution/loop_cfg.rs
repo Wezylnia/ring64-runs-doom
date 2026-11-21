@@ -55,10 +55,32 @@ pub(super) fn select_shared_rotated_reads(
         .then_some((order, bound))
 }
 
+#[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+pub(super) fn select_shared_natural_memory(
+    instructions: &[Instruction],
+) -> Option<(LoopOrder, u32)> {
+    select_layout_filtered(instructions, false, 64, |body| {
+        body.iter().any(|i| reads_memory(i.operation))
+            && body
+                .iter()
+                .any(|i| matches!(i.operation, Operation::Store { .. }))
+            && !body.iter().any(|i| i.shared_atomic())
+    })
+}
+
 fn select_layout(
     instructions: &[Instruction],
     rotate: bool,
     max_body_len: usize,
+) -> Option<(LoopOrder, u32)> {
+    select_layout_filtered(instructions, rotate, max_body_len, |_| true)
+}
+
+fn select_layout_filtered(
+    instructions: &[Instruction],
+    rotate: bool,
+    max_body_len: usize,
+    admit: impl Fn(&[Instruction]) -> bool,
 ) -> Option<(LoopOrder, u32)> {
     let mut best = None::<(LoopOrder, u32)>;
     for (tail, instruction) in instructions.iter().enumerate() {
@@ -76,7 +98,8 @@ fn select_layout(
                 head: head as u32,
                 tail: tail as u32,
             };
-            if let Some(bound) = iteration_bound(instructions, order)
+            if admit(&instructions[earlier..=tail])
+                && let Some(bound) = iteration_bound(instructions, order)
                 && best.is_none_or(|(_, previous)| bound > previous)
             {
                 best = Some((order, bound));
