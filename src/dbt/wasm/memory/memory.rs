@@ -177,7 +177,20 @@ impl Emitter {
         next_pc: u64,
         exit_depth: u32,
     ) {
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if width == Width::W32
+            && self.loop_gates_prechecked
+            && let Some(window) = self.indexed_read_window
+            && window.address == address
+        {
+            self.load_indexed_dword(dst, window, next_pc, exit_depth);
+            return;
+        }
         self.load_value(address, width, next_pc, false, exit_depth);
+        self.write_loaded_value(dst, width);
+    }
+
+    fn write_loaded_value(&mut self, dst: RegisterView, width: Width) {
         self.op(Op::LocalGet(VALUE));
         self.narrow(width);
         self.write_register(dst, width);
@@ -191,16 +204,6 @@ impl Emitter {
         for_write: bool,
         exit_depth: u32,
     ) {
-        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-        if !for_write
-            && width == Width::W32
-            && self.loop_gates_prechecked
-            && let Some(window) = self.indexed_read_window
-            && window.address == address
-        {
-            self.load_indexed_dword(window, next_pc, exit_depth);
-            return;
-        }
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         if !for_write && width == Width::W8 && self.load_proved_byte(address, next_pc) {
             return;
@@ -286,17 +289,19 @@ impl Emitter {
             .op(Op::LocalGet(LHS))
             .op(Op::I64Sub)
             .op(Op::LocalSet(VALUE));
-        let end = u64::from(self.context.segment(window.address.segment).limit) + 1;
-        self.op(Op::LocalGet(VALUE))
-            .op(Op::I64Const(end as i64))
-            .op(Op::LocalGet(ADDRESS))
-            .op(Op::I64Sub)
-            .op(Op::LocalTee(RHS))
-            .op(Op::LocalGet(VALUE))
-            .op(Op::LocalGet(RHS))
-            .op(Op::I64LtU)
-            .op(Op::Select)
-            .op(Op::LocalSet(VALUE));
+        if !self.context.is_long64() {
+            let end = u64::from(self.context.segment(window.address.segment).limit) + 1;
+            self.op(Op::LocalGet(VALUE))
+                .op(Op::I64Const(end as i64))
+                .op(Op::LocalGet(ADDRESS))
+                .op(Op::I64Sub)
+                .op(Op::LocalTee(RHS))
+                .op(Op::LocalGet(VALUE))
+                .op(Op::LocalGet(RHS))
+                .op(Op::I64LtU)
+                .op(Op::Select)
+                .op(Op::LocalSet(VALUE));
+        }
         let shift = window.address.index.unwrap().scale.trailing_zeros();
         // The admitted anchor is readable for four bytes. Trim later starts
         // to the same mapping and segment before scaling their indices.
@@ -314,6 +319,7 @@ impl Emitter {
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     fn load_indexed_dword(
         &mut self,
+        dst: RegisterView,
         window: super::read_loop::IndexedReadWindow,
         next_pc: u64,
         exit_depth: u32,
@@ -333,19 +339,30 @@ impl Emitter {
                 .op(Op::I32Shl);
         }
         self.op(Op::I32Add);
-        self.direct_scalar_load(
-            Width::W32,
-            MemArg {
-                offset: 0,
-                align: 0,
-                memory_index: 0,
-            },
-        );
+        let memory = MemArg {
+            offset: 0,
+            align: 0,
+            memory_index: 0,
+        };
+        let long64 = self.context.is_long64();
+        if long64 {
+            // The load has already zero-extended the architectural destination.
+            self.op(Op::I64Load32U(memory));
+            self.write_register(dst, Width::W32);
+        } else {
+            self.direct_scalar_load(Width::W32, memory);
+        }
         self.op(Op::Else);
         self.address(address, next_pc);
         self.op(Op::LocalSet(ADDRESS));
         self.load_address_value(Width::W32, false, exit_depth + 1);
+        if long64 {
+            self.write_loaded_value(dst, Width::W32);
+        }
         self.op(Op::End);
+        if !long64 {
+            self.write_loaded_value(dst, Width::W32);
+        }
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]

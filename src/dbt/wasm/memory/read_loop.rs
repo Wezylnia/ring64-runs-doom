@@ -23,9 +23,6 @@ impl IndexedReadWindow {
             memory::Access,
             x86::context::{Mode, Segment},
         };
-        if context.mode() != Mode::Protected || !context.code32() {
-            return None;
-        }
         let [loads @ .., counter, branch] = body else {
             return None;
         };
@@ -68,7 +65,10 @@ impl IndexedReadWindow {
             || counter.bank == base
             || counter.bank == index.register
             || address.segment != Segment::Ds
-            || address.size != Width::W32
+            || !(context.is_long64() && address.size == Width::W64
+                || context.mode() == Mode::Protected
+                    && context.code32()
+                    && address.size == Width::W32)
             || context
                 .translate(0, 4, address.segment, Access::Read, false)
                 .ok()
