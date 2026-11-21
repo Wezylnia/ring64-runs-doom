@@ -126,9 +126,61 @@ fn arithmetic<S: Semantics, W: Semantics>(
     )
 }
 
+fn normal_f32_binary(kind: Kind, left: u32, right: u32, mxcsr: u32) -> Option<(u64, u32)> {
+    let left_exp = (left >> 23) & 0xff;
+    let right_exp = (right >> 23) & 0xff;
+    if !(1..255).contains(&left_exp) || !(1..255).contains(&right_exp) {
+        return None;
+    }
+    // A product needs at most 48 significant bits. For the sum or
+    // difference, aligning two 24-bit significands and allowing a carry
+    // fits in binary64 at this exponent distance.
+    if kind != Kind::Mul && left_exp.abs_diff(right_exp) > 28 {
+        return None;
+    }
+    let a = f64::from(f32::from_bits(left));
+    let b = f64::from(f32::from_bits(right));
+    let exact = match kind {
+        Kind::Add => a + b,
+        Kind::Sub => a - b,
+        Kind::Mul => a * b,
+        _ => unreachable!(),
+    };
+    let bits = exact.to_bits();
+    const BIAS_DELTA: u64 = 1023 - 127;
+    let exponent = (bits >> 52) & 0x7ff;
+    if !(BIAS_DELTA + 2..BIAS_DELTA + 254).contains(&exponent) {
+        // Leave signed cancellation, tiny results and overflow to APFloat.
+        return None;
+    }
+    const DISCARDED: u64 = (1 << (52 - 23)) - 1;
+    const HALF: u64 = 1 << (52 - 23 - 1);
+    let sign = ((bits >> 32) as u32) & 0x8000_0000;
+    let fraction = ((bits >> (52 - 23)) as u32) & 0x7f_ffff;
+    let magnitude = ((exponent - BIAS_DELTA) as u32) << 23 | fraction;
+    let remainder = bits & DISCARDED;
+    if remainder == 0 {
+        return Some((u64::from(sign | magnitude), 0));
+    }
+    let increment = match (mxcsr >> 13) & 3 {
+        0 => remainder > HALF || remainder == HALF && fraction & 1 != 0,
+        1 => sign != 0,
+        2 => sign == 0,
+        _ => false,
+    };
+    Some((u64::from(sign | (magnitude + u32::from(increment))), 32))
+}
+
 pub(super) fn binary(kind: Kind, format: Format, left: u64, right: u64, mxcsr: u32) -> (u64, u32) {
     match format {
-        Format::F32 => arithmetic::<rustc_apfloat::ieee::SingleS, Wide32>(kind, left, right, mxcsr),
+        Format::F32 => {
+            if matches!(kind, Kind::Add | Kind::Sub | Kind::Mul)
+                && let Some(result) = normal_f32_binary(kind, left as u32, right as u32, mxcsr)
+            {
+                return result;
+            }
+            arithmetic::<rustc_apfloat::ieee::SingleS, Wide32>(kind, left, right, mxcsr)
+        }
         Format::F64 => arithmetic::<rustc_apfloat::ieee::DoubleS, Wide64>(kind, left, right, mxcsr),
     }
 }

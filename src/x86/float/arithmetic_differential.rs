@@ -337,3 +337,69 @@ fn varied_bit_patterns_match_unconditional_widening() {
         }
     }
 }
+
+#[test]
+fn exact_f64_widening_rounds_f32_normal_results_in_each_direction() {
+    let one = 0x3f80_0000;
+    let half_ulp = 0x3380_0000;
+    let sign = 0x8000_0000;
+    for (kind, left, right, expected) in [
+        (Kind::Add, one, half_ulp, [one, one, one + 1, one]),
+        (
+            Kind::Add,
+            one + 1,
+            half_ulp,
+            [one + 2, one + 1, one + 2, one + 1],
+        ),
+        (
+            Kind::Add,
+            0x3fff_ffff,
+            half_ulp,
+            [0x4000_0000, 0x3fff_ffff, 0x4000_0000, 0x3fff_ffff],
+        ),
+        (
+            Kind::Sub,
+            sign | one,
+            half_ulp,
+            [sign | one, sign | (one + 1), sign | one, sign | one],
+        ),
+        (
+            Kind::Mul,
+            one + 1,
+            one + 1,
+            [one + 2, one + 2, one + 3, one + 2],
+        ),
+    ] {
+        for (rc, bits) in expected.into_iter().enumerate() {
+            let mxcsr = (rc as u32) << 13;
+            assert_eq!(
+                normal_f32_binary(kind, left, right, mxcsr),
+                Some((u64::from(bits), 32))
+            );
+            assert_eq!(
+                dual_arithmetic::<SingleS, Wide32>(kind, u64::from(left), u64::from(right), mxcsr),
+                (u64::from(bits), 32)
+            );
+        }
+    }
+    assert_eq!(
+        normal_f32_binary(Kind::Mul, one, one, 0),
+        Some((u64::from(one), 0))
+    );
+}
+
+#[test]
+fn normal_f32_widening_keeps_unproved_endpoints_and_signed_zero_checked() {
+    let one = 0x3f80_0000;
+    for (kind, left, right) in [
+        (Kind::Add, one, 0x3100_0000),         // exponent difference 29
+        (Kind::Sub, one, one),                 // rounding-dependent cancellation sign
+        (Kind::Mul, 0x0080_0000, one),         // minimum normal
+        (Kind::Mul, 0x7f7f_ffff, one),         // maximum finite
+        (Kind::Mul, 0x0080_0000, 0x3f00_0000), // exact subnormal
+        (Kind::Mul, 1, one),                   // subnormal operand
+        (Kind::Mul, 0x7f80_0000, one),         // infinity
+    ] {
+        assert_eq!(normal_f32_binary(kind, left, right, 0), None);
+    }
+}
