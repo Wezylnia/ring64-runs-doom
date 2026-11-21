@@ -315,7 +315,7 @@ main::before {
   max-inline-size: 32ch;
   justify-self: end;
   color: var(--muted);
-  font-size: 1rem;
+  font-size: 1.0625rem;
   font-weight: 350;
   line-height: 1.4;
   text-wrap: pretty;
@@ -323,14 +323,15 @@ main::before {
 
 .ink-note-mark {
   color: var(--brick);
+  font-size: 1.1875em;
   font-style: normal;
   font-weight: 400;
+  line-height: 0;
 }
 
 sup.ink-note-mark {
   margin-inline-start: 0.15em;
-  font-size: 0.65em;
-  line-height: 0;
+  font-size: 0.75em;
 }
 
 .ink-controls,
@@ -559,6 +560,6 @@ sup.ink-note-mark {
   }
 
   .ink-caption p {
-    font-size: 0.9375rem;
+    font-size: 1rem;
   }
 }
