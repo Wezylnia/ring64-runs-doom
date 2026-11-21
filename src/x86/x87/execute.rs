@@ -94,11 +94,6 @@ pub(super) fn eval(state: &mut State, op: Op, source: u128, flags: u64) -> Effec
     let top = state.top();
     let other = state.physical(op.index);
     let a = state.raw(top);
-    let b = if op.format == Format::Register {
-        state.raw(other)
-    } else {
-        number::widen(source, op.format)
-    };
     let cw = state.control_word;
     match op.kind {
         Init => {
@@ -157,7 +152,7 @@ pub(super) fn eval(state: &mut State, op: Op, source: u128, flags: u64) -> Effec
             let r = if op.kind == Constant {
                 number::Result::raw(number::constant(op.index, cw))
             } else if op.format == Format::Register {
-                number::Result::raw(b)
+                number::Result::raw(state.raw(other))
             } else {
                 number::load(source, op.format)
             };
@@ -178,7 +173,7 @@ pub(super) fn eval(state: &mut State, op: Op, source: u128, flags: u64) -> Effec
                 state.status_word &= !0x200
             }
             let va = if ea { INDEFINITE } else { a };
-            let vb = if eb { INDEFINITE } else { b };
+            let vb = if eb { INDEFINITE } else { state.raw(other) };
             state.put(top, vb);
             state.put(other, va);
             return out;
@@ -191,7 +186,7 @@ pub(super) fn eval(state: &mut State, op: Op, source: u128, flags: u64) -> Effec
                 return out;
             }
             if predicate(op.condition, flags) {
-                state.put(top, b)
+                state.put(top, state.raw(other))
             }
             return out;
         }
@@ -304,8 +299,14 @@ pub(super) fn eval(state: &mut State, op: Op, source: u128, flags: u64) -> Effec
         state.put(top, if op.kind == Abs { a & !SIGN } else { a ^ SIGN });
         return out;
     }
+    let b = if op.kind == Test {
+        0
+    } else if op.format == Format::Register {
+        state.raw(other)
+    } else {
+        number::widen(source, op.format)
+    };
     if compares {
-        let b = if op.kind == Test { 0 } else { b };
         let ca = number::class(a);
         let cb = number::class(b);
         let unordered = matches!(op.kind, CompareUnordered | CompareUnorderedFlags);
