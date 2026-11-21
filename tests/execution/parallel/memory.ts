@@ -1,5 +1,5 @@
 import { context } from '../modes/fixture.js';
-import { exit, fault, type Scenario } from '../../support/fixture.js';
+import { changed, exit, fault, type Scenario } from '../../support/fixture.js';
 import {
   ENTRY,
   RAM,
@@ -457,6 +457,64 @@ export function parallelMemoryScenarios(
           same(completed.state.registers, repaired, 'retry loads the last valid dword once');
           equal(completed.state.flags, 0x46n, 'final DEC flags');
           equal((await cpu.readTimeState()).tsc, startTsc + 12n, 'TSC includes the repaired lap');
+        });
+      },
+    },
+    {
+      name: 'shared Long64 indexed reads distinguish equal low halves and fault at the canonical boundary',
+      async run() {
+        // MOV EAX,[RDI+RSI]; ADD RSI,RDX; ADD RDX,5; DEC ECX; JNE entry.
+        const code = hex('8b04374801d64883c205ffc975f2');
+        const options = linearMachine(compiler, code);
+        const stop = ENTRY + BigInt(code.length);
+        const high = 0xffff_8001_ffff_fff8n;
+        const low = 0x0000_0000_ffff_fff8n;
+        const hole = 0x0000_8000_0000_0000n;
+        const stride = BigInt.asUintN(64, low - high);
+        options.memory.mappings.splice(
+          1,
+          1,
+          span(high - 8n, 'data', 0, 16, 'r'),
+          span(low - 8n, 'data', 16, 16, 'r'),
+          span(hole - 8n, 'data', 32, 8, 'r'),
+        );
+        const data = new DataView(options.memory.backings[1]!.bytes.buffer);
+        data.setUint32(8, 0x1234abcd, true);
+        data.setUint32(24, 0xfedcba98, true);
+        data.setUint32(36, 0x76543210, true);
+
+        await withMachine(factory, options, async (machine) => {
+          const cpu = machine.cpus[0]!;
+          const input = cpuState(ENTRY, { 1: 3n, 2: stride, 6: high, 7: 0n });
+          await cpu.setState(input);
+          // One run visits high, low (same low 32 bits), then hole - 3.
+          const failed = await cpu.run({ budget: 16n, stop });
+          const committed = changed(input, ENTRY, {
+            0: 0xfedcba98n,
+            1: 1n,
+            2: stride + 10n,
+            6: hole - 3n,
+          });
+          exit(failed, 'data-fault', 16n, 10n, committed);
+          fault(failed, {
+            instructionPc: ENTRY,
+            address: hole - 3n,
+            width: 4,
+            access: 'read',
+            cause: 'noncanonical',
+            failingAddress: hole,
+            segment: 'ds',
+          });
+
+          const repaired = changed(failed.state, ENTRY, { 6: hole - 4n });
+          await cpu.setState(repaired);
+          const completed = changed(
+            committed,
+            stop,
+            { 0: 0x76543210n, 1: 0n, 2: stride + 15n, 6: hole + stride + 6n },
+            0x46n,
+          );
+          exit(await cpu.run({ budget: 6n, stop }), 'stop', 6n, 5n, completed);
         });
       },
     },
