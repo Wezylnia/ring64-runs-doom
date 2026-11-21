@@ -358,6 +358,12 @@ fn exact_f64_widening_rounds_f32_normal_results_in_each_direction() {
             [0x4000_0000, 0x3fff_ffff, 0x4000_0000, 0x3fff_ffff],
         ),
         (
+            Kind::Add,
+            0x7eff_ffff,
+            0x7280_0000,
+            [0x7f00_0000, 0x7eff_ffff, 0x7f00_0000, 0x7eff_ffff],
+        ),
+        (
             Kind::Sub,
             sign | one,
             half_ulp,
@@ -368,6 +374,18 @@ fn exact_f64_widening_rounds_f32_normal_results_in_each_direction() {
             one + 1,
             one + 1,
             [one + 2, one + 2, one + 3, one + 2],
+        ),
+        (
+            Kind::Mul,
+            one + 1,
+            0x3fc0_0000,
+            [0x3fc0_0002, 0x3fc0_0001, 0x3fc0_0002, 0x3fc0_0001],
+        ),
+        (
+            Kind::Mul,
+            sign | (one + 3),
+            0x3fc0_0000,
+            [0xbfc0_0004, 0xbfc0_0005, 0xbfc0_0004, 0xbfc0_0004],
         ),
     ] {
         for (rc, bits) in expected.into_iter().enumerate() {
