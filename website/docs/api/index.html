@@ -120,6 +120,11 @@
               phase timings in milliseconds.
             </p>
             <h3 class="docs-subtitle">stop reasons</h3>
+            <p>
+              Check <code>result.reason</code> before reading its diagnostic. For example,
+              <code>result.pageFault.address</code> is available when the reason is
+              <code>'page-fault'</code>.
+            </p>
             <dl class="docs-reference">
               <dt><code>stop</code>, <code>budget</code>, <code>repeat-budget</code></dt>
               <dd>The CPU reached the stop address or used up one of the run budgets.</dd>
@@ -368,6 +373,40 @@
               Both callbacks are synchronous. On a parallel machine they run on the host that
               created the machine. Return from the callback before calling back into the CPU or
               machine.
+            </p>
+            <h3 id="mmio" class="docs-subtitle">memory-mapped i/o</h3>
+            <p>
+              Pass <code>mmio: MmioProvider</code> to <code>createCpu</code> to reserve device
+              addresses. A range is a <code>base: bigint</code> and a <code>length: number</code> in
+              bytes. Use linear addresses for <code>linear</code> and guest physical addresses for
+              <code>ia32e-paged</code> or <code>physical</code>. Device ranges are separate from RAM
+              mappings and count toward <code>maxMappings</code>.
+            </p>
+            <div class="docs-example">
+              <div class="docs-example-bar"><span>typescript</span></div>
+              <pre tabindex="0"><code>import type { MmioProvider } from 'ring64';
+
+let value = 0n;
+const mmio = {
+  ranges: [{ base: 0x9000n, length: 1 }],
+  read() {
+    return value;
+  },
+  write(_address, _width, next) {
+    value = next;
+  },
+} satisfies MmioProvider;</code></pre>
+            </div>
+            <p>
+              An aligned guest scalar <code>mov</code> through one of these ranges calls
+              <code>read(address, width)</code> or <code>write(address, width, value)</code>. Widths
+              are <code>8 | 16 | 32 | 64</code> bits. Use unsigned <code>bigint</code>
+              values that fit the width, and return synchronously.
+            </p>
+            <p>
+              A transaction must fit entirely inside one range. Instruction fetches, host memory
+              access, and guest instructions outside this scalar <code>mov</code>
+              subset see device addresses as unmapped. A throwing provider rejects the run.
             </p>
           </section>
         </main>

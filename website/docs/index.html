@@ -162,6 +162,10 @@ llvm-objcopy -O binary --only-section=.text add.o add.bin</code></pre>
               guest port reads and writes to your app.
             </p>
             <p>
+              If a device exposes registers at memory addresses, a standalone CPU can route its
+              guest loads and stores to an <a href="./api/#mmio">MMIO provider</a>.
+            </p>
+            <p>
               <a href="./api/#memory">Memory models and mappings</a> cover linear, paged and
               physical access. <a href="./api/#run-result">Run results</a> explain instruction
               budgets, normal stops and faults.
