@@ -1,4 +1,5 @@
 import { Core } from '../../../sdk/src/wasm/core.js';
+import { context } from '../modes/fixture.js';
 import {
   check,
   equal,
@@ -74,6 +75,37 @@ export function pagingBoundaryReviewScenarios(compiler: WebAssembly.Module): Sce
           equal(irq.retired, 1n, 'interrupt is observed after the first addition');
           equal(irq.state.rip, middle, 'IRQ returns to the correct loop entry');
         });
+      },
+    },
+    {
+      name: 'paged 32-bit register loop preserves flags and high banks with a nonzero code segment',
+      async run() {
+        const head = 0x3fffd0n;
+        const exit = head + 8n;
+        const execution = context('compatibility');
+        execution.segments.cs.base = 0x30n;
+        execution.segments.cs.limit = Number(exit - 1n);
+        // SHL EAX,1; ADC EBX,0; DEC ECX; JNZ head.
+        await usingPaged(
+          compiler,
+          { code: 'd1e083d3004975f8', context: execution },
+          async (cpu) => {
+            const start = initial(
+              head,
+              { 0: 0x1234567880000000n, 1: 0xabcdef0000000003n, 3: 0x9999999900000005n },
+              2n,
+            );
+            cpu.setState(start);
+            const result = await cpu.run({ budget: 13n, stop: exit });
+            equal(result.reason, 'stop', 'stop after the last valid code-segment byte');
+            equal(result.retired, 12n, 'three four-instruction laps retire');
+            equal(result.state.rip, exit, 'the saved PC is still an offset from CS');
+            equal(result.state.registers[0], 0x1234567800000000n, 'SHL keeps the upper bank');
+            equal(result.state.registers[1], 0xabcdef0000000000n, 'DEC keeps the upper bank');
+            equal(result.state.registers[3], 0x9999999900000006n, 'ADC observes the shift carry');
+            equal(result.state.flags, 0x46n, 'DEC publishes the exit flags');
+          },
+        );
       },
     },
     {

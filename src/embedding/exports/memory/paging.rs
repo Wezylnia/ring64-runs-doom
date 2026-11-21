@@ -1,6 +1,4 @@
 use super::*;
-#[cfg(not(feature = "parallel"))]
-use crate::x86::context::Mode;
 use crate::x86::paging::{self, walk::Failure};
 use crate::x86::protection_keys::State as Keys;
 
@@ -27,23 +25,10 @@ impl Core {
                 if context.is_long64() {
                     return Some(pc);
                 }
-                if !matches!(context.mode(), Mode::Protected | Mode::Compatibility)
-                    || !context.code32()
-                    || instruction.next_pc <= pc
-                {
+                if instruction.next_pc <= pc {
                     return None;
                 }
-                let linear = context
-                    .translate(
-                        pc,
-                        instruction.encoded_len(),
-                        Segment::Cs,
-                        Access::Execute,
-                        false,
-                    )
-                    .ok()?;
-                (context.segment_base(Segment::Cs).checked_add(pc) == Some(linear))
-                    .then_some(linear)
+                context.nonwrapping_code32_fetch(pc, instruction.encoded_len())
             },
         )?;
         let request = paging::walk::Request {
@@ -307,17 +292,13 @@ impl Core {
 pub extern "C" fn core_paged_loop_guard(pc: u64, bytes: u32, flags: u64, shadow: u32) -> i32 {
     use crate::x86::flags::{RF, TF};
 
-    if flags & (RF | TF) != 0
-        || shadow != 0
-        || bytes == 0
-        || u64::from(bytes) > 0x1000 - (pc & 0xfff)
-    {
+    if flags & (RF | TF) != 0 || shadow != 0 {
         return 2;
     }
     BRIDGE.with_borrow_mut(|bridge| {
         let core = bridge.core.as_mut().unwrap();
         let state = unsafe { &*core.state.get() };
-        if !core.context.is_long64()
+        if !core.context.single_page_code_span(pc, bytes)
             || state.event.kind != 0
             || state.interrupts != Default::default()
             || state.debug.registers.active()

@@ -284,6 +284,8 @@ fn reached_paged_32_bit_instruction_uses_the_translated_cs_span() {
             [reads, reads * u64::from(width), 0, 0, 0, 0],
             "{family}"
         );
+        assert_eq!(paging::core_paged_loop_guard(PC, 3, 2, 0), 1, "{family}");
+        assert_eq!(physical_counts::take(), [0; 6], "{family}");
         BRIDGE.with_borrow_mut(|bridge| {
             let core = bridge.core.as_mut().unwrap();
             let exact = core.paged_decode(PC).unwrap();
@@ -318,6 +320,7 @@ fn reached_paged_32_bit_instruction_falls_back_for_page_splits_and_cs_wrap() {
         });
         activate_single_instruction();
         assert_eq!(paging::core_paged_debug_begin(PC, RF, 0), 0);
+        assert_eq!(paging::core_paged_loop_guard(PC, 3, 2, 0), 2);
         BRIDGE.with_borrow_mut(|bridge| {
             let core = bridge.core.as_mut().unwrap();
             assert_mov(0, core.paged_decode(PC).unwrap());

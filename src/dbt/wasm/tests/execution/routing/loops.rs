@@ -149,6 +149,75 @@ fn paged_register_loop_retains_dispatch_under_a_tight_artifact_limit() {
     }
 }
 
+#[cfg(not(feature = "parallel"))]
+#[test]
+fn guarded_paged_register_loop_uses_the_full_linear_cs_span() {
+    use crate::x86::context::{Mode, Segment};
+
+    let code = [0x83, 0xc0, 1, 0x83, 0xe9, 1, 0x75, 0xf8];
+    let same_offset_page = compiled_fixture(0x1000, &code, 0x1000).instructions;
+    let split_offset_page = compiled_fixture(0x1ffc, &code, 0x1ffc).instructions;
+    for (mode, code32, base, limit, split_offset, usable, guarded) in [
+        (Mode::Protected, true, 0x123, 0x1007, false, true, true),
+        (Mode::Protected, true, 4, u32::MAX, true, true, true),
+        (
+            Mode::Compatibility,
+            true,
+            0x123,
+            u32::MAX,
+            false,
+            true,
+            true,
+        ),
+        (Mode::Protected, true, 0xffc, u32::MAX, false, true, false),
+        (Mode::Protected, true, 0x123, 0x1006, false, true, false),
+        (
+            Mode::Protected,
+            true,
+            0xffff_f000,
+            u32::MAX,
+            false,
+            true,
+            false,
+        ),
+        (
+            Mode::Protected,
+            true,
+            0xffff_effc,
+            u32::MAX,
+            false,
+            true,
+            false,
+        ),
+        (Mode::Protected, true, 0, u32::MAX, false, false, false),
+        (Mode::Protected, false, 0, u32::MAX, false, true, false),
+        (Mode::Compatibility, false, 0, u32::MAX, false, true, false),
+        (Mode::Real, false, 0, 0xffff, false, true, false),
+        (Mode::Virtual8086, false, 0, 0xffff, false, true, false),
+    ] {
+        let mut unit = unit(if split_offset {
+            split_offset_page.clone()
+        } else {
+            same_offset_page.clone()
+        });
+        unit.context.set_mode_and_cpl(mode, 0);
+        let segment = Segment::Cs;
+        let mut cs = unit.context.segment(segment);
+        (cs.base, cs.limit, cs.default32, cs.usable) = (base, limit, code32, usable);
+        let mut attributes = unit.context.attributes(segment);
+        attributes.long = false;
+        unit.context.set_segment(segment, 8, cs, attributes);
+
+        let bytes = emit_profile(&unit, true, true, usize::MAX);
+        assert_eq!(
+            wasm_loop_count(&bytes),
+            if guarded { 3 } else { 2 },
+            "{mode:?} code32={code32} CS base={base:#x} limit={limit:#x}"
+        );
+        wasmparser::Validator::new().validate_all(&bytes).unwrap();
+    }
+}
+
 #[test]
 fn register_loop_keeps_carry_live_through_zero_count_and_partial_writers() {
     let code = [

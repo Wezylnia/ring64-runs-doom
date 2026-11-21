@@ -193,16 +193,13 @@ impl StructuredLoop {
 
     #[cfg(not(feature = "parallel"))]
     pub(super) fn within_paged_fetch(mut self, unit: &super::Unit) -> Option<Self> {
-        if !unit.context.is_long64() {
-            return None;
-        }
         let head = unit.instructions[self.head as usize].pc;
         let end = unit.instructions[self.tail as usize].next_pc;
-        let length = end.checked_sub(head)?;
-        if length == 0 || length > 0x1000 - (head & 0xfff) || !crate::memory::canonical48(head) {
+        let length = u32::try_from(end.checked_sub(head)?).ok()?;
+        if !unit.context.single_page_code_span(head, length) {
             return None;
         }
-        self.paged_fetch_bytes = Some(length as u32);
+        self.paged_fetch_bytes = Some(length);
         Some(self)
     }
 

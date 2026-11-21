@@ -343,6 +343,33 @@ impl ExecutionContext {
         }
     }
 
+    #[cfg(not(feature = "parallel"))]
+    pub(crate) fn nonwrapping_code32_fetch(&self, offset: u64, bytes: u32) -> Option<u64> {
+        if !matches!(self.mode(), Mode::Protected | Mode::Compatibility) || !self.code32() {
+            return None;
+        }
+        let linear = self
+            .translate(offset, bytes, Segment::Cs, Access::Execute, false)
+            .ok()?;
+        (self.segment_base(Segment::Cs).checked_add(offset) == Some(linear)).then_some(linear)
+    }
+
+    #[cfg(not(feature = "parallel"))]
+    pub(crate) fn single_page_code_span(&self, offset: u64, bytes: u32) -> bool {
+        if bytes == 0 || bytes > 0x1000 {
+            return false;
+        }
+        let linear = if self.is_long64() {
+            crate::memory::canonical48(offset).then_some(offset)
+        } else {
+            if offset > self.code_limit() {
+                return false;
+            }
+            self.nonwrapping_code32_fetch(offset, bytes)
+        };
+        linear.is_some_and(|linear| u64::from(bytes) <= 0x1000 - (linear & 0xfff))
+    }
+
     pub fn translate(
         &self,
         offset: u64,
