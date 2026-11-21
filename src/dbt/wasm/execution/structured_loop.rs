@@ -222,7 +222,9 @@ impl StructuredLoop {
             .or_else(|| Self::select_body(instructions, LoopKind::Registers));
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         let existing = existing.or_else(|| Self::select_increment_reads(unit));
-        existing
+        existing.or_else(|| {
+            super::loop_cfg::select_natural_read_shifts(instructions).map(Self::forward)
+        })
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]

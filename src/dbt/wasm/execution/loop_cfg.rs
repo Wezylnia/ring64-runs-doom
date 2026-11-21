@@ -37,9 +37,32 @@ impl LoopOrder {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Layout {
+    Natural,
+    Rotated,
+    NaturalReadShifts,
+}
+
 pub(super) fn select(instructions: &[Instruction]) -> Option<(LoopOrder, u32)> {
     let limit = instructions.len();
-    select_layout(instructions, false, limit).or_else(|| select_layout(instructions, true, limit))
+    select_layout(instructions, Layout::Natural, limit)
+        .or_else(|| select_layout(instructions, Layout::Rotated, limit))
+}
+
+pub(super) fn select_natural_read_shifts(instructions: &[Instruction]) -> Option<(LoopOrder, u32)> {
+    instructions
+        .iter()
+        .find(|instruction| immediate_read_shift(instruction.operation).is_some())?;
+    select_layout_filtered(
+        instructions,
+        Layout::NaturalReadShifts,
+        instructions.len(),
+        |body| {
+            body.iter()
+                .all(|i| !matches!(i.operation, Operation::Store { .. }))
+        },
+    )
 }
 
 #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
@@ -48,7 +71,7 @@ pub(super) fn select_shared_rotated_reads(
 ) -> Option<(LoopOrder, u32)> {
     // Shared compilation holds an exclusive grant. Bound the source window
     // before scanning branches or proving any candidate's execution paths.
-    let (order, bound) = select_layout(instructions, true, 64)?;
+    let (order, bound) = select_layout(instructions, Layout::Rotated, 64)?;
     instructions[order.earlier as usize..=order.tail as usize]
         .iter()
         .all(|instruction| !matches!(instruction.operation, Operation::Store { .. }))
@@ -59,7 +82,7 @@ pub(super) fn select_shared_rotated_reads(
 pub(super) fn select_shared_natural_memory(
     instructions: &[Instruction],
 ) -> Option<(LoopOrder, u32)> {
-    select_layout_filtered(instructions, false, 64, |body| {
+    select_layout_filtered(instructions, Layout::Natural, 64, |body| {
         body.iter().any(|i| reads_memory(i.operation))
             && body
                 .iter()
@@ -70,15 +93,15 @@ pub(super) fn select_shared_natural_memory(
 
 fn select_layout(
     instructions: &[Instruction],
-    rotate: bool,
+    layout: Layout,
     max_body_len: usize,
 ) -> Option<(LoopOrder, u32)> {
-    select_layout_filtered(instructions, rotate, max_body_len, |_| true)
+    select_layout_filtered(instructions, layout, max_body_len, |_| true)
 }
 
 fn select_layout_filtered(
     instructions: &[Instruction],
-    rotate: bool,
+    layout: Layout,
     max_body_len: usize,
     admit: impl Fn(&[Instruction]) -> bool,
 ) -> Option<(LoopOrder, u32)> {
@@ -99,13 +122,13 @@ fn select_layout_filtered(
                 tail: tail as u32,
             };
             if admit(&instructions[earlier..=tail])
-                && let Some(bound) = iteration_bound(instructions, order)
+                && let Some(bound) = iteration_bound(instructions, order, layout)
                 && best.is_none_or(|(_, previous)| bound > previous)
             {
                 best = Some((order, bound));
             }
         };
-        if rotate {
+        if layout == Layout::Rotated {
             let mut prefix_targets = instructions[head..tail]
                 .iter()
                 .filter_map(|i| branch_target(i.operation))
@@ -575,21 +598,27 @@ fn shift_before_read(
         producer = producer.checked_sub(1)?;
     }
     let shift = at(producer);
+    if shift.next_pc != next.pc {
+        return None;
+    }
+    Some((producer, immediate_read_shift(shift.operation)?))
+}
+
+fn immediate_read_shift(operation: Operation) -> Option<ReadFaultFlags> {
     let Operation::Shift {
         kind: kind @ (Shift::Shl | Shift::Shr | Shift::Sar),
         dst: Location::Register(_),
         count: Count::Immediate(count),
         width: width @ (Width::W32 | Width::W64),
-    } = shift.operation
+    } = operation
     else {
         return None;
     };
     let mask = if width == Width::W64 { 63 } else { 31 };
-    (shift.next_pc == next.pc && count & mask != 0)
-        .then_some((producer, ReadFaultFlags::Shift(kind, width)))
+    (count & mask != 0).then_some(ReadFaultFlags::Shift(kind, width))
 }
 
-fn iteration_bound(instructions: &[Instruction], order: LoopOrder) -> Option<u32> {
+fn iteration_bound(instructions: &[Instruction], order: LoopOrder, layout: Layout) -> Option<u32> {
     let source = &instructions[order.earlier as usize..=order.tail as usize];
     let first_pc = source.first()?.pc;
     let last_pc = source.last()?.pc;
@@ -597,7 +626,7 @@ fn iteration_bound(instructions: &[Instruction], order: LoopOrder) -> Option<u32
     if source
         .windows(2)
         .any(|pair| pair[0].next_pc != pair[1].pc || pair[0].pc >= pair[1].pc)
-        || rotated && !source.iter().any(|i| reads_memory(i.operation))
+        || layout != Layout::Natural && !source.iter().any(|i| reads_memory(i.operation))
     {
         return None;
     }
@@ -611,7 +640,7 @@ fn iteration_bound(instructions: &[Instruction], order: LoopOrder) -> Option<u32
         let (taken, fallthrough) = match instruction.operation {
             Operation::Jump { target } => (Some(target), None),
             Operation::Jcc { target, .. } => (Some(target), Some(instruction.next_pc)),
-            operation if inside_body(operation, rotated) => (None, Some(instruction.next_pc)),
+            operation if inside_body(operation, layout) => (None, Some(instruction.next_pc)),
             _ => return None,
         };
         let mut cost = 0;
@@ -663,7 +692,7 @@ fn reads_memory(operation: Operation) -> bool {
     )
 }
 
-fn inside_body(operation: Operation, rotated: bool) -> bool {
+fn inside_body(operation: Operation, layout: Layout) -> bool {
     matches!(
         operation,
         Operation::Alu { .. }
@@ -682,7 +711,7 @@ fn inside_body(operation: Operation, rotated: bool) -> bool {
                 dst: Location::Register(_),
                 ..
             }
-    ) || rotated
+    ) || layout == Layout::Rotated
         && matches!(
             operation,
             Operation::Shift {
@@ -690,12 +719,13 @@ fn inside_body(operation: Operation, rotated: bool) -> bool {
                 ..
             }
         )
+        || layout == Layout::NaturalReadShifts && immediate_read_shift(operation).is_some()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::x86::instruction::{Address, Condition, RegisterView, Width};
+    use crate::x86::instruction::{Address, Condition, DataOperand, RegisterView, Width};
 
     #[test]
     fn longest_lap_counts_reachable_instructions_and_rejects_inner_cycles() {
@@ -723,9 +753,62 @@ mod tests {
             head: 0,
             tail: 5,
         };
-        assert_eq!(iteration_bound(&body, order), Some(4));
+        assert_eq!(iteration_bound(&body, order, Layout::Natural), Some(4));
         body[4].operation = Operation::Jump { target: 0x1004 };
-        assert_eq!(iteration_bound(&body, order), None);
+        assert_eq!(iteration_bound(&body, order, Layout::Natural), None);
+    }
+
+    #[test]
+    fn natural_read_loop_accepts_only_plain_immediate_register_shifts() {
+        let pc = |i| 0x1000 + i as u64 * 4;
+        let register = RegisterView::low(0);
+        let shift = |count| Operation::Shift {
+            kind: Shift::Shr,
+            dst: Location::Register(register),
+            count,
+            width: Width::W32,
+        };
+        let mut body: Vec<_> = [
+            shift(Count::Immediate(1)),
+            Operation::Load {
+                dst: register,
+                address: Address::default(),
+                width: Width::W32,
+            },
+            Operation::Jcc {
+                condition: Condition::Below,
+                target: pc(4),
+            },
+            Operation::Jump { target: pc(5) },
+            Operation::Nop,
+            Operation::Jcc {
+                condition: Condition::Below,
+                target: pc(0),
+            },
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(i, operation)| Instruction {
+            pc: pc(i),
+            next_pc: pc(i + 1),
+            operation,
+        })
+        .collect();
+        assert!(select(&body).is_none());
+        let (order, bound) = select_natural_read_shifts(&body).unwrap();
+        assert_eq!((order.earlier, order.head, order.tail, bound), (0, 0, 5, 5));
+
+        for count in [Count::Cl, Count::Immediate(32)] {
+            body[0].operation = shift(count);
+            assert!(select_natural_read_shifts(&body).is_none());
+        }
+        body[0].operation = shift(Count::Immediate(1));
+        body[4].operation = Operation::Store {
+            src: DataOperand::Register(register),
+            address: Address::default(),
+            width: Width::W32,
+        };
+        assert!(select_natural_read_shifts(&body).is_none());
     }
 
     #[test]
@@ -752,7 +835,7 @@ mod tests {
                 operation,
             })
             .collect();
-        let (order, max_lap) = select_layout(&body, true, body.len()).unwrap();
+        let (order, max_lap) = select_layout(&body, Layout::Rotated, body.len()).unwrap();
         assert_eq!((order.earlier, order.head, order.tail), (0, 32, 96));
         assert_eq!(max_lap, 65);
 
@@ -761,7 +844,7 @@ mod tests {
         body[prefix - 1].operation = Operation::Jump {
             target: pc(prefix - 2),
         };
-        assert!(iteration_bound(&body, order).is_none());
+        assert!(iteration_bound(&body, order, Layout::Rotated).is_none());
         assert!(
             iteration_bound(
                 &body,
@@ -769,6 +852,7 @@ mod tests {
                     earlier: prefix as u32 - 1,
                     ..order
                 },
+                Layout::Rotated,
             )
             .is_none()
         );
@@ -799,12 +883,15 @@ mod tests {
                     },
                 })
                 .collect();
-            let (order, bound) = select_layout(&body, true, body.len()).unwrap();
+            let (order, bound) = select_layout(&body, Layout::Rotated, body.len()).unwrap();
             assert_eq!(
                 (order.earlier, order.head, order.tail, bound),
                 (0, 1, tail as u32, 4)
             );
-            assert_eq!(select_layout(&body, true, 64).is_some(), length == 64);
+            assert_eq!(
+                select_layout(&body, Layout::Rotated, 64).is_some(),
+                length == 64
+            );
         }
     }
 }
