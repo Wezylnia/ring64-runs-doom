@@ -430,6 +430,55 @@ test('an outlined float retry loses its proof when the resumed lap exits', async
   }
 });
 
+test('sticky precision float loops replay the original failing instruction', async () => {
+  const code = body();
+  const fraction = 1 + 2 ** -23;
+  const signaling = floats(fraction, 2, 3, 4);
+  new DataView(signaling.buffer).setUint32(4, 0x7f800001, true);
+  const cpu = await createCpu({
+    compiler,
+    entry: head,
+    limits: LIMITS,
+    memory: {
+      backings: [
+        { id: 'code', bytes: code },
+        { id: 'row', bytes: floats(fraction, 2, 3, 4) },
+        { id: 'column', bytes: signaling },
+      ],
+      mappings: [
+        { ...mapping(head, 'code', code.length), permissions: { ...readOnly, execute: true } },
+        mapping(row, 'row', 16),
+        mapping(column, 'column', 16),
+      ],
+    },
+    memoryLimits: { maxBackings: 3, maxMappings: 3, maxBackingBytes: code.length + 32 },
+  });
+  const input = initial(head, { 0: row, 1: 0n, 2: 4n, 3: column });
+  const stop = head + BigInt(code.length);
+  try {
+    cpu.setState(input);
+    cpu.setMxcsr(0x1f24); // Precision is masked and sticky. Invalid is unmasked.
+    const invalid = await cpu.run({ budget: 40n, stop });
+    assert.equal(invalid.reason, 'simd-exception');
+    assert.equal(invalid.state.rip, head + 16n);
+    assert.equal(invalid.retired, 3n);
+    assert.deepEqual(cpu.readXmmState().slice(0, 2), [0x3f800002n, 0x40000000n]);
+    assert.equal(invalid.simdException?.mxcsrBefore, 0x1f24);
+    assert.equal(invalid.simdException?.mxcsrAfter, 0x1f25);
+
+    cpu.setState(input);
+    cpu.setMxcsr(0x0fa4); // Sticky precision still traps when unmasked.
+    const precision = await cpu.run({ budget: 40n, stop });
+    assert.equal(precision.reason, 'simd-exception');
+    assert.equal(precision.state.rip, head + 5n);
+    assert.equal(precision.retired, 1n);
+    assert.equal(cpu.readXmmState()[0], 0x3f800001n);
+    assert.equal(precision.simdException?.mxcsrAfter, 0x0fa4);
+  } finally {
+    cpu.dispose();
+  }
+});
+
 test('a read loop interleaving stack and data still faults at the first denied stack operand', async () => {
   const code = hex('8b048c8b1e48ffc14839d175f3f4');
   // MOV EAX,[RSP+RCX*4]; MOV EBX,[RSI]; INC RCX; CMP RCX,RDX; JNE head; HLT

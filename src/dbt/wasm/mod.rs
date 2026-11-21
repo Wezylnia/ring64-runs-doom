@@ -136,6 +136,8 @@ struct Emitter {
     normal_low_f32: u16,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     float_outline_params: u32,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    float_raw_sticky: bool,
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     parallel_atomic: Option<parallel::Atomic>,
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
@@ -671,7 +673,7 @@ fn emit_placement(
     let reads = if !guard_reads {
         GuardedReads::Checked
     } else if cfg!(all(not(feature = "parallel"), target_arch = "wasm32")) {
-        GuardedReads::Outlined
+        GuardedReads::OutlinedSticky
     } else {
         GuardedReads::Inline
     };
@@ -712,7 +714,9 @@ fn emit_placement(
 enum GuardedReads {
     Checked,
     Inline,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     Outlined,
+    OutlinedSticky,
 }
 
 fn emit_body(
@@ -1704,11 +1708,14 @@ fn emit_body(
         [next_local, next_local + 1, next_local + 2]
     });
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    let float_outline = if _guard_reads == GuardedReads::Outlined {
+    let float_outline = if matches!(
+        _guard_reads,
+        GuardedReads::Outlined | GuardedReads::OutlinedSticky
+    ) {
         loop_body
             .zip(proved_reads)
             .and_then(|(body, (proof, _, first_bias, _, _))| {
-                float_loop::FloatOutline::new(
+                let mut outline = float_loop::FloatOutline::new(
                     unit,
                     body,
                     proof,
@@ -1716,7 +1723,11 @@ fn emit_body(
                     vector_registers,
                     run_index + 1 + u32::from(dynamic_targets),
                     &mut types,
-                )
+                )?;
+                if _guard_reads == GuardedReads::OutlinedSticky {
+                    outline.enable_sticky();
+                }
+                Some(outline)
             })
     } else {
         None
@@ -1724,6 +1735,9 @@ fn emit_body(
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if let Some(float_outline) = &float_outline {
         functions.function(float_outline.signature);
+        if float_outline.sticky_index.is_some() {
+            functions.function(float_outline.signature);
+        }
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let outline_locals = float_outline.as_ref().map(|_| locals.clone());
@@ -1733,7 +1747,7 @@ fn emit_body(
         vector_temporaries.expect("outlined Float temporaries")[2] + 1
     });
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    let mut outlined_function = None;
+    let mut outlined_functions = Vec::new();
     let mut emitter = Emitter {
         paged,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -1754,6 +1768,8 @@ fn emit_body(
         normal_low_f32: 0,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         float_outline_params: 0,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        float_raw_sticky: false,
         #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
         parallel_atomic,
         #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
@@ -1920,12 +1936,23 @@ fn emit_body(
                     emitter.proved_reads = Some((proof, first_bias));
                     if let Some(outline) = &float_outline {
                         let rejected = outline_rejected.expect("outline rejection local");
-                        outlined_function = Some(emitter.emit_float_outline(
+                        let locals = outline_locals.as_deref().expect("outline locals");
+                        outlined_functions.push(emitter.emit_float_outline(
                             outline,
-                            outline_locals.as_deref().expect("outline locals"),
+                            locals,
                             &unit.instructions,
                             loop_body,
+                            false,
                         ));
+                        if outline.sticky_index.is_some() {
+                            outlined_functions.push(emitter.emit_float_outline(
+                                outline,
+                                locals,
+                                &unit.instructions,
+                                loop_body,
+                                true,
+                            ));
+                        }
                         emitter.op(Op::If(BlockType::Empty));
                         emitter.multiple_read_laps(proof);
                         // Keep the proved inline placement for later visits after
@@ -1991,7 +2018,7 @@ fn emit_body(
         code.function(&entry_lookup::emit(&emitter.entries));
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    if let Some((_, body, _)) = &outlined_function {
+    for (_, body, _) in &outlined_functions {
         code.function(body);
     }
     let mut module = Module::new();
@@ -2003,9 +2030,9 @@ fn emit_body(
     let mut bytes = module.finish();
     let hints_start = bytes.len();
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    let outline_has_hints = outlined_function
-        .as_ref()
-        .is_some_and(|(_, _, hints)| !hints.is_empty());
+    let outline_has_hints = outlined_functions
+        .iter()
+        .any(|(_, _, hints)| !hints.is_empty());
     #[cfg(any(feature = "parallel", not(target_arch = "wasm32")))]
     let outline_has_hints = false;
     if !emitter.branch_hints.is_empty() || outline_has_hints {
@@ -2014,15 +2041,31 @@ fn emit_body(
             hints.function_hints(run_index, emitter.branch_hints);
         }
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-        if let Some((function, _, branches)) = outlined_function
-            && !branches.is_empty()
-        {
-            hints.function_hints(function, branches);
+        for (function, _, branches) in outlined_functions {
+            if !branches.is_empty() {
+                hints.function_hints(function, branches);
+            }
         }
         hints.append_to(&mut bytes);
     }
     let code_start = bytes.len();
     code.append_to(&mut bytes);
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    if _guard_reads == GuardedReads::OutlinedSticky
+        && float_outline.is_some()
+        && bytes.len() > max_artifact_bytes
+    {
+        // The extra specialization must not displace the original branch hints.
+        return emit_body(
+            unit,
+            observed,
+            paged,
+            loop_body,
+            GuardedReads::Outlined,
+            _extra_spans,
+            max_artifact_bytes,
+        );
+    }
     if bytes.len() > max_artifact_bytes {
         // Optional annotations never displace executable code under the owner's limit.
         bytes.drain(hints_start..code_start);

@@ -8,6 +8,7 @@ use wasm_encoder::{BlockType, Instruction as Op, ValType};
 const ROUNDING_CONTROL: i32 = 0x6000;
 const PRECISION_STATUS: i32 = 1 << 5;
 const PRECISION_MASK: i32 = 1 << 12;
+pub(super) const MASKED_STICKY_PRECISION: i32 = PRECISION_MASK | PRECISION_STATUS;
 
 impl Emitter {
     pub(super) fn float(&mut self, instruction: FloatInstruction, next_pc: u64, exit_depth: u32) {
@@ -166,6 +167,11 @@ impl Emitter {
         wide: Option<u32>,
         normal: [bool; 2],
     ) {
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if self.float_raw_sticky {
+            self.float_f32_sticky(kind, left, right, wide, normal);
+            return;
+        }
         let mxcsr = super::vector::memory(offset_of!(RunState, mxcsr));
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         let rounding_prechecked = self.proved_reads.is_some();
@@ -219,11 +225,10 @@ impl Emitter {
         // Check before rounding so a tiny product that rounds to a normal f32 still falls back.
         self.reject_non_normal_f32(RESULT);
 
-        let masked_sticky_precision = PRECISION_MASK | PRECISION_STATUS;
         self.op(Op::LocalGet(STORE_STATUS))
-            .op(Op::I32Const(masked_sticky_precision))
+            .op(Op::I32Const(MASKED_STICKY_PRECISION))
             .op(Op::I32And)
-            .op(Op::I32Const(masked_sticky_precision))
+            .op(Op::I32Const(MASKED_STICKY_PRECISION))
             .op(Op::I32Ne)
             .op(Op::If(BlockType::Empty));
         // A normal f64 result is representable in f32 exactly when the
@@ -276,6 +281,76 @@ impl Emitter {
             self.float_f64(RESULT);
             self.op(Op::F32DemoteF64).op(Op::F32x4ReplaceLane(0));
         }
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    fn float_f32_sticky(
+        &mut self,
+        kind: Kind,
+        left: u32,
+        right: u32,
+        wide: Option<u32>,
+        normal: [bool; 2],
+    ) {
+        for (vector, known_normal) in [left, right].into_iter().zip(normal) {
+            if !known_normal {
+                // Signed zero is admissible. Nonfinite operands cannot
+                // produce an interior result and are rejected below.
+                self.op(Op::LocalGet(vector))
+                    .op(Op::I32x4ExtractLane(0))
+                    .op(Op::I32Const(0x7fff_ffff))
+                    .op(Op::I32And)
+                    .op(Op::I32Const(1))
+                    .op(Op::I32Sub)
+                    .op(Op::I32Const(0x007f_ffff))
+                    .op(Op::I32LtU)
+                    .unlikely(Op::BrIf(0));
+            }
+        }
+        if let Some(result) = wide {
+            self.op(Op::LocalGet(left))
+                .op(Op::LocalGet(right))
+                .op(if kind == Kind::Add {
+                    Op::F32x4Add
+                } else {
+                    Op::F32x4Mul
+                })
+                .op(Op::LocalTee(result))
+                .op(Op::I32x4ExtractLane(0));
+            self.reject_fp32_noninterior();
+            self.op(Op::LocalGet(result));
+        } else {
+            self.op(Op::LocalGet(left))
+                .op(Op::LocalGet(left))
+                .op(Op::F32x4ExtractLane(0))
+                .op(Op::LocalGet(right))
+                .op(Op::F32x4ExtractLane(0))
+                .op(if kind == Kind::Add {
+                    Op::F32Add
+                } else {
+                    Op::F32Mul
+                })
+                .op(Op::I32ReinterpretF32)
+                .op(Op::LocalTee(STORE_STATUS));
+            self.reject_fp32_noninterior();
+            self.op(Op::LocalGet(STORE_STATUS))
+                .op(Op::I32x4ReplaceLane(0));
+        }
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    fn reject_fp32_noninterior(&mut self) {
+        // An interior rounded result cannot have crossed either exponent
+        // boundary. Precision is already masked and sticky in this outline.
+        self.op(Op::I32Const(23))
+            .op(Op::I32ShrU)
+            .op(Op::I32Const(255))
+            .op(Op::I32And)
+            .op(Op::I32Const(2))
+            .op(Op::I32Sub)
+            .op(Op::I32Const(251))
+            .op(Op::I32GtU)
+            .unlikely(Op::BrIf(0));
     }
 
     pub(super) fn load_float_mxcsr(&mut self) {

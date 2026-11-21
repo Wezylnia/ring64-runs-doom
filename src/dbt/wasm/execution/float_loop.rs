@@ -1,6 +1,6 @@
 use super::{
-    ENTRY, Emitter, FLAGS, GPR, REMAINING, RIP, StructuredLoop, Unit, read_loop::ReadLoop,
-    vector::Banks,
+    ENTRY, Emitter, FLAGS, GPR, REMAINING, RIP, StructuredLoop, Unit,
+    float::MASKED_STICKY_PRECISION, read_loop::ReadLoop, vector::Banks,
 };
 use crate::memory::canonical48;
 use wasm_encoder::{BlockType, Function, Instruction as Op, TypeSection, ValType};
@@ -10,6 +10,7 @@ pub(super) const HEADER_REJECTION: i32 = -1;
 pub(super) struct FloatOutline {
     index: u32,
     pub(super) signature: u32,
+    pub(super) sticky_index: Option<u32>,
     inputs: Vec<(u32, ValType)>,
     outputs: Vec<(u32, ValType)>,
 }
@@ -77,9 +78,14 @@ impl FloatOutline {
         Some(Self {
             index,
             signature,
+            sticky_index: None,
             inputs,
             outputs,
         })
+    }
+
+    pub(super) fn enable_sticky(&mut self) {
+        self.sticky_index = Some(self.index + 1);
     }
 }
 
@@ -90,6 +96,7 @@ impl Emitter {
         locals: &[(u32, ValType)],
         instructions: &[crate::x86::instruction::Instruction],
         loop_body: StructuredLoop,
+        sticky: bool,
     ) -> (u32, Function, Vec<wasm_encoder::BranchHint>) {
         let current_index = self.current_index;
         let current_pc = self.current_pc;
@@ -105,6 +112,7 @@ impl Emitter {
         let parent = std::mem::replace(&mut self.body, function);
         let parent_hints = std::mem::take(&mut self.branch_hints);
         self.float_outline_params = outline.inputs.len() as u32;
+        self.float_raw_sticky = sticky;
         for (argument, (local, _)) in outline.inputs.iter().enumerate() {
             self.body.instruction(&Op::LocalGet(argument as u32));
             self.op(Op::LocalSet(*local));
@@ -123,6 +131,7 @@ impl Emitter {
         }
         self.op(Op::End);
         self.float_outline_params = 0;
+        self.float_raw_sticky = false;
         self.current_index = current_index;
         self.current_pc = current_pc;
         self.current_operation = current_operation;
@@ -130,7 +139,12 @@ impl Emitter {
         self.segment = segment;
         let body = std::mem::replace(&mut self.body, parent);
         let hints = std::mem::replace(&mut self.branch_hints, parent_hints);
-        (outline.index, body, hints)
+        let index = if sticky {
+            outline.sticky_index.expect("sticky float outline index")
+        } else {
+            outline.index
+        };
+        (index, body, hints)
     }
 
     pub(super) fn call_float_outline(
@@ -145,7 +159,20 @@ impl Emitter {
         for (local, _) in &outline.inputs {
             self.op(Op::LocalGet(*local));
         }
-        self.op(Op::Call(outline.index));
+        if let Some(raw) = outline.sticky_index {
+            self.load_float_mxcsr();
+            self.op(Op::I32Const(MASKED_STICKY_PRECISION))
+                .op(Op::I32And)
+                .op(Op::I32Const(MASKED_STICKY_PRECISION))
+                .op(Op::I32Eq)
+                .unlikely(Op::If(BlockType::FunctionType(outline.signature)))
+                .op(Op::Call(raw))
+                .op(Op::Else)
+                .op(Op::Call(outline.index))
+                .op(Op::End);
+        } else {
+            self.op(Op::Call(outline.index));
+        }
         for (local, _) in outline.outputs.iter().rev() {
             self.op(Op::LocalSet(*local));
         }
