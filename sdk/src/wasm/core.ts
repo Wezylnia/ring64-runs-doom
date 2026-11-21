@@ -357,6 +357,7 @@ export function instantiateArtifact(
 
 export class Core {
   #taskRetry: 'instruction' | 'delivery' | undefined;
+  readonly takeSourceInvalidation?: () => boolean;
 
   get taskRetry() {
     return this.#taskRetry;
@@ -374,6 +375,10 @@ export class Core {
     private readonly mmio?: MmioBridge,
   ) {
     this.#exports = exports;
+    const takeSourceInvalidation = exports.core_take_source_invalidation;
+    if (typeof takeSourceInvalidation === 'function') {
+      this.takeSourceInvalidation = () => takeSourceInvalidation() !== 0;
+    }
     this.#layout = this.info<CoreStateLayout>();
     this.#statePointer = exports.core_state_ptr() >>> 0;
     for (const name of [

@@ -25,6 +25,7 @@ pub(super) struct Validity {
     owners: BTreeMap<u64, Owner>,
     active: Option<u64>,
     active_invalid: bool,
+    invalidated: bool,
     sources: BTreeMap<usize, Vec<(u32, u64)>>,
     completed_write: Option<(usize, u32, u64)>,
 }
@@ -36,6 +37,7 @@ impl Default for Validity {
             owners: BTreeMap::new(),
             active: None,
             active_invalid: false,
+            invalidated: false,
             sources: BTreeMap::new(),
             completed_write: None,
         }
@@ -95,6 +97,7 @@ impl Validity {
                     && u64::from(offset) < u64::from(source.offset) + u64::from(source.length)
             }) {
                 owner.valid = false;
+                self.invalidated = true;
                 if self.active == Some(id) {
                     self.active_invalid = true;
                 }
@@ -111,6 +114,7 @@ impl Validity {
                 .sources
                 .iter()
                 .all(|source| source_current(source, backings, mappings));
+            self.invalidated |= !owner.valid;
         }
         self.active_invalid = self
             .active
@@ -217,6 +221,11 @@ impl Image {
             .is_some_and(|owner| owner.valid)
     }
 
+    #[cfg(any(target_arch = "wasm32", test))]
+    pub(crate) fn take_source_invalidation(&mut self) -> bool {
+        std::mem::take(&mut self.validity.invalidated)
+    }
+
     pub fn activate(&mut self, owner: u64) -> bool {
         if !self.owner_valid(owner) {
             return false;
@@ -239,6 +248,7 @@ impl Image {
     }
 
     pub fn retire_sources(&mut self) {
+        self.validity.invalidated |= !self.validity.owners.is_empty();
         self.validity.owners.clear();
         self.validity.active = None;
         self.validity.active_invalid = false;
@@ -300,6 +310,57 @@ mod tests {
     use super::*;
 
     mod dependencies;
+
+    #[test]
+    fn reports_source_invalidation_only_when_an_owner_becomes_stale() {
+        use super::super::{MappingInput, Permissions};
+        let mut image = Image::new(0x1000, vec![0; 16], 0x4000, vec![0; 8]).unwrap();
+        let code = MappingInput {
+            base: 0x1000,
+            backing: "code".into(),
+            offset: 0,
+            length: 16,
+            permissions: Permissions {
+                read: true,
+                write: true,
+                execute: true,
+            },
+        };
+        image.set_mappings(vec![code.clone()]).unwrap();
+        let first = image.register_source([(0x1000, 4)]).unwrap();
+        let second = image.register_source([(0x1008, 4)]).unwrap();
+        image.activate(first);
+        image.write(0x1004, 1, 7).unwrap();
+        image.set_mappings(vec![code.clone()]).unwrap();
+        assert!(!image.take_source_invalidation());
+
+        image.write(0x1008, 1, 1).unwrap();
+        assert!(image.take_source_invalidation());
+        assert!(image.owner_valid(first));
+        assert!(!image.owner_valid(second));
+        assert!(!image.active_changed());
+        image.write(0x1008, 1, 2).unwrap();
+        assert!(!image.take_source_invalidation());
+
+        image
+            .set_mappings(vec![MappingInput {
+                length: 2,
+                ..code.clone()
+            }])
+            .unwrap();
+        assert!(image.take_source_invalidation());
+        assert!(!image.owner_valid(first));
+        image.set_mappings(vec![code]).unwrap();
+        assert!(!image.take_source_invalidation());
+
+        let fresh = image.register_source([(0x1000, 4)]).unwrap();
+        assert!(image.activate(fresh));
+        image.invalidate_sources();
+        assert!(image.take_source_invalidation());
+        image.invalidate_sources();
+        assert!(!image.take_source_invalidation());
+        assert!(image.active_changed());
+    }
 
     #[test]
     fn repeated_runtime_fences_keep_the_active_exit_until_a_new_activation() {

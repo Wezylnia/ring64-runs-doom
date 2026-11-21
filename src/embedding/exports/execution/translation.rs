@@ -169,6 +169,20 @@ pub extern "C" fn core_validity(owner: u64) -> i32 {
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn core_take_source_invalidation() -> i32 {
+    BRIDGE.with_borrow_mut(|bridge| {
+        i32::from(
+            bridge
+                .core
+                .as_mut()
+                .unwrap()
+                .image
+                .take_source_invalidation(),
+        )
+    })
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn core_publish(owner: u64) -> i32 {
     BRIDGE.with_borrow_mut(|bridge| i32::from(bridge.core.as_mut().unwrap().publish_owner(owner)))
 }

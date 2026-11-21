@@ -379,7 +379,9 @@ export class Cpu {
 
   protected pruneTranslations(): void {
     try {
-      this.#cache.prune((artifact) => this.#engine.valid(artifact.metadata.owner));
+      const engine = this.#engine;
+      if (engine.takeSourceInvalidation?.() !== false)
+        this.#cache.prune((artifact) => engine.valid(artifact.metadata.owner));
     } catch (cause) {
       this.#lifecycle = 'failed';
       throw new Error('cpu engine failed', { cause });

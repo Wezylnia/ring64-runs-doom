@@ -46,6 +46,7 @@ export type CoreExports = WebAssembly.Exports & {
   core_remove_backing(): number;
   core_set_mappings(): number;
   core_validity(owner: bigint): number;
+  core_take_source_invalidation?(): number;
   core_publish(owner: bigint): number;
   core_activate(owner: bigint): number;
   core_release(owner: bigint): void;
