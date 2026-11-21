@@ -184,13 +184,22 @@ impl Emitter {
     }
 
     pub(super) fn arithmetic_result(&mut self, kind: Alu, width: Width) {
-        self.op(Op::LocalGet(LHS)).op(Op::LocalGet(RHS));
-        self.op(if kind == Alu::Add {
-            Op::I64Add
+        let add = kind == Alu::Add;
+        if width == Width::W32 {
+            self.op(Op::LocalGet(LHS))
+                .op(Op::I32WrapI64)
+                .op(Op::LocalGet(RHS))
+                .op(Op::I32WrapI64)
+                .op(if add { Op::I32Add } else { Op::I32Sub })
+                .op(Op::I64ExtendI32U);
         } else {
-            Op::I64Sub
-        });
-        self.narrow(width);
+            self.op(Op::LocalGet(LHS)).op(Op::LocalGet(RHS)).op(if add {
+                Op::I64Add
+            } else {
+                Op::I64Sub
+            });
+            self.narrow(width);
+        }
         self.op(Op::LocalSet(RESULT));
     }
 

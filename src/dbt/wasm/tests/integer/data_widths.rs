@@ -95,6 +95,23 @@ fn narrow_arithmetic_uses_its_own_sign_carry_and_auxiliary_bits() {
 }
 
 #[test]
+fn dword_arithmetic_wraps_and_compares_before_publishing_flags() {
+    let upper = 0x1122334400000000;
+    let cases = [
+        ([0x83, 0xc0, 1], 0x7fff_ffff, 0x8000_0000, 0x896),
+        ([0x83, 0xc0, 1], 0xffff_ffff, 0, 0x57),
+        ([0x83, 0xe8, 1], 0x8000_0000, 0x7fff_ffff, 0x816),
+        ([0x83, 0xe8, 1], 0, 0xffff_ffff, 0x97),
+        ([0x83, 0xf8, 0xff], 0x7fff_ffff, upper | 0x7fff_ffff, 0x887),
+        ([0x83, 0xf8, 0xff], 0xffff_ffff, upper | 0xffff_ffff, 0x46),
+    ]
+    .map(|(code, before, after, flags)| {
+        data_case(&code, &[(0, upper | before)], &[(0, after)], 0x8d7, flags)
+    });
+    run_cases(cases.to_vec());
+}
+
+#[test]
 fn extensions_and_sign_high_write_only_the_selected_view() {
     let mut cases = Vec::new();
     for (code, input, expected) in [
