@@ -247,6 +247,65 @@ test('Long64 dependent dword reads preserve full indices and resume a denied loa
   }
 });
 
+test('scalar SIMD read loops preserve INC flags before the latch comparison', async () => {
+  const code = hex(
+    'f30f100488' + // MOVSS XMM0,[RAX+RCX*4]
+      'f30f59048b' + // MULSS XMM0,[RBX+RCX*4]
+      'f30f58c848ffc14839d175ea', // ADDSS XMM1,XMM0; INC RCX; CMP RCX,RDX; JNE head
+  );
+  const left = floats(1, 2);
+  const right = floats(2, 3);
+  const cpu = await createCpu({
+    compiler,
+    entry: head,
+    limits: LIMITS,
+    memory: {
+      backings: [
+        { id: 'code', bytes: code },
+        { id: 'row', bytes: left },
+        { id: 'column', bytes: right },
+      ],
+      mappings: [
+        { ...mapping(head, 'code', code.length), permissions: { ...readOnly, execute: true } },
+        mapping(row, 'row', left.length),
+        mapping(column, 'column', right.length),
+      ],
+    },
+    memoryLimits: {
+      maxBackings: 3,
+      maxMappings: 3,
+      maxBackingBytes: code.length + left.length + right.length,
+    },
+  });
+  try {
+    const input = initial(head, { 0: row, 1: 0n, 2: 2n, 3: column }, 0x8d7n);
+    const stop = head + BigInt(code.length);
+    const reset = () => {
+      cpu.setState(input);
+      cpu.setMxcsr(0x1fa0);
+      cpu.setXmmState(Array<bigint>(16).fill(0n));
+    };
+    reset();
+    const completed = changed(input, stop, { 1: 2n }, 0x46n);
+    exit(await cpu.run({ budget: 20n, stop }), 'stop', 20n, 12n, completed);
+    assert.equal(cpu.readXmmState()[1], 0x41000000n);
+
+    reset();
+    exit(
+      await cpu.run({ budget: 4n, stop }),
+      'budget',
+      4n,
+      4n,
+      changed(input, head + 17n, { 1: 1n }, 3n),
+    );
+    assert.equal(cpu.readXmmState()[1], 0x40000000n);
+    exit(await cpu.run({ budget: 20n, stop }), 'stop', 20n, 8n, completed);
+    assert.equal(cpu.readXmmState()[1], 0x41000000n);
+  } finally {
+    cpu.dispose();
+  }
+});
+
 test('SIMD read loops resume from interior PCs and validate every backing after remapping', async () => {
   const code = body();
   const stop = head + BigInt(code.length);
