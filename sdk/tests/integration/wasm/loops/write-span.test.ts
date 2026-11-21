@@ -1,9 +1,8 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import { createCpu } from '../../../src/index.js';
-import { Core } from '../../../src/wasm/core.js';
-import { protectedSnapshot } from '../../../../tests/support/context.js';
+import { createCpu } from '../../../../src/index.js';
+import { Core } from '../../../../src/wasm/core.js';
+import { protectedSnapshot } from '../../../../../tests/support/context.js';
 import {
   LIMITS,
   changed,
@@ -12,11 +11,8 @@ import {
   hex,
   initial,
   memory,
-} from '../../../../tests/support/fixture.js';
-
-const compiler = await WebAssembly.compile(
-  new Uint8Array(await readFile(new URL('../../../../build/ring64.wasm', import.meta.url))),
-);
+} from '../../../../../tests/support/fixture.js';
+import { compiler } from './fixture.js';
 
 function lebSize(value: number): number {
   let size = 1;
