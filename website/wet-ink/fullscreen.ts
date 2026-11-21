@@ -36,7 +36,6 @@ export function enableFullscreen(
     }
     const label = open ? 'exit fullscreen' : 'fullscreen';
     button.dataset.expanded = String(open);
-    button.textContent = open ? 'Exit fullscreen' : 'Fullscreen';
     button.title = label;
     button.setAttribute('aria-label', label);
     button.focus({ preventScroll: true });

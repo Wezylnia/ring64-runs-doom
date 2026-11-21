@@ -11,3 +11,5 @@ npm run site:dev
 The local preview listens on `http://127.0.0.1:4173`. `RING64_SITE_PORT` overrides the port.
 
 `npm run site:build` writes the static site to `build/website/`. This also builds the Ring64 SDK and compiles the Wet Ink x86-64 guest from `wet-ink/ink.c`.
+
+The site type-checks against the built SDK. The build bundles the worker's `ring64` import into `wet-ink/worker.js` and serves the compiler as its sibling `wet-ink/ring64.wasm`.

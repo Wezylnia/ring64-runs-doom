@@ -39,7 +39,6 @@ function attachInk(
     const label = playing ? 'pause animation' : 'play animation';
     stage.dataset.playing = String(playing);
     play.dataset.playing = String(playing);
-    play.textContent = playing ? 'Pause' : 'Play';
     play.title = label;
     play.setAttribute('aria-label', label);
   }
