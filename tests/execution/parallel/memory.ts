@@ -345,6 +345,52 @@ export function parallelMemoryScenarios(
       },
     },
     {
+      name: 'shared rotated read loops keep shift flags at a late memory fault',
+      async run() {
+        // The comparison at +17 can branch to +2 before the loop head at +12.
+        const code = 'eb0a89c183c70483ee01740ed1e88d5001391f72ed83ee0175f290';
+        const options = linearMachine(compiler, code);
+        const data = RAM + 5n;
+        const read = ENTRY + 17n;
+        const stop = ENTRY + 26n;
+        options.cpus[0] = { entry: ENTRY + 12n, context: context('protected') };
+        options.memory.mappings[1] = span(data, 'data', 5, 8, 'r');
+        options.memory.backings[1]!.bytes[5] = 1;
+        options.memory.backings[1]!.bytes[9] = 1;
+        await withMachine(factory, options, async (machine) => {
+          const cpu = machine.cpus[0]!;
+          const high = 0x1122334400000000n;
+          await cpu.setState(
+            cpuState(ENTRY + 12n, {
+              0: high | 0x80000007n,
+              1: high,
+              2: high,
+              3: 2n,
+              6: 3n,
+              7: data,
+            }),
+          );
+          const failed = await cpu.run({ budget: 64n, stop });
+          equal(failed.reason, 'data-fault', 'third operand crosses the mapping');
+          equal(failed.state.rip, read, 'fault at the original CMP');
+          equal(failed.state.flags, 7n, 'preceding SHR flags');
+          equal(failed.retired, 18n, 'only instructions before the fault retired');
+          equal(failed.state.registers[7], data + 8n, 'earlier branch updated the address twice');
+          fault(failed, {
+            instructionPc: read,
+            address: data + 8n,
+            width: 4,
+            access: 'read',
+            cause: 'unmapped',
+            failingAddress: data + 8n,
+            segment: 'ds',
+          });
+          await machine.setMappings([options.memory.mappings[0]!, span(data, 'data', 5, 12, 'r')]);
+          done(await cpu.run({ budget: 2n, stop: ENTRY + 19n }), ENTRY + 19n, 1n);
+        });
+      },
+    },
+    {
       name: 'shared SIMD dword reads preserve lanes and precise split faults',
       async run() {
         // MOVSS XMM0,FS:[RAX]; MOVSS XMM1,FS:[RBX].
