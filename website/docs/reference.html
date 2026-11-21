@@ -330,6 +330,19 @@
     import <code>ring64/parallel</code> to create a machine. each vcpu owns its state and runs in a
     dedicated worker.
   </p>
+  <p>
+    run all vcpus concurrently with the same stop address. see the
+    <a href="#parallel-example">complete example</a> for machine setup.
+  </p>
+  <div class="docs-example">
+    <div class="docs-example-bar">
+      <a href="./examples/api/run-together.ts" download>run-together.ts</a>
+      <button type="button" data-copy-code="run-together" aria-label="copy run-together.ts" hidden>
+        copy
+      </button>
+    </div>
+    <pre><code id="run-together"><!-- example:api/run-together.ts --></code></pre>
+  </div>
   <details>
     <summary>browser requirements</summary>
     <p>
