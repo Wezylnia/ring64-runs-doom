@@ -588,6 +588,75 @@ export function parallelMemoryScenarios(
       },
     },
     {
+      name: 'shared byte reads across two windows keep distinct bases and precise faults',
+      async run() {
+        // MOVZX EAX,[RDI+RSI]; MOVSX EDX,[RBX]; INC ESI; INC RBX; DEC ECX; JNE entry.
+        const code = hex('0fb604370fbe13ffc648ffc3ffc975f0');
+        const stop = ENTRY + BigInt(code.length);
+        const indexed = 0xffff_8000_0000_4000n;
+        const plain = RAM;
+        const options = linearMachine(compiler, code);
+        const program = options.memory.mappings[0]!;
+        const high = span(indexed, 'data', 0, 16, 'r');
+        options.memory.mappings = [program, span(plain, 'data', 16, 15, 'r'), high];
+        const bytes = options.memory.backings[1]!.bytes;
+        bytes[7] = 0x71;
+        bytes[15] = 0x55;
+        bytes[16 + 7] = 0x91;
+        bytes[16 + 14] = 0xe2;
+        bytes[16 + 15] = 0x80;
+        const input = cpuState(ENTRY, {
+          0: 0x11223344deadbeefn,
+          1: 10n,
+          2: 0x55667788deadbeefn,
+          3: plain + 6n,
+          6: 6n,
+          7: indexed,
+        });
+
+        await withMachine(factory, options, async (machine) => {
+          const cpu = machine.cpus[0]!;
+          await cpu.setState(input);
+          const warm = changed(input, ENTRY, {
+            0: 0x71n,
+            1: 8n,
+            2: 0xffff_ff91n,
+            3: plain + 8n,
+            6: 8n,
+          });
+          exit(await cpu.run({ budget: 12n, stop }), 'budget', 12n, 12n, warm);
+
+          const failed = await cpu.run({ budget: 64n, stop });
+          const partial = changed(warm, ENTRY + 4n, {
+            0: 0x55n,
+            1: 1n,
+            2: 0xffff_ffe2n,
+            3: plain + 15n,
+            6: 15n,
+          });
+          exit(failed, 'data-fault', 64n, 43n, partial);
+          fault(failed, {
+            instructionPc: ENTRY + 4n,
+            address: plain + 15n,
+            width: 1,
+            access: 'read',
+            cause: 'unmapped',
+            failingAddress: plain + 15n,
+            segment: 'ds',
+          });
+
+          await machine.setMappings([program, span(plain, 'data', 16, 16, 'r'), high]);
+          const completed = changed(
+            partial,
+            stop,
+            { 1: 0n, 2: 0xffff_ff80n, 3: plain + 16n, 6: 16n },
+            0x46n,
+          );
+          exit(await cpu.run({ budget: 8n, stop }), 'stop', 8n, 5n, completed);
+        });
+      },
+    },
+    {
       name: 'shared indexed float reads keep exact bounds after promotion and remap',
       async run() {
         // MOVSS [RAX+RCX*4]; ADDSS [RBX+RCX*4]; accumulate; count; XCHG [RDI],RAX.
