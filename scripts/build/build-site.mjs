@@ -12,6 +12,9 @@ import {
 } from 'node:fs/promises';
 import { dirname, join, posix, resolve } from 'node:path';
 import { build } from 'esbuild';
+import hljs from 'highlight.js/lib/core';
+import c from 'highlight.js/lib/languages/c';
+import typescript from 'highlight.js/lib/languages/typescript';
 
 const root = resolve(import.meta.dirname, '../..');
 const source = join(root, 'website');
@@ -19,9 +22,8 @@ const generated = join(root, 'build');
 const sdk = join(generated, 'npm/ring64');
 const output = join(generated, 'website');
 
-function escapeHtml(code) {
-  return code.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
-}
+hljs.registerLanguage('c', c);
+hljs.registerLanguage('typescript', typescript);
 
 execFileSync(
   process.execPath,
@@ -46,7 +48,11 @@ try {
   ]);
   const exampleNames = ['add.ts', 'add.c', 'add-c.ts', 'parallel.ts'];
   const examples = await Promise.all(
-    exampleNames.map((name) => readFile(join(source, 'docs/examples', name), 'utf8')),
+    exampleNames.map(async (name) => {
+      const code = await readFile(join(source, 'docs/examples', name), 'utf8');
+      return hljs.highlight(code.trimEnd(), { language: name.endsWith('.c') ? 'c' : 'typescript' })
+        .value;
+    }),
   );
   for (const page of [
     'index.html',
@@ -56,7 +62,7 @@ try {
   ]) {
     let html = await readFile(join(source, page), 'utf8');
     for (const [index, name] of exampleNames.entries()) {
-      html = html.replace(`<!-- example:${name} -->`, () => escapeHtml(examples[index].trimEnd()));
+      html = html.replace(`<!-- example:${name} -->`, () => examples[index]);
     }
     const destination = join(staged, page);
     const siteRoot = posix.relative(posix.dirname(page), '.') || '.';

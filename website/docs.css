@@ -153,6 +153,20 @@
   font-size: inherit;
 }
 
+.docs-content .hljs-keyword,
+.docs-content .hljs-literal {
+  color: #992e25;
+}
+
+.docs-content .hljs-string,
+.docs-content .hljs-number {
+  color: #664827;
+}
+
+.docs-content .hljs-comment {
+  color: #665952;
+}
+
 .docs-reference {
   margin: 1.125rem 0 0;
 }
