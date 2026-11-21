@@ -52,7 +52,7 @@ mod paging;
 mod processor;
 #[path = "system/protection.rs"]
 mod protection;
-#[path = "execution/routing.rs"]
+#[path = "execution/routing/mod.rs"]
 mod routing;
 #[path = "system/software_events.rs"]
 mod software_events;
