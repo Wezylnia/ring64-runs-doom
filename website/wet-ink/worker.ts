@@ -7,6 +7,10 @@ const codeBase = 0x2000000n;
 const stop = 0x8000n;
 const state = 0x10000n;
 const outputLength = pigmentWidth * pigmentHeight * 2;
+const origin = {
+  x: Math.floor(Math.random() * 65536),
+  y: Math.floor(Math.random() * 65536),
+};
 const limits: Limits = {
   maxInstructions: 512,
   maxSourceBytes: 8192,
@@ -43,8 +47,9 @@ self.onmessage = async ({ data }: MessageEvent<StepRequest>) => {
     const started = performance.now();
     // The flat image starts at step and returns to the sentinel on its SysV stack.
     const registers: Registers = [0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n];
-    registers[1] = BigInt(data.y); // RCX
-    registers[2] = BigInt(data.x); // RDX
+    const position = tick === 0 ? origin : data;
+    registers[1] = BigInt(position.y); // RCX
+    registers[2] = BigInt(position.x); // RDX
     registers[4] = state + BigInt(stackOffset); // RSP
     registers[6] = BigInt(tick); // RSI
     registers[7] = state; // RDI

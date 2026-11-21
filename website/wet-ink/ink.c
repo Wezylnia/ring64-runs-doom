@@ -31,9 +31,14 @@ static float sin_turns(float turns) {
     return x * (1.0f + xx * (-0.166655f + xx * (0.0083109f + xx * (-0.0001849f))));
 }
 
-static void seed(Ink *ink) {
+static inline int wrap(int x, int count) { return x < 0 ? x + count : (x >= count ? x - count : x); }
+
+static void seed(Ink *ink, unsigned originX, unsigned originY) {
+    int dx = ((originX & 65535u) * WIDTH) >> 16;
+    int dy = ((originY & 65535u) * HEIGHT) >> 16;
     ink->initialRed = ink->initialDark = 0;
     for (int y = 0; y < HEIGHT; y++) {
+        int row = wrap(y + dy, HEIGHT) * WIDTH;
         for (int x = 0; x < WIDTH; x++) {
             float u = (float)x / WIDTH, v = (float)y / HEIGHT;
             float s = u + .18f * sin_turns(v + .03f) + .05f * sin_turns(v * 2.0f - u);
@@ -42,7 +47,7 @@ static void seed(Ink *ink) {
                         + .35f * sin_turns(2.0f * s + t - .13f) + .16f * sin_turns(3.0f * s + 2.0f * t);
             float layer = .63f * sin_turns(2.0f * s - t + .05f) + .46f * sin_turns(s + 2.0f * t - .18f)
                         + .22f * sin_turns(3.0f * t + .30f);
-            int i = y * WIDTH + x;
+            int i = row + wrap(x + dx, WIDTH);
             float red = .11f + .78f * clamp(.5f + .73f * sheet, 0.0f, 1.0f);
             float dark = .12f + .76f * clamp(.5f + .82f * layer, 0.0f, 1.0f);
             unsigned r = (unsigned)(red * 1023), d = (unsigned)(dark * 1023);
@@ -101,8 +106,6 @@ static void push(Ink *ink, Brush brush) {
         }
     }
 }
-
-static inline int wrap(int x, int count) { return x < 0 ? x + count : (x >= count ? x - count : x); }
 
 static inline Dye interpolate(Dye a, Dye b, unsigned weight) {
     // Two 10-bit channels fit in independent 16-bit lanes during the weighted sum.
@@ -174,7 +177,8 @@ __attribute__((section(".text.step")))
 #endif
 void step(Ink *ink, uint32_t tick, uint32_t x, uint32_t y, uint32_t previous, uint32_t active) {
     if (tick == 0) {
-        seed(ink);
+        // The first position places the dye before the brush starts moving it.
+        seed(ink, x, y);
         for (int i = 0; i < AREA; i++) {
             ink->pixels[2 * i] = (uint8_t)((ink->dye[i] & 1023) >> 2);
             ink->pixels[2 * i + 1] = (uint8_t)(ink->dye[i] >> 18);
