@@ -205,12 +205,21 @@ impl Emitter {
         }
 
         if let Some(wide) = wide {
+            // Keep the rounded destination independent of the exactness
+            // calculation. Both vector operands have proved zero upper lanes.
+            self.op(Op::LocalGet(left))
+                .op(Op::LocalGet(right))
+                .op(if kind == Kind::Add {
+                    Op::F32x4Add
+                } else {
+                    Op::F32x4Mul
+                })
+                .op(Op::LocalSet(wide));
             self.op(if kind == Kind::Add {
                 Op::F64x2Add
             } else {
                 Op::F64x2Mul
             })
-            .op(Op::LocalTee(wide))
             .op(Op::F64x2ExtractLane(0));
         } else {
             self.float_f64(LHS);
@@ -274,8 +283,7 @@ impl Emitter {
             .op(Op::End)
             .op(Op::End);
         if let Some(wide) = wide {
-            // The second lane started as positive zero in both operands.
-            self.op(Op::LocalGet(wide)).op(Op::F32x4DemoteF64x2Zero);
+            self.op(Op::LocalGet(wide));
         } else {
             self.op(Op::LocalGet(left));
             self.float_f64(RESULT);
