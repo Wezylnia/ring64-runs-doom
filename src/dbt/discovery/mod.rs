@@ -186,23 +186,11 @@ pub(crate) fn discover_with_profile(
             _ => {}
         }
     }
-    let mut source_ranges: Vec<SourceRange> = Vec::new();
-    for address in if identity_source {
+    let source_ranges = ranges(if identity_source {
         &source
     } else {
         &linear_source
-    } {
-        if let Some(last) = source_ranges.last_mut()
-            && u128::from(last.start) + u128::from(last.length) == u128::from(*address)
-        {
-            last.length += 1;
-        } else {
-            source_ranges.push(SourceRange {
-                start: *address,
-                length: 1,
-            });
-        }
-    }
+    });
     let mut read_dependencies = BTreeSet::new();
     for page in fetch_pages.values() {
         for &entry in page.entries() {
