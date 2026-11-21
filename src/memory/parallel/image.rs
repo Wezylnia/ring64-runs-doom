@@ -468,6 +468,30 @@ impl Image {
     }
 
     #[cfg(target_arch = "wasm32")]
+    pub(crate) fn shared_dword_window(&self, address: u32, segment_limit: u32) -> Option<[u32; 4]> {
+        let layout = self.shared?;
+        let mapping = &self.mappings[self.locate_index(u64::from(address))?];
+        if !mapping.permissions.read {
+            return None;
+        }
+        let base = u32::try_from(mapping.base).ok()?;
+        let segment_length = (u64::from(segment_limit) + 1).checked_sub(u64::from(base))?;
+        let limit = u32::try_from(
+            segment_length
+                .min(u64::from(mapping.length))
+                .checked_sub(3)?,
+        )
+        .ok()?;
+        if address - base >= limit {
+            return None;
+        }
+        let backing = self.backings[mapping.backing].shared?;
+        let host = backing.offset + mapping.offset;
+        let guard_bias = layout.guards.wrapping_sub((layout.base / 64) * 4);
+        Some([base, limit, host, guard_bias])
+    }
+
+    #[cfg(target_arch = "wasm32")]
     pub(crate) fn begin_shared_guarded_rmw(&mut self, address: u64, width: u32) -> bool {
         let Some(layout) = self.shared else {
             return false;

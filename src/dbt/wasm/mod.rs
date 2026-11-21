@@ -152,6 +152,8 @@ struct Emitter {
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     parallel_vector_span: Option<(u32, [Option<parallel::VectorSpanMemo>; 2], u32)>,
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+    parallel_dword_window: Option<parallel::DwordWindow>,
+    #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     parallel_retry: Option<u32>,
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     parallel_address_memos: Vec<(u32, u32)>,
@@ -705,7 +707,18 @@ fn emit_placement(
     guard_reads: bool,
     max_artifact_bytes: usize,
 ) -> Vec<u8> {
-    let reads = if cfg!(all(feature = "parallel", target_arch = "wasm32")) {
+    let reads = if cfg!(all(feature = "parallel", target_arch = "wasm32"))
+        && !observed
+        && !paged
+        && unit.context.mode() == crate::x86::context::Mode::Protected
+        && unit.context.code32()
+        && unit.context.translate(0, 4, Segment::Ds, crate::memory::Access::Read, false).ok() == Some(0)
+        && unit.instructions.iter().any(|i| {
+            matches!(i.operation, Operation::Jcc { target, .. } | Operation::Jump { target } if target < i.pc)
+        })
+    {
+        GuardedReads::SharedWindow
+    } else if cfg!(all(feature = "parallel", target_arch = "wasm32")) {
         GuardedReads::SharedDword
     } else if !guard_reads {
         GuardedReads::Checked
@@ -755,6 +768,7 @@ enum GuardedReads {
     Checked,
     Inline,
     SharedDword,
+    SharedWindow,
     Outlined { sticky: bool, dyadic: bool },
 }
 
@@ -1539,8 +1553,10 @@ fn emit_body(
         index
     });
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
-    let parallel_vector_dword = (_guard_reads == GuardedReads::SharedDword
-        && parallel_resolve.is_some()
+    let parallel_vector_dword = (matches!(
+        _guard_reads,
+        GuardedReads::SharedDword | GuardedReads::SharedWindow
+    ) && parallel_resolve.is_some()
         && vector_banks.loads)
         .then(|| {
             let signature =
@@ -1554,6 +1570,23 @@ fn emit_body(
             run_index += 1;
             index
         });
+    #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+    let window_resolve = (_guard_reads == GuardedReads::SharedWindow
+        && unit
+            .instructions
+            .iter()
+            .any(|i| parallel::DwordWindow::eligible(i.operation)))
+    .then(|| {
+        let signature = add_function_type(&mut types, [ValType::I64], [ValType::I32]);
+        imports.import(
+            "env",
+            "parallel_dword_window",
+            EntityType::Function(signature),
+        );
+        let index = run_index;
+        run_index += 1;
+        index
+    });
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     let vector_span_groups = loop_body
         .filter(|body| _extra_spans && parallel_vector_dword.is_some() && body.is_shared_float())
@@ -1782,6 +1815,13 @@ fn emit_body(
     } else {
         Vec::new()
     };
+    #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+    let parallel_dword_window = window_resolve.map(|resolver| {
+        let first = next_local;
+        locals.push((4, ValType::I32));
+        next_local += 4;
+        parallel::DwordWindow::new(resolver, first)
+    });
     let boundary_locals = observed.then(|| {
         let result = [next_local, next_local + 1, next_local + 2, next_local + 3];
         locals.push((4, ValType::I32));
@@ -1878,6 +1918,8 @@ fn emit_body(
         parallel_vector_dword,
         #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
         parallel_vector_span,
+        #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+        parallel_dword_window,
         #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
         parallel_retry: None,
         #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
@@ -2155,6 +2197,19 @@ fn emit_body(
     }
     let code_start = bytes.len();
     code.append_to(&mut bytes);
+    #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+    if bytes.len() > max_artifact_bytes && parallel_dword_window.is_some() {
+        // Keep any existing shared FP32 trial when the window alone exceeds the cap.
+        return emit_body(
+            unit,
+            observed,
+            paged,
+            loop_body,
+            GuardedReads::SharedDword,
+            _extra_spans,
+            max_artifact_bytes,
+        );
+    }
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     if bytes.len() > max_artifact_bytes && parallel_vector_span.is_some() {
         return emit_body(

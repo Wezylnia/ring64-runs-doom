@@ -251,6 +251,10 @@ impl Emitter {
             return;
         }
         #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+        if !for_write && width == Width::W32 && self.parallel_load_dword_window(exit_depth) {
+            return;
+        }
+        #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
         if self.parallel_load(width, for_write, exit_depth) {
             return;
         }

@@ -1,5 +1,7 @@
 use super::{ADDRESS, Emitter, LHS, RESULT, RHS, STORE_STATUS, VALUE};
+use crate::embedding::layout::RunState;
 use crate::x86::{
+    context::Segment,
     float::{Format, Kind},
     instruction::{
         Address, Alu, Instruction, Location, MemoryAluOperands, Operation, VectorInstruction,
@@ -124,6 +126,45 @@ impl VectorSpanMemo {
             displacement: 0,
             ..address
         })
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct DwordWindow {
+    resolve: u32,
+    base: u32,
+    limit: u32,
+    host: u32,
+    guard_bias: u32,
+}
+
+impl DwordWindow {
+    pub(super) fn new(resolve: u32, first: u32) -> Self {
+        Self {
+            resolve,
+            base: first,
+            limit: first + 1,
+            host: first + 2,
+            guard_bias: first + 3,
+        }
+    }
+
+    pub(super) fn eligible(operation: Operation) -> bool {
+        let address = match operation {
+            Operation::Load {
+                address,
+                width: Width::W32,
+                ..
+            }
+            | Operation::MemoryAlu {
+                address,
+                width: Width::W32,
+                kind: Alu::Cmp | Alu::Test,
+                ..
+            } => address,
+            _ => return false,
+        };
+        address.segment == Segment::Ds && address.index.is_some()
     }
 }
 
@@ -368,6 +409,86 @@ impl Emitter {
         self.load_address_slow(width, for_write, exit_depth + 1);
         self.op(Op::End);
         true
+    }
+
+    pub(super) fn parallel_load_dword_window(&mut self, exit_depth: u32) -> bool {
+        let (Some(window), Some(scalar)) = (self.parallel_dword_window, self.parallel_scalar)
+        else {
+            return false;
+        };
+        if !DwordWindow::eligible(self.current_operation) {
+            return false;
+        }
+        debug_assert!(self.parallel_retry.is_none());
+        self.op(Op::Block(BlockType::Result(ValType::I32)));
+        self.dword_window_delta(window);
+        self.op(Op::LocalGet(window.limit))
+            .op(Op::I32GeU)
+            .op(Op::If(BlockType::Empty))
+            .op(Op::LocalGet(ADDRESS))
+            .op(Op::Call(window.resolve))
+            .op(Op::I32Eqz)
+            .op(Op::If(BlockType::Empty))
+            .op(Op::I32Const(0))
+            .op(Op::Br(2))
+            .op(Op::End);
+        let scratch = std::mem::offset_of!(RunState, vector_scratch) as u64;
+        for (field, offset) in [window.base, window.limit, window.host, window.guard_bias]
+            .into_iter()
+            .zip((0..16).step_by(4))
+        {
+            self.op(Op::LocalGet(0))
+                .op(Op::I32Load(MemArg {
+                    offset: scratch + offset,
+                    align: 2,
+                    memory_index: 0,
+                }))
+                .op(Op::LocalSet(field));
+        }
+        self.dword_window_delta(window);
+        self.op(Op::Drop).op(Op::End);
+        self.op(Op::LocalGet(STORE_STATUS))
+            .op(Op::LocalGet(window.host))
+            .op(Op::I32Add)
+            .op(Op::LocalTee(scalar.address))
+            .op(Op::I32Const(7))
+            .op(Op::I32And)
+            .op(Op::I32Const(4))
+            .op(Op::I32LeU)
+            .op(Op::If(BlockType::Result(ValType::I32)))
+            .op(Op::LocalGet(scalar.address))
+            .op(Op::I32Const(6))
+            .op(Op::I32ShrU)
+            .op(Op::I32Const(2))
+            .op(Op::I32Shl)
+            .op(Op::LocalGet(window.guard_bias))
+            .op(Op::I32Add)
+            .op(Op::I32AtomicLoad(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 1,
+            }))
+            .op(Op::I32Eqz)
+            .op(Op::Else)
+            .op(Op::I32Const(0))
+            .op(Op::End)
+            .op(Op::End);
+        self.op(Op::If(BlockType::Empty));
+        self.read_shared_lane(scalar, Width::W32, false);
+        self.narrow(Width::W32);
+        self.op(Op::LocalSet(VALUE)).op(Op::Else);
+        // A rejected window, lane, or stripe requires the checked read.
+        self.load_address_slow(Width::W32, false, exit_depth + 1);
+        self.op(Op::End);
+        true
+    }
+
+    fn dword_window_delta(&mut self, window: DwordWindow) {
+        self.op(Op::LocalGet(ADDRESS))
+            .op(Op::I32WrapI64)
+            .op(Op::LocalGet(window.base))
+            .op(Op::I32Sub)
+            .op(Op::LocalTee(STORE_STATUS));
     }
 
     pub(super) fn parallel_vector_dword(&mut self, exit_depth: u32) -> bool {

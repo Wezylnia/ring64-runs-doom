@@ -3,7 +3,7 @@ use crate::memory::{MemoryError, SharedDword};
 
 #[unsafe(no_mangle)]
 pub extern "C" fn core_parallel_abi() -> u32 {
-    3
+    4
 }
 
 fn complete(bridge: &mut Bridge, result: Result<(), MemoryError>) -> i32 {
@@ -157,6 +157,32 @@ fn parallel_vector_dword<const SPAN: bool>(offset: u64, segment: u32) -> u64 {
                 0
             }
         }
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn core_parallel_dword_window(offset: u64) -> i32 {
+    BRIDGE.with_borrow_mut(|bridge| {
+        let core = bridge.core.as_mut().expect("initialized parallel core");
+        let segment = Segment::Ds;
+        let Some(address) = core
+            .context
+            .translate(offset, 4, segment, Access::Read, false)
+            .ok()
+            .filter(|&address| address == offset)
+            .and_then(|address| u32::try_from(address).ok())
+        else {
+            return 0;
+        };
+        let limit = core.context.segment(segment).limit;
+        let Some(window) = core.image.shared_dword_window(address, limit) else {
+            return 0;
+        };
+        let scratch = unsafe { &mut (*core.state.get()).vector_scratch };
+        for (slot, field) in scratch.chunks_exact_mut(4).zip(window) {
+            slot.copy_from_slice(&field.to_le_bytes());
+        }
+        1
     })
 }
 
