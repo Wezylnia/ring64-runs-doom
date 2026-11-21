@@ -57,7 +57,6 @@
   border-inline-start-color: var(--brick);
   background: #f5e6d7;
   color: var(--brick);
-  font-weight: 700;
 }
 
 .docs-toc a:focus-visible {
