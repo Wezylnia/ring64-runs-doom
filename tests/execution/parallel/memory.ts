@@ -720,6 +720,85 @@ export function parallelMemoryScenarios(
       },
     },
     {
+      name: 'shared natural read-store loops preserve short budgets and checked writes',
+      async run() {
+        // MOVZX EAX,[RSI]; CMP EAX,2; JB store; ADD EAX,64;
+        // store: MOV [RDI+RBX],AL; INC RDI; INC RSI; SUB ECX,1; JNE head.
+        const options = linearMachine(
+          compiler,
+          '0fb60683f802720383c04088041f48ffc748ffc683e90175e790',
+        );
+        const table = RAM;
+        const output = RAM + 0x100n;
+        const store = ENTRY + 11n;
+        const stop = ENTRY + 25n;
+        const data = options.memory.backings[1]!.bytes;
+        data.set([1, 2, 3, 0]);
+        data.set([0x7a, 0x7b, 0x7c, 0x7d], 256);
+        const code = options.memory.mappings[0]!;
+        const input = span(table, 'data', 0, 4, 'r');
+        options.memory.mappings = [
+          code,
+          input,
+          span(output, 'data', 256, 1),
+          span(output + 1n, 'data', 257, 3, 'r'),
+        ];
+        await withMachine(factory, options, async (machine) => {
+          const cpu = machine.cpus[0]!;
+          const initial = {
+            ...cpuState(ENTRY, { 1: 4n, 3: 0n, 6: table, 7: output }),
+            flags: 0x202n,
+          };
+          await cpu.setState(initial);
+          exit(
+            await cpu.run({ budget: 20n, stop: store }),
+            'stop',
+            20n,
+            3n,
+            changed(initial, store, { 0: 1n }, 0x297n),
+          );
+          same(
+            [...(await machine.readMemory(output, 4))],
+            [0x7a, 0x7b, 0x7c, 0x7d],
+            'stopped before store',
+          );
+
+          await cpu.setState(initial);
+          const partial = changed(
+            initial,
+            ENTRY + 3n,
+            { 0: 2n, 1: 3n, 6: table + 1n, 7: output + 1n },
+            0x206n,
+          );
+          exit(await cpu.run({ budget: 9n, stop }), 'budget', 9n, 9n, partial);
+          const denied = await cpu.run({ budget: 50n, stop });
+          exit(denied, 'data-fault', 50n, 3n, changed(partial, store, { 0: 0x42n }));
+          fault(denied, {
+            instructionPc: store,
+            address: output + 1n,
+            width: 1,
+            access: 'write',
+            cause: 'permission',
+            failingAddress: output + 1n,
+            segment: 'ds',
+          });
+          same(
+            [...(await machine.readMemory(output, 4))],
+            [1, 0x7b, 0x7c, 0x7d],
+            'only first store retired',
+          );
+
+          await machine.setMappings([code, input, span(output, 'data', 256, 4)]);
+          done(await cpu.run({ budget: 50n, stop }), stop, 22n);
+          same(
+            [...(await machine.readMemory(output, 4))],
+            [1, 0x42, 0x43, 0],
+            'repair resumes the denied store',
+          );
+        });
+      },
+    },
+    {
       name: 'shared indexed float reads keep exact bounds after promotion and remap',
       async run() {
         // MOVSS [RAX+RCX*4]; ADDSS [RBX+RCX*4]; accumulate; count; XCHG [RDI],RAX.
