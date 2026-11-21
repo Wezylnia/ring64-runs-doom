@@ -311,6 +311,8 @@ fn numeric_gpr_views_and_comparison_flags_publish_only_the_selected_projection()
             }
         }
     }
+    // A signalling NaN keeps both compares on the numeric helper path.
+    let a = (a & !0xffff_ffff) | 0x7f80_0001;
     for kind in [Kind::Comi, Kind::Ucomi] {
         for reason in [0, 13] {
             for alias in [false, true] {
@@ -337,6 +339,34 @@ fn numeric_gpr_views_and_comparison_flags_publish_only_the_selected_projection()
         }
     }
     run_cases(cases);
+}
+
+#[test]
+fn f32_flag_compare_falls_back_to_the_helper_under_a_tight_artifact_cap() {
+    let op = numeric(Kind::Comi);
+    let operation = Operation::Float(FloatInstruction {
+        op,
+        dst: 0,
+        src: Location::Register(RegisterView::low(1)),
+    });
+    let unit = unit(vec![instruction(0, operation)]);
+    let direct = emit(&unit);
+    let fallback = emit_profile(&unit, false, false, direct.len() - 1);
+    assert!(fallback.len() < direct.len());
+    let mut case = packet(
+        vec![operation],
+        &[(0, 0x3f80_0000), (1, 0x4000_0000)],
+        &[],
+        1,
+        1,
+    );
+    case["bytes"] = json!(fallback);
+    case["expected"]["flags"] = json!("403");
+    case["accesses"] = json!([
+        {"kind":"float", "args":[op.encode(), "3f800000", "0", "40000000", "0"],
+         "result":{"reason":0, "value":"1"}}
+    ]);
+    run_cases(vec![case]);
 }
 
 #[test]

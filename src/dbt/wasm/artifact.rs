@@ -177,13 +177,17 @@ fn emit_placement(
     } else {
         GuardedReads::Inline
     };
+    let optional = OptionalLowering {
+        extra_spans: true,
+        inline_f32_compares: true,
+    };
     let (bytes, extra_spans) = emit_body(
         unit,
         observed,
         (paged, mmio),
         loop_body,
         reads,
-        true,
+        optional,
         max_artifact_bytes,
     );
     if extra_spans && bytes.len() > max_artifact_bytes {
@@ -202,7 +206,10 @@ fn emit_placement(
             (paged, mmio),
             loop_body,
             reads,
-            false,
+            OptionalLowering {
+                extra_spans: false,
+                ..optional
+            },
             max_artifact_bytes,
         )
         .0;
@@ -238,15 +245,22 @@ enum GuardedReads {
     },
 }
 
+#[derive(Clone, Copy)]
+struct OptionalLowering {
+    extra_spans: bool,
+    inline_f32_compares: bool,
+}
+
 fn emit_body(
     unit: &Unit,
     observed: bool,
     (paged, mmio): (bool, bool),
     loop_body: Option<StructuredLoop>,
     _guard_reads: GuardedReads,
-    _extra_spans: bool,
+    optional: OptionalLowering,
     max_artifact_bytes: usize,
 ) -> (Vec<u8>, bool) {
+    let _extra_spans = optional.extra_spans;
     let vector_banks = vector::Banks::for_unit(unit);
     let has_repeat = unit
         .instructions
@@ -1320,6 +1334,7 @@ fn emit_body(
         vector_store,
         vector_access_reason,
         float,
+        inline_f32_compares: optional.inline_f32_compares,
         load_mxcsr,
         store_mxcsr,
         x87,
@@ -1564,6 +1579,26 @@ fn emit_body(
     }
     let code_start = bytes.len();
     code.append_to(&mut bytes);
+    if bytes.len() > max_artifact_bytes
+        && optional.inline_f32_compares
+        && unit.instructions.iter().any(|instruction| {
+            matches!(instruction.operation, Operation::Float(float) if super::float::is_f32_flag_compare(float))
+        })
+    {
+        // Keep the original placement if the direct compare exceeds its cap.
+        return emit_body(
+            unit,
+            observed,
+            (paged, mmio),
+            loop_body,
+            _guard_reads,
+            OptionalLowering {
+                inline_f32_compares: false,
+                ..optional
+            },
+            max_artifact_bytes,
+        );
+    }
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     if bytes.len() > max_artifact_bytes
         && loop_body.is_some_and(StructuredLoop::shared_memory_prechecked)
@@ -1617,7 +1652,7 @@ fn emit_body(
                     compact,
                     byte_stores: false,
                 },
-                _extra_spans,
+                optional,
                 max_artifact_bytes,
             );
         }
@@ -1630,7 +1665,10 @@ fn emit_body(
             (paged, mmio),
             loop_body,
             _guard_reads,
-            false,
+            OptionalLowering {
+                extra_spans: false,
+                ..optional
+            },
             max_artifact_bytes,
         );
     }
@@ -1647,7 +1685,7 @@ fn emit_body(
             (paged, mmio),
             loop_body,
             GuardedReads::Checked,
-            _extra_spans,
+            optional,
             max_artifact_bytes,
         );
     }
@@ -1673,7 +1711,7 @@ fn emit_body(
                 diamond: false,
                 indexed_read,
             },
-            _extra_spans,
+            optional,
             max_artifact_bytes,
         );
     }
@@ -1698,7 +1736,7 @@ fn emit_body(
                 diamond,
                 indexed_read: false,
             },
-            _extra_spans,
+            optional,
             max_artifact_bytes,
         );
     }
@@ -1720,7 +1758,7 @@ fn emit_body(
                 diamond: false,
                 indexed_read: false,
             },
-            _extra_spans,
+            optional,
             max_artifact_bytes,
         );
     }
@@ -1736,7 +1774,7 @@ fn emit_body(
             (paged, mmio),
             loop_body,
             GuardedReads::Inline,
-            _extra_spans,
+            optional,
             max_artifact_bytes,
         );
     }

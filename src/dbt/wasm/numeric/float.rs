@@ -10,6 +10,10 @@ const PRECISION_STATUS: i32 = 1 << 5;
 const PRECISION_MASK: i32 = 1 << 12;
 pub(super) const MASKED_STICKY_PRECISION: i32 = PRECISION_MASK | PRECISION_STATUS;
 
+pub(super) fn is_f32_flag_compare(instruction: FloatInstruction) -> bool {
+    instruction.op.format == Format::F32 && instruction.writes_flags()
+}
+
 impl Emitter {
     pub(super) fn float(&mut self, instruction: FloatInstruction, next_pc: u64, exit_depth: u32) {
         let [left, right, result] = self.vector_temps();
@@ -43,6 +47,10 @@ impl Emitter {
             }
         }
         self.op(Op::LocalSet(right));
+        if self.inline_f32_compares && is_f32_flag_compare(instruction) {
+            self.float_compare_f32_flags(instruction, left, right, exit_depth);
+            return;
+        }
         if instruction.op.scalar
             && instruction.op.format == Format::F32
             && matches!(instruction.op.kind, Kind::Add | Kind::Mul)
@@ -94,6 +102,53 @@ impl Emitter {
             let destination = self.xmm(instruction.dst);
             self.op(Op::LocalGet(result)).op(Op::LocalSet(destination));
         }
+    }
+
+    fn float_compare_f32_flags(
+        &mut self,
+        instruction: FloatInstruction,
+        left: u32,
+        right: u32,
+        exit_depth: u32,
+    ) {
+        self.op(Op::LocalGet(FLAGS))
+            .op(Op::I64Const(2))
+            .op(Op::I64And);
+        self.op(Op::Block(BlockType::Result(ValType::I64)))
+            .op(Op::Block(BlockType::Empty));
+        for vector in [left, right] {
+            // nan and denormal status stays with the instruction helper.
+            self.op(Op::LocalGet(vector))
+                .op(Op::I32x4ExtractLane(0))
+                .op(Op::I32Const(0x7fff_ffff))
+                .op(Op::I32And)
+                .op(Op::LocalTee(STORE_STATUS))
+                .op(Op::I32Const(0x7f80_0000))
+                .op(Op::I32GtU)
+                .op(Op::LocalGet(STORE_STATUS))
+                .op(Op::I32Const(1))
+                .op(Op::I32Sub)
+                .op(Op::I32Const(0x007f_ffff))
+                .op(Op::I32LtU)
+                .op(Op::I32Or)
+                .op(Op::BrIf(0));
+        }
+        for comparison in [Op::F32Lt, Op::F32Eq] {
+            self.op(Op::LocalGet(left))
+                .op(Op::F32x4ExtractLane(0))
+                .op(Op::LocalGet(right))
+                .op(Op::F32x4ExtractLane(0))
+                .op(comparison);
+        }
+        self.op(Op::I32Const(6))
+            .op(Op::I32Shl)
+            .op(Op::I32Or)
+            .op(Op::I64ExtendI32U)
+            .op(Op::Br(1))
+            .op(Op::End);
+        self.float_helper(instruction, left, right, exit_depth + 1);
+        self.op(Op::I64x2ExtractLane(0)).op(Op::End);
+        self.op(Op::I64Or).op(Op::LocalSet(FLAGS));
     }
 
     fn float_f32_fallback(

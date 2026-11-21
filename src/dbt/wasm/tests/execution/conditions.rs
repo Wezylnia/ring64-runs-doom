@@ -84,11 +84,50 @@ fn scalar_float_compare_replaces_parity_only_on_success() {
             2,
             (&[], flags, next, result as u32, remaining),
         );
+        let mut xmm = ["0"; 16];
+        xmm[0] = "7f800001";
+        packet["xmm"] = json!(xmm);
+        packet["expected"]["xmm"] = packet["xmm"].clone();
         packet["accesses"] = json!([
-            {"kind":"float", "args":[compare.encode(),"0","0","0","0"],
+            {"kind":"float", "args":[compare.encode(),"7f800001","0","0","0"],
              "result":{"reason":status,"value":"45"}}
         ]);
         cases.push(packet);
+    }
+    run_cases(cases);
+}
+
+#[test]
+fn ordered_f32_flag_comparisons_preserve_xmm_and_mxcsr_without_a_helper() {
+    let mut cases = Vec::new();
+    for opcode in [0x2e, 0x2f] {
+        let artifact = compiled_fixture(0x1000, &[0x0f, opcode, 0xc1], 0x1000);
+        for (left, right, status) in [
+            (0u32, 0x80000000u32, 0x40),
+            (0x00800000, 0x7f7fffff, 1),
+            (0x80800000, 0xff7fffff, 0),
+            (0xff800000, 0x7f800000, 1),
+            (0x7f800000, 0x7f800000, 0x40),
+            (0x3f800000, 0x3f800001, 1),
+        ] {
+            let mut packet = execution_case(
+                &artifact.bytes,
+                &artifact.entries,
+                &[],
+                0xed7,
+                0x1000,
+                1,
+                (&[], 0x602 | status, 0x1003, 1, 0),
+            );
+            let mut xmm = [0; 16];
+            xmm[0] = 0x7f800001_80000001_ffffffff_00000000u128 | u128::from(left);
+            xmm[1] = 0x7fc00001_ff800001_807fffff_00000000u128 | u128::from(right);
+            packet["xmm"] = json!(xmm.map(|value| format!("{value:x}")));
+            packet["expected"]["xmm"] = packet["xmm"].clone();
+            packet["mxcsr"] = json!(0xa03f);
+            packet["expected"]["mxcsr"] = packet["mxcsr"].clone();
+            cases.push(packet);
+        }
     }
     run_cases(cases);
 }
