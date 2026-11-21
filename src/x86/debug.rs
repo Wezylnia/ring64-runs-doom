@@ -39,10 +39,16 @@ impl State {
         (start.is_multiple_of(width) && canonical48(start) && canonical48(end))
             .then_some((start, end, kind))
     }
+    pub fn has_enabled_slots(&self) -> bool {
+        self.dr7 & 0xff != 0
+    }
     pub fn active(&self) -> bool {
         (0..4).any(|slot| self.slot(slot).is_some())
     }
     pub fn matches(&self, address: u64, width: u32, access: Access) -> u8 {
+        if !self.has_enabled_slots() {
+            return 0;
+        }
         let Some(end) = width
             .checked_sub(1)
             .and_then(|w| address.checked_add(u64::from(w)))

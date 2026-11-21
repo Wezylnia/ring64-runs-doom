@@ -72,16 +72,15 @@ impl Core {
         if flags & crate::x86::flags::RF != 0 || shadow == 2 {
             return 0;
         }
+        let registers = unsafe { &(*self.state.get()).debug.registers };
+        if !registers.has_enabled_slots() {
+            return 0;
+        }
         let slots = self
             .context
             .translate(pc, 0, Segment::Cs, Access::Execute, false)
             .ok()
-            .map_or(0, |linear| unsafe {
-                (*self.state.get())
-                    .debug
-                    .registers
-                    .matches(linear, 1, Access::Execute)
-            });
+            .map_or(0, |linear| registers.matches(linear, 1, Access::Execute));
         if slots == 0 {
             0
         } else {
@@ -190,6 +189,13 @@ impl Core {
         use crate::x86::debug::{Completion, Deferred, complete};
         let state = unsafe { &mut *self.state.get() };
         let raw = state.debug.continuation;
+        if !state.debug.registers.has_enabled_slots()
+            && decision == 0
+            && self.debug_candidate == 0
+            && raw == Default::default()
+        {
+            return 0;
+        }
         let mut deferred = (raw.slots != 0).then_some(Deferred {
             slots: raw.slots as u8,
             origin: raw.origin,
