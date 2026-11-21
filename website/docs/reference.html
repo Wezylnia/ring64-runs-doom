@@ -1,0 +1,420 @@
+<section id="api" class="docs-section" aria-labelledby="api-title">
+  <h2 id="api-title">api reference</h2>
+  <p>
+    import <code>ring64</code> for a standalone cpu or <code>ring64/parallel</code> for a machine
+    with shared guest memory.
+  </p>
+  <nav class="docs-api-links" aria-label="api categories">
+    <a href="#cpu">cpu</a>
+    <a href="#limits">limits</a>
+    <a href="#run-result">run results</a>
+    <a href="#memory">memory</a>
+    <a href="#state">state</a>
+    <a href="#parallel">parallel</a>
+    <a href="#io">port i/o</a>
+    <a href="#mmio">memory-mapped i/o</a>
+  </nav>
+
+  <section id="cpu" class="docs-api-section" aria-labelledby="cpu-title">
+    <h3 id="cpu-title">cpu</h3>
+    <dl class="docs-members">
+      <div>
+        <dt><code>loadCpuCompiler(): Promise&lt;WebAssembly.Module&gt;</code></dt>
+        <dd>loads the packaged <code>ring64.wasm</code>. reuse the module across cpus.</dd>
+      </div>
+      <div>
+        <dt><code>createCpu(options: Options): Promise&lt;Cpu&gt;</code></dt>
+        <dd>
+          pass a <code>compiler</code> as wasm bytes or a compiled module, plus
+          <a href="#limits">limits</a> and a <a href="#memory">memory configuration</a>.
+          <code>context</code> sets the initial execution mode and segments.
+        </dd>
+      </div>
+      <div>
+        <dt><code>cpu.run(options: RunOptions): Promise&lt;RunResult&gt;</code></dt>
+        <dd>resumes from the current state. read or change state and memory between runs.</dd>
+      </div>
+      <div>
+        <dt><code>cpu.requestInterrupt(vector: number): boolean</code></dt>
+        <dt><code>cpu.requestNmi(): void</code></dt>
+        <dd>
+          queue an interrupt for the next run. irq vectors are 0–255.
+          <code>requestInterrupt</code> returns <code>false</code> if an irq is already queued.
+        </dd>
+      </div>
+      <div>
+        <dt><code>cpu.reset(): void</code></dt>
+        <dt><code>cpu.dispose(): void</code></dt>
+        <dd>
+          <code>reset</code> resets state and preserves memory in physical mode.
+          <code>dispose</code> releases the cpu after its run settles.
+        </dd>
+      </div>
+      <div>
+        <dt><code>cpu.inspectTranslations(): UnitMetadata[]</code></dt>
+        <dd>returns a snapshot of the cached translations.</dd>
+      </div>
+      <div>
+        <dt><code>cpu.creationMs: number</code></dt>
+        <dd>cpu creation time in milliseconds.</dd>
+      </div>
+    </dl>
+  </section>
+
+  <section id="limits" class="docs-api-section" aria-labelledby="limits-title">
+    <h3 id="limits-title">limits</h3>
+    <p>
+      pass all six <code>Limits</code> fields as positive unsigned 32-bit integers. limits apply per
+      vcpu. the <a href="#quickstart">quickstart</a> has a complete example.
+    </p>
+    <dl class="docs-members">
+      <div>
+        <dt><code>maxInstructions</code>, <code>maxSourceBytes</code></dt>
+        <dd>instruction and source byte limits per translation.</dd>
+      </div>
+      <div>
+        <dt><code>maxArtifactBytes</code></dt>
+        <dd>byte limit per generated wasm module.</dd>
+      </div>
+      <div>
+        <dt><code>maxCachedArtifacts</code>, <code>maxCachedBytes</code></dt>
+        <dd>module count and byte limits for the translation cache.</dd>
+      </div>
+      <div>
+        <dt><code>maxTranslationsPerRun</code></dt>
+        <dd>bounds translation attempts and retries per run.</dd>
+      </div>
+    </dl>
+  </section>
+
+  <section id="run-result" class="docs-api-section" aria-labelledby="run-result-title">
+    <h3 id="run-result-title">run options and results</h3>
+    <dl class="docs-members">
+      <div>
+        <dt><code>budget: bigint</code></dt>
+        <dd>maximum guest instructions to retire.</dd>
+      </div>
+      <div>
+        <dt><code>stop?: bigint</code></dt>
+        <dd>stop before executing the instruction at this address.</dd>
+      </div>
+      <div>
+        <dt><code>repeatBudget?: bigint</code></dt>
+        <dd>maximum <code>rep</code> iterations. defaults to <code>budget</code>.</dd>
+      </div>
+      <div>
+        <dt><code>eventDelivery?: { budget: bigint }</code></dt>
+        <dt><code>exceptionDelivery?: { budget: bigint }</code></dt>
+        <dd>
+          enables automatic guest event delivery with a separate budget. pass either spelling.
+        </dd>
+      </div>
+    </dl>
+    <p>
+      <code>RunResult</code> includes <code>state</code>, <code>retired</code> and
+      <code>remaining</code>, and <code>repeatIterations</code> and
+      <code>remainingRepeatBudget</code>. automatic delivery also returns
+      <code>deliveryAttempts</code> and <code>remainingDeliveryBudget</code>.
+      <code>resources</code> counts translation and cache work. <code>timings</code> reports
+      milliseconds.
+    </p>
+    <p>
+      check <code>reason</code> to read a fault's diagnostic. guest faults return results. invalid
+      options and host failures, such as a throwing provider, can reject the run.
+    </p>
+    <dl class="docs-members">
+      <div>
+        <dt><code>stop</code>, <code>budget</code>, <code>repeat-budget</code></dt>
+        <dd>reached the stop address or used up an execution budget.</dd>
+      </div>
+      <div>
+        <dt>
+          <code>event-budget</code>, <code>pending-exception</code>, <code>pending-interrupt</code>
+        </dt>
+        <dd>delivery reached its budget or an event is waiting in <code>state.event</code>.</dd>
+      </div>
+      <div>
+        <dt><code>halted</code>, <code>shutdown</code>, <code>paused</code></dt>
+        <dd>guest halt, guest shutdown or a parallel pause.</dd>
+      </div>
+      <div>
+        <dt><code>unsupported</code>, <code>resource-limit</code></dt>
+        <dd>unsupported operation or a translation limit.</dd>
+      </div>
+      <div>
+        <dt><code>fetch-fault</code>, <code>target-fault</code>, <code>data-fault</code></dt>
+        <dd><code>fault</code> describes the address, access, width and cause.</dd>
+      </div>
+      <div>
+        <dt><code>page-fault</code></dt>
+        <dd><code>pageFault</code> includes the linear address and guest paging error code.</dd>
+      </div>
+      <div>
+        <dt><code>physical-memory-fault</code></dt>
+        <dd><code>physicalMemoryFault</code> describes the guest physical access.</dd>
+      </div>
+      <div>
+        <dt>
+          <code>segment-fault</code>, <code>protection-fault</code>,
+          <code>system-memory-fault</code>
+        </dt>
+        <dd>
+          <code>segmentFault</code>, <code>protectionFault</code> or <code>systemMemoryFault</code>.
+        </dd>
+      </div>
+      <div>
+        <dt>
+          <code>alignment-fault</code>, <code>alignment-check</code>, <code>debug-exception</code>
+        </dt>
+        <dd>
+          <code>alignmentFault</code>, <code>alignmentCheck</code> or <code>debugException</code>.
+        </dd>
+      </div>
+      <div>
+        <dt>
+          <code>simd-exception</code>, <code>x87-exception</code>, <code>general-protection</code>
+        </dt>
+        <dd>
+          <code>simdException</code>, <code>x87Exception</code> or
+          <code>generalProtectionFault</code>.
+        </dd>
+      </div>
+      <div>
+        <dt>
+          <code>invalid-encoding</code>, <code>device-not-available</code>,
+          <code>divide-error</code>
+        </dt>
+        <dd>
+          <code>invalid-encoding</code> can include <code>numericControlFault</code>.
+          <code>device-not-available</code> can include <code>deviceNotAvailable</code>.
+        </dd>
+      </div>
+    </dl>
+  </section>
+
+  <section id="memory" class="docs-api-section" aria-labelledby="memory-title">
+    <h3 id="memory-title">memory</h3>
+    <dl class="docs-members">
+      <div>
+        <dt><code>linear</code></dt>
+        <dd>
+          the default. pass <code>code</code> and <code>ram</code> as
+          <code>{ base: bigint, bytes: Uint8Array }</code>. execution starts at
+          <code>code.base</code>. code is readable and executable, ram is readable and writable.
+        </dd>
+      </div>
+      <div>
+        <dt><code>ia32e-paged</code></dt>
+        <dd>uses guest page tables in long64 or compatibility mode. pass <code>paging</code>.</dd>
+      </div>
+      <div>
+        <dt><code>physical</code></dt>
+        <dd>maps guest physical addresses. pass <code>context</code> and <code>paging</code>.</dd>
+      </div>
+    </dl>
+    <p>
+      custom linear maps, <code>ia32e-paged</code> and <code>physical</code> require
+      <code>entry</code>, <code>memoryLimits</code> and <code>memory: { backings, mappings }</code>.
+      each <code>MemoryBackingInput</code> pairs an <code>id</code> with <code>bytes</code>. each
+      <code>MemoryMapping</code> names a <code>backing</code> and supplies <code>base</code>,
+      <code>offset</code>, <code>length</code> and <code>permissions</code> for <code>read</code>,
+      <code>write</code> and <code>execute</code>. mappings must fit their backing and occupy
+      distinct guest ranges.
+    </p>
+    <p>
+      <code>MemoryLimits</code> requires <code>maxBackingBytes</code>, <code>maxBackings</code> and
+      <code>maxMappings</code>.
+    </p>
+    <dl class="docs-members">
+      <div>
+        <dt><code>readMemory(address: bigint, length: number): Uint8Array</code></dt>
+        <dt><code>writeMemory(address: bigint, bytes: Uint8Array): void</code></dt>
+        <dd>access linear mappings. reads return a copy.</dd>
+      </div>
+      <div>
+        <dt><code>readPhysicalMemory(address: bigint, length: number): Uint8Array</code></dt>
+        <dt><code>writePhysicalMemory(address: bigint, bytes: Uint8Array): void</code></dt>
+        <dd>
+          access guest physical mappings in <code>ia32e-paged</code> or <code>physical</code>. reads
+          return a copy.
+        </dd>
+      </div>
+      <div>
+        <dt><code>addBacking(input: MemoryBackingInput): void</code></dt>
+        <dt><code>removeBacking(id: string): void</code></dt>
+        <dt><code>setMappings(mappings: MemoryMapping[]): void</code></dt>
+        <dd>add bytes, remove an unmapped backing or replace the entire mapping list.</dd>
+      </div>
+    </dl>
+    <p>
+      on a parallel machine, call shared memory and mapping methods on the machine. they return
+      promises.
+    </p>
+  </section>
+
+  <section id="state" class="docs-api-section" aria-labelledby="state-title">
+    <h3 id="state-title">state</h3>
+    <dl class="docs-members">
+      <div>
+        <dt><code>readState(): StateSnapshot</code></dt>
+        <dt><code>setState(state: State): void</code></dt>
+        <dd>
+          instruction pointer, flags, interruptibility, events and interrupts. the
+          <code>Registers</code> tuple follows x86 register order.
+          <code>rax, rcx, rdx, rbx, rsp, rbp, rsi, rdi</code>, then
+          <code>r8</code>–<code>r15</code>.
+        </dd>
+      </div>
+      <div>
+        <dt><code>readContext(): ExecutionContextSnapshot</code></dt>
+        <dt><code>setContext(context: ExecutionContext): void</code></dt>
+        <dd>execution mode, segments and descriptor tables.</dd>
+      </div>
+      <div>
+        <dt><code>readPagingState(): PagingState</code></dt>
+        <dt><code>setPagingState(state: PagingState): void</code></dt>
+        <dt><code>readFastSystemState(): FastSystemState</code></dt>
+        <dt><code>setFastSystemState(state: FastSystemState): void</code></dt>
+        <dd>
+          paging and fast system call state in <code>ia32e-paged</code> or <code>physical</code>.
+        </dd>
+      </div>
+      <div>
+        <dt><code>readXmmState(): bigint[]</code></dt>
+        <dt><code>setXmmState(state: bigint[]): void</code></dt>
+        <dt><code>readMxcsr(): number</code></dt>
+        <dt><code>setMxcsr(value: number): void</code></dt>
+        <dt><code>readX87State(): X87State</code></dt>
+        <dt><code>setX87State(value: X87State): void</code></dt>
+        <dd>16 xmm registers, simd control and x87 floating-point state.</dd>
+      </div>
+      <div>
+        <dt><code>readDebugState(): DebugState</code></dt>
+        <dt><code>setDebugState(state: DebugState): void</code></dt>
+        <dt><code>readTimeState(): TimeState</code></dt>
+        <dt><code>setTimeState(state: TimeState): void</code></dt>
+        <dt><code>readXcr0(): bigint</code></dt>
+        <dt><code>setXcr0(value: bigint): void</code></dt>
+        <dt><code>readProtectionKeysState(): ProtectionKeysState</code></dt>
+        <dt><code>setProtectionKeysState(state: ProtectionKeysState): void</code></dt>
+        <dd>debug registers, guest time, extended register control and protection keys.</dd>
+      </div>
+    </dl>
+  </section>
+
+  <section id="parallel" class="docs-api-section" aria-labelledby="parallel-title">
+    <h3 id="parallel-title">parallel</h3>
+    <p>each vcpu owns its state and runs in a dedicated worker.</p>
+    <details>
+      <summary>browser requirements</summary>
+      <p>
+        keep the package's worker modules and <code>ring64-parallel.wasm</code> available at their
+        relative urls. the browser needs shared memory with atomics and wasm multiple memories.
+        serve the page with these headers to enable cross-origin isolation.
+      </p>
+      <div class="docs-example">
+        <pre><code>Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Embedder-Policy: require-corp</code></pre>
+      </div>
+    </details>
+    <dl class="docs-members">
+      <div>
+        <dt><code>loadParallelCompiler(): Promise&lt;WebAssembly.Module&gt;</code></dt>
+        <dd>loads the packaged <code>ring64-parallel.wasm</code> for reuse across machines.</dd>
+      </div>
+      <div>
+        <dt><code>createMachine(options: MachineOptions): Promise&lt;Machine&gt;</code></dt>
+        <dd>
+          pass a parallel <code>compiler</code>, <code>limits</code>, <code>memoryModel</code>,
+          <code>memory</code> and <code>memoryLimits</code>. set <code>sharedRamCapacity</code> to a
+          positive multiple of 4096 bytes. each backing's size is rounded up to 4096 bytes.
+        </dd>
+      </div>
+      <div>
+        <dt><code>MachineOptions.cpus</code></dt>
+        <dd>
+          supply at least two records with an <code>entry</code> address. paged and physical cpus
+          need <code>paging</code>. physical cpus also need <code>context</code>.
+        </dd>
+      </div>
+      <div>
+        <dt><code>machine.cpus: readonly ParallelCpu[]</code></dt>
+        <dt><code>cpu.run(options: RunOptions): Promise&lt;ParallelRunResult&gt;</code></dt>
+        <dd>
+          handles have an <code>id</code>, async state methods and the
+          <a href="#run-result">same run result shape</a> as a standalone cpu.
+        </dd>
+      </div>
+      <div>
+        <dt><code>cpu.pause(): Promise&lt;void&gt;</code></dt>
+        <dt><code>machine.pause(): Promise&lt;void&gt;</code></dt>
+        <dd>pause one vcpu or the machine. a run that yields returns <code>paused</code>.</dd>
+      </div>
+      <div>
+        <dt><code>cpu.requestInterrupt(vector: number): Promise&lt;boolean&gt;</code></dt>
+        <dt><code>cpu.requestNmi(): Promise&lt;void&gt;</code></dt>
+        <dd>queue an interrupt on a vcpu, including during a run.</dd>
+      </div>
+      <div>
+        <dt><code>cpu.reset(): Promise&lt;void&gt;</code></dt>
+        <dt><code>machine.reset(): Promise&lt;void&gt;</code></dt>
+        <dd>
+          physical mode only. reset one idle vcpu or pause active runs and reset all vcpus. both
+          preserve shared memory.
+        </dd>
+      </div>
+      <div>
+        <dt><code>machine.dispose(): Promise&lt;void&gt;</code></dt>
+        <dd>stops the workers and releases the machine.</dd>
+      </div>
+    </dl>
+  </section>
+
+  <section id="io" class="docs-api-section" aria-labelledby="io-title">
+    <h3 id="io-title">port i/o</h3>
+    <p>
+      pass <code>io?: IoProvider</code> to a cpu or machine. ports are unsigned 16-bit numbers.
+      <code>IoWidth</code> is <code>8 | 16 | 32</code> in bits.
+    </p>
+    <dl class="docs-members">
+      <div>
+        <dt><code>read(port: number, width: IoWidth): number</code></dt>
+        <dd>return an unsigned integer that fits the width.</dd>
+      </div>
+      <div>
+        <dt><code>write(port: number, width: IoWidth, value: number): void</code></dt>
+        <dd>handle the unsigned value and return <code>undefined</code>.</dd>
+      </div>
+    </dl>
+    <p>
+      callbacks are synchronous and run on the host that created the cpu or machine. return from a
+      callback before calling back into it.
+    </p>
+  </section>
+
+  <section id="mmio" class="docs-api-section" aria-labelledby="mmio-title">
+    <h3 id="mmio-title">memory-mapped i/o</h3>
+    <p>
+      pass <code>mmio?: MmioProvider</code> to <code>createCpu</code> on a standalone cpu.
+      <code>ranges</code> lists device regions as <code>{ base: bigint, length: number }</code>. use
+      linear addresses in <code>linear</code> mode and guest physical addresses otherwise. ranges
+      occupy slots in <code>maxMappings</code>
+      and must be disjoint from ram and each other.
+    </p>
+    <dl class="docs-members">
+      <div>
+        <dt><code>read(address: bigint, width: MmioWidth): bigint</code></dt>
+        <dt><code>write(address: bigint, width: MmioWidth, value: bigint): void</code></dt>
+        <dd>
+          <code>MmioWidth</code> is <code>8 | 16 | 32 | 64</code> in bits. callbacks are synchronous
+          and values are unsigned <code>bigint</code> within that width.
+        </dd>
+      </div>
+    </dl>
+    <p>
+      a naturally aligned scalar <code>mov</code> wholly within one range can call the provider.
+      instruction fetches, host memory methods and other guest instructions see device addresses as
+      unmapped. a throwing provider rejects the run.
+    </p>
+  </section>
+</section>

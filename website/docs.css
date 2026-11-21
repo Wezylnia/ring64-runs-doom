@@ -1,58 +1,46 @@
 .docs-shell {
-  container-type: inline-size;
   grid-template-rows: auto 1fr;
 }
 
-.docs-layout {
-  display: grid;
-  grid-template-columns: 9.5rem minmax(0, 1fr);
-  align-items: start;
-  gap: clamp(1.75rem, 5cqi, 4rem);
-  padding-block: clamp(1.75rem, 4cqi, 3rem) 4rem;
+.docs-content {
+  width: min(100%, 42rem);
+  margin-inline: auto;
+  padding-block: clamp(1.75rem, 4vw, 3rem) 4rem;
+  min-inline-size: 0;
+  font-size: 1.0625rem;
+  line-height: 1.58;
 }
 
 .docs-toc {
-  position: sticky;
-  inset-block-start: 1.5rem;
   display: flex;
-  flex-direction: column;
-  align-items: start;
-  gap: 0.375rem;
-  padding-block-start: 0.25rem;
+  flex-wrap: wrap;
+  gap: 0.25rem clamp(1rem, 3vw, 1.75rem);
+  padding-block-end: 0.625rem;
+  border-bottom: 1px solid var(--rule);
+  margin-block-end: 1.625rem;
   font-size: 0.9375rem;
 }
 
 .docs-toc a {
-  min-block-size: 1.75rem;
   align-content: center;
+  min-block-size: 2rem;
   color: var(--muted);
   text-decoration: none;
 }
 
 .docs-toc a:hover,
-.docs-toc a:focus-visible,
-.docs-toc a[aria-current='page'] {
+.docs-toc a:focus-visible {
   color: var(--brick);
   text-decoration: underline;
 }
 
-.docs-reference-link {
-  margin-block-start: 0.5rem;
-  font-weight: 650;
-}
-
-.docs-content {
-  min-inline-size: 0;
-  max-inline-size: 48rem;
-}
-
-.docs-section {
-  scroll-margin-block-start: 1.5rem;
+.docs-content [id] {
+  scroll-margin-block-start: 1.25rem;
 }
 
 .docs-section + .docs-section {
-  margin-block-start: clamp(2.75rem, 6cqi, 4.5rem);
-  padding-block-start: clamp(1.75rem, 3cqi, 2.5rem);
+  margin-block-start: 2rem;
+  padding-block-start: 1.625rem;
   border-block-start: 1px solid var(--rule);
 }
 
@@ -60,93 +48,124 @@
 .docs-content h2,
 .docs-content h3 {
   margin-block: 0 0.625rem;
-  font-family: var(--font-print);
-  font-weight: 500;
-  font-style: italic;
+  color: var(--ink);
+  line-height: 1.1;
   letter-spacing: -0.025em;
-  text-wrap: balance;
 }
 
 .docs-content h1 {
-  font-size: clamp(2.625rem, 6cqi, 4rem);
-  line-height: 1.04;
+  font-size: clamp(2.125rem, 5vw, 3rem);
+  font-weight: 750;
 }
 
 .docs-content h2 {
-  font-size: clamp(1.875rem, 3.5cqi, 2.5rem);
-  line-height: 1.12;
+  font-size: 1.625rem;
+  font-weight: 700;
 }
 
-.docs-content h3,
-.docs-content .docs-subtitle {
-  margin-block-start: 1.75rem;
-  font-size: 1.5rem;
-}
-
-.docs-content p,
-.docs-content li,
-.docs-reference dd {
-  max-inline-size: 65ch;
-  font: clamp(1.0625rem, 2cqi, 1.1875rem) / 1.5 var(--font-print);
+.docs-content h3 {
+  font-size: 1.2rem;
+  font-weight: 700;
 }
 
 .docs-content p + p {
   margin-block-start: 0.625rem;
 }
 
-.docs-content .docs-lead {
-  color: var(--muted);
-  font-size: clamp(1.1875rem, 2.5cqi, 1.375rem);
+.docs-content p a,
+.docs-content summary:hover {
+  color: var(--brick);
 }
 
 .docs-content code {
   font-family: var(--font-code);
   font-size: 0.8em;
-}
-
-.docs-content p code,
-.docs-content li code,
-.docs-reference dd code {
-  color: var(--brick);
   overflow-wrap: anywhere;
 }
 
-.docs-example {
-  margin-block: 1.125rem;
-  border: 1px solid var(--rule);
-  background: color-mix(in srgb, var(--paper) 89%, var(--rule));
+.docs-content :is(p, li, dd) code {
+  color: var(--brick);
 }
 
-.docs-example-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  min-height: 2rem;
-  padding-inline: 0.875rem 0.375rem;
-  border-block-end: 1px solid var(--rule);
-  color: var(--muted);
-  font: 0.75rem var(--font-code);
+.docs-content details {
+  margin-block-start: 0.5rem;
 }
 
-.docs-example-bar button {
+.docs-section > details:first-of-type {
+  margin-block-start: 0.875rem;
+}
+
+.docs-content summary {
+  width: fit-content;
   min-height: 2rem;
-  padding-inline: 0.5rem;
-  border: 0;
-  background: transparent;
-  color: var(--ink);
-  font: 0.8125rem var(--font-site);
+  align-content: center;
+  font-weight: 650;
   cursor: pointer;
 }
 
-.docs-example-bar button:hover {
+.docs-content summary::marker {
   color: var(--brick);
+}
+
+.docs-content details[open] > summary {
+  margin-block-end: 0.625rem;
+}
+
+.docs-example,
+.docs-install {
+  margin-block: 0.875rem;
+  border: 1px solid var(--rule);
+  background: #f5e6d7;
+}
+
+.docs-example-bar,
+.docs-install {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.375rem;
+  padding-inline: 0.875rem 0.375rem;
+  color: var(--muted);
+  min-block-size: 2.125rem;
+}
+
+.docs-example-bar {
+  border-block-end: 1px solid var(--rule);
+  font: 0.8125rem var(--font-code);
+}
+
+.docs-install {
+  width: fit-content;
+  max-width: 100%;
+  gap: 1rem;
+  color: var(--ink);
+}
+
+.docs-example-bar button,
+.docs-install button {
+  min-height: 2.125rem;
+  min-width: 3.5rem;
+  padding-inline: 0.375rem;
+  border: 0;
+  background: transparent;
+  color: var(--brick);
+  font: 0.875rem var(--font-site);
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.docs-example-bar button:hover,
+.docs-install button:hover {
+  text-decoration: underline;
 }
 
 .docs-content pre {
   margin: 0;
-  overflow: auto;
   padding: 0.875rem;
-  font: 0.8125rem / 1.55 var(--font-code);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  tab-size: 2;
+  font: 0.875rem / 1.6 var(--font-code);
 }
 
 .docs-content pre code {
@@ -167,35 +186,42 @@
   color: #665952;
 }
 
-.docs-reference {
-  margin: 1.125rem 0 0;
+.docs-api-section {
+  margin-block-start: 1.5rem;
 }
 
-.docs-reference dt {
-  margin-block: 1rem 0.125rem;
-  font-size: 1rem;
-  font-weight: 650;
-  overflow-wrap: anywhere;
+.docs-api-section + .docs-api-section {
+  border-block-start: 1px solid var(--rule);
+  padding-block-start: 1.25rem;
 }
 
-.docs-reference dd {
-  margin: 0;
+.docs-members {
+  margin-block: 0.75rem 0;
 }
 
-@container (max-width: 44rem) {
-  .docs-layout {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 1.5rem;
-  }
+.docs-members > div + div {
+  margin-block-start: 0.75rem;
+}
 
-  .docs-toc {
-    position: static;
-    flex-direction: row;
-    flex-wrap: wrap;
-    gap: 0.125rem 1rem;
-  }
+.docs-members dt {
+  line-height: 1.35;
+  color: var(--ink);
+}
 
-  .docs-reference-link {
-    margin-block-start: 0;
-  }
+.docs-members dt code {
+  font-weight: 600;
+}
+
+.docs-members dd {
+  margin: 0.1875rem 0 0;
+  font-size: 0.9375rem;
+  color: var(--muted);
+}
+
+.docs-api-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1.25rem;
+  margin-block-start: 0.5rem;
+  font-size: 0.9375rem;
 }

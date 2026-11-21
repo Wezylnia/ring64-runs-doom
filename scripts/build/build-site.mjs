@@ -41,12 +41,13 @@ try {
   await mkdir(demo, { recursive: true });
 
   const entries = await readdir(source, { withFileTypes: true });
-  const [masthead, canvas, controls] = await Promise.all([
+  const [masthead, canvas, controls, reference] = await Promise.all([
     readFile(join(source, 'masthead.html'), 'utf8'),
     readFile(join(wetInk, 'canvas.html'), 'utf8'),
     readFile(join(wetInk, 'controls.html'), 'utf8'),
+    readFile(join(source, 'docs/reference.html'), 'utf8'),
   ]);
-  const exampleNames = ['add.ts', 'add.c', 'add-c.ts', 'parallel.ts'];
+  const exampleNames = ['add.ts', 'add.c'];
   const examples = await Promise.all(
     exampleNames.map(async (name) => {
       const code = await readFile(join(source, 'docs/examples', name), 'utf8');
@@ -54,15 +55,13 @@ try {
         .value;
     }),
   );
-  for (const page of [
-    'index.html',
-    'under-the-ink/index.html',
-    'docs/index.html',
-    'docs/api/index.html',
-  ]) {
+  for (const page of ['index.html', 'under-the-ink/index.html', 'docs/index.html']) {
     let html = await readFile(join(source, page), 'utf8');
-    for (const [index, name] of exampleNames.entries()) {
-      html = html.replace(`<!-- example:${name} -->`, () => examples[index]);
+    if (page === 'docs/index.html') {
+      html = html.replace('<!-- docs-reference -->', () => reference.trimEnd());
+      for (const [index, name] of exampleNames.entries()) {
+        html = html.replace(`<!-- example:${name} -->`, () => examples[index]);
+      }
     }
     const destination = join(staged, page);
     const siteRoot = posix.relative(posix.dirname(page), '.') || '.';
@@ -86,6 +85,7 @@ try {
   }
   if (entries.some((entry) => entry.name === 'assets' && entry.isDirectory()))
     await cp(join(source, 'assets'), assets, { recursive: true });
+  await cp(join(source, 'docs/examples'), join(staged, 'docs/examples'), { recursive: true });
   await mkdir(guestAssets, { recursive: true });
 
   await copyFile(join(root, 'assets/logo.svg'), join(assets, 'logo.svg'));
