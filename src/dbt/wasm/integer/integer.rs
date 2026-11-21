@@ -221,12 +221,22 @@ impl Emitter {
             .op(Op::I64Const(16))
             .op(Op::I64And)
             .op(Op::I64Or);
-        self.op(Op::LocalGet(RESULT))
-            .op(Op::I64Eqz)
-            .op(Op::I64ExtendI32U)
-            .op(Op::I64Const(6))
-            .op(Op::I64Shl)
-            .op(Op::I64Or);
+        self.op(Op::LocalGet(RESULT));
+        if !cfg!(feature = "parallel")
+            && self.loop_gates_prechecked
+            && self
+                .structured_loop
+                .is_some_and(|(body, _)| body.forward_edges() && body.order().earlier == body.head)
+        {
+            // Only zero has 64 leading zeros, the packed ZF bit.
+            self.op(Op::I64Clz).op(Op::I64Const(0x40)).op(Op::I64And);
+        } else {
+            self.op(Op::I64Eqz)
+                .op(Op::I64ExtendI32U)
+                .op(Op::I64Const(6))
+                .op(Op::I64Shl);
+        }
+        self.op(Op::I64Or);
         self.op(Op::LocalGet(RESULT))
             .op(Op::I64Const(i64::from(width.bits() - 1)))
             .op(Op::I64ShrU)
