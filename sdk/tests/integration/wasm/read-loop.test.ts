@@ -185,6 +185,68 @@ test('dependent dword reads wrap the scaled index and resume at the faulting ins
   }
 });
 
+test('Long64 dependent dword reads preserve full indices and resume a denied load', async () => {
+  const code = hex('8b4483fc'.repeat(4) + '83e90175eb');
+  // MOV EAX,[RBX+RAX*4-4] four times, followed by SUB ECX,1; JNE head.
+  const high = 0xffff_8000_0000_4000n;
+  const index = 0x1_0000_0000n;
+  const data = hex('63000000020000000300000001000000');
+  const farData = hex('01000000');
+  const codeMap = {
+    ...mapping(head, 'code', code.length),
+    permissions: { ...readOnly, execute: true },
+  };
+  const dataMap = mapping(high, 'indices', data.length);
+  const farMap = mapping(high + 4n * index, 'far-index', farData.length);
+  const cpu = await createCpu({
+    compiler,
+    entry: head,
+    limits: LIMITS,
+    memory: {
+      backings: [
+        { id: 'code', bytes: code },
+        { id: 'indices', bytes: data },
+        { id: 'far-index', bytes: farData },
+      ],
+      mappings: [codeMap, { ...dataMap, length: 12 }, farMap],
+    },
+    memoryLimits: {
+      maxBackings: 3,
+      maxMappings: 3,
+      maxBackingBytes: code.length + data.length + farData.length,
+    },
+  });
+  try {
+    const budget = 12n;
+    const stop = head + BigInt(code.length);
+    const input = initial(head, { 0: index, 1: 1n, 3: high + 4n }, 0x893n);
+    cpu.setState(input);
+    const denied = await cpu.run({ budget, stop });
+    const faultPc = head + 12n;
+    exit(denied, 'data-fault', budget, 3n, changed(input, faultPc, { 0: 3n }));
+    fault(denied, {
+      instructionPc: faultPc,
+      address: high + 12n,
+      width: 4,
+      access: 'read',
+      cause: 'unmapped',
+      failingAddress: high + 12n,
+      segment: 'ds',
+    });
+
+    cpu.setMappings([codeMap, dataMap, farMap]);
+    exit(
+      await cpu.run({ budget, stop }),
+      'stop',
+      budget,
+      3n,
+      changed(input, stop, { 0: 1n, 1: 0n }, 0x46n),
+    );
+  } finally {
+    cpu.dispose();
+  }
+});
+
 test('SIMD read loops resume from interior PCs and validate every backing after remapping', async () => {
   const code = body();
   const stop = head + BigInt(code.length);
