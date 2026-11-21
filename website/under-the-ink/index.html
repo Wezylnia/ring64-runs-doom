@@ -7,15 +7,18 @@
     <meta name="description" content="the story behind wet ink, a live x86-64 artwork." />
     <title>under the ink</title>
     <link rel="icon" href="../assets/favicon.svg" type="image/svg+xml" />
+    <link
+      rel="preload"
+      href="../assets/fonts/national-park.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
     <link rel="stylesheet" href="../style.css" />
   </head>
   <body>
     <div class="shell ink-essay">
-      <header class="masthead">
-        <a class="wordmark" href="../">
-          <img src="../assets/logo.svg" width="300" height="146" alt="ring64" />
-        </a>
-      </header>
+      <!-- site-masthead -->
       <main class="ink-essay-content">
         <article>
           <h1 class="ink-essay-title">under the ink</h1>
@@ -70,6 +73,7 @@
         </article>
       </main>
     </div>
+    <script type="module" src="../site.js"></script>
     <script type="module" src="../wet-ink/index.js"></script>
   </body>
 </html>

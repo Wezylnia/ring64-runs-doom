@@ -10,7 +10,7 @@ import {
   rm,
   writeFile,
 } from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, posix, resolve } from 'node:path';
 import { build } from 'esbuild';
 
 const root = resolve(import.meta.dirname, '../..');
@@ -34,16 +34,20 @@ try {
   await mkdir(demo, { recursive: true });
 
   const entries = await readdir(source, { withFileTypes: true });
-  const [canvas, controls] = await Promise.all(
-    ['canvas.html', 'controls.html'].map((name) => readFile(join(wetInk, name), 'utf8')),
-  );
+  const [masthead, canvas, controls] = await Promise.all([
+    readFile(join(source, 'masthead.html'), 'utf8'),
+    readFile(join(wetInk, 'canvas.html'), 'utf8'),
+    readFile(join(wetInk, 'controls.html'), 'utf8'),
+  ]);
   for (const page of ['index.html', 'under-the-ink/index.html']) {
     const html = await readFile(join(source, page), 'utf8');
     const destination = join(staged, page);
+    const siteRoot = posix.relative(posix.dirname(page), '.') || '.';
     await mkdir(dirname(destination), { recursive: true });
     await writeFile(
       destination,
       html
+        .replace('<!-- site-masthead -->', () => masthead.replaceAll('{{root}}', siteRoot).trim())
         .replace('<!-- wet-ink-canvas -->', () => canvas.trim())
         .replace('<!-- wet-ink-controls -->', () => controls.trim()),
     );
