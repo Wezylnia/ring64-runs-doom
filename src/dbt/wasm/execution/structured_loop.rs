@@ -28,7 +28,10 @@ pub(super) struct StructuredLoop {
 
 impl StructuredLoop {
     pub(super) fn dword_writes(self, unit: &super::Unit) -> u16 {
-        if self.kind != LoopKind::Registers || unit.context.is_long64() {
+        if cfg!(feature = "parallel")
+            || self.kind != LoopKind::Registers
+            || unit.context.is_long64()
+        {
             return 0;
         }
         let mut writes = 0;
@@ -113,6 +116,9 @@ impl StructuredLoop {
     }
 
     pub(super) fn select(instructions: &[Instruction]) -> Option<Self> {
+        if cfg!(feature = "parallel") {
+            return Self::select_body(instructions, LoopKind::Registers);
+        }
         Self::select_body(instructions, LoopKind::Float)
             .or_else(|| Self::select_body(instructions, LoopKind::IntegerReads))
             .or_else(|| {
@@ -433,18 +439,21 @@ impl Emitter {
             }
         }
         let order = body.order();
-        let predicates = if self.loop_gates_prechecked && body.forward_edges() {
-            super::loop_cfg::compare_predicates(instructions, order, &self.context)
-        } else {
-            Vec::new()
-        };
+        let predicates =
+            if !cfg!(feature = "parallel") && self.loop_gates_prechecked && body.forward_edges() {
+                super::loop_cfg::compare_predicates(instructions, order, &self.context)
+            } else {
+                Vec::new()
+            };
         if body.forward_edges() {
             // Each later cloned instruction has an enclosing forward label.
             for _ in 1..order.len() {
                 self.op(Op::Block(BlockType::Empty));
             }
         }
-        let defer_read_flags = self.loop_gates_prechecked && body.kind == LoopKind::IntegerReads;
+        let defer_read_flags = !cfg!(feature = "parallel")
+            && self.loop_gates_prechecked
+            && body.kind == LoopKind::IntegerReads;
         let mut flags_on_next_read_fault = None;
         for position in 0..order.len() {
             let ordinal = order.at(position) as usize;
@@ -455,7 +464,9 @@ impl Emitter {
             let depth = inner_depth + body.active_labels(self.current_index);
             self.structured_loop = Some((body, depth));
             // The complete-lap guard and the no-fault body rule hide intermediate status.
-            self.omit_result_status = body.kind == LoopKind::Registers
+            // A worker signal can publish flags at any instruction entry.
+            self.omit_result_status = !cfg!(feature = "parallel")
+                && body.kind == LoopKind::Registers
                 && self.loop_gates_prechecked
                 && status_effect(instructions[ordinal].operation) == StatusEffect::Replace
                 && instructions[ordinal + 1..body.tail as usize + 1]

@@ -295,11 +295,7 @@ fn register_loop_reuses_the_checked_entries_for_partial_laps() {
         0x90,
     ];
     let artifact = compiled_fixture(0x1000, &code, 0x1000);
-    let specialized = !cfg!(feature = "parallel");
-    assert_eq!(
-        wasm_loop_count(&artifact.bytes),
-        1 + usize::from(specialized)
-    );
+    assert_eq!(wasm_loop_count(&artifact.bytes), 2);
     let input = [(0, 0x40000001), (1, 2), (3, 0x40)];
     let mut cases = Vec::new();
     for (pc, budget, stop, writes, flags, next, reason, remaining) in [
@@ -386,7 +382,7 @@ fn register_loop_reuses_the_checked_entries_for_partial_laps() {
     let limits = crate::dbt::Limits {
         max_instructions: 16,
         max_source_bytes: 64,
-        max_artifact_bytes: executable_artifact_size(&artifact.bytes) - u32::from(specialized),
+        max_artifact_bytes: executable_artifact_size(&artifact.bytes) - 1,
     };
     let fallback = crate::dbt::compile(&image, 0x1000, limits).unwrap();
     assert_eq!(wasm_loop_count(&fallback.bytes), 1);

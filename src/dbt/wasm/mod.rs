@@ -591,10 +591,7 @@ pub(crate) fn emit_profile(
     max_artifact_bytes: usize,
 ) -> Vec<u8> {
     let observed = observed || paged;
-    if !observed
-        && !cfg!(feature = "parallel")
-        && let Some(loop_body) = StructuredLoop::select(&unit.instructions)
-    {
+    if !observed && let Some(loop_body) = StructuredLoop::select(&unit.instructions) {
         let bytes = emit_placement(
             unit,
             observed,
