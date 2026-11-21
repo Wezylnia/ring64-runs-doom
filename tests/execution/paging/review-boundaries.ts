@@ -431,6 +431,93 @@ export function pagingBoundaryReviewScenarios(compiler: WebAssembly.Module): Sce
       },
     },
     {
+      name: 'paged compatibility reads preserve flat data and checked segment boundaries',
+      async run() {
+        const head = 0x3fffd0n;
+        for (const layout of ['dword', 'byte', 'nonflat', 'limit', 'wrap', 'no-read'] as const) {
+          const execution = context('compatibility');
+          execution.segments.cs.base = 0x30n;
+          if (layout === 'nonflat') execution.segments.ds.base = 0x400000n;
+          if (layout === 'limit') execution.segments.ds.limit = 0x40100b;
+          const byte = layout === 'byte';
+          const payload = byte
+            ? Uint8Array.of(0xff, 0x34, 42, 7)
+            : little([0x12345678ffffffffn, 0x000000070000002an]);
+          const code = byte
+            ? '0fb6070fb6070fb64f010fb6570283c0010fb61e83ed0175ea'
+            : '8b078b078b4f048b570883c0018b1e83ed0175ee';
+          const data = layout === 'nonflat' ? 0x1000n : 0x401000n;
+          const fourth = layout === 'wrap' ? 0xfffffffen : data + (byte ? 3n : 12n);
+          const fault =
+            layout === 'limit' || layout === 'wrap'
+              ? 'segment-fault'
+              : layout === 'no-read'
+                ? 'physical-memory-fault'
+                : undefined;
+          await usingPaged(
+            compiler,
+            {
+              code,
+              context: execution,
+              words: [
+                [0x1000n, 0x2027n],
+                [0x2000n, 0x3027n],
+                [0x3010n, 0x4027n],
+                [0x4000n, 0x9027n],
+                [0x4008n, 0xa027n],
+              ],
+              spans:
+                layout === 'no-read'
+                  ? [
+                      { physical: 0xa000n, bytes: payload.slice(0, 12) },
+                      { physical: 0xa00cn, bytes: payload.slice(12), read: false },
+                    ]
+                  : [{ physical: 0xa000n, bytes: payload }],
+            },
+            async (cpu) => {
+              const high = 0xaabbccdd00000000n;
+              cpu.setState(
+                initial(
+                  head,
+                  {
+                    0: high,
+                    2: 0n,
+                    3: high | 0x1234n,
+                    5: 2n,
+                    6: high | fourth,
+                    7: high | data,
+                  },
+                  2n,
+                ),
+              );
+              const result = await cpu.run({ budget: 16n, stop: head + BigInt(code.length / 2) });
+              equal(result.reason, fault ?? 'stop', layout);
+              equal(result.retired, fault ? 5n : 15n, 'preserve exact iteration or prefix');
+              equal(
+                result.state.rip,
+                head + (fault ? 13n : BigInt(code.length / 2)),
+                'CS-relative PC',
+              );
+              equal(
+                result.state.registers[0],
+                high | (byte ? 256n : 0n),
+                '32-bit writes preserve high bank',
+              );
+              equal(result.state.registers[2], 42n, 'earlier load remains committed');
+              equal(
+                result.state.registers[3],
+                high | (fault ? 0x1234n : 7n),
+                'failing load publishes no destination',
+              );
+              equal(result.state.flags, fault ? 0x57n : 0x46n, 'exact prefix or last-lap flags');
+              if (fault === 'segment-fault')
+                equal(result.segmentFault?.segment, 'ds', 'checked DS has priority over page walk');
+            },
+          );
+        }
+      },
+    },
+    {
       name: 'paging review native cross-page fetch discards an owner invalidated by its one accessed-bit update',
       async run() {
         await usingPaged(

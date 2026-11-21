@@ -354,6 +354,17 @@ impl ExecutionContext {
         (self.segment_base(Segment::Cs).checked_add(offset) == Some(linear)).then_some(linear)
     }
 
+    // A flat readable DS makes the 32-bit effective offset the linear
+    // address. Naturally aligned byte and dword loads stay within its limit.
+    #[cfg(not(feature = "parallel"))]
+    pub(crate) fn flat_paged_data32(&self) -> bool {
+        matches!(self.mode(), Mode::Protected | Mode::Compatibility)
+            && self.code32()
+            && self.segment_base(Segment::Ds) == 0
+            && self.segment(Segment::Ds).limit == u32::MAX
+            && self.translate(0, 1, Segment::Ds, Access::Read, false).ok() == Some(0)
+    }
+
     #[cfg(not(feature = "parallel"))]
     pub(crate) fn single_page_code_span(&self, offset: u64, bytes: u32) -> bool {
         if bytes == 0 || bytes > 0x1000 {

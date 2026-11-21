@@ -56,8 +56,15 @@ fn fixture(family: &str, warm: bool, executable: bool) -> Vec<u8> {
         "mappings":[{"base":"0x0","backing":"ram","offset":0,"length":40960,
             "permissions":{"read":true,"write":true,"execute":executable}}]
     });
+    let compatibility =
+        (family == "compat32").then(|| serde_json::to_vec(&config["context"]).unwrap());
     let length = mapped_input(config, &bytes);
     assert_eq!(mapped::core_init_mapped(PC, length), 0, "{family}");
+    if let Some(input) = compatibility {
+        // The IA32e initializer starts in Long64; the SDK then imports context.
+        BRIDGE.with_borrow_mut(|bridge| bridge.input = input);
+        assert_eq!(super::super::context::core_set_context(), 0, "{family}");
+    }
     BRIDGE.with_borrow_mut(|bridge| unsafe {
         let state = &mut *bridge.core.as_mut().unwrap().state.get();
         state.registers[0] = 0x1122334455667788;
@@ -282,6 +289,25 @@ fn reached_paged_32_bit_instruction_uses_the_translated_cs_span() {
         assert_eq!(
             physical_counts::take(),
             [reads, reads * u64::from(width), 0, 0, 0, 0],
+            "{family}"
+        );
+        assert_eq!(paging::core_paged_loop_guard(PC, 3, 2, 0), 1, "{family}");
+        assert_eq!(
+            paging::core_paged_read_loop_guard32(PC, 3, 2, 0),
+            1,
+            "{family}"
+        );
+        BRIDGE.with_borrow_mut(|bridge| {
+            bridge
+                .core
+                .as_mut()
+                .unwrap()
+                .context
+                .set_segment_base(Segment::Ds, 1);
+        });
+        assert_eq!(
+            paging::core_paged_read_loop_guard32(PC, 3, 2, 0),
+            2,
             "{family}"
         );
         assert_eq!(paging::core_paged_loop_guard(PC, 3, 2, 0), 1, "{family}");

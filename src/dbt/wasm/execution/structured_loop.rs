@@ -197,33 +197,31 @@ impl StructuredLoop {
 
     #[cfg(not(feature = "parallel"))]
     pub(super) fn select_paged_reads(unit: &super::Unit) -> Option<Self> {
-        if !unit.context.is_long64()
-            || !unit
-                .instructions
-                .iter()
-                .any(|i| paged_read_width(i.operation).is_some())
-        {
+        let long64 = unit.context.is_long64();
+        if !long64 && !unit.context.flat_paged_data32() {
+            return None;
+        }
+        let address_size = (!long64).then_some(Width::W32);
+        let read = |operation| paged_read_width(operation, address_size).is_some();
+        if !unit.instructions.iter().any(|i| read(i.operation)) {
             return None;
         }
         let simple = Self::select_straight_body(
             &unit.instructions,
             LoopKind::PagedReads,
-            |op| inside_register_body(op) || paged_read_width(op).is_some(),
-            |body| {
-                body.iter()
-                    .filter_map(|instruction| paged_read_width(instruction.operation))
-                    .take(4)
-                    .count()
-                    == 4
-            },
+            |op| inside_register_body(op) || read(op),
+            |body| body.iter().filter(|i| read(i.operation)).take(4).count() == 4,
         );
         simple
             .or_else(|| {
+                if !long64 {
+                    return None;
+                }
                 super::loop_cfg::select_paged_read_graph(&unit.instructions, |body| {
-                    body.iter().any(|i| paged_read_width(i.operation).is_some())
+                    body.iter().any(|i| read(i.operation))
                         && body.iter().all(|i| {
                             inside_register_body(i.operation)
-                                || paged_read_width(i.operation).is_some()
+                                || read(i.operation)
                                 || matches!(
                                     i.operation,
                                     Operation::Jump { .. } | Operation::Jcc { .. }
@@ -241,7 +239,7 @@ impl StructuredLoop {
         let mut widths = [false; 2];
         if self.paged_fetch_bytes.is_some() {
             for instruction in &unit.instructions[self.earlier as usize..self.tail as usize] {
-                match paged_read_width(instruction.operation) {
+                match paged_read_width(instruction.operation, None) {
                     Some(Width::W8) => widths[0] = true,
                     Some(Width::W32) => widths[1] = true,
                     _ => {}
@@ -253,7 +251,10 @@ impl StructuredLoop {
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     pub(super) fn with_paged_read_span(mut self, unit: &super::Unit) -> Option<Self> {
-        if self.kind != LoopKind::PagedReads || self.paged_read_widths(unit) != [true, false] {
+        if !unit.context.is_long64()
+            || self.kind != LoopKind::PagedReads
+            || self.paged_read_widths(unit) != [true, false]
+        {
             return None;
         }
         let proof = super::read_loop::ReadLoop::recognize_integer(
@@ -482,30 +483,32 @@ fn inside_register_body(operation: Operation) -> bool {
 }
 
 #[cfg(not(feature = "parallel"))]
-fn paged_read_width(operation: Operation) -> Option<Width> {
+fn paged_read_width(operation: Operation, address_size: Option<Width>) -> Option<Width> {
     use crate::x86::context::Segment;
 
-    match operation {
+    let (address, width) = match operation {
         Operation::Load {
             width: Width::W32,
             address,
             ..
-        }
-        | Operation::MemoryAlu {
+        } => (address, Width::W32),
+        Operation::MemoryAlu {
             kind: Alu::Cmp,
             width: Width::W32,
             address,
             ..
-        } if address.segment == Segment::Ds => Some(Width::W32),
+        } if address_size.is_none() => (address, Width::W32),
         Operation::Extend {
             src: Location::Memory(address),
             source_width: Width::W8,
             width: Width::W32,
             signed: false,
             ..
-        } if address.segment == Segment::Ds => Some(Width::W8),
-        _ => None,
-    }
+        } => (address, Width::W8),
+        _ => return None,
+    };
+    (address.segment == Segment::Ds && address_size.is_none_or(|size| size == address.size))
+        .then_some(width)
 }
 
 fn integer_read(operation: Operation) -> bool {

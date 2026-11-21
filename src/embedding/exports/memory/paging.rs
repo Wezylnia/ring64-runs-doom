@@ -290,6 +290,22 @@ impl Core {
 #[cfg(not(feature = "parallel"))]
 #[unsafe(no_mangle)]
 pub extern "C" fn core_paged_loop_guard(pc: u64, bytes: u32, flags: u64, shadow: u32) -> i32 {
+    paged_loop_guard::<false>(pc, bytes, flags, shadow)
+}
+
+#[cfg(not(feature = "parallel"))]
+#[unsafe(no_mangle)]
+pub extern "C" fn core_paged_read_loop_guard32(
+    pc: u64,
+    bytes: u32,
+    flags: u64,
+    shadow: u32,
+) -> i32 {
+    paged_loop_guard::<true>(pc, bytes, flags, shadow)
+}
+
+#[cfg(not(feature = "parallel"))]
+fn paged_loop_guard<const FLAT_DATA32: bool>(pc: u64, bytes: u32, flags: u64, shadow: u32) -> i32 {
     use crate::x86::flags::{RF, TF};
 
     if flags & (RF | TF) != 0 || shadow != 0 {
@@ -298,7 +314,8 @@ pub extern "C" fn core_paged_loop_guard(pc: u64, bytes: u32, flags: u64, shadow:
     BRIDGE.with_borrow_mut(|bridge| {
         let core = bridge.core.as_mut().unwrap();
         let state = unsafe { &*core.state.get() };
-        if !core.context.single_page_code_span(pc, bytes)
+        if (FLAT_DATA32 && !core.context.flat_paged_data32())
+            || !core.context.single_page_code_span(pc, bytes)
             || state.event.kind != 0
             || state.interrupts != Default::default()
             || state.debug.registers.active()
@@ -311,7 +328,7 @@ pub extern "C" fn core_paged_loop_guard(pc: u64, bytes: u32, flags: u64, shadow:
             return 0;
         }
         // The active owner covers every loop byte. A retained executable page
-        // covers the whole lap; register-only instructions cannot change it.
+        // covers the whole lap; admitted operands preserve its translation.
         core.clear_paged_instruction();
         core.reconcile_translation_changes();
         1

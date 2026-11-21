@@ -271,6 +271,123 @@ fn paged_rotated_compare_requires_its_whole_code_span_and_a_ds_operand() {
     }
 }
 
+#[cfg(not(feature = "parallel"))]
+#[test]
+fn paged_32_bit_reads_require_flat_ds_and_dword_addresses() {
+    use crate::memory::Image;
+    use crate::x86::context::{ExecutionContext, Mode, Segment, SegmentType};
+
+    let mut context = ExecutionContext::default();
+    context.set_mode_and_cpl(Mode::Protected, 0);
+    let mut cs = context.segment(Segment::Cs);
+    cs.default32 = true;
+    let mut cs_attributes = context.attributes(Segment::Cs);
+    cs_attributes.long = false;
+    context.set_segment(Segment::Cs, 8, cs, cs_attributes);
+    for (mode, base, limit, usable, kind, addr32, guarded) in [
+        (
+            Mode::Protected,
+            0,
+            u32::MAX,
+            true,
+            SegmentType::ReadWrite,
+            true,
+            true,
+        ),
+        (
+            Mode::Compatibility,
+            0,
+            u32::MAX,
+            true,
+            SegmentType::ReadWrite,
+            true,
+            true,
+        ),
+        (
+            Mode::Protected,
+            1,
+            u32::MAX,
+            true,
+            SegmentType::ReadWrite,
+            true,
+            false,
+        ),
+        (
+            Mode::Protected,
+            0,
+            0xffff,
+            true,
+            SegmentType::ReadWrite,
+            true,
+            false,
+        ),
+        (
+            Mode::Protected,
+            0,
+            u32::MAX,
+            false,
+            SegmentType::ReadWrite,
+            true,
+            false,
+        ),
+        (
+            Mode::Protected,
+            0,
+            u32::MAX,
+            true,
+            SegmentType::ExpandDownReadOnly,
+            true,
+            false,
+        ),
+        (
+            Mode::Protected,
+            0,
+            u32::MAX,
+            true,
+            SegmentType::ReadWrite,
+            false,
+            false,
+        ),
+    ] {
+        context.set_mode_and_cpl(mode, 0);
+        let mut ds = context.segment(Segment::Ds);
+        (ds.base, ds.limit, ds.usable, ds.kind) = (base, limit, usable, kind);
+        context.set_segment(Segment::Ds, 24, ds, context.attributes(Segment::Ds));
+        let mut code = Vec::new();
+        for _ in 0..4 {
+            if !addr32 {
+                code.push(0x67);
+            }
+            code.extend_from_slice(&[0x8b, 0x07]); // mov eax, [edi] / [bx]
+        }
+        code.extend_from_slice(&[0x83, 0xe9, 1]);
+        code.extend_from_slice(&[0x75, 0u8.wrapping_sub(code.len() as u8 + 2)]);
+        let image = Image::new(0x1000, code, 0x8000, vec![0; 8]).unwrap();
+        let artifact = crate::dbt::compile_with_context(
+            &image,
+            &context,
+            0x1000,
+            crate::dbt::Limits {
+                max_instructions: 64,
+                max_source_bytes: 256,
+                max_artifact_bytes: 65536,
+            },
+        )
+        .unwrap();
+        let unit = Unit {
+            context: context.clone(),
+            ..unit(artifact.instructions)
+        };
+        let bytes = emit_profile(&unit, true, true, usize::MAX);
+        assert_eq!(
+            wasm_loop_count(&bytes),
+            if guarded { 3 } else { 1 },
+            "{mode:?}: DS={ds:?} addr32={addr32}"
+        );
+        wasmparser::Validator::new().validate_all(&bytes).unwrap();
+    }
+}
+
 #[test]
 fn register_loop_keeps_carry_live_through_zero_count_and_partial_writers() {
     let code = [

@@ -894,8 +894,14 @@ fn emit_body(
         write_segment_base_type.map(|index| import_function("write_segment_base", index));
     let processor = processor_type.map(|index| import_function("processor", index));
     let protection_key = protection_key_type.map(|index| import_function("protection_key", index));
-    let paged_loop_guard =
-        paged_loop_guard_type.map(|index| import_function("paged_loop_guard", index));
+    let paged_loop_guard = paged_loop_guard_type.map(|index| {
+        let name = if !unit.context.is_long64() && (paged_read_byte || paged_read_dword) {
+            "paged_read_loop_guard32"
+        } else {
+            "paged_loop_guard"
+        };
+        import_function(name, index)
+    });
     let paged_loop_read_byte = paged_loop_read_type
         .filter(|_| paged_read_byte)
         .map(|index| import_function("paged_loop_read_byte", index));
