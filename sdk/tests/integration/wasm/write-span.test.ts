@@ -3,7 +3,16 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { createCpu } from '../../../src/index.js';
 import { Core } from '../../../src/wasm/core.js';
-import { LIMITS, fault, hex, initial } from '../../../../tests/support/fixture.js';
+import { protectedSnapshot } from '../../../../tests/support/context.js';
+import {
+  LIMITS,
+  changed,
+  exit,
+  fault,
+  hex,
+  initial,
+  memory,
+} from '../../../../tests/support/fixture.js';
 
 const compiler = await WebAssembly.compile(
   new Uint8Array(await readFile(new URL('../../../../build/ring64.wasm', import.meta.url))),
@@ -196,6 +205,86 @@ test('a loop store crossing its cached span admits the entire operand before pub
       failingAddress: data + 6n,
       segment: 'ds',
     });
+  } finally {
+    cpu.dispose();
+  }
+});
+
+test('fixed stack slots preserve the spill and compare flags when the following load faults', async () => {
+  const head = 0x31000n;
+  const esp = 0x49000n;
+  const stack = esp + 16n;
+  const spill = esp + 24n;
+  // Spill first, then CMP/JB over the middle slot's load. SUB replaces flags on success.
+  const code = hex('8b5424108954241883f80172068b4c241489ca83ee0175e890');
+  const stackBytes = hex('01000000efcdab89aaaaaaaa');
+  const codeMap = {
+    base: head,
+    backing: 'code',
+    offset: 0,
+    length: code.length,
+    permissions: { read: true, write: false, execute: true },
+  };
+  const stackMap = {
+    base: stack,
+    backing: 'stack',
+    offset: 0,
+    length: stackBytes.length,
+    permissions: { read: true, write: true, execute: false },
+  };
+  const cpu = await createCpu({
+    compiler,
+    entry: head,
+    context: protectedSnapshot(),
+    limits: LIMITS,
+    memory: {
+      backings: [
+        { id: 'code', bytes: code },
+        { id: 'stack', bytes: stackBytes },
+      ],
+      mappings: [codeMap, stackMap],
+    },
+    memoryLimits: {
+      maxBackings: 2,
+      maxMappings: 3,
+      maxBackingBytes: code.length + stackBytes.length,
+    },
+  });
+  try {
+    const input = initial(head, { 0: 0x80000000n, 1: 0n, 2: 0n, 4: esp, 6: 1n });
+    const stop = head + 24n;
+    const budget = 20n;
+    cpu.setState(input);
+    const completed = await cpu.run({ budget, stop });
+    exit(
+      completed,
+      'stop',
+      budget,
+      8n,
+      changed(input, stop, { 1: 0x89abcdefn, 2: 0x89abcdefn, 6: 0n }, 0x46n),
+    );
+    memory(cpu, spill, '01000000');
+
+    cpu.setMappings([
+      codeMap,
+      { ...stackMap, length: 4 },
+      { ...stackMap, base: spill, offset: 8, length: 4 },
+    ]);
+    cpu.writeMemory(spill, hex('aaaaaaaa'));
+    cpu.setState(input);
+    const denied = await cpu.run({ budget, stop });
+    const faultPc = head + 13n;
+    exit(denied, 'data-fault', budget, 4n, changed(input, faultPc, { 2: 1n }, 0x816n));
+    fault(denied, {
+      instructionPc: faultPc,
+      address: esp + 20n,
+      width: 4,
+      access: 'read',
+      cause: 'unmapped',
+      failingAddress: esp + 20n,
+      segment: 'ss',
+    });
+    memory(cpu, spill, '01000000');
   } finally {
     cpu.dispose();
   }
