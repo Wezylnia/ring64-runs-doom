@@ -22,36 +22,13 @@
   <body>
     <div class="shell">
       <header class="masthead">
-        <a class="wordmark" href="./">
-          <img src="./assets/logo.svg" width="300" height="146" alt="ring64" />
-        </a>
-        <nav aria-label="project links">
-          <a href="https://www.npmjs.com/package/ring64">npm</a>
-          <a href="https://github.com/fatihguzeldev/ring64" id="github-link">
-            github
-            <span id="github-stars" class="star-count" aria-hidden="true" hidden>
-              <svg
-                viewBox="0 0 24 24"
-                width="15"
-                height="15"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.65"
-              >
-                <path
-                  d="m12 3 2.8 5.7 6.3.9-4.5 4.4 1.1 6.2-5.7-3-5.7 3 1.1-6.2-4.5-4.4 6.3-.9z"
-                  stroke-linejoin="round"
-                />
-              </svg>
-              <span id="github-star-value"></span>
-            </span>
+        <div class="project-brand">
+          <a class="wordmark" href="./">
+            <img src="./assets/logo.svg" width="300" height="146" alt="ring64" />
           </a>
-        </nav>
-      </header>
-
-      <main>
-        <div class="intro">
-          <h1>x86 cpu emulator for javascript runtimes</h1>
+          <p class="project-slogan">x86 cpu emulator for javascript runtimes</p>
+        </div>
+        <div class="project-actions">
           <div class="install">
             <code id="install-command">npm install ring64</code>
             <button
@@ -86,23 +63,39 @@
             </button>
             <span id="copy-status" class="visually-hidden" role="status"></span>
           </div>
+          <nav aria-label="project links">
+            <a href="https://www.npmjs.com/package/ring64"><span class="nav-label">npm</span></a>
+            <a href="https://github.com/fatihguzeldev/ring64" id="github-link">
+              <span id="github-stars" class="star-count" aria-hidden="true" hidden>
+                <svg
+                  viewBox="0 0 24 24"
+                  width="15"
+                  height="15"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.65"
+                >
+                  <path
+                    d="m12 3 2.8 5.7 6.3.9-4.5 4.4 1.1 6.2-5.7-3-5.7 3 1.1-6.2-4.5-4.4 6.3-.9z"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+                <span id="github-star-value"></span>
+              </span>
+              <span class="nav-label">github</span>
+            </a>
+          </nav>
         </div>
+      </header>
 
-        <figure class="wet-ink" aria-label="wet ink">
-          <div id="ink-stage" class="ink-stage">
-            <canvas
-              id="ink"
-              width="3840"
-              height="2160"
-              tabindex="0"
-              aria-label="interactive flowing ink"
-              aria-describedby="ink-guide"
-            ></canvas>
-            <p id="status" class="ink-status" role="status"></p>
-            <noscript><p class="ink-status">enable javascript to run the ink.</p></noscript>
-          </div>
+      <main>
+        <figure class="wet-ink" aria-labelledby="wet-ink-title">
           <figcaption class="ink-caption">
-            <p>live ink from an x86-64 program.</p>
+            <h1 id="wet-ink-title">wet ink</h1>
+            <p>
+              red and black ink curls as you stir it. ring64 runs the x86-64 program live in your
+              browser.
+            </p>
             <span id="ink-guide" class="visually-hidden">
               stir with the pointer or arrow keys. press space on the canvas to pause or resume.
             </span>
@@ -175,6 +168,18 @@
               </button>
             </div>
           </figcaption>
+          <div id="ink-stage" class="ink-stage">
+            <canvas
+              id="ink"
+              width="3840"
+              height="2160"
+              tabindex="0"
+              aria-label="interactive flowing ink"
+              aria-describedby="ink-guide"
+            ></canvas>
+            <p id="status" class="ink-status" role="status"></p>
+            <noscript><p class="ink-status">enable javascript to run the ink.</p></noscript>
+          </div>
         </figure>
       </main>
 
