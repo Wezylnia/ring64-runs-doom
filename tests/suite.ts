@@ -1,5 +1,6 @@
 import { resetScenarios } from './execution/reset/index.js';
 import { ioScenarios } from './execution/io/index.js';
+import { mmioScenarios } from './execution/mmio/index.js';
 import { numericControlScenarios } from './execution/numeric-controls.js';
 import { integerScenarios } from './execution/integer/index.js';
 import { stackScenarios } from './execution/stack/index.js';
@@ -62,6 +63,7 @@ export async function runScenarios(
     ...modeScenarios(core),
     ...stringScenarios(core),
     ...ioScenarios(core),
+    ...mmioScenarios(core),
     ...nearControlScenarios(core),
     ...exchangeScenarios(core),
     ...simdScenarios(core),

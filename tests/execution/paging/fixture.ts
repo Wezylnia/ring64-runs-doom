@@ -5,6 +5,7 @@ import {
   type Limits,
   type PagingState,
   type IoProvider,
+  type MmioProvider,
 } from '../../../sdk/src/index.js';
 import { LIMITS, hex } from '../../support/fixture.js';
 export { check, equal, hex, initial, same, type Scenario } from '../../support/fixture.js';
@@ -33,6 +34,7 @@ export function word(cpu: Cpu, physical: bigint): bigint {
 
 export interface PagedSetup {
   io?: IoProvider;
+  mmio?: MmioProvider;
   code?: string;
   words?: readonly (readonly [bigint, bigint])[];
   spans?: readonly {
@@ -97,6 +99,7 @@ export async function usingPaged(
   const cpu = await createCpu({
     compiler,
     ...(setup.io === undefined ? {} : { io: setup.io }),
+    ...(setup.mmio === undefined ? {} : { mmio: setup.mmio }),
     memoryModel: 'ia32e-paged',
     paging: setup.bank ?? BANK,
     memory: { backings, mappings },

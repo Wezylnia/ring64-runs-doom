@@ -1,4 +1,11 @@
-import { createCpu, loadCpuCompiler, type Cpu, type Options, type RunOptions } from 'ring64';
+import {
+  createCpu,
+  loadCpuCompiler,
+  type Cpu,
+  type MmioProvider,
+  type Options,
+  type RunOptions,
+} from 'ring64';
 import {
   createMachine,
   loadParallelCompiler,
@@ -129,4 +136,17 @@ export function checkFaultDiagnostics(result: import('ring64').RunResult): void 
 
 export function checkParallelPageFault(result: import('ring64/parallel').ParallelRunResult): void {
   if (result.reason === 'page-fault') void result.pageFault.address;
+}
+
+export function checkMmio(
+  options: Options,
+  machineOptions: MachineOptions,
+  mmio: MmioProvider,
+): Promise<Cpu> {
+  const width: import('ring64').MmioWidth = 64;
+  const value: bigint = mmio.read(0n, width);
+  void value;
+  // @ts-expect-error Worker machines do not yet expose MMIO.
+  void createMachine({ ...machineOptions, mmio });
+  return createCpu({ ...options, mmio });
 }
