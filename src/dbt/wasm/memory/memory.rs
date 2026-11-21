@@ -192,6 +192,16 @@ impl Emitter {
         exit_depth: u32,
     ) {
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if !for_write
+            && width == Width::W32
+            && self.loop_gates_prechecked
+            && let Some(window) = self.indexed_read_window
+            && window.address == address
+        {
+            self.load_indexed_dword(window, next_pc, exit_depth);
+            return;
+        }
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         if !for_write && width == Width::W8 && self.load_proved_byte(address, next_pc) {
             return;
         }
@@ -215,6 +225,127 @@ impl Emitter {
         self.address(address, next_pc);
         self.op(Op::LocalSet(ADDRESS));
         self.load_address_value(width, for_write, exit_depth);
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn guard_indexed_read_window(
+        &mut self,
+        window: super::read_loop::IndexedReadWindow,
+        lap: u32,
+    ) {
+        use super::{LHS, REMAINING, RHS};
+        use crate::memory::DirectSpan;
+
+        let field = |offset, align| MemArg {
+            offset,
+            align,
+            memory_index: 0,
+        };
+        self.op(Op::I64Const(0)).op(Op::LocalSet(window.limit));
+        self.op(Op::Block(BlockType::Empty))
+            .op(Op::LocalGet(REMAINING))
+            .op(Op::I64Const(i64::from(lap)))
+            .op(Op::I64LtU)
+            .op(Op::BrIf(0));
+        self.address(
+            Address {
+                index: None,
+                ..window.address
+            },
+            0,
+        );
+        self.op(Op::LocalTee(ADDRESS))
+            .op(Op::I32Const(4))
+            .op(Op::I32Const(window.address.segment as i32))
+            .op(Op::Call(window.span.resolve))
+            .op(Op::LocalTee(STORE_STATUS))
+            .op(Op::I32Eqz)
+            .op(Op::BrIf(0));
+        self.op(Op::LocalGet(ADDRESS))
+            .op(Op::LocalGet(STORE_STATUS))
+            .op(Op::I64Load(field(
+                std::mem::offset_of!(DirectSpan, base) as u64,
+                3,
+            )))
+            .op(Op::I64Sub)
+            .op(Op::LocalSet(LHS));
+        self.op(Op::LocalGet(STORE_STATUS))
+            .op(Op::I32Load(field(
+                std::mem::offset_of!(DirectSpan, host) as u64,
+                2,
+            )))
+            .op(Op::LocalGet(LHS))
+            .op(Op::I32WrapI64)
+            .op(Op::I32Add)
+            .op(Op::LocalSet(window.host));
+        self.op(Op::LocalGet(STORE_STATUS))
+            .op(Op::I64Load32U(field(
+                std::mem::offset_of!(DirectSpan, length) as u64,
+                2,
+            )))
+            .op(Op::LocalGet(LHS))
+            .op(Op::I64Sub)
+            .op(Op::LocalSet(VALUE));
+        let end = u64::from(self.context.segment(window.address.segment).limit) + 1;
+        self.op(Op::LocalGet(VALUE))
+            .op(Op::I64Const(end as i64))
+            .op(Op::LocalGet(ADDRESS))
+            .op(Op::I64Sub)
+            .op(Op::LocalTee(RHS))
+            .op(Op::LocalGet(VALUE))
+            .op(Op::LocalGet(RHS))
+            .op(Op::I64LtU)
+            .op(Op::Select)
+            .op(Op::LocalSet(VALUE));
+        let shift = window.address.index.unwrap().scale.trailing_zeros();
+        // The admitted anchor is readable for four bytes. Trim later starts
+        // to the same mapping and segment before scaling their indices.
+        self.op(Op::LocalGet(VALUE))
+            .op(Op::I64Const(4))
+            .op(Op::I64Sub)
+            .op(Op::I64Const(i64::from(shift)))
+            .op(Op::I64ShrU)
+            .op(Op::I64Const(1))
+            .op(Op::I64Add)
+            .op(Op::LocalSet(window.limit))
+            .op(Op::End);
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    fn load_indexed_dword(
+        &mut self,
+        window: super::read_loop::IndexedReadWindow,
+        next_pc: u64,
+        exit_depth: u32,
+    ) {
+        let address = window.address;
+        let index = address.index.unwrap();
+        self.register(index.register, address.size);
+        self.op(Op::LocalTee(VALUE))
+            .op(Op::LocalGet(window.limit))
+            .op(Op::I64LtU)
+            .op(Op::If(BlockType::Empty))
+            .op(Op::LocalGet(window.host))
+            .op(Op::LocalGet(VALUE))
+            .op(Op::I32WrapI64);
+        if index.scale != 1 {
+            self.op(Op::I32Const(index.scale.trailing_zeros() as i32))
+                .op(Op::I32Shl);
+        }
+        self.op(Op::I32Add);
+        self.direct_scalar_load(
+            Width::W32,
+            MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            },
+        );
+        self.op(Op::Else);
+        self.address(address, next_pc);
+        self.op(Op::LocalSet(ADDRESS));
+        self.load_address_value(Width::W32, false, exit_depth + 1);
+        self.op(Op::End);
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]

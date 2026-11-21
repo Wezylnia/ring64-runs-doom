@@ -132,6 +132,8 @@ struct Emitter {
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     proved_stack: Option<(stack_slots::StackSlots, u32)>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    indexed_read_window: Option<read_loop::IndexedReadWindow>,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     proved_reads: Option<(read_loop::ReadLoop, u32)>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     proved_read_retry: Option<(u32, u32)>, // tail ordinal and one-shot retry local
@@ -748,6 +750,7 @@ fn emit_placement(
             sticky: true,
             dyadic: true,
             diamond: true,
+            indexed_read: true,
         }
     } else {
         GuardedReads::Inline
@@ -809,6 +812,7 @@ enum GuardedReads {
         sticky: bool,
         dyadic: bool,
         diamond: bool,
+        indexed_read: bool,
     },
 }
 
@@ -1836,6 +1840,29 @@ fn emit_body(
         })
     });
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let indexed_read_window = loop_body.and_then(|body| {
+        if !matches!(
+            _guard_reads,
+            GuardedReads::Outlined {
+                indexed_read: true,
+                ..
+            }
+        ) {
+            return None;
+        }
+        let span = read_span?;
+        let address = body.indexed_read_address(unit)?;
+        let host = next_local;
+        locals.extend([(1, ValType::I32), (1, ValType::I64)]);
+        next_local += 2;
+        Some(read_loop::IndexedReadWindow {
+            address,
+            span,
+            host,
+            limit: host + 1,
+        })
+    });
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let proved_integer_reads = loop_body.and_then(|body| {
         let span = read_span?;
         let proof = (_guard_reads != GuardedReads::Checked)
@@ -2013,6 +2040,8 @@ fn emit_body(
         write_spans: [None; 2],
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         proved_stack: None,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        indexed_read_window,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         proved_reads: None,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -2403,7 +2432,12 @@ fn emit_body(
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if bytes.len() > max_artifact_bytes
         && read_loop_diamond.is_some()
-        && let GuardedReads::Outlined { sticky, dyadic, .. } = _guard_reads
+        && let GuardedReads::Outlined {
+            sticky,
+            dyadic,
+            indexed_read,
+            ..
+        } = _guard_reads
     {
         // Keep the original loop placement when only the merged latch is too large.
         return emit_body(
@@ -2415,6 +2449,32 @@ fn emit_body(
                 sticky,
                 dyadic,
                 diamond: false,
+                indexed_read,
+            },
+            _extra_spans,
+            max_artifact_bytes,
+        );
+    }
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    if bytes.len() > max_artifact_bytes
+        && indexed_read_window.is_some()
+        && let GuardedReads::Outlined {
+            sticky,
+            dyadic,
+            diamond,
+            ..
+        } = _guard_reads
+    {
+        return emit_body(
+            unit,
+            observed,
+            paged,
+            loop_body,
+            GuardedReads::Outlined {
+                sticky,
+                dyadic,
+                diamond,
+                indexed_read: false,
             },
             _extra_spans,
             max_artifact_bytes,
@@ -2436,6 +2496,7 @@ fn emit_body(
                 sticky: sticky && outline.dyadic.is_some(),
                 dyadic: false,
                 diamond: false,
+                indexed_read: false,
             },
             _extra_spans,
             max_artifact_bytes,

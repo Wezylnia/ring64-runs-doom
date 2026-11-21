@@ -125,6 +125,17 @@ impl StructuredLoop {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn indexed_read_address(self, unit: &super::Unit) -> Option<Address> {
+        if self.kind != LoopKind::IntegerReads {
+            return None;
+        }
+        super::read_loop::IndexedReadWindow::recognize(
+            &unit.context,
+            &unit.instructions[self.head as usize..=self.tail as usize],
+        )
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     pub(super) fn integer_read_proof(
         self,
         unit: &super::Unit,
@@ -466,6 +477,10 @@ impl Emitter {
         write_segment_base: Option<u32>,
     ) {
         self.op(Op::If(BlockType::Empty));
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if let Some(window) = self.indexed_read_window {
+            self.guard_indexed_read_window(window, body.max_lap_len);
+        }
         #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
         let trial = if let Some((_, _, budget_floor)) = self.parallel_vector_span {
             let lap = i64::from(body.max_lap_len);

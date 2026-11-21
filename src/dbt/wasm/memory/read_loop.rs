@@ -7,6 +7,94 @@ use crate::x86::{
     },
 };
 
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[derive(Clone, Copy)]
+pub(super) struct IndexedReadWindow {
+    pub(super) address: Address,
+    pub(super) span: super::memory::SpanCache,
+    pub(super) host: u32,
+    pub(super) limit: u32,
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+impl IndexedReadWindow {
+    pub(super) fn recognize(context: &ExecutionContext, body: &[Instruction]) -> Option<Address> {
+        use crate::{
+            memory::Access,
+            x86::context::{Mode, Segment},
+        };
+        if context.mode() != Mode::Protected || !context.code32() {
+            return None;
+        }
+        let [loads @ .., counter, branch] = body else {
+            return None;
+        };
+        if !matches!(branch.operation, Operation::Jcc {
+            condition: Condition::NotEqual, target
+        } if target == body.first()?.pc)
+        {
+            return None;
+        }
+        let Operation::Alu {
+            kind: Alu::Add | Alu::Sub,
+            dst: counter,
+            src: DataOperand::Immediate(_),
+            ..
+        } = counter.operation
+        else {
+            return None;
+        };
+        let first = loads.first()?.operation;
+        let (normalize, loads) = if matches!(first, Operation::Mov { .. }) {
+            (Some(first), &loads[1..])
+        } else {
+            (None, loads)
+        };
+        let Operation::Load {
+            dst,
+            address,
+            width: Width::W32,
+        } = loads.first()?.operation
+        else {
+            return None;
+        };
+        let AddressBase::Register(base) = address.base else {
+            return None;
+        };
+        let index = address.index?;
+        if dst.high_byte
+            || index.register != dst.bank
+            || base == index.register
+            || counter.bank == base
+            || counter.bank == index.register
+            || address.segment != Segment::Ds
+            || address.size != Width::W32
+            || context
+                .translate(0, 4, address.segment, Access::Read, false)
+                .ok()
+                != Some(0)
+        {
+            return None;
+        }
+        let load = Operation::Load {
+            dst,
+            address,
+            width: Width::W32,
+        };
+        let self_mov = Operation::Mov {
+            dst,
+            src: DataOperand::Register(dst),
+            width: Width::W32,
+        };
+        (normalize.is_none_or(|operation| operation == self_mov)
+            && loads.len() >= 4
+            && loads
+                .iter()
+                .all(|instruction| instruction.operation == load))
+        .then_some(address)
+    }
+}
+
 #[derive(Clone, Copy)]
 struct Stream {
     first: Address,
