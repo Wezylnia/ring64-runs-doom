@@ -130,9 +130,13 @@ impl Image {
             .shared
             .expect("shared backing binding");
         let absolute = backing.offset + mapping.offset + relative;
-        Ok(layout
-            .direct_lane_allowed(absolute, width, access == Access::Write)
-            .then_some(absolute))
+        if (absolute & 7) + width > 8
+            || !layout.unpromoted(absolute)
+            || access == Access::Write && layout.watched(absolute, width)
+        {
+            return Ok(None);
+        }
+        Ok(Some(absolute))
     }
 
     #[cfg(target_arch = "wasm32")]
@@ -217,8 +221,7 @@ impl Image {
         let mut offsets = [0; 16];
         let offsets = &mut offsets[..width as usize];
         self.offsets(address, offsets, index);
-        self.shared_rmw = layout.begin_rmw(offsets);
-        self.shared_rmw.is_some()
+        layout.begin_rmw(offsets, &mut self.shared_rmw)
     }
 
     #[cfg(target_arch = "wasm32")]

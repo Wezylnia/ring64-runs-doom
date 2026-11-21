@@ -186,7 +186,7 @@ impl SharedLayout {
         self.guards + ((absolute - self.base) / 64) * 4
     }
 
-    fn watched(self, start: u32, length: u32) -> bool {
+    pub(super) fn watched(self, start: u32, length: u32) -> bool {
         let mut cur = start - self.base;
         let end = cur + length;
         while cur < end {
@@ -321,10 +321,8 @@ impl SharedLayout {
 
     #[cfg(target_arch = "wasm32")]
     #[inline]
-    pub(super) fn direct_lane_allowed(self, absolute: u32, width: u32, write: bool) -> bool {
-        (absolute & 7) + width <= 8
-            && unsafe { load_control(self.stripe(absolute)) } == 0
-            && (!write || !self.watched(absolute, width))
+    pub(super) fn unpromoted(self, absolute: u32) -> bool {
+        unsafe { load_control(self.stripe(absolute)) == 0 }
     }
 
     #[cfg(target_arch = "wasm32")]
@@ -337,9 +335,7 @@ impl SharedLayout {
     pub(super) fn byte_store_room(self, absolute: u32) -> Option<u32> {
         let in_word = (absolute - self.base) & 31;
         // Both the source-watch word and its containing stripe must stay clear.
-        if unsafe { load_control(self.stripe(absolute)) } != 0
-            || self.watched(absolute - in_word, 32)
-        {
+        if !self.unpromoted(absolute) || self.watched(absolute - in_word, 32) {
             return None;
         }
         Some(32 - in_word)
@@ -347,9 +343,9 @@ impl SharedLayout {
 
     #[cfg(target_arch = "wasm32")]
     #[inline]
-    pub(super) fn begin_rmw(self, offsets: &[u32]) -> Option<SharedHeld> {
+    pub(super) fn begin_rmw(self, offsets: &[u32], hold: &mut Option<SharedHeld>) -> bool {
         if self.has_watched_byte(offsets) {
-            return None;
+            return false;
         }
         let (stripes, count) = self.stripes(offsets);
         let stripes = &stripes[..count];
@@ -361,14 +357,15 @@ impl SharedLayout {
                 let _grant = SharedExclusive::acquire();
                 self.promote(stripes);
             }
-            return None;
+            return false;
         }
-        self.try_hold(stripes, true)
+        *hold = self.try_hold(stripes, true);
+        hold.is_some()
     }
 
     // True leaves the read to generated Wasm. Otherwise publish the loaded dword
     // while the stripe hold or exclusive grant is still live.
-    #[inline]
+    #[inline(always)]
     pub(super) fn read_contiguous_dword<const NATIVE_DWORD: bool>(
         self,
         absolute: u32,
