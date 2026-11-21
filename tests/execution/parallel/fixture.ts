@@ -23,6 +23,8 @@ type RunOptions = Parameters<Cpu['run']>[0];
 export type TestCpu = AsyncMethods<
   | 'readState'
   | 'setState'
+  | 'readXmmState'
+  | 'setXmmState'
   | 'readContext'
   | 'readDebugState'
   | 'setDebugState'

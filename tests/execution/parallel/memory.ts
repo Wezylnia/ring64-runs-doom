@@ -1,5 +1,5 @@
 import { context } from '../modes/fixture.js';
-import type { Scenario } from '../../support/fixture.js';
+import { fault, type Scenario } from '../../support/fixture.js';
 import {
   ENTRY,
   RAM,
@@ -252,6 +252,64 @@ export function parallelMemoryScenarios(
           );
           same(await words(machine, at, 1), [low], 'even swap count returns original full value');
           equal(w.state.registers[0], high, 'writer register holds the other complete value');
+        });
+      },
+    },
+    {
+      name: 'shared SIMD dword reads preserve lanes and precise split faults',
+      async run() {
+        // MOVSS XMM0,FS:[RAX]; MOVSS XMM1,FS:[RBX].
+        const options = linearMachine(compiler, '64f30f100064f30f100b');
+        const tls = 0x1_0000_4000n;
+        options.cpus[0]!.context = { mode: 'long64', fsBase: tls, gsBase: 0n };
+        options.memory.backings[1]!.bytes.set(Uint8Array.from({ length: 130 }, (_, i) => i));
+        const tail = span(tls + 64n, 'data', 128, 2);
+        options.memory.mappings.splice(1, 1, span(tls, 'data', 0, 64), {
+          ...tail,
+          permissions: { ...tail.permissions, read: false },
+        });
+        await withMachine(factory, options, async (machine) => {
+          const cpu = machine.cpus[0]!;
+          const raw = Array<bigint>(16).fill(0x1234567890abcdef1122334455667788n);
+          const stop = ENTRY + 10n;
+          const read = async (second: bigint) => {
+            await cpu.setState(cpuState(ENTRY, { 0: 1n, 3: second }));
+            await cpu.setXmmState(raw);
+            return cpu.run({ budget: 3n, stop });
+          };
+          done(await read(5n), stop, 2n);
+          same(
+            await cpu.readXmmState(),
+            [0x04030201n, 0x08070605n, ...raw.slice(2)],
+            'same-lane and cross-lane unaligned dwords both clear the upper bits',
+          );
+
+          const denied = await read(62n);
+          equal(denied.reason, 'data-fault', 'denied second fragment');
+          equal(denied.state.rip, ENTRY + 5n, 'retry at MOVSS');
+          equal(denied.retired, 1n, 'only the first MOVSS retired');
+          fault(denied, {
+            instructionPc: ENTRY + 5n,
+            address: tls + 62n,
+            width: 4,
+            access: 'read',
+            cause: 'permission',
+            failingAddress: tls + 64n,
+            segment: 'fs',
+          });
+          same(
+            await cpu.readXmmState(),
+            [0x04030201n, ...raw.slice(1)],
+            'fault preserves destination',
+          );
+
+          await machine.setMappings([...options.memory.mappings.slice(0, 2), tail]);
+          done(await cpu.run({ budget: 2n, stop }), stop, 1n);
+          same(
+            await cpu.readXmmState(),
+            [0x04030201n, 0x81803f3en, ...raw.slice(2)],
+            'retry assembles both readable fragments',
+          );
         });
       },
     },
