@@ -391,6 +391,75 @@ export function parallelMemoryScenarios(
       },
     },
     {
+      name: 'shared indexed dword reads stop at the DS limit and restart after address repair',
+      async run() {
+        // MOV EAX,[EDI+ESI]; ADD ESI,4; DEC ECX; JNE entry.
+        const code = hex('8b043783c6044975f7');
+        const options = linearMachine(compiler, code);
+        const top = 0xfffffff0n;
+        const stop = ENTRY + BigInt(code.length);
+        options.cpus[0]!.context = context('protected');
+        options.memory.mappings[1] = span(top, 'data', 3, 32, 'r');
+        const data = new DataView(options.memory.backings[1]!.bytes.buffer);
+        // The first two reads map to backing offsets 8 and 12.
+        data.setUint32(8, 0x12345678, true);
+        data.setUint32(12, 0x87654321, true);
+        data.setUint32(16, 0xddccbbaa, true);
+        await withMachine(factory, options, async (machine) => {
+          const cpu = machine.cpus[0]!;
+          const high = 0x1122334400000000n;
+          const input = cpuState(ENTRY, { 0: high, 1: high | 3n, 6: high, 7: high | (top + 5n) });
+          const startTsc = (await cpu.readTimeState()).tsc;
+          await cpu.setState(input);
+          const failed = await cpu.run({ budget: 16n, stop });
+          equal(failed.reason, 'segment-fault', 'third dword crosses the 4 GiB segment end');
+          equal(failed.state.rip, ENTRY, 'fault at the third indexed MOV');
+          equal(failed.state.flags, 2n, 'second DEC flags');
+          equal(failed.retired, 8n, 'only two full laps retired');
+          equal(failed.remaining, 8n, 'fault did not consume budget');
+          const committed = input.registers.slice();
+          committed[0] = high | 0x87654321n;
+          committed[1] = high | 1n;
+          committed[6] = high | 8n;
+          same(
+            failed.state.registers,
+            committed,
+            'committed reader state and preserved upper dwords',
+          );
+          same(
+            failed.segmentFault,
+            {
+              instructionPc: ENTRY,
+              segment: 'ds',
+              offset: 0xfffffffdn,
+              width: 4,
+              access: 'read',
+              cause: 'limit',
+              failingOffset: 0x100000000n,
+            },
+            'exact first byte beyond DS',
+          );
+          equal(
+            (await cpu.readTimeState()).tsc,
+            startTsc + 8n,
+            'TSC counts only the completed laps',
+          );
+
+          const repaired = failed.state.registers.slice();
+          repaired[7] = high | (top + 4n); // With ESI=8 the retry starts at 0xfffffffc.
+          await cpu.setState({ ...failed.state, registers: repaired });
+          const completed = await cpu.run({ budget: 5n, stop });
+          done(completed, stop, 4n);
+          repaired[0] = high | 0xccbbaa87n;
+          repaired[1] = high;
+          repaired[6] = high | 12n;
+          same(completed.state.registers, repaired, 'retry loads the last valid dword once');
+          equal(completed.state.flags, 0x46n, 'final DEC flags');
+          equal((await cpu.readTimeState()).tsc, startTsc + 12n, 'TSC includes the repaired lap');
+        });
+      },
+    },
+    {
       name: 'shared indexed float reads keep exact bounds after promotion and remap',
       async run() {
         // MOVSS [RAX+RCX*4]; ADDSS [RBX+RCX*4]; accumulate; count; XCHG [RDI],RAX.
