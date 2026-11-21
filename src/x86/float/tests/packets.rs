@@ -1,4 +1,5 @@
-use super::*;
+use super::super::*;
+use super::reference::integer_conversion;
 
 fn op(kind: Kind, format: Format, scalar: bool) -> Op {
     Op {
@@ -358,8 +359,7 @@ fn scalar_gpr_conversion_matches_native_rounding_and_status() {
                         for daz in [0, 64] {
                             for unmask in [0, 1 << 7, 1 << 12, (1 << 7) | (1 << 12)] {
                                 let mxcsr = (0x1fa4 & !unmask) | daz | (rc << 13);
-                                let expected =
-                                    native_reference::integer_conversion(op, old, right, mxcsr, 1);
+                                let expected = integer_conversion(op, old, right, mxcsr, 1);
                                 assert_eq!(
                                     eval(op, old, right, mxcsr),
                                     expected,

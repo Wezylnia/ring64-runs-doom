@@ -1,5 +1,5 @@
 //! x86-64 Linux hardware comparison. FXSAVE captures the producer before a pending #MF.
-use super::*;
+use super::super::*;
 use core::arch::{asm, x86_64::__cpuid};
 use std::io::Write;
 

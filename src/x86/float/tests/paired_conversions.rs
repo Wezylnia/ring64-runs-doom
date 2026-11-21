@@ -1,4 +1,5 @@
-use super::*;
+use super::super::*;
+use super::reference::integer_conversion;
 
 fn conversion(kind: Kind) -> Op {
     Op {
@@ -71,11 +72,11 @@ fn packed_integer_conversions_keep_lane_priority_and_aliased_destinations() {
                         for old in [source, !source] {
                             assert_eq!(
                                 eval(op, old, source, mxcsr),
-                                native_reference::integer_conversion(op, old, source, mxcsr, count),
+                                integer_conversion(op, old, source, mxcsr, count),
                             );
                             assert_eq!(
                                 eval_pair(op, old, source, mxcsr),
-                                native_reference::integer_conversion(op, old, source, mxcsr, 2),
+                                integer_conversion(op, old, source, mxcsr, 2),
                             );
                         }
                     }

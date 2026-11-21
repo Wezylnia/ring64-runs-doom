@@ -1,4 +1,4 @@
-use super::*;
+use super::super::*;
 use rustc_apfloat::ieee::X87DoubleExtended;
 use rustc_apfloat::{Float, Round, Status};
 

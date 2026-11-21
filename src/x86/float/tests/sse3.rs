@@ -1,4 +1,4 @@
-use super::*;
+use super::super::*;
 
 pub(super) fn packed(kind: Kind, format: Format) -> Op {
     Op {

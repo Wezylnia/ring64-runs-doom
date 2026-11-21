@@ -1,4 +1,4 @@
-use super::*;
+use super::super::*;
 
 fn initial() -> x87::State {
     let mut s = x87::State {

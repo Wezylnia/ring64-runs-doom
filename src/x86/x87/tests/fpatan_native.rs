@@ -1,8 +1,6 @@
 //! Native x86 captures the producer with a non-waiting FXSAVE before any #MF.
-use super::{
-    log_exp_native::{hardware, rank},
-    *,
-};
+use super::super::*;
+use super::log_exp_native::{hardware, rank};
 
 const SIGN: u128 = 1 << 79;
 const HALF: u128 = 0x3ffe8000000000000000;

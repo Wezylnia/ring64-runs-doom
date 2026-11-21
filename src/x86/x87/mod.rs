@@ -1,17 +1,6 @@
-#[cfg(test)]
-mod exception_review_tests;
 mod execute;
-#[cfg(test)]
-mod fisttp_tests;
-#[cfg(all(test, target_arch = "x86_64", target_os = "linux"))]
-mod fpatan_native;
-#[cfg(all(test, target_arch = "x86_64", target_os = "linux"))]
-mod log_exp_native;
 mod number;
-#[cfg(test)]
-mod reference_tests;
-#[cfg(test)]
-mod special_tests;
+
 #[cfg(test)]
 mod tests;
 

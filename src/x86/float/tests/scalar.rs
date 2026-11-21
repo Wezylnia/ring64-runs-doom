@@ -1,4 +1,4 @@
-use super::*;
+use super::super::*;
 
 fn scalar(kind: Kind) -> Op {
     Op {

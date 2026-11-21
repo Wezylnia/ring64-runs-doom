@@ -1,4 +1,4 @@
-use super::*;
+use super::super::*;
 
 const ONE: u128 = 0x3fff8000000000000000;
 const INDEFINITE: u128 = 0xffffc000000000000000;

@@ -1,5 +1,7 @@
 use super::*;
 
+mod boundaries;
+
 fn state() -> x87::State {
     let mut state = x87::State {
         status_word: 5 << 11,

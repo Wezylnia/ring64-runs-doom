@@ -3,7 +3,6 @@ use rustc_apfloat::ieee::{Double, IeeeFloat, Semantics, Single};
 use rustc_apfloat::{Float, FloatConvert, Round, Status, StatusAnd};
 
 #[cfg(test)]
-#[path = "arithmetic_differential.rs"]
 mod differential;
 
 struct Wide32;

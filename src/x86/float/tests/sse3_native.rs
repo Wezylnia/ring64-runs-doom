@@ -1,5 +1,5 @@
-use super::sse3_tests::{packed, words};
-use super::*;
+use super::super::*;
+use super::sse3::{packed, words};
 use core::arch::{asm, x86_64::__cpuid};
 use std::io::Write;
 

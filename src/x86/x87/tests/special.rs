@@ -1,4 +1,4 @@
-use super::*;
+use super::super::*;
 
 fn occupied(values: &[u128], cw: u16) -> State {
     let mut state = State {

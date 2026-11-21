@@ -2,8 +2,6 @@ use super::float;
 use super::instruction::{Ssse3Op, VectorBinary, VectorShift, Width};
 use super::x87;
 
-#[cfg(test)]
-mod boundary_tests;
 mod integer;
 #[cfg(test)]
 mod tests;

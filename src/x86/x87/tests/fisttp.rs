@@ -1,4 +1,4 @@
-use super::*;
+use super::super::*;
 
 fn operand(format: Format) -> Op {
     Op {

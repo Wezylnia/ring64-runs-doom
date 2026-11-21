@@ -299,18 +299,3 @@ fn eval_lanes(op: Op, left: u128, right: u128, mxcsr: u32, count: u32) -> Outcom
 
 #[cfg(test)]
 mod tests;
-
-#[cfg(test)]
-mod packets;
-
-#[cfg(test)]
-mod native_reference;
-
-#[cfg(test)]
-mod pair_tests;
-
-#[cfg(test)]
-mod sse3_tests;
-
-#[cfg(all(test, target_arch = "x86_64"))]
-mod sse3_native;
