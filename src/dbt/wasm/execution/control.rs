@@ -5,6 +5,13 @@ use crate::x86::context::Segment;
 use crate::x86::instruction::{Address, Condition, CountCondition, RegisterView, Width};
 use wasm_encoder::{BlockType, Instruction as Op, MemArg};
 
+#[derive(Clone, Copy)]
+pub(super) enum InstructionRetirement {
+    One,
+    Deferred,
+    ReadAfterPrefix(u32),
+}
+
 impl Emitter {
     pub(super) fn target_failure(&mut self, exit_depth: u32) {
         self.record_fault_segment(Segment::Cs);
@@ -263,10 +270,23 @@ impl Emitter {
         {
             self.restore_loop_registers();
         }
-        self.op(Op::I64Const(next as i64))
-            .op(Op::LocalSet(RIP))
-            .op(Op::LocalGet(REMAINING))
-            .op(Op::I64Const(1))
+        self.op(Op::I64Const(next as i64)).op(Op::LocalSet(RIP));
+        match self.instruction_retirement {
+            InstructionRetirement::One => self.retire_instructions(1),
+            InstructionRetirement::Deferred => {}
+            InstructionRetirement::ReadAfterPrefix(count) => self.retire_instructions(count + 1),
+        }
+    }
+
+    pub(super) fn retire_before_read_fault(&mut self) {
+        if let InstructionRetirement::ReadAfterPrefix(count) = self.instruction_retirement {
+            self.retire_instructions(count);
+        }
+    }
+
+    fn retire_instructions(&mut self, count: u32) {
+        self.op(Op::LocalGet(REMAINING))
+            .op(Op::I64Const(i64::from(count)))
             .op(Op::I64Sub)
             .op(Op::LocalSet(REMAINING));
     }

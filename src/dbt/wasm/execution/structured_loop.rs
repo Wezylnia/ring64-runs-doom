@@ -1,5 +1,6 @@
 use super::{
     Emitter, GPR, REMAINING,
+    control::InstructionRetirement,
     loop_cfg::{CompareAction, LoopOrder, ReadFaultFlags},
 };
 use wasm_encoder::{BlockType, Instruction as Op};
@@ -521,11 +522,23 @@ impl Emitter {
             }
         }
         let order = body.order();
-        let predicates =
+        let (predicates, read_prefix_len) =
             if !cfg!(feature = "parallel") && self.loop_gates_prechecked && body.forward_edges() {
-                super::loop_cfg::compare_predicates(instructions, order, &self.context)
+                // Batching the protected dword prefix removes a hot spill
+                // needed only when the first read faults.
+                let read_prefix_len = if self.context.mode() == crate::x86::context::Mode::Protected
+                    && self.context.code32()
+                {
+                    super::loop_cfg::read_prefix_len(instructions, order)
+                } else {
+                    0
+                };
+                (
+                    super::loop_cfg::compare_predicates(instructions, order, &self.context),
+                    read_prefix_len,
+                )
             } else {
-                Vec::new()
+                (Vec::new(), 0)
             };
         if body.forward_edges() {
             // Each later cloned instruction has an enclosing forward label.
@@ -574,6 +587,13 @@ impl Emitter {
                 compare,
                 CompareAction::SkipStatus | CompareAction::SkipStatusAndRestoreOnLoadFault(_)
             );
+            self.instruction_retirement = if position < read_prefix_len {
+                InstructionRetirement::Deferred
+            } else if read_prefix_len != 0 && position == read_prefix_len {
+                InstructionRetirement::ReadAfterPrefix(read_prefix_len)
+            } else {
+                InstructionRetirement::One
+            };
             self.instruction(
                 instructions[ordinal],
                 instructions.get(ordinal + 1),
@@ -601,6 +621,7 @@ impl Emitter {
         }
         self.omit_result_status = false;
         self.flags_on_read_fault = None;
+        self.instruction_retirement = InstructionRetirement::One;
         self.op(Op::End);
         self.structured_loop = None;
     }

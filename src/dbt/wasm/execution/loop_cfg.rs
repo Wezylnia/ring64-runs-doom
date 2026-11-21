@@ -97,6 +97,38 @@ fn branch_target(operation: Operation) -> Option<u64> {
     }
 }
 
+pub(super) fn read_prefix_len(instructions: &[Instruction], order: LoopOrder) -> u32 {
+    let at = |position| instructions[order.at(position) as usize];
+    for position in 0..order.len() {
+        let instruction = at(position);
+        match instruction.operation {
+            Operation::Alu { .. }
+            | Operation::Lea { .. }
+            | Operation::Mov { .. }
+            | Operation::Nop
+            | Operation::Shift {
+                dst: Location::Register(_),
+                ..
+            } if position + 1 < order.len() && instruction.next_pc == at(position + 1).pc => {}
+            // Only the head can enter the straight prefix. Its comparisons
+            // perform one ordinary read before changing architectural state.
+            Operation::MemoryAlu {
+                kind: Alu::Cmp | Alu::Test,
+                ..
+            } if position >= 2
+                && !instructions[order.earlier as usize..=order.tail as usize]
+                    .iter()
+                    .filter_map(|instruction| branch_target(instruction.operation))
+                    .any(|target| at(0).pc < target && target <= instruction.pc) =>
+            {
+                return position;
+            }
+            _ => return 0,
+        }
+    }
+    0
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ConditionSource {
     Operands(Width),

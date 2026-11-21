@@ -1548,7 +1548,7 @@ fn conditional_move_preserves_sub_flags_across_an_intervening_scalar_load() {
 #[test]
 fn guarded_shift_restores_flags_on_a_read_fault_before_compare_branch() {
     use super::super::loop_cfg::{
-        CompareAction, ConditionSource, ReadFaultFlags, compare_predicates, select,
+        CompareAction, ConditionSource, ReadFaultFlags, compare_predicates, read_prefix_len, select,
     };
     use crate::embedding::layout::DATA;
     use crate::x86::instruction::{Count, Location, Shift};
@@ -1575,6 +1575,7 @@ fn guarded_shift_restores_flags_on_a_read_fault_before_compare_branch() {
     );
     let context = crate::x86::context::ExecutionContext::default();
     let (order, _) = select(&artifact.instructions).unwrap();
+    assert_eq!(read_prefix_len(&artifact.instructions, order), 2);
     let predicates =
         |instructions: &[Instruction]| compare_predicates(instructions, order, &context);
     let plan = predicates(&artifact.instructions);
@@ -1612,6 +1613,7 @@ fn guarded_shift_restores_flags_on_a_read_fault_before_compare_branch() {
             target,
         };
         assert_eq!(predicates(&rejected)[0], CompareAction::Ordinary);
+        assert_eq!(read_prefix_len(&rejected, order), 0);
     }
 
     let shifted = [(0, 0x4000_0000), (2, 0x4000_0001)];

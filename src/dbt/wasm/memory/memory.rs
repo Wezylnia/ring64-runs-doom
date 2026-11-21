@@ -134,6 +134,7 @@ impl Emitter {
     }
 
     fn memory_failure(&mut self, exit_depth: u32) {
+        self.retire_before_read_fault();
         match self.flags_on_read_fault {
             Some(super::loop_cfg::ReadFaultFlags::Arithmetic(kind, width)) => {
                 if kind == crate::x86::instruction::Alu::Cmp {
