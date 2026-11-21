@@ -2,9 +2,7 @@ use super::super::image::Backing;
 #[cfg(target_arch = "wasm32")]
 use super::super::{Access, Fault};
 use super::super::{Image, MemoryError};
-#[cfg(target_arch = "wasm32")]
-use super::shift;
-use super::{Lanes, each_lane, gather, lane, scatter};
+use super::{Lanes, each_lane, gather, lane, scatter, shift};
 
 #[cfg(target_arch = "wasm32")]
 #[link(wasm_import_module = "ring64_ram")]
@@ -534,6 +532,39 @@ impl Image {
             unreachable!()
         };
         if bytes.len() <= 8 && (address & 63) + bytes.len() as u64 <= 64 {
+            if bytes.len() == 4 && self.shared_rmw.is_none() {
+                let mapping = &self.mappings[index];
+                let relative = (address - mapping.base) as u32;
+                if 4 <= mapping.length - relative {
+                    let backing = self.backings[mapping.backing]
+                        .shared
+                        .expect("shared backing binding");
+                    let absolute = backing.offset + mapping.offset + relative;
+                    if (absolute & 63) <= 60 {
+                        let crosses_lane = (absolute & 7) > 4;
+                        let stripes = [layout.stripe(absolute)];
+                        // Same one-attempt hold and exclusive promotion order as access().
+                        let held = layout.try_hold(&stripes, crosses_lane);
+                        let _grant = held.is_none().then(|| {
+                            let grant = SharedExclusive::acquire();
+                            if crosses_lane {
+                                layout.promote(&stripes);
+                            }
+                            grant
+                        });
+                        let base = lane(absolute);
+                        let bits = shift(absolute);
+                        let low = layout.load(base) >> bits;
+                        let value = if crosses_lane {
+                            low | (layout.load(base + 8) << (64 - bits))
+                        } else {
+                            low
+                        };
+                        bytes.copy_from_slice(&(value as u32).to_le_bytes());
+                        return;
+                    }
+                }
+            }
             let mut offsets = [0; 8];
             let offsets = &mut offsets[..bytes.len()];
             self.offsets(address, offsets, index);
