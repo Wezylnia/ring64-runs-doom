@@ -332,19 +332,18 @@ fn divide(a: Num, b: Num) -> Num {
     } else {
         sa - sb
     };
-    // The remainder stays below the 64-bit divisor. Only the doubled
-    // remainder needs a carry, and only the complete quotient needs 67 bits.
-    let mut q = 1u64;
-    for _ in 0..63 {
-        q = (q << 1) | quotient_bit(&mut rem, sb);
-    }
+    // The fractional quotient fits in one word. Its remainder is also
+    // below the divisor, so only the low word of the subtraction is needed.
+    let fraction = ((u128::from(rem) << 64) / u128::from(sb)) as u64;
+    rem = fraction.wrapping_mul(sb).wrapping_neg();
+    let q = (1u128 << 64) | u128::from(fraction);
     let mut tail = 0u64;
-    for _ in 0..3 {
+    for _ in 0..2 {
         tail = (tail << 1) | quotient_bit(&mut rem, sb);
     }
     Num {
         negative: a.negative ^ b.negative,
-        sig: (u128::from(q) << 3) | u128::from(tail | u64::from(rem != 0)),
+        sig: (q << 2) | u128::from(tail | u64::from(rem != 0)),
         scale: e - 66,
     }
 }
