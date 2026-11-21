@@ -1,0 +1,439 @@
+/* Hallmark v2.0.0 · theme: custom · idea: a live ink print by an x86 CPU · vibe: hand-drawn, warm, precise, playful · hero: full-width live art · axes: light/grotesk/warm */
+/* The approved print needs the largest uninterrupted surface on the page. */
+
+@font-face {
+  font-family: 'National Park';
+  src: url('./assets/fonts/national-park.woff2') format('woff2');
+  font-style: normal;
+  font-weight: 400 750;
+  font-display: swap;
+}
+
+:root {
+  color-scheme: light;
+  --paper: #faeee1;
+  --ink: #311e21;
+  --brick: #aa3525;
+  --brick-dark: #84291c;
+  --muted: #624a43;
+  --rule: #c4a896;
+  --command: #f2dfcc;
+  --stage: #ead6c4;
+  --wet-ink-grain: url('./wet-ink/grain.png');
+  --font-site: 'National Park', ui-sans-serif, sans-serif;
+  --font-code: ui-monospace, 'SFMono-Regular', Consolas, monospace;
+  --gutter: clamp(1.25rem, 5vw, 4rem);
+  --measure: 78rem;
+  font-family: var(--font-site);
+  font-synthesis: none;
+  background: var(--paper);
+  color: var(--ink);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  overflow-x: clip;
+  margin: 0;
+}
+
+[hidden] {
+  display: none;
+}
+
+h1,
+h2,
+p,
+figure {
+  margin: 0;
+}
+
+a {
+  color: inherit;
+  text-underline-offset: 0.22em;
+}
+
+a:hover {
+  color: var(--brick);
+}
+
+button {
+  min-height: 2.75rem;
+  padding-inline: 0.875rem;
+  border: 1px solid var(--rule);
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--brick);
+  color: var(--brick);
+}
+
+button:active:not(:disabled) {
+  background: var(--command);
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+:focus-visible {
+  outline: 2px solid var(--brick);
+  outline-offset: 4px;
+}
+
+.frame {
+  width: min(var(--measure), calc(100% - 2 * var(--gutter)));
+  margin-inline: auto;
+}
+
+.masthead {
+  min-height: 4.75rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--rule);
+}
+
+.wordmark {
+  display: block;
+  margin-left: -0.1rem;
+}
+
+.wordmark img {
+  display: block;
+  width: 8.625rem;
+  height: auto;
+}
+
+.masthead nav {
+  display: flex;
+  align-items: center;
+  gap: clamp(1.125rem, 3vw, 2.25rem);
+  font-size: 0.9375rem;
+  font-weight: 650;
+}
+
+.masthead nav a {
+  display: grid;
+  align-items: center;
+  min-height: 2.75rem;
+  text-decoration: none;
+}
+
+.masthead nav a:hover {
+  text-decoration: underline;
+}
+
+.intro {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(15rem, 19.5rem);
+  align-items: end;
+  gap: clamp(1.5rem, 4vw, 4rem);
+  padding-block: clamp(1.75rem, 3vw, 2.75rem) clamp(1.5rem, 2.6vw, 2.25rem);
+}
+
+h1 {
+  min-width: 0;
+  color: var(--ink);
+  font-size: clamp(2.85rem, 5.55vw, 5.75rem);
+  font-weight: 700;
+  line-height: 0.94;
+  letter-spacing: -0.07em;
+  overflow-wrap: break-word;
+  text-wrap: balance;
+}
+
+.intro-details {
+  display: grid;
+  gap: 1rem;
+  align-self: end;
+  padding-bottom: 0.125rem;
+}
+
+.intro-details p {
+  max-width: 28ch;
+  font-size: clamp(1rem, 1.45vw, 1.1875rem);
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+.install {
+  display: flex;
+  min-height: 3rem;
+  align-items: stretch;
+  justify-content: space-between;
+  border: 1px solid var(--rule);
+  background: var(--command);
+}
+
+.install code {
+  display: grid;
+  align-items: center;
+  min-width: 0;
+  padding: 0.5rem 0.875rem;
+  font-family: var(--font-code);
+  font-size: clamp(0.8125rem, 1.2vw, 0.9375rem);
+  user-select: all;
+}
+
+.install button {
+  flex: none;
+  min-width: 4.75rem;
+  border: 0;
+  border-left: 1px solid var(--rule);
+  color: var(--brick-dark);
+  font-size: 0.875rem;
+}
+
+.install button:hover {
+  background: var(--brick);
+  color: var(--paper);
+}
+
+.ink-stage {
+  position: relative;
+  isolation: isolate;
+  overflow: clip;
+  aspect-ratio: 16 / 9;
+  border: 1px solid var(--rule);
+  background: var(--stage) url('./assets/wet-ink-poster.webp') center / 100% 100% no-repeat;
+}
+
+.ink-stage::after {
+  position: absolute;
+  inset: 0;
+  background: var(--wet-ink-grain) repeat 0 0 / 106px;
+  opacity: 0.52;
+  pointer-events: none;
+}
+
+.ink-stage:has(canvas[data-frame])::after {
+  content: '';
+}
+
+#ink {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  visibility: hidden;
+  touch-action: none;
+  outline-offset: -4px;
+}
+
+#ink[data-frame] {
+  visibility: visible;
+}
+
+.ink-status {
+  position: absolute;
+  z-index: 1;
+  inset-inline-start: 0.875rem;
+  inset-block-end: 0.875rem;
+  max-width: calc(100% - 1.75rem);
+  padding: 0.5rem 0.875rem;
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 0.9375rem;
+}
+
+.ink-status:empty {
+  display: none;
+}
+
+.wet-ink-fullscreen {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: var(--ink);
+}
+
+.ink-stage:fullscreen,
+.wet-ink-fullscreen .ink-stage {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: var(--ink);
+}
+
+.ink-stage:fullscreen #ink,
+.wet-ink-fullscreen #ink {
+  position: relative;
+  width: min(100%, 100dvh * 16 / 9);
+  height: auto;
+}
+
+.wet-ink-fullscreen-controls {
+  position: absolute;
+  z-index: 2;
+  display: flex;
+  gap: 0.5rem;
+  inset-inline-end: 1rem;
+  inset-block-end: 1rem;
+}
+
+.wet-ink-fullscreen-controls button {
+  background: var(--paper);
+}
+
+.ink-caption {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 1rem;
+  padding-block: 0.375rem;
+  border-top: 1px solid var(--rule);
+}
+
+.ink-caption h2 {
+  font-size: 1.375rem;
+  font-weight: 700;
+  letter-spacing: -0.035em;
+}
+
+.ink-guide,
+.ink-credit {
+  color: var(--muted);
+  font-size: 0.9375rem;
+  line-height: 1.45;
+}
+
+.ink-credit {
+  padding-block: 0.875rem 1rem;
+}
+
+.ink-controls {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.ink-controls button {
+  font-size: 0.875rem;
+  white-space: nowrap;
+}
+
+#play {
+  min-width: 4.375rem;
+}
+
+.touch-hint {
+  display: none;
+}
+
+.colophon {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.875rem 1.75rem;
+  align-items: center;
+  padding-block: 1.125rem 2rem;
+  border-top: 1px solid var(--rule);
+  color: var(--muted);
+  font-size: 0.9375rem;
+  font-weight: 550;
+}
+
+.colophon a:last-child {
+  margin-left: auto;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: clip;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+@media (pointer: coarse) {
+  .pointer-hint {
+    display: none;
+  }
+
+  .touch-hint {
+    display: inline;
+  }
+}
+
+@media (max-width: 62rem) {
+  .intro {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1.25rem;
+  }
+
+  .intro-details {
+    grid-template-columns: minmax(0, 1fr) minmax(15rem, 19.5rem);
+    align-items: end;
+  }
+}
+
+@media (max-width: 43rem) {
+  .masthead {
+    min-height: 4.125rem;
+  }
+
+  .wordmark img {
+    width: 7rem;
+  }
+
+  .intro {
+    gap: 1rem;
+  }
+
+  .desktop-break {
+    display: none;
+  }
+
+  h1 {
+    font-size: clamp(2.5rem, 8.8vw, 3.75rem);
+    max-width: 19ch;
+  }
+
+  .intro-details {
+    grid-template-columns: minmax(0, 1fr);
+    justify-items: start;
+  }
+
+  .install {
+    width: min(100%, 20rem);
+  }
+
+  .ink-caption {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0.25rem 0.5rem;
+    padding-bottom: 0.625rem;
+  }
+
+  .ink-guide {
+    grid-row: 2;
+    grid-column: 1 / -1;
+  }
+
+  .ink-controls {
+    grid-row: 1;
+    grid-column: 2;
+  }
+
+  .colophon a:last-child {
+    margin-left: 0;
+  }
+}

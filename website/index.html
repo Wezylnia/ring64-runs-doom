@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#faeee1" />
+    <meta
+      name="description"
+      content="Ring64 is an open-source x86 and x86-64 CPU emulator for JavaScript runtimes. Try Wet Ink, an interactive x86-64 program running live in your browser."
+    />
+    <title>Ring64 | x86 CPU emulator for JavaScript runtimes</title>
+    <link rel="icon" href="./assets/logo.svg" type="image/svg+xml" />
+    <link
+      rel="preload"
+      href="./assets/fonts/national-park.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <header class="frame masthead">
+      <a class="wordmark" href="./">
+        <img src="./assets/logo.svg" width="300" height="146" alt="Ring64" />
+      </a>
+      <nav aria-label="Project links">
+        <a href="https://www.npmjs.com/package/ring64">npm</a>
+        <a href="https://github.com/fatihguzeldev/ring64">GitHub</a>
+      </nav>
+    </header>
+
+    <main class="frame">
+      <section class="intro" aria-labelledby="title">
+        <h1 id="title">
+          An x86 CPU emulator<br class="desktop-break" />
+          for JavaScript runtimes.
+        </h1>
+        <div class="intro-details">
+          <p>Run x86 and x86-64 in browsers or Node.js with a TypeScript SDK.</p>
+          <div class="install">
+            <code id="install-command">npm install ring64</code>
+            <button type="button" id="copy-install" aria-label="Copy install command" hidden>
+              Copy
+            </button>
+          </div>
+          <span id="copy-status" class="visually-hidden" role="status"></span>
+        </div>
+      </section>
+
+      <figure class="wet-ink" aria-labelledby="wet-ink-title">
+        <figcaption class="ink-caption">
+          <h2 id="wet-ink-title">Wet Ink</h2>
+          <p class="ink-guide" id="ink-guide">
+            <span class="pointer-hint">Move through the ink.</span>
+            <span class="touch-hint">Drag to stir.</span>
+            <span class="visually-hidden"> Arrow keys stir the ink.</span>
+          </p>
+          <div class="ink-controls">
+            <button type="button" id="play" disabled>Pause</button>
+            <button type="button" id="fullscreen" hidden>Fullscreen</button>
+          </div>
+        </figcaption>
+        <div id="ink-stage" class="ink-stage">
+          <canvas
+            id="ink"
+            width="3840"
+            height="2160"
+            tabindex="0"
+            aria-label="Interactive flowing ink"
+            aria-describedby="ink-guide"
+          ></canvas>
+          <p id="status" class="ink-status" role="status"></p>
+          <noscript>
+            <p class="ink-status">Enable JavaScript to run Wet Ink.</p>
+          </noscript>
+        </div>
+        <p class="ink-credit">The flow is computed live by x86-64 code running in Ring64.</p>
+      </figure>
+    </main>
+
+    <footer class="frame colophon">
+      <a href="https://github.com/fatihguzeldev/ring64#usage">Usage examples</a>
+      <a href="./assets/wet-ink/wet-ink.bin" download="wet-ink.x86-64.bin">Wet Ink binary</a>
+      <a href="https://github.com/fatihguzeldev/ring64/blob/main/LICENSE">MIT license</a>
+    </footer>
+
+    <script type="module" src="./install.mjs"></script>
+    <script type="module" src="./wet-ink/index.mjs"></script>
+  </body>
+</html>
