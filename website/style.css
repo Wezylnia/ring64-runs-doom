@@ -321,6 +321,18 @@ main::before {
   text-wrap: pretty;
 }
 
+.ink-note-mark {
+  color: var(--brick);
+  font-style: normal;
+  font-weight: 400;
+}
+
+sup.ink-note-mark {
+  margin-inline-start: 0.15em;
+  font-size: 0.65em;
+  line-height: 0;
+}
+
 .ink-controls,
 .wet-ink-fullscreen-controls {
   display: flex;
