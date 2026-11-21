@@ -919,10 +919,8 @@ fn rotated_loop_preserves_both_backedges_and_original_entry_boundaries() {
         .collect();
     let unit = unit(instructions);
     let bytes = emit(&unit);
-    assert_eq!(
-        wasm_loop_count(&bytes),
-        1 + usize::from(!cfg!(feature = "parallel"))
-    );
+    // Standalone rotates the load loop; workers specialize the register backedge.
+    assert_eq!(wasm_loop_count(&bytes), 2);
     let entries: Vec<_> = unit.instructions.iter().map(|i| i.pc).collect();
     let mut cases = Vec::new();
     for (entry, budget, counter, load, eax, ecx, flags, rip, reason, remaining, stop) in [
