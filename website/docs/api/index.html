@@ -1,0 +1,378 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#faeee1" />
+    <meta name="description" content="the ring64 typescript api reference." />
+    <title>api reference · ring64</title>
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../style.css" />
+    <link rel="stylesheet" href="../../docs.css" />
+  </head>
+  <body>
+    <div class="shell docs-shell">
+      <!-- site-masthead -->
+      <div class="docs-layout">
+        <nav class="docs-toc" aria-label="api reference">
+          <a href="#cpu">cpu</a>
+          <a href="#limits">limits</a>
+          <a href="#run-result">run &amp; results</a>
+          <a href="#memory">memory</a>
+          <a href="#state">state</a>
+          <a href="#parallel">parallel</a>
+          <a href="#io">i/o</a>
+          <a class="docs-reference-link" href="../">quickstart</a>
+        </nav>
+
+        <main class="docs-content">
+          <section id="cpu" class="docs-section" aria-labelledby="cpu-title">
+            <h1 id="cpu-title">api reference</h1>
+            <p class="docs-lead">
+              Import <code>ring64</code> for a standalone CPU or <code>ring64/parallel</code> for a
+              machine with multiple vCPUs and shared guest memory.
+            </p>
+            <h2 class="docs-subtitle">cpu</h2>
+            <dl class="docs-reference">
+              <dt><code>loadCpuCompiler(): Promise&lt;WebAssembly.Module&gt;</code></dt>
+              <dd>
+                Loads the packaged <code>ring64.wasm</code>. You can reuse the module across CPUs.
+              </dd>
+              <dt><code>createCpu(options: Options): Promise&lt;Cpu&gt;</code></dt>
+              <dd>
+                Takes a <code>compiler</code> as <code>Uint8Array</code> bytes or a compiled module,
+                translation <a href="#limits">limits</a> and one
+                <a href="#memory">memory configuration</a>. Use <code>context</code> to set the
+                initial execution mode and <code>io</code> to connect guest ports.
+              </dd>
+              <dt><code>cpu.run(options: RunOptions): Promise&lt;RunResult&gt;</code></dt>
+              <dd>
+                Resumes execution from the current guest state. Read or change state and memory
+                between runs.
+              </dd>
+              <dt>
+                <code>cpu.requestInterrupt(vector: number): boolean</code>
+                <code>cpu.requestNmi(): void</code>
+              </dt>
+              <dd>
+                Queue an interrupt for the next run. Interrupt vectors range from 0 to 255.
+                <code>requestInterrupt</code> returns <code>false</code> when an IRQ is already
+                queued.
+              </dd>
+              <dt>
+                <code>cpu.reset(): void</code>
+                <code>cpu.dispose(): void</code>
+              </dt>
+              <dd>
+                In physical mode, <code>reset</code> resets CPU state while preserving memory. Call
+                <code>dispose</code> after the current run has settled to release the CPU.
+              </dd>
+              <dt><code>cpu.inspectTranslations(): UnitMetadata[]</code></dt>
+              <dd>Returns a snapshot of the cached translations.</dd>
+              <dt><code>cpu.creationMs: number</code></dt>
+              <dd>Time spent creating this CPU, in milliseconds.</dd>
+            </dl>
+          </section>
+
+          <section id="limits" class="docs-section" aria-labelledby="limits-title">
+            <h2 id="limits-title">limits</h2>
+            <p>
+              Supply all six <code>Limits</code> fields as positive 32-bit unsigned integers. Each
+              vCPU has its own translation cache and run limits.
+            </p>
+            <dl class="docs-reference">
+              <dt><code>maxInstructions</code>, <code>maxSourceBytes</code></dt>
+              <dd>Cap the instructions and guest source bytes in one translation.</dd>
+              <dt><code>maxArtifactBytes</code></dt>
+              <dd>Caps the size of one generated Wasm module.</dd>
+              <dt><code>maxCachedArtifacts</code>, <code>maxCachedBytes</code></dt>
+              <dd>Cap the count and combined byte size of cached modules.</dd>
+              <dt><code>maxTranslationsPerRun</code></dt>
+              <dd>Caps translation attempts during one <code>run</code>.</dd>
+            </dl>
+            <p>
+              The <a href="../#quickstart">quickstart</a> has a complete limits object.
+              <code>budget</code> controls how many guest instructions retire in a run.
+            </p>
+          </section>
+
+          <section id="run-result" class="docs-section" aria-labelledby="run-result-title">
+            <h2 id="run-result-title">run &amp; results</h2>
+            <dl class="docs-reference">
+              <dt><code>budget: bigint</code></dt>
+              <dd>The maximum number of guest instructions that can retire in this run.</dd>
+              <dt><code>stop?: bigint</code></dt>
+              <dd>Stop when the instruction pointer reaches this address, before executing it.</dd>
+              <dt><code>repeatBudget?: bigint</code></dt>
+              <dd>Caps REP iterations and defaults to <code>budget</code>.</dd>
+              <dt><code>eventDelivery?: { budget: bigint }</code></dt>
+              <dd>
+                Enables automatic delivery of guest events with its own budget.
+                <code>exceptionDelivery</code> has the same shape. Pass either one.
+              </dd>
+            </dl>
+            <p>
+              <code>RunResult</code> returns a <code>reason</code>, a CPU state snapshot,
+              <code>retired</code> and <code>remaining</code>, and <code>repeatIterations</code> and
+              <code>remainingRepeatBudget</code>. Runs with automatic delivery also return
+              <code>deliveryAttempts</code> and <code>remainingDeliveryBudget</code>.
+              <code>resources</code> counts translation and cache work. <code>timings</code> reports
+              phase timings in milliseconds.
+            </p>
+            <h3 class="docs-subtitle">stop reasons</h3>
+            <dl class="docs-reference">
+              <dt><code>stop</code>, <code>budget</code>, <code>repeat-budget</code></dt>
+              <dd>The CPU reached the stop address or used up one of the run budgets.</dd>
+              <dt>
+                <code>event-budget</code>, <code>pending-exception</code>,
+                <code>pending-interrupt</code>
+              </dt>
+              <dd>
+                Event delivery reached its limit or an event is waiting in <code>state.event</code>.
+              </dd>
+              <dt><code>halted</code>, <code>shutdown</code>, <code>paused</code></dt>
+              <dd>A guest halt, guest shutdown or a parallel pause request stopped execution.</dd>
+              <dt><code>unsupported</code>, <code>resource-limit</code></dt>
+              <dd>The core could not run the operation or the run hit a translation limit.</dd>
+              <dt><code>fetch-fault</code>, <code>target-fault</code>, <code>data-fault</code></dt>
+              <dd><code>fault</code> describes the access, its width, address and cause.</dd>
+              <dt><code>page-fault</code>, <code>physical-memory-fault</code></dt>
+              <dd>
+                <code>pageFault</code> reports the guest paging error.
+                <code>physicalMemoryFault</code> reports the failing access to guest physical
+                memory.
+              </dd>
+              <dt>
+                <code>segment-fault</code>, <code>protection-fault</code>,
+                <code>system-memory-fault</code>
+              </dt>
+              <dd>
+                Read <code>segmentFault</code>, <code>protectionFault</code> or
+                <code>systemMemoryFault</code>.
+              </dd>
+              <dt>
+                <code>alignment-fault</code>, <code>alignment-check</code>,
+                <code>debug-exception</code>
+              </dt>
+              <dd>
+                Read <code>alignmentFault</code>, <code>alignmentCheck</code> or
+                <code>debugException</code>.
+              </dd>
+              <dt>
+                <code>simd-exception</code>, <code>x87-exception</code>,
+                <code>general-protection</code>
+              </dt>
+              <dd>
+                Read <code>simdException</code>, <code>x87Exception</code> or
+                <code>generalProtectionFault</code>.
+              </dd>
+              <dt>
+                <code>invalid-encoding</code>, <code>device-not-available</code>,
+                <code>divide-error</code>
+              </dt>
+              <dd>
+                Instruction or numeric failures. <code>invalid-encoding</code> can include
+                <code>numericControlFault</code>. <code>device-not-available</code> can include
+                <code>deviceNotAvailable</code>.
+              </dd>
+            </dl>
+            <p>
+              Guest stops and faults return results. Invalid options and host failures, including a
+              throwing I/O provider, can reject the run.
+            </p>
+          </section>
+
+          <section id="memory" class="docs-section" aria-labelledby="memory-title">
+            <h2 id="memory-title">memory</h2>
+            <dl class="docs-reference">
+              <dt><code>linear</code></dt>
+              <dd>
+                The default. Pass <code>code</code> and <code>ram</code> spans with
+                <code>{ base: bigint, bytes: Uint8Array }</code>. The CPU starts at
+                <code>code.base</code>. The code span is read and execute. The RAM span is read and
+                write. Use explicit <code>memory</code>, <code>entry</code> and
+                <code>memoryLimits</code> for custom mappings.
+              </dd>
+              <dt><code>ia32e-paged</code></dt>
+              <dd>
+                Uses guest page tables in long64 or compatibility mode. Supply explicit memory, an
+                entry address and <code>paging: PagingState</code>.
+              </dd>
+              <dt><code>physical</code></dt>
+              <dd>
+                Maps guest physical addresses. Supply explicit memory, an entry address,
+                <code>context</code> and <code>paging</code>. Use this mode for guests that manage
+                their own execution mode and paging.
+              </dd>
+            </dl>
+            <p>
+              A <code>MemoryBackingInput</code> is an <code>id</code> and a
+              <code>Uint8Array</code> of bytes. A <code>MemoryMapping</code> places a backing range
+              at a guest <code>base</code> using a <code>backing</code> ID, byte
+              <code>offset</code> and <code>length</code>, and
+              <code>permissions: { read, write, execute }</code>. Use <code>bigint</code> for
+              addresses and <code>number</code> for byte counts. Mappings must fit their backings
+              and occupy distinct guest address ranges.
+            </p>
+            <p>
+              <code>MemoryLimits</code> caps the total backing bytes (<code>maxBackingBytes</code>),
+              backing count (<code>maxBackings</code>) and mapping count (<code>maxMappings</code>).
+              Provide all three fields for explicit memory.
+            </p>
+            <dl class="docs-reference">
+              <dt>
+                <code>readMemory(address: bigint, length: number): Uint8Array</code>
+                <code>writeMemory(address: bigint, bytes: Uint8Array): void</code>
+              </dt>
+              <dd>Access a linear mapping. Reads return a copy.</dd>
+              <dt>
+                <code>readPhysicalMemory(address: bigint, length: number): Uint8Array</code>
+                <code>writePhysicalMemory(address: bigint, bytes: Uint8Array): void</code>
+              </dt>
+              <dd>
+                Access guest physical addresses in <code>ia32e-paged</code> or
+                <code>physical</code> mode. Reads return a copy.
+              </dd>
+              <dt>
+                <code>addBacking(input: MemoryBackingInput): void</code>
+                <code>removeBacking(id: string): void</code>
+                <code>setMappings(mappings: MemoryMapping[]): void</code>
+              </dt>
+              <dd>
+                Add bytes, remove an unmapped backing or replace the entire mapping list. On a
+                parallel machine these methods and memory reads and writes return promises.
+              </dd>
+            </dl>
+          </section>
+
+          <section id="state" class="docs-section" aria-labelledby="state-title">
+            <h2 id="state-title">state</h2>
+            <dl class="docs-reference">
+              <dt>
+                <code>readState(): StateSnapshot</code> / <code>setState(state: State): void</code>
+              </dt>
+              <dd>
+                Read or set the instruction pointer, flags and the <code>Registers</code> tuple. Its
+                order is <code>rax, rcx, rdx, rbx, rsp, rbp, rsi, rdi</code>, followed by
+                <code>r8</code> through <code>r15</code>. State also carries interruptibility,
+                pending events and interrupts.
+              </dd>
+              <dt>
+                <code>readContext(): ExecutionContextSnapshot</code> /
+                <code>setContext(context: ExecutionContext): void</code>
+              </dt>
+              <dd>Read or set execution mode, segmentation and descriptor table state.</dd>
+              <dt>
+                <code>readPagingState(): PagingState</code> /
+                <code>setPagingState(state: PagingState): void</code>
+                <code>readFastSystemState(): FastSystemState</code> /
+                <code>setFastSystemState(state: FastSystemState): void</code>
+              </dt>
+              <dd>
+                Access paging registers and fast system-call state in a paged or physical CPU. You
+                can supply the initial banks with <code>paging</code> and <code>fastSystem</code>.
+              </dd>
+              <dt>
+                <code>readXmmState(): bigint[]</code> /
+                <code>setXmmState(state: bigint[]): void</code> <code>readMxcsr(): number</code> /
+                <code>setMxcsr(value: number): void</code> <code>readX87State(): X87State</code> /
+                <code>setX87State(value: X87State): void</code>
+              </dt>
+              <dd>Access the 16 XMM registers, SIMD control and x87 floating-point state.</dd>
+              <dt>
+                <code>readDebugState(): DebugState</code> /
+                <code>setDebugState(state: DebugState): void</code>
+                <code>readTimeState(): TimeState</code> /
+                <code>setTimeState(state: TimeState): void</code> <code>readXcr0(): bigint</code> /
+                <code>setXcr0(value: bigint): void</code>
+                <code>readProtectionKeysState(): ProtectionKeysState</code> /
+                <code>setProtectionKeysState(state: ProtectionKeysState): void</code>
+              </dt>
+              <dd>Access debug, guest time, extended register control and protection-key state.</dd>
+            </dl>
+          </section>
+
+          <section id="parallel" class="docs-section" aria-labelledby="parallel-title">
+            <h2 id="parallel-title">parallel</h2>
+            <dl class="docs-reference">
+              <dt><code>loadParallelCompiler(): Promise&lt;WebAssembly.Module&gt;</code></dt>
+              <dd>
+                Loads the packaged <code>ring64-parallel.wasm</code> for reuse across machines.
+              </dd>
+              <dt><code>createMachine(options: MachineOptions): Promise&lt;Machine&gt;</code></dt>
+              <dd>
+                Pass a parallel <code>compiler</code>, <code>limits</code>, an explicit
+                <code>memoryModel</code>, <code>memory</code> and <code>memoryLimits</code>. Set
+                <code>sharedRamCapacity</code> in bytes as a positive multiple of 4096. Each backing
+                counts toward it rounded up to 4096 bytes.
+              </dd>
+              <dt><code>cpus</code></dt>
+              <dd>
+                Supply at least two CPU records, each with an <code>entry</code>. The paged and
+                physical models also require <code>paging</code> per CPU. Physical mode requires
+                every CPU’s initial <code>context</code>.
+              </dd>
+            </dl>
+            <p>
+              The machine creates one dedicated worker per vCPU. The workers share guest memory and
+              hold independent CPU state. Browser use requires a cross-origin isolated page,
+              dedicated workers, shared memory, atomics and Wasm multiple memories.
+            </p>
+            <dl class="docs-reference">
+              <dt><code>machine.cpus: readonly ParallelCpu[]</code></dt>
+              <dd>
+                Each handle has an <code>id</code>, async state access and
+                <code>run(options): Promise&lt;ParallelRunResult&gt;</code>. The
+                <a href="#run-result">run result</a> has the same shape as a standalone result. Use
+                the machine for shared memory and mappings.
+              </dd>
+              <dt>
+                <code>cpu.pause(): Promise&lt;void&gt;</code>
+                <code>machine.pause(): Promise&lt;void&gt;</code>
+              </dt>
+              <dd>
+                Pause the active run on one vCPU or across the machine. A run that yields to a pause
+                returns <code>paused</code> with its saved state and remaining budgets.
+              </dd>
+              <dt>
+                <code>cpu.requestInterrupt(vector: number): Promise&lt;boolean&gt;</code>
+                <code>cpu.requestNmi(): Promise&lt;void&gt;</code>
+              </dt>
+              <dd>Queue an interrupt on one vCPU. Requests can be made while it runs.</dd>
+              <dt>
+                <code>cpu.reset(): Promise&lt;void&gt;</code>
+                <code>machine.reset(): Promise&lt;void&gt;</code>
+                <code>machine.dispose(): Promise&lt;void&gt;</code>
+              </dt>
+              <dd>
+                In physical mode, reset one idle vCPU or the entire machine. Dispose the machine to
+                stop its workers and release resources.
+              </dd>
+            </dl>
+          </section>
+
+          <section id="io" class="docs-section" aria-labelledby="io-title">
+            <h2 id="io-title">i/o</h2>
+            <p>
+              Pass <code>io?: IoProvider</code> to the CPU or machine to handle guest port I/O. The
+              port is a 16-bit unsigned <code>number</code>. <code>IoWidth</code> is
+              <code>8 | 16 | 32</code> in bits.
+            </p>
+            <dl class="docs-reference">
+              <dt><code>read(port: number, width: IoWidth): number</code></dt>
+              <dd>Return an unsigned integer that fits the requested width.</dd>
+              <dt><code>write(port: number, width: IoWidth, value: number): void</code></dt>
+              <dd>Handle the unsigned value and return <code>undefined</code>.</dd>
+            </dl>
+            <p>
+              Both callbacks are synchronous. On a parallel machine they run on the host that
+              created the machine. Return from the callback before calling back into the CPU or
+              machine.
+            </p>
+          </section>
+        </main>
+      </div>
+    </div>
+    <script type="module" src="../../site.js"></script>
+  </body>
+</html>

@@ -132,6 +132,10 @@ a:hover {
   text-decoration: underline;
 }
 
+.masthead nav a[aria-current='true'] {
+  color: var(--brick);
+}
+
 .star-count {
   color: var(--brick);
   display: inline-flex;

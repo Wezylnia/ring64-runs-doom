@@ -18,6 +18,11 @@ const source = join(root, 'website');
 const generated = join(root, 'build');
 const sdk = join(generated, 'npm/ring64');
 const output = join(generated, 'website');
+
+function escapeHtml(code) {
+  return code.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+}
+
 execFileSync(
   process.execPath,
   [join(root, 'node_modules/typescript/bin/tsc'), '--project', join(source, 'tsconfig.json')],
@@ -39,15 +44,32 @@ try {
     readFile(join(wetInk, 'canvas.html'), 'utf8'),
     readFile(join(wetInk, 'controls.html'), 'utf8'),
   ]);
-  for (const page of ['index.html', 'under-the-ink/index.html']) {
-    const html = await readFile(join(source, page), 'utf8');
+  const exampleNames = ['add.ts', 'add.c', 'add-c.ts', 'parallel.ts'];
+  const examples = await Promise.all(
+    exampleNames.map((name) => readFile(join(source, 'docs/examples', name), 'utf8')),
+  );
+  for (const page of [
+    'index.html',
+    'under-the-ink/index.html',
+    'docs/index.html',
+    'docs/api/index.html',
+  ]) {
+    let html = await readFile(join(source, page), 'utf8');
+    for (const [index, name] of exampleNames.entries()) {
+      html = html.replace(`<!-- example:${name} -->`, () => escapeHtml(examples[index].trimEnd()));
+    }
     const destination = join(staged, page);
     const siteRoot = posix.relative(posix.dirname(page), '.') || '.';
     await mkdir(dirname(destination), { recursive: true });
     await writeFile(
       destination,
       html
-        .replace('<!-- site-masthead -->', () => masthead.replaceAll('{{root}}', siteRoot).trim())
+        .replace('<!-- site-masthead -->', () =>
+          masthead
+            .replaceAll('{{root}}', siteRoot)
+            .replaceAll('{{docsCurrent}}', String(page.startsWith('docs/')))
+            .trim(),
+        )
         .replace('<!-- wet-ink-canvas -->', () => canvas.trim())
         .replace('<!-- wet-ink-controls -->', () => controls.trim()),
     );
@@ -68,6 +90,7 @@ try {
   await build({
     entryPoints: {
       site: join(source, 'site.ts'),
+      docs: join(source, 'docs.ts'),
       'wet-ink/index': join(wetInk, 'index.ts'),
       'wet-ink/worker': join(wetInk, 'worker.ts'),
     },

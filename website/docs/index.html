@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#faeee1" />
+    <meta name="description" content="run x86 and x86-64 code from typescript with ring64." />
+    <title>docs · ring64</title>
+    <link rel="icon" href="../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../style.css" />
+    <link rel="stylesheet" href="../docs.css" />
+  </head>
+  <body>
+    <div class="shell docs-shell">
+      <!-- site-masthead -->
+      <div class="docs-layout">
+        <nav class="docs-toc" aria-label="docs">
+          <a href="#quickstart">quickstart</a>
+          <a href="#your-code">your own code</a>
+          <a href="#memory-and-io">memory &amp; i/o</a>
+          <a href="#parallel">parallel</a>
+          <a class="docs-reference-link" href="./api/">api reference</a>
+        </nav>
+
+        <main class="docs-content">
+          <section id="quickstart" class="docs-section" aria-labelledby="quickstart-title">
+            <h1 id="quickstart-title">run x86 from typescript</h1>
+            <p class="docs-lead">
+              Give a CPU some x86-64 instructions and two numbers. Run it and read the sum from the
+              <code>rax</code> register.
+            </p>
+            <div class="docs-example">
+              <div class="docs-example-bar">
+                <span>terminal</span>
+                <button
+                  type="button"
+                  data-copy-code="install"
+                  aria-label="copy install command"
+                  hidden
+                >
+                  copy
+                </button>
+              </div>
+              <pre tabindex="0"><code id="install">npm install ring64</code></pre>
+            </div>
+            <div class="docs-example">
+              <div class="docs-example-bar">
+                <span>add.mts</span>
+                <button type="button" data-copy-code="add" aria-label="copy add.mts" hidden>
+                  copy
+                </button>
+              </div>
+              <pre tabindex="0"><code id="add"><!-- example:add.ts --></code></pre>
+            </div>
+            <p>
+              On Node.js 22.12 or later, save this as <code>add.mts</code> and run
+              <code>node --experimental-strip-types add.mts</code>. It prints <code>42n</code>.
+            </p>
+            <p>
+              <code>code.base</code> is the starting address. <code>stop</code> is the address just
+              past the two instructions. <code>budget</code> caps how many guest instructions can
+              run before control returns to your app.
+            </p>
+            <p>
+              The example’s <code>limits</code> bound translation work and cache size. See
+              <a href="./api/#limits">limits</a> when your guest grows beyond this example.
+            </p>
+            <h2 class="docs-subtitle">browser setup</h2>
+            <p>
+              Run the example from a TypeScript entry point in a browser with WebAssembly SIMD.
+              <code>loadCpuCompiler()</code> looks for <code>ring64.wasm</code> alongside the SDK.
+              If your bundler moves the SDK, copy <code>node_modules/ring64/ring64.wasm</code> into
+              your public assets and point <code>compiler</code> at it explicitly.
+            </p>
+            <div class="docs-example">
+              <div class="docs-example-bar">
+                <span>typescript</span>
+                <button
+                  type="button"
+                  data-copy-code="browser-compiler"
+                  aria-label="copy browser asset setup"
+                  hidden
+                >
+                  copy
+                </button>
+              </div>
+              <pre
+                tabindex="0"
+              ><code id="browser-compiler">const response = await fetch('/ring64.wasm');
+if (!response.ok) throw new Error(`could not load ring64.wasm (${response.status})`);
+const compiler = new Uint8Array(await response.arrayBuffer());</code></pre>
+            </div>
+            <p>Pass that <code>compiler</code> to <code>createCpu</code>.</p>
+          </section>
+
+          <section id="your-code" class="docs-section" aria-labelledby="your-code-title">
+            <h2 id="your-code-title">run your own code</h2>
+            <p>
+              The CPU starts at the address you give it. Your app provides the instruction bytes,
+              memory and any state the guest expects. Here is the same addition as a freestanding C
+              function.
+            </p>
+            <div class="docs-example">
+              <div class="docs-example-bar">
+                <span>add.c</span>
+                <button type="button" data-copy-code="c-source" aria-label="copy add.c" hidden>
+                  copy
+                </button>
+              </div>
+              <pre tabindex="0"><code id="c-source"><!-- example:add.c --></code></pre>
+            </div>
+            <p>
+              Use Clang and LLVM’s <code>llvm-objcopy</code> to extract the function’s instruction
+              bytes into <code>add.bin</code>.
+            </p>
+            <div class="docs-example">
+              <div class="docs-example-bar">
+                <span>terminal</span>
+                <button
+                  type="button"
+                  data-copy-code="build-c"
+                  aria-label="copy build commands"
+                  hidden
+                >
+                  copy
+                </button>
+              </div>
+              <pre
+                tabindex="0"
+              ><code id="build-c">clang --target=x86_64-unknown-none-elf -O2 -ffreestanding \
+  -fno-stack-protector -fomit-frame-pointer -mno-red-zone -c add.c -o add.o
+llvm-objcopy -O binary --only-section=.text add.o add.bin</code></pre>
+            </div>
+            <p>
+              Serve <code>add.bin</code> next to the browser script. The x86-64 System V calling
+              convention puts these arguments in <code>rdi</code> and <code>rsi</code>. The host
+              puts a return address on the guest stack, and Ring64 stops there after
+              <code>ret</code>.
+            </p>
+            <div class="docs-example">
+              <div class="docs-example-bar">
+                <span>add-c.ts</span>
+                <button type="button" data-copy-code="c-loader" aria-label="copy add-c.ts" hidden>
+                  copy
+                </button>
+              </div>
+              <pre tabindex="0"><code id="c-loader"><!-- example:add-c.ts --></code></pre>
+            </div>
+          </section>
+
+          <section id="memory-and-io" class="docs-section" aria-labelledby="memory-and-io-title">
+            <h2 id="memory-and-io-title">memory &amp; i/o</h2>
+            <p>
+              Start with <code>code</code> and <code>ram</code> for a small linear guest. Use
+              backings and mappings when you need more regions or separate read, write and execute
+              permissions. Addresses and register values are <code>bigint</code>. Byte counts are
+              <code>number</code>.
+            </p>
+            <p>
+              Read registers and memory after a run returns. Keep a long-running guest in a worker
+              if the page needs to stay responsive. An <code>IoProvider</code> connects synchronous
+              guest port reads and writes to your app.
+            </p>
+            <p>
+              <a href="./api/#memory">Memory models and mappings</a> cover linear, paged and
+              physical access. <a href="./api/#run-result">Run results</a> explain instruction
+              budgets, normal stops and faults.
+            </p>
+          </section>
+
+          <section id="parallel" class="docs-section" aria-labelledby="parallel-title">
+            <h2 id="parallel-title">parallel</h2>
+            <p>
+              A machine gives each vCPU its own registers and a worker. The vCPUs share guest
+              memory. Here they read the same code, receive different arguments and return
+              <code>[42n, 12n]</code>.
+            </p>
+            <div class="docs-example">
+              <div class="docs-example-bar">
+                <span>parallel.ts</span>
+                <button
+                  type="button"
+                  data-copy-code="parallel-code"
+                  aria-label="copy parallel.ts"
+                  hidden
+                >
+                  copy
+                </button>
+              </div>
+              <pre tabindex="0"><code id="parallel-code"><!-- example:parallel.ts --></code></pre>
+            </div>
+            <p>
+              In a browser, serve the page with cross-origin isolation and keep the package’s worker
+              modules and <code>ring64-parallel.wasm</code> available. Parallel execution needs
+              shared memory, atomics and Wasm multiple memories. See the
+              <a href="./api/#parallel">machine API</a> for pause, state and memory access.
+            </p>
+            <div class="docs-example">
+              <div class="docs-example-bar"><span>response headers</span></div>
+              <pre tabindex="0"><code>Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Embedder-Policy: require-corp</code></pre>
+            </div>
+          </section>
+        </main>
+      </div>
+    </div>
+    <p id="docs-copy-status" class="visually-hidden" role="status"></p>
+    <script type="module" src="../site.js"></script>
+    <script type="module" src="../docs.js"></script>
+  </body>
+</html>

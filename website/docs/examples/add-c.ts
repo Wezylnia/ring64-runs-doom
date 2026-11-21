@@ -1,0 +1,40 @@
+import { createCpu, loadCpuCompiler, type Limits } from 'ring64';
+
+const response = await fetch(new URL('./add.bin', import.meta.url));
+if (!response.ok) throw new Error(`could not load add.bin (${response.status})`);
+const code = new Uint8Array(await response.arrayBuffer());
+const entry = 0x1000n;
+const stop = 0x2000n;
+const stackBase = 0x8000n;
+const stack = new Uint8Array(16);
+new DataView(stack.buffer).setBigUint64(8, stop, true);
+
+const limits = {
+  maxInstructions: 128,
+  maxSourceBytes: 2048,
+  maxArtifactBytes: 262144,
+  maxCachedArtifacts: 32,
+  maxCachedBytes: 4194304,
+  maxTranslationsPerRun: 32,
+} satisfies Limits;
+
+const cpu = await createCpu({
+  compiler: await loadCpuCompiler(),
+  code: { base: entry, bytes: code },
+  ram: { base: stackBase, bytes: stack },
+  limits,
+});
+
+try {
+  const state = cpu.readState();
+  state.registers[7] = 19n; // rdi
+  state.registers[6] = 23n; // rsi
+  state.registers[4] = stackBase + 8n; // rsp points at the return address
+  cpu.setState(state);
+
+  const result = await cpu.run({ budget: 10n, stop });
+  if (result.reason !== 'stop') throw new Error(`guest stopped with ${result.reason}`);
+  console.log(result.state.registers[0]); // rax = 42n
+} finally {
+  cpu.dispose();
+}
