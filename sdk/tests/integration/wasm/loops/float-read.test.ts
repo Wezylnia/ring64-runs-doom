@@ -2,7 +2,14 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createCpu } from '../../../../src/index.js';
 import { simdFault } from '../../../../../tests/execution/floating/fixture.js';
-import { LIMITS, changed, exit, fault, hex, initial } from '../../../../../tests/support/fixture.js';
+import {
+  LIMITS,
+  changed,
+  exit,
+  fault,
+  hex,
+  initial,
+} from '../../../../../tests/support/fixture.js';
 import { compiler, head, row, column, readOnly, mapping } from './fixture.js';
 
 function body(address32 = false): Uint8Array {
