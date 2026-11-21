@@ -1,5 +1,6 @@
 use super::admission::core_probe;
 use super::mapped::{core_read_memory, core_write_memory};
+use super::scalar::*;
 use super::translation::core_compile;
 use super::*;
 #[path = "memory/access_faults.rs"]

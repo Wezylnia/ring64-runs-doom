@@ -51,7 +51,7 @@ fn fixture() {
 #[test]
 fn paging_import_clears_transient_alignment_only_after_validation_and_keeps_pending_source() {
     fixture();
-    assert_eq!(core_load_impl::<false, true>(0x4001, 4), 0);
+    assert_eq!(core_paged_load(0x4001, 4), 0);
     let (failure, bank, event) = BRIDGE.with_borrow_mut(|bridge| {
         let core = bridge.core.as_mut().unwrap();
         let state = unsafe { &mut *core.state.get() };
@@ -98,7 +98,7 @@ fn paging_import_clears_transient_alignment_only_after_validation_and_keeps_pend
 fn each_operand_admission_clears_a_previous_alignment_refusal() {
     for operation in 0..6 {
         fixture();
-        assert_eq!(core_load_impl::<false, true>(0x4001, 4), 0);
+        assert_eq!(core_paged_load(0x4001, 4), 0);
         assert_eq!(
             paging::core_paged_access_reason(),
             super::super::super::layout::ALIGNMENT_CHECK
@@ -106,26 +106,23 @@ fn each_operand_admission_clears_a_previous_alignment_refusal() {
         assert_eq!(paging::core_paged_access_failed(), 1);
         match operation {
             0 => {
-                assert_eq!(core_load_impl::<false, true>(0x4000, 4), 0x90909090);
+                assert_eq!(core_paged_load(0x4000, 4), 0x90909090);
             }
             1 => {
-                assert_eq!(
-                    core_load_for_write_impl::<false, true>(0x4000, 4),
-                    0x90909090
-                );
+                assert_eq!(core_paged_load_for_write(0x4000, 4), 0x90909090);
             }
             2 => {
-                assert_eq!(core_store_impl::<false, true>(0x4000, 4, 0x12345678), 1);
+                assert_eq!(core_paged_store(0x4000, 4, 0x12345678), 1);
             }
             3 => {
                 assert_eq!(
-                    context::core_paged_segmented_load(0x4000, 4, Segment::Ds as u32),
+                    scalar::core_paged_segmented_load(0x4000, 4, Segment::Ds as u32),
                     0x90909090
                 );
             }
             4 => {
                 assert_eq!(
-                    context::core_paged_segmented_store(0x4000, 4, 0x12345678, Segment::Ds as u32),
+                    scalar::core_paged_segmented_store(0x4000, 4, 0x12345678, Segment::Ds as u32),
                     1
                 );
             }

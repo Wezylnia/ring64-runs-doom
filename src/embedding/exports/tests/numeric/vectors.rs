@@ -38,7 +38,7 @@ fn wide_loads_preserve_zero_upper_bits_and_order_alignment_before_mapping() {
         vector::core_vector_load(0x7001, 16, Segment::Fs as u32, 16),
         0
     );
-    assert_eq!(context::core_access_reason(), ALIGNMENT);
+    assert_eq!(scalar::core_access_reason(), ALIGNMENT);
     assert_eq!(
         metadata(ALIGNMENT),
         serde_json::json!({"segment":"fs","offset":"0x7001","address":"0x7001","width":16,"access":"read","alignment":16})
@@ -48,7 +48,7 @@ fn wide_loads_preserve_zero_upper_bits_and_order_alignment_before_mapping() {
         vector::core_vector_load(0x800000000001, 16, Segment::Ds as u32, 16),
         0
     );
-    assert_eq!(context::core_access_reason(), DATA);
+    assert_eq!(scalar::core_access_reason(), DATA);
     assert_eq!(metadata(DATA)["cause"], "noncanonical");
     assert_eq!(metadata(ALIGNMENT), serde_json::Value::Null);
 }
@@ -182,7 +182,7 @@ fn xmm_import_clears_only_successful_diagnostics_and_preserves_live_execution_ow
         bridge.input = vec![0xaa; 255];
     });
     assert_eq!(vector::core_import_xmm(), 1);
-    assert_eq!(context::core_access_reason(), ALIGNMENT);
+    assert_eq!(scalar::core_access_reason(), ALIGNMENT);
     assert_eq!(core_divide_failed(), 1);
     assert_eq!(metadata(TARGET)["address"], "0x800000000000");
     BRIDGE.with_borrow_mut(|bridge| bridge.input = vec![0xaa; 256]);
