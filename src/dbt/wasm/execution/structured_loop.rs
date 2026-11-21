@@ -197,10 +197,15 @@ impl StructuredLoop {
 
     #[cfg(not(feature = "parallel"))]
     pub(super) fn select_paged_reads(unit: &super::Unit) -> Option<Self> {
-        if !unit.context.is_long64() {
+        if !unit.context.is_long64()
+            || !unit
+                .instructions
+                .iter()
+                .any(|i| paged_read_width(i.operation).is_some())
+        {
             return None;
         }
-        Self::select_straight_body(
+        let simple = Self::select_straight_body(
             &unit.instructions,
             LoopKind::PagedReads,
             |op| inside_register_body(op) || paged_read_width(op).is_some(),
@@ -211,16 +216,31 @@ impl StructuredLoop {
                     .count()
                     == 4
             },
-        )?
-        .without_dword_projection()
-        .within_paged_fetch(unit)
+        );
+        simple
+            .or_else(|| {
+                super::loop_cfg::select_paged_read_graph(&unit.instructions, |body| {
+                    body.iter().any(|i| paged_read_width(i.operation).is_some())
+                        && body.iter().all(|i| {
+                            inside_register_body(i.operation)
+                                || paged_read_width(i.operation).is_some()
+                                || matches!(
+                                    i.operation,
+                                    Operation::Jump { .. } | Operation::Jcc { .. }
+                                )
+                        })
+                })
+                .map(Self::forward)
+            })?
+            .without_dword_projection()
+            .within_paged_fetch(unit)
     }
 
     #[cfg(not(feature = "parallel"))]
     pub(super) fn paged_read_widths(self, unit: &super::Unit) -> [bool; 2] {
         let mut widths = [false; 2];
-        if self.kind == LoopKind::PagedReads {
-            for instruction in &unit.instructions[self.head as usize..self.tail as usize] {
+        if self.paged_fetch_bytes.is_some() {
+            for instruction in &unit.instructions[self.earlier as usize..self.tail as usize] {
                 match paged_read_width(instruction.operation) {
                     Some(Width::W8) => widths[0] = true,
                     Some(Width::W32) => widths[1] = true,
@@ -233,7 +253,7 @@ impl StructuredLoop {
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     pub(super) fn with_paged_read_span(mut self, unit: &super::Unit) -> Option<Self> {
-        if self.paged_read_widths(unit) != [true, false] {
+        if self.kind != LoopKind::PagedReads || self.paged_read_widths(unit) != [true, false] {
             return None;
         }
         let proof = super::read_loop::ReadLoop::recognize_integer(
@@ -249,10 +269,10 @@ impl StructuredLoop {
 
     #[cfg(not(feature = "parallel"))]
     pub(super) fn within_paged_fetch(mut self, unit: &super::Unit) -> Option<Self> {
-        let head = unit.instructions[self.head as usize].pc;
+        let first = unit.instructions[self.earlier as usize].pc;
         let end = unit.instructions[self.tail as usize].next_pc;
-        let length = u32::try_from(end.checked_sub(head)?).ok()?;
-        if !unit.context.single_page_code_span(head, length) {
+        let length = u32::try_from(end.checked_sub(first)?).ok()?;
+        if !unit.context.single_page_code_span(first, length) {
             return None;
         }
         self.paged_fetch_bytes = Some(length);
@@ -467,6 +487,12 @@ fn paged_read_width(operation: Operation) -> Option<Width> {
 
     match operation {
         Operation::Load {
+            width: Width::W32,
+            address,
+            ..
+        }
+        | Operation::MemoryAlu {
+            kind: Alu::Cmp,
             width: Width::W32,
             address,
             ..
@@ -751,7 +777,7 @@ impl Emitter {
             .op(Op::I64GeU)
             .op(Op::I32And)
             .op(Op::If(BlockType::Empty))
-            .op(Op::I64Const(instructions[body.head as usize].pc as i64))
+            .op(Op::I64Const(instructions[body.earlier as usize].pc as i64))
             .op(Op::I32Const(body.paged_fetch_bytes.unwrap() as i32));
         self.system_bits();
         self.op(Op::LocalGet(super::SHADOW))
@@ -962,24 +988,27 @@ impl Emitter {
         let outlined_float = self.float_outline_params != 0;
         #[cfg(not(all(not(feature = "parallel"), target_arch = "wasm32")))]
         let outlined_float = false;
-        let (predicates, read_prefix_len) =
-            if !cfg!(feature = "parallel") && self.loop_gates_prechecked && body.forward_edges() {
-                // Batching the protected dword prefix removes a hot spill
-                // needed only when the first read faults.
-                let read_prefix_len = if self.context.mode() == crate::x86::context::Mode::Protected
-                    && self.context.code32()
-                {
-                    super::loop_cfg::read_prefix_len(instructions, order)
-                } else {
-                    0
-                };
-                (
-                    super::loop_cfg::compare_predicates(instructions, order, &self.context),
-                    read_prefix_len,
-                )
+        let (predicates, read_prefix_len) = if !cfg!(feature = "parallel")
+            && self.loop_gates_prechecked
+            && body.forward_edges()
+            && !self.guarded_paged_lap
+        {
+            // Batching the protected dword prefix removes a hot spill
+            // needed only when the first read faults.
+            let read_prefix_len = if self.context.mode() == crate::x86::context::Mode::Protected
+                && self.context.code32()
+            {
+                super::loop_cfg::read_prefix_len(instructions, order)
             } else {
-                (Vec::new(), 0)
+                0
             };
+            (
+                super::loop_cfg::compare_predicates(instructions, order, &self.context),
+                read_prefix_len,
+            )
+        } else {
+            (Vec::new(), 0)
+        };
         if body.forward_edges() {
             // Each later cloned instruction has an enclosing forward label.
             for _ in 1..order.len() {

@@ -174,6 +174,83 @@ export function pagingBoundaryReviewScenarios(compiler: WebAssembly.Module): Sce
       },
     },
     {
+      name: 'paged rotated memory compare keeps branch, stop and refusal boundaries exact',
+      async run() {
+        const prefix = 0x400000n;
+        const head = prefix + 8n;
+        const compare = prefix + 19n;
+        const exit = prefix + 36n;
+        // The upper-half path branches backward to the prefix, which can fall
+        // through to the head. The lower-half path branches directly to the head.
+        const code = '4489f74139fb73c889fb4429dbd1eb468d341b423934b173e74101db41ffc34139fb72e4';
+        const data = new Uint8Array(4096);
+        data.set(little([0n, 1n, 2n, 3n], 4));
+        await usingPaged(
+          compiler,
+          {
+            code,
+            words: [[0x4008n, 0xa027n]],
+            spans: [{ physical: 0xa000n, bytes: data }],
+          },
+          async (cpu) => {
+            const start = (base: bigint, needle: bigint, upper = 4n) =>
+              initial(head, { 1: base, 6: needle, 7: upper, 11: 0n }, 2n);
+            cpu.setState(start(0x401000n, 2n));
+            equal((await cpu.run({ budget: 5n })).state.rip, compare + 4n, 'warm code and data');
+            cpu.setState(start(0x401000n, 2n));
+            const done = await cpu.run({ budget: 32n, stop: exit });
+            equal(done.reason, 'stop', 'both halves reach the common falling exit');
+            equal(done.retired, 19n, 'nine upper-half steps and ten lower-half steps');
+            equal(done.state.rip, exit, 'falling exit is the original next byte');
+            equal(done.state.registers[7], 2n, 'rotated prefix lowered the upper bound');
+            equal(done.state.registers[11], 2n, 'lower-half path raised the lower bound');
+            equal(done.state.flags & 0x8d7n, 0x46n, 'the final bound compare sets ZF');
+
+            const takenExit = prefix - 48n;
+            cpu.setState(start(0x401000n, 0n, 1n));
+            const taken = await cpu.run({ budget: 32n, stop: takenExit });
+            equal(taken.reason, 'stop', 'the rotated prefix can take the other exit');
+            equal(taken.retired, 9n, 'the exiting prefix retires its compare and branch');
+            equal(taken.state.rip, takenExit, 'stop precedes fetching the unmapped exit');
+            equal(taken.state.registers[7], 0n, 'the exiting prefix commits the empty interval');
+
+            cpu.setState(start(0x401000n, 2n));
+            const partial = await cpu.run({ budget: 10n });
+            equal(partial.reason, 'budget', 'a shorter first lap leaves one checked instruction');
+            equal(partial.retired, 10n, 'the complete upper path and next MOV retire');
+            equal(partial.state.rip, head + 2n, 'the checked entry stops before the next SUB');
+
+            cpu.setState(start(0x401000n, 2n));
+            const stopped = await cpu.run({ budget: 32n, stop: prefix });
+            equal(stopped.reason, 'stop', 'stop applies to the rotated prefix');
+            equal(stopped.retired, 6n, 'wait at the branch target without entering the prefix');
+            equal(stopped.state.rip, prefix, 'stop points to the unstarted prefix');
+            equal(stopped.state.registers[7], 4n, 'the prefix did not change the upper bound');
+
+            cpu.setState(start(0x401ff4n, 1n));
+            const denied = await cpu.run({ budget: 32n });
+            equal(denied.reason, 'page-fault', 'second memory compare faults exactly');
+            equal(denied.retired, 14n, 'first lap and the second arithmetic prefix retire once');
+            equal(denied.state.rip, compare, 'retry starts at the faulting memory compare');
+            equal(denied.state.registers[11], 3n, 'first lap bound is preserved');
+            equal(denied.state.registers[14], 3n, 'second prefix formed the faulting index');
+            equal(denied.state.flags & 0x8d7n, 0x47n, 'incoming SHR flags survive the refused CMP');
+            same(
+              denied.pageFault,
+              {
+                vector: 14,
+                instructionPc: compare,
+                address: 0x402000n,
+                errorCode: 0,
+                access: 'read',
+              },
+              'checked operand supplies the exact fault packet',
+            );
+          },
+        );
+      },
+    },
+    {
       name: 'paged MOVZX keeps the exact byte loop prefix before a missed read',
       async run() {
         const head = 0x400000n;

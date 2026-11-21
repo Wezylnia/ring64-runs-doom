@@ -235,6 +235,42 @@ fn paged_dword_read_loop_keeps_original_dispatch_under_a_tight_artifact_limit() 
     }
 }
 
+#[cfg(not(feature = "parallel"))]
+#[test]
+fn paged_rotated_compare_requires_its_whole_code_span_and_a_ds_operand() {
+    use crate::x86::{context::Segment, instruction::Operation};
+
+    // The rotated prefix is visited by JAE after CMP [RCX+R14*4],ESI.
+    let code = [
+        0x44, 0x89, 0xf7, 0x41, 0x39, 0xfb, 0x73, 0xc8, 0x89, 0xfb, 0x44, 0x29, 0xdb, 0xd1, 0xeb,
+        0x46, 0x8d, 0x34, 0x1b, 0x42, 0x39, 0x34, 0xb1, 0x73, 0xe7, 0x41, 0x01, 0xdb, 0x41, 0xff,
+        0xc3, 0x41, 0x39, 0xfb, 0x72, 0xe4,
+    ];
+    let same_page = unit(compiled_fixture(0x1000, &code, 0x1008).instructions);
+    let cross_page = unit(compiled_fixture(0x1ffc, &code, 0x2004).instructions);
+    let mut fs = unit(same_page.instructions.clone());
+    let Some(compare) = fs
+        .instructions
+        .iter_mut()
+        .find_map(|i| match &mut i.operation {
+            Operation::MemoryAlu { address, .. } => Some(address),
+            _ => None,
+        })
+    else {
+        panic!("fixture must decode a memory compare");
+    };
+    compare.segment = Segment::Fs;
+
+    let guarded = emit_profile(&same_page, true, true, usize::MAX);
+    let capped = emit_profile(&same_page, true, true, guarded.len() - 1);
+    let cross_page = emit_profile(&cross_page, true, true, usize::MAX);
+    let fs = emit_profile(&fs, true, true, usize::MAX);
+    for (bytes, loops) in [(guarded, 3), (capped, 1), (cross_page, 1), (fs, 1)] {
+        assert_eq!(wasm_loop_count(&bytes), loops);
+        wasmparser::Validator::new().validate_all(&bytes).unwrap();
+    }
+}
+
 #[test]
 fn register_loop_keeps_carry_live_through_zero_count_and_partial_writers() {
     let code = [

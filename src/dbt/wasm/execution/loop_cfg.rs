@@ -50,6 +50,21 @@ pub(super) fn select(instructions: &[Instruction]) -> Option<(LoopOrder, u32)> {
         .or_else(|| select_layout(instructions, Layout::Rotated, limit))
 }
 
+#[cfg(not(feature = "parallel"))]
+pub(super) fn select_paged_read_graph(
+    instructions: &[Instruction],
+    admit: impl Fn(&[Instruction]) -> bool,
+) -> Option<(LoopOrder, u32)> {
+    let limit = instructions.len();
+    select_layout_filtered(instructions, Layout::Natural, limit, &admit).or_else(|| {
+        select_layout_filtered(instructions, Layout::Rotated, limit, admit).filter(|(order, _)| {
+            // The retained read also touches the successor's execute entry.
+            // A read immediately before the head could end a rotated lap.
+            !reads_memory(instructions[order.head as usize - 1].operation)
+        })
+    })
+}
+
 pub(super) fn select_natural_read_shifts(instructions: &[Instruction]) -> Option<(LoopOrder, u32)> {
     instructions
         .iter()
