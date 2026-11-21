@@ -14,6 +14,12 @@ pub(super) fn is_f32_flag_compare(instruction: FloatInstruction) -> bool {
     instruction.op.format == Format::F32 && instruction.writes_flags()
 }
 
+pub(super) fn is_scalar_f32_sub(instruction: FloatInstruction) -> bool {
+    instruction.op.scalar
+        && instruction.op.format == Format::F32
+        && instruction.op.kind == Kind::Sub
+}
+
 impl Emitter {
     pub(super) fn float(&mut self, instruction: FloatInstruction, next_pc: u64, exit_depth: u32) {
         let [left, right, result] = self.vector_temps();
@@ -53,7 +59,8 @@ impl Emitter {
         }
         if instruction.op.scalar
             && instruction.op.format == Format::F32
-            && matches!(instruction.op.kind, Kind::Add | Kind::Mul)
+            && (matches!(instruction.op.kind, Kind::Add | Kind::Mul)
+                || self.inline_f32_sub && instruction.op.kind == Kind::Sub)
         {
             self.op(Op::Block(BlockType::Result(ValType::V128)))
                 .op(Op::Block(BlockType::Empty));
@@ -232,6 +239,12 @@ impl Emitter {
             self.float_f32_sticky(kind, left, right, wide, normal);
             return;
         }
+        let (scalar_wide, vector, vector_wide) = match kind {
+            Kind::Add => (Op::F64Add, Op::F32x4Add, Op::F64x2Add),
+            Kind::Sub => (Op::F64Sub, Op::F32x4Sub, Op::F64x2Sub),
+            Kind::Mul => (Op::F64Mul, Op::F32x4Mul, Op::F64x2Mul),
+            _ => unreachable!("guarded scalar FP32 arithmetic"),
+        };
         let mxcsr = super::vector::memory(offset_of!(RunState, mxcsr));
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         let rounding_prechecked = self.proved_reads.is_some();
@@ -245,8 +258,8 @@ impl Emitter {
 
         for ((vector, bits), known_normal) in [(left, LHS), (right, RHS)].into_iter().zip(normal) {
             if rounding_prechecked && !known_normal {
-                // ADD and MUL cannot produce finite results from nonfinite inputs.
-                // The result check rejects these before any guest effects.
+                // These operations cannot produce a finite result from a nonfinite input.
+                // The result check rejects them before any guest effects.
                 self.reject_denormal_f32_operand(vector);
             }
             self.op(Op::LocalGet(vector));
@@ -275,26 +288,13 @@ impl Emitter {
             // calculation. Both vector operands have proved zero upper lanes.
             self.op(Op::LocalGet(left))
                 .op(Op::LocalGet(right))
-                .op(if kind == Kind::Add {
-                    Op::F32x4Add
-                } else {
-                    Op::F32x4Mul
-                })
+                .op(vector)
                 .op(Op::LocalSet(wide));
-            self.op(if kind == Kind::Add {
-                Op::F64x2Add
-            } else {
-                Op::F64x2Mul
-            })
-            .op(Op::F64x2ExtractLane(0));
+            self.op(vector_wide).op(Op::F64x2ExtractLane(0));
         } else {
             self.float_f64(LHS);
             self.float_f64(RHS);
-            self.op(if kind == Kind::Add {
-                Op::F64Add
-            } else {
-                Op::F64Mul
-            });
+            self.op(scalar_wide);
         }
         self.op(Op::I64ReinterpretF64).op(Op::LocalSet(RESULT));
         // Check before rounding so a tiny product that rounds to a normal f32 still falls back.
@@ -312,16 +312,19 @@ impl Emitter {
             .op(Op::I64And)
             .op(Op::I64Eqz)
             .op(Op::I32Eqz);
-        if kind == Kind::Add {
+        if matches!(kind, Kind::Add | Kind::Sub) {
             // A widened sum that loses a nonzero addend can look exact
-            // only when it has the larger addend's bit pattern.
+            // only when it has the larger addend's bit pattern. For SUB
+            // the effective right addend has the opposite sign.
             self.op(Op::LocalGet(RESULT))
                 .op(Op::LocalGet(LHS))
                 .op(Op::I64Eq)
                 .op(Op::LocalGet(RESULT))
-                .op(Op::LocalGet(RHS))
-                .op(Op::I64Eq)
-                .op(Op::I32Or);
+                .op(Op::LocalGet(RHS));
+            if kind == Kind::Sub {
+                self.op(Op::I64Const(i64::MIN)).op(Op::I64Xor);
+            }
+            self.op(Op::I64Eq).op(Op::I32Or);
             for summand in [LHS, RHS] {
                 self.op(Op::LocalGet(summand))
                     .op(Op::I64Const(1))
@@ -379,6 +382,12 @@ impl Emitter {
         wide: Option<u32>,
         normal: [bool; 2],
     ) {
+        let (scalar, vector) = match kind {
+            Kind::Add => (Op::F32Add, Op::F32x4Add),
+            Kind::Sub => (Op::F32Sub, Op::F32x4Sub),
+            Kind::Mul => (Op::F32Mul, Op::F32x4Mul),
+            _ => unreachable!("guarded scalar FP32 arithmetic"),
+        };
         for (vector, known_normal) in [left, right].into_iter().zip(normal) {
             if !known_normal {
                 self.reject_denormal_f32_operand(vector);
@@ -387,11 +396,7 @@ impl Emitter {
         if let Some(result) = wide {
             self.op(Op::LocalGet(left))
                 .op(Op::LocalGet(right))
-                .op(if kind == Kind::Add {
-                    Op::F32x4Add
-                } else {
-                    Op::F32x4Mul
-                })
+                .op(vector)
                 .op(Op::LocalTee(result))
                 .op(Op::I32x4ExtractLane(0));
             self.reject_fp32_noninterior();
@@ -402,11 +407,7 @@ impl Emitter {
                 .op(Op::F32x4ExtractLane(0))
                 .op(Op::LocalGet(right))
                 .op(Op::F32x4ExtractLane(0))
-                .op(if kind == Kind::Add {
-                    Op::F32Add
-                } else {
-                    Op::F32Mul
-                })
+                .op(scalar)
                 .op(Op::I32ReinterpretF32)
                 .op(Op::LocalTee(STORE_STATUS));
             self.reject_fp32_noninterior();

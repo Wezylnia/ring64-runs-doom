@@ -5,7 +5,47 @@ fn access(op: Numeric, left: u128, right: u128, result: u128, reason: u32, mxcsr
 }
 
 #[test]
-fn scalar_f32_add_and_multiply_preserve_upper_lanes_and_precision_status_without_a_helper() {
+fn tight_artifact_cap_keeps_direct_compare_but_uses_the_helper_for_subtraction() {
+    let sub = numeric(Kind::Sub);
+    let operations = [sub, numeric(Kind::Ucomi)].map(|op| {
+        Operation::Float(FloatInstruction {
+            op,
+            dst: 0,
+            src: Location::Register(RegisterView::low(1)),
+        })
+    });
+    let unit = unit(
+        operations
+            .into_iter()
+            .enumerate()
+            .map(|(index, operation)| instruction(index as u64, operation))
+            .collect(),
+    );
+    let direct = emit(&unit);
+    let fallback = emit_profile(&unit, false, false, direct.len() - 1);
+    assert!(fallback.len() < direct.len());
+    let mut case = packet(
+        operations.to_vec(),
+        &[(0, 0x4040_0000), (1, 0x4000_0000)],
+        &[(0, 0x3f80_0000)],
+        1,
+        2,
+    );
+    case["bytes"] = json!(fallback);
+    case["expected"]["flags"] = json!("403");
+    case["accesses"] = json!([access(
+        sub,
+        0x4040_0000,
+        0x4000_0000,
+        0x3f80_0000,
+        0,
+        0x1f80
+    )]);
+    run_cases(vec![case]);
+}
+
+#[test]
+fn scalar_f32_add_subtract_and_multiply_preserve_lanes_and_precision_without_a_helper() {
     let mut cases = vec![];
     for (kind, a, b, result, inexact) in [
         (Kind::Add, 0x3f80_0000, 0x4000_0000, 0x4040_0000, false),
@@ -14,6 +54,14 @@ fn scalar_f32_add_and_multiply_preserve_upper_lanes_and_precision_status_without
         (Kind::Add, 0x0080_0000, 0x3f80_0000, 0x3f80_0000, true),
         (Kind::Add, 0x3f80_0000, 0xbf80_0000, 0, false),
         (Kind::Add, 0x8000_0000, 0x8000_0000, 0x8000_0000, false),
+        (Kind::Sub, 0x4040_0000, 0x4000_0000, 0x3f80_0000, false),
+        (Kind::Sub, 0x3f80_0000, 0x0080_0000, 0x3f80_0000, true),
+        (Kind::Sub, 0x0080_0000, 0x3f80_0000, 0xbf80_0000, true),
+        (Kind::Sub, 0x0080_0000, 0xbf80_0000, 0x3f80_0000, true),
+        (Kind::Sub, 0xbf80_0000, 0xbf80_0000, 0, false),
+        (Kind::Sub, 0x8000_0000, 0, 0x8000_0000, false),
+        (Kind::Sub, 0x8000_0000, 0x8000_0000, 0, false),
+        (Kind::Sub, 0, 0x8000_0000, 0, false),
         (Kind::Mul, 0x3f80_0001, 0x3f80_0001, 0x3f80_0002, true),
         (Kind::Mul, 0xc040_0000, 0x4080_0000, 0xc140_0000, false),
         (Kind::Mul, 0x8000_0000, 0x4000_0000, 0x8000_0000, false),
@@ -65,7 +113,7 @@ fn scalar_f32_add_and_multiply_preserve_upper_lanes_and_precision_status_without
 }
 
 #[test]
-fn scalar_f32_add_and_multiply_defer_exceptional_operands_results_and_controls() {
+fn scalar_f32_add_subtract_and_multiply_defer_exceptional_operands_results_and_controls() {
     let address = Address {
         base: AddressBase::Register(0),
         ..Address::default()
@@ -87,6 +135,15 @@ fn scalar_f32_add_and_multiply_defer_exceptional_operands_results_and_controls()
         (Kind::Mul, 0x0080_0000, 0x3f7f_ffff, 0x1f80), // Tiny result rounded to min-normal
         (Kind::Mul, 0x0080_0000, 0x3f00_0000, 0x9f80), // Exact subnormal result with FTZ
         (Kind::Add, 0x0080_0001, 0x8080_0000, 0x1780), // Unmasked underflow on cancellation
+        (Kind::Sub, 0x0080_0000, 0x3f80_0000, 0x0fa0), // Unmasked lost LHS, sticky precision
+        (Kind::Sub, 0x3f80_0000, 0x3f80_0000, 0x3f80), // Round down changes zero's sign
+        (Kind::Sub, 0x3f80_0000, 0x0000_0001, 0x1fc0), // DAZ
+        (Kind::Sub, 0x3f80_0000, 0xff80_0001, 0x1f00), // Right sNaN, unmasked invalid
+        (Kind::Sub, 0x3f80_0000, 0xffc0_0002, 0x1f80), // Right qNaN preserves its sign
+        (Kind::Sub, 0x7f80_0000, 0x7f80_0000, 0x1f80), // Infinity minus itself
+        (Kind::Sub, 0x7f7f_ffff, 0xff7f_ffff, 0x1f80), // Overflow
+        (Kind::Sub, 0x0080_0001, 0x0080_0000, 0x1780), // Unmasked underflow on cancellation
+        (Kind::Sub, 0x0080_0001, 0x0080_0000, 0x9f80), // Exact subnormal result with FTZ
     ] {
         let op = numeric(kind);
         let left = 0x112233445566778899aabbcc00000000u128 | a;

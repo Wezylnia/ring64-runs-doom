@@ -205,6 +205,7 @@ struct Emitter {
     vector_access_reason: Option<u32>,
     float: Option<u32>,
     inline_f32_compares: bool,
+    inline_f32_sub: bool,
     load_mxcsr: Option<u32>,
     store_mxcsr: Option<u32>,
     x87: Option<u32>,

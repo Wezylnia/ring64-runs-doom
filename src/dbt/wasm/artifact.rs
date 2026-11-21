@@ -180,6 +180,7 @@ fn emit_placement(
     let optional = OptionalLowering {
         extra_spans: true,
         inline_f32_compares: true,
+        inline_f32_sub: true,
     };
     let (bytes, extra_spans) = emit_body(
         unit,
@@ -249,6 +250,7 @@ enum GuardedReads {
 struct OptionalLowering {
     extra_spans: bool,
     inline_f32_compares: bool,
+    inline_f32_sub: bool,
 }
 
 fn emit_body(
@@ -1335,6 +1337,7 @@ fn emit_body(
         vector_access_reason,
         float,
         inline_f32_compares: optional.inline_f32_compares,
+        inline_f32_sub: optional.inline_f32_sub,
         load_mxcsr,
         store_mxcsr,
         x87,
@@ -1579,6 +1582,26 @@ fn emit_body(
     }
     let code_start = bytes.len();
     code.append_to(&mut bytes);
+    if bytes.len() > max_artifact_bytes
+        && optional.inline_f32_sub
+        && unit.instructions.iter().any(|instruction| {
+            matches!(instruction.operation, Operation::Float(float) if super::float::is_scalar_f32_sub(float))
+        })
+    {
+        // Drop the new arithmetic path before reducing the compare or loop placement.
+        return emit_body(
+            unit,
+            observed,
+            (paged, mmio),
+            loop_body,
+            _guard_reads,
+            OptionalLowering {
+                inline_f32_sub: false,
+                ..optional
+            },
+            max_artifact_bytes,
+        );
+    }
     if bytes.len() > max_artifact_bytes
         && optional.inline_f32_compares
         && unit.instructions.iter().any(|instruction| {
