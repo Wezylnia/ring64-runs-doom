@@ -8,7 +8,7 @@ const RF: u64 = 0x10002;
 fn fixture(family: &str, warm: bool, executable: bool) -> Vec<u8> {
     let mut bytes = vec![0xa5; 0xa000];
     let (entries, bank) = match family {
-        "ia32e" | "long64" => (
+        "ia32e" | "long64" | "compat32" => (
             vec![
                 (0x1000, 0x2007u64, 8),
                 (0x2000, 0x3007, 8),
@@ -40,12 +40,16 @@ fn fixture(family: &str, warm: bool, executable: bool) -> Vec<u8> {
     }
     let mut context = ExecutionContext::default().to_json();
     if family != "long64" {
-        context["mode"] = serde_json::json!("protected");
+        context["mode"] = serde_json::json!(if family == "compat32" {
+            "compatibility"
+        } else {
+            "protected"
+        });
         context["segments"]["cs"]["long"] = serde_json::json!(false);
         context["segments"]["cs"]["default32"] = serde_json::json!(true);
     }
     let config = serde_json::json!({
-        "memoryModel":if matches!(family, "ia32e" | "long64") { "ia32e-paged" } else { "physical" },
+        "memoryModel":if matches!(family, "ia32e" | "long64" | "compat32") { "ia32e-paged" } else { "physical" },
         "context":context,"paging":bank,
         "memoryLimits":{"maxBackingBytes":40960,"maxBackings":1,"maxMappings":1},
         "backings":[{"id":"ram","length":40960}],
@@ -236,6 +240,77 @@ fn reached_long64_instruction_keeps_byte_and_execute_source_invalidation() {
                 assert_mov(1, bridge.core.as_mut().unwrap().paged_decode(PC).unwrap());
             });
         }
+    }
+}
+
+#[cfg(not(feature = "parallel"))]
+#[test]
+fn reached_paged_32_bit_instruction_uses_the_translated_cs_span() {
+    for (family, next_pte, width, reads) in [
+        ("legacy32", 0x2008, 4, 2),
+        ("pae", 0x3010, 8, 2),
+        ("compat32", 0x4010, 8, 4),
+    ] {
+        fixture(family, true, true);
+        BRIDGE.with_borrow_mut(|bridge| {
+            let core = bridge.core.as_mut().unwrap();
+            core.context.set_segment_base(Segment::Cs, 0x1000);
+            core.image.physical_write(next_pte, width, 0x9027).unwrap();
+        });
+        let owner = activate_single_instruction();
+        BRIDGE.with_borrow(|bridge| {
+            assert_eq!(
+                bridge.core.as_ref().unwrap().warm_paged_instruction(PC),
+                None
+            );
+        });
+        physical_counts::take();
+        assert_eq!(paging::core_paged_debug_begin(PC, RF, 0), 0, "{family}");
+        assert_eq!(
+            physical_counts::take(),
+            [reads, reads * u64::from(width), 0, 0, 0, 0],
+            "{family}"
+        );
+        BRIDGE.with_borrow_mut(|bridge| {
+            let core = bridge.core.as_mut().unwrap();
+            let exact = core.paged_decode(PC).unwrap();
+            assert_mov(0, exact);
+            assert_eq!(core.warm_paged_instruction(PC), Some(exact), "{family}");
+            core.image.physical_write(0x9002, 1, 0xc9).unwrap();
+            assert_eq!(core.warm_paged_instruction(PC), None);
+        });
+        assert_eq!(translation::core_validity(owner), 0);
+        assert_eq!(paging::core_paged_debug_begin(PC, RF, 0), 26);
+        BRIDGE.with_borrow_mut(|bridge| {
+            assert_mov(1, bridge.core.as_mut().unwrap().paged_decode(PC).unwrap());
+        });
+    }
+}
+
+#[cfg(not(feature = "parallel"))]
+#[test]
+fn reached_paged_32_bit_instruction_falls_back_for_page_splits_and_cs_wrap() {
+    for (base, locations, pte, physical) in [
+        (0xffe, [0x9ffe, 0x9fff, 0x8000], 0x2008, 0x8027),
+        (0xffff_f0f0, [0x90f0, 0x90f1, 0x90f2], 0x2000, 0x9027),
+    ] {
+        fixture("legacy32", true, true);
+        BRIDGE.with_borrow_mut(|bridge| {
+            let core = bridge.core.as_mut().unwrap();
+            core.context.set_segment_base(Segment::Cs, base);
+            core.image.physical_write(pte, 4, physical).unwrap();
+            for (address, byte) in locations.into_iter().zip([0x66, 0x89, 0xc0]) {
+                core.image.physical_write(address, 1, byte).unwrap();
+            }
+        });
+        activate_single_instruction();
+        assert_eq!(paging::core_paged_debug_begin(PC, RF, 0), 0);
+        BRIDGE.with_borrow_mut(|bridge| {
+            let core = bridge.core.as_mut().unwrap();
+            assert_mov(0, core.paged_decode(PC).unwrap());
+            assert_eq!(core.warm_paged_instruction(PC), None, "CS base {base:#x}");
+            assert_eq!(core.paging.unwrap().cr2, 0xdead);
+        });
     }
 }
 

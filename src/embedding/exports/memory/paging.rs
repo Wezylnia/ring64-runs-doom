@@ -1,4 +1,6 @@
 use super::*;
+#[cfg(not(feature = "parallel"))]
+use crate::x86::context::Mode;
 use crate::x86::paging::{self, walk::Failure};
 use crate::x86::protection_keys::State as Keys;
 
@@ -8,19 +10,44 @@ impl Core {
         &self,
         pc: u64,
     ) -> Option<crate::x86::instruction::Instruction> {
-        if !self.context.is_long64() || self.image.active_changed() {
+        if self.image.active_changed() {
             return None;
         }
         let paging = self
             .paging
             .as_ref()
             .filter(|state| state.cr0 & (1 << 31) != 0)?;
-        let (instruction, physical) =
-            self.translation_owners
-                .current_instruction(self.active_owner?, pc, paging)?;
-        // Long64 CS is identity, and the active proof covers every instruction byte.
+        let context = &self.context;
+        let (instruction, linear, physical) = self.translation_owners.current_instruction(
+            self.active_owner?,
+            pc,
+            paging,
+            |instruction| {
+                // Long64 CS is identity, and the active proof covers every instruction byte.
+                if context.is_long64() {
+                    return Some(pc);
+                }
+                if !matches!(context.mode(), Mode::Protected | Mode::Compatibility)
+                    || !context.code32()
+                    || instruction.next_pc <= pc
+                {
+                    return None;
+                }
+                let linear = context
+                    .translate(
+                        pc,
+                        instruction.encoded_len(),
+                        Segment::Cs,
+                        Access::Execute,
+                        false,
+                    )
+                    .ok()?;
+                (context.segment_base(Segment::Cs).checked_add(pc) == Some(linear))
+                    .then_some(linear)
+            },
+        )?;
         let request = paging::walk::Request {
-            linear: pc,
+            linear,
             access: Access::Execute,
             class: paging::walk::AccessClass::operand(self.context.cpl(), false),
         };

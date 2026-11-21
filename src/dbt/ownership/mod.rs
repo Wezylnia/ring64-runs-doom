@@ -98,7 +98,8 @@ impl Owners {
         owner: u64,
         pc: u64,
         state: &paging::State,
-    ) -> Option<(Instruction, u64)> {
+        linear_start: impl FnOnce(Instruction) -> Option<u64>,
+    ) -> Option<(Instruction, u64, u64)> {
         let record = self.records.get(&owner)?;
         let fetch = record.fetch.as_ref()?;
         if record.admission != Admission::Current || !fetch.same_root(state) {
@@ -109,8 +110,11 @@ impl Owners {
             .binary_search_by_key(&pc, |i| i.pc)
             .ok()?;
         let instruction = record.instructions[index];
-        let physical = fetch.proof.physical_span(pc, instruction.encoded_len())?;
-        Some((instruction, physical))
+        let linear = linear_start(instruction)?;
+        let physical = fetch
+            .proof
+            .physical_span(linear, instruction.encoded_len())?;
+        Some((instruction, linear, physical))
     }
 
     pub fn record_paged(
