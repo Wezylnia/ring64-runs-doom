@@ -92,6 +92,27 @@ impl Owners {
         })
     }
 
+    #[cfg(not(feature = "parallel"))]
+    pub fn current_instruction(
+        &self,
+        owner: u64,
+        pc: u64,
+        state: &paging::State,
+    ) -> Option<(Instruction, u64)> {
+        let record = self.records.get(&owner)?;
+        let fetch = record.fetch.as_ref()?;
+        if record.admission != Admission::Current || !fetch.same_root(state) {
+            return None;
+        }
+        let index = record
+            .instructions
+            .binary_search_by_key(&pc, |i| i.pc)
+            .ok()?;
+        let instruction = record.instructions[index];
+        let physical = fetch.proof.physical_span(pc, instruction.encoded_len())?;
+        Some((instruction, physical))
+    }
+
     pub fn record_paged(
         &mut self,
         owner: u64,

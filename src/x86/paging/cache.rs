@@ -137,6 +137,31 @@ impl Cache {
         Ok(Some(translation))
     }
 
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    pub(crate) fn touch_current_fetch(
+        &self,
+        state: &State,
+        request: Request,
+        physical: u64,
+    ) -> bool {
+        debug_assert_eq!(request.access, Access::Execute);
+        let mut entries = self.entries.borrow_mut();
+        let Some(index) = entries.find(state, request) else {
+            return false;
+        };
+        let translation = entries.slots[index].unwrap().translation.at(request.linear);
+        if translation.physical != physical
+            || translation
+                .rights
+                .authorize(state, request, &ProtectionKeys::ZERO)
+                .is_err()
+        {
+            return false;
+        }
+        entries.touch(index);
+        true
+    }
+
     /// Pure retained-view projection: no A/D, fill, eviction or LRU effects.
     pub fn observe(
         &self,

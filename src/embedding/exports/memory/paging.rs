@@ -3,6 +3,32 @@ use crate::x86::paging::{self, walk::Failure};
 use crate::x86::protection_keys::State as Keys;
 
 impl Core {
+    #[cfg(not(feature = "parallel"))]
+    pub(super) fn warm_paged_instruction(
+        &self,
+        pc: u64,
+    ) -> Option<crate::x86::instruction::Instruction> {
+        if !self.context.is_long64() || self.image.active_changed() {
+            return None;
+        }
+        let paging = self
+            .paging
+            .as_ref()
+            .filter(|state| state.cr0 & (1 << 31) != 0)?;
+        let (instruction, physical) =
+            self.translation_owners
+                .current_instruction(self.active_owner?, pc, paging)?;
+        // Long64 CS is identity, and the active proof covers every instruction byte.
+        let request = paging::walk::Request {
+            linear: pc,
+            access: Access::Execute,
+            class: paging::walk::AccessClass::operand(self.context.cpl(), false),
+        };
+        self.translation_cache
+            .touch_current_fetch(paging, request, physical)
+            .then_some(instruction)
+    }
+
     pub(super) fn paged_decode(
         &mut self,
         pc: u64,
@@ -250,6 +276,11 @@ pub extern "C" fn core_paged_debug_begin(pc: u64, flags: u64, shadow: u32) -> i3
         let debug = core.debug_execute(pc, flags, shadow);
         if debug != 0 {
             return debug;
+        }
+        #[cfg(not(feature = "parallel"))]
+        if let Some(instruction) = core.warm_paged_instruction(pc) {
+            core.reconcile_translation_changes();
+            return core.instruction_admission(instruction.operation, pc, true);
         }
         match core.paged_decode(pc) {
             Ok(instruction) if !core.image.active_changed() => {

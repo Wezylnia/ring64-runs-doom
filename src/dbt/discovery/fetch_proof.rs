@@ -44,6 +44,19 @@ pub(crate) struct FetchProof {
 
 #[cfg(any(target_arch = "wasm32", test))]
 impl FetchProof {
+    #[cfg(not(feature = "parallel"))]
+    pub(crate) fn physical_span(&self, linear: u64, length: u32) -> Option<u64> {
+        let offset = linear & !PAGE_MASK;
+        if offset + u64::from(length) > 0x1000 {
+            return None;
+        }
+        let index = self
+            .pages
+            .binary_search_by_key(&(linear & PAGE_MASK), |page| page.linear)
+            .ok()?;
+        Some(self.pages[index].physical + offset)
+    }
+
     /// The caller separately verifies the full execution context, root and
     /// physical source owner. A speculative check must never perform a fetch.
     pub(crate) fn matches(
