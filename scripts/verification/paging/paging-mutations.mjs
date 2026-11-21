@@ -24,8 +24,25 @@ const mutants = [
   {
     name: 'early-partial-dirty-publication',
     file: access,
-    old: `        let mut updates = Vec::new();\n        for prepared in &pending {\n            updates.extend(self.dirty_admission(prepared, &prepared.fields)?);\n        }\n        self.dirty_publish(&updates);`,
-    replacement: `        for prepared in &pending {\n            let updates = self.dirty_admission(prepared, &prepared.fields)?;\n            self.dirty_publish(&updates);\n        }`,
+    old: `        let mut updates = Vec::new();
+        for (index, prepared) in pending.iter().enumerate() {
+            updates.extend(self.dirty_admission(prepared, &prepared.fields).map_err(
+                |failure| PublicationFailure {
+                    index: Some(index),
+                    failure,
+                },
+            )?);
+        }
+        self.dirty_publish(&updates);`,
+    replacement: `        for (index, prepared) in pending.iter().enumerate() {
+            let updates = self.dirty_admission(prepared, &prepared.fields).map_err(
+                |failure| PublicationFailure {
+                    index: Some(index),
+                    failure,
+                },
+            )?;
+            self.dirty_publish(&updates);
+        }`,
     filter: 'all frame dirty admissions',
   },
   {
@@ -39,15 +56,26 @@ const mutants = [
   {
     name: 'system-metadata-uses-source-cpl',
     file: access,
-    old: '        self.read_at(address, width, false)',
-    replacement: '        self.read_at(address, width, self.user)',
+    old: `        self.read_at(
+            address,
+            width,
+            AccessClass::ImplicitSupervisor,
+            Intent::Exempt,
+        )`,
+    replacement: '        self.read_at(address, width, self.class, Intent::Exempt)',
     filter: 'ring3 PF entry uses supervisor metadata',
   },
   {
     name: 'new-frame-uses-source-cpl',
     file: access,
-    old: '        self.capture_write(address, width, cpl == 3)',
-    replacement: '        self.capture_write(address, width, self.user)',
+    old: `        self.capture_write(
+            address,
+            width,
+            AccessClass::operand(cpl, self.raw_ac),
+            intent,
+        )`,
+    replacement:
+      '        let _ = cpl;\n        self.capture_write(address, width, self.class, intent)',
     filter: 'ring3 PF entry uses supervisor metadata',
   },
   {
@@ -67,8 +95,8 @@ const mutants = [
   {
     name: 'contributory-to-pf-wrongly-double-faults',
     file: exception,
-    old: 'let double_fault = self.vector == 14 || vector != 14 && matches!(self.vector, 0 | 10..=13);',
-    replacement: 'let double_fault = self.vector == 14 || matches!(self.vector, 0 | 10..=13);',
+    old: 'previous == 14 || fault.vector != 14 && matches!(previous, 0 | 10..=13)',
+    replacement: 'previous == 14 || matches!(previous, 0 | 10..=13)',
     filter: 'sources fold asymmetrically',
   },
   {
@@ -133,8 +161,8 @@ const mutants = [
   {
     name: 'large-page-pat-misclassified-as-reserved-address',
     file: walk,
-    old: 'let reserved_address = large && entry & (((1u64 << shift) - 1) & !0x1fff) != 0;',
-    replacement: 'let reserved_address = large && entry & (((1u64 << shift) - 1) & !0xfff) != 0;',
+    old: 'entry & (((1u64 << shift) - 1) & !0x1fff) != 0',
+    replacement: 'entry & (((1u64 << shift) - 1) & !0xfff) != 0',
     filter: 'both large page sizes',
   },
   {
