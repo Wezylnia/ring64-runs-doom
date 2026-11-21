@@ -58,6 +58,9 @@ mod software_events;
 mod ssse3;
 #[path = "execution/stack.rs"]
 mod stack;
+#[cfg(any(test, all(not(feature = "parallel"), target_arch = "wasm32")))]
+#[path = "memory/stack_slots.rs"]
+mod stack_slots;
 #[path = "execution/state.rs"]
 mod state;
 #[path = "memory/streaming.rs"]
@@ -118,6 +121,8 @@ struct Emitter {
     stack_read_span: Option<memory::SpanCache>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     write_spans: [Option<memory::SpanCache>; 2],
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    proved_stack: Option<(stack_slots::StackSlots, u32)>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     proved_reads: Option<(read_loop::ReadLoop, u32)>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -605,7 +610,7 @@ pub(crate) fn emit_profile(
             return bytes;
         }
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-        if loop_body.read_proof(unit).is_some() {
+        if loop_body.read_proof(unit).is_some() || loop_body.stack_proof(unit).is_some() {
             // Keep the checked placement when only the extra guarded body
             // would exhaust the user's generated artifact limit.
             let bytes = emit_placement(
@@ -642,6 +647,11 @@ fn emit_placement(
         max_artifact_bytes,
     );
     if extra_spans && bytes.len() > max_artifact_bytes {
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if guard_reads && loop_body.is_some_and(|body| body.stack_proof(unit).is_some()) {
+            // Drop the extra stack loop before reconsidering the original span caches.
+            return bytes;
+        }
         return emit_body(
             unit,
             observed,
@@ -1550,6 +1560,25 @@ fn emit_body(
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let write_caches = write_segments.map(|used| write_span.filter(|_| used).map(&mut span_cache));
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let proved_stack = loop_body.and_then(|body| {
+        let proof = _guard_reads.then(|| body.stack_proof(unit)).flatten()?;
+        let read = read_span?.resolve;
+        let write = if proof.writes {
+            Some(write_span?)
+        } else {
+            None
+        };
+        let host = next_local;
+        next_local += 1;
+        locals.push((1, ValType::I32));
+        Some(stack_slots::StackGuard {
+            slots: proof,
+            read,
+            write,
+            host,
+        })
+    });
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let proved_reads = loop_body.and_then(|body| {
         let span = read_span?;
         let proof = _guard_reads.then(|| body.read_proof(unit)).flatten()?;
@@ -1618,6 +1647,8 @@ fn emit_body(
         stack_read_span: None,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         write_spans: [None; 2],
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        proved_stack: None,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         proved_reads: None,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -1751,6 +1782,24 @@ fn emit_body(
             if loop_body.precheck_gates_without_read_proof() {
                 // Partial laps and in-loop stops use the original entry labels.
                 emitter.exclude_loop_stop(&unit.instructions, loop_body);
+                #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+                if let Some(guard) = proved_stack {
+                    emitter.emit_stack_loops(
+                        &unit.instructions,
+                        loop_body,
+                        loop_depth,
+                        write_segment_base,
+                        guard,
+                    );
+                } else {
+                    emitter.emit_prechecked_loop(
+                        &unit.instructions,
+                        loop_body,
+                        loop_depth,
+                        write_segment_base,
+                    );
+                }
+                #[cfg(any(feature = "parallel", not(target_arch = "wasm32")))]
                 emitter.emit_prechecked_loop(
                     &unit.instructions,
                     loop_body,

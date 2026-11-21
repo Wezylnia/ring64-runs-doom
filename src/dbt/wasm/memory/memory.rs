@@ -184,6 +184,23 @@ impl Emitter {
         for_write: bool,
         exit_depth: u32,
     ) {
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if !for_write
+            && let Some((proof, host)) = self.proved_stack
+            && let Some(offset) = proof.offset(address, width)
+        {
+            self.segment = address.segment;
+            self.op(Op::LocalGet(host));
+            self.direct_scalar_load(
+                width,
+                MemArg {
+                    offset,
+                    align: 0,
+                    memory_index: 0,
+                },
+            );
+            return;
+        }
         self.address(address, next_pc);
         self.op(Op::LocalSet(ADDRESS));
         self.load_address_value(width, for_write, exit_depth);
@@ -350,27 +367,36 @@ impl Emitter {
                 debug_assert_eq!(width, Width::W32);
                 self.op(Op::V128Load32Zero(memory)).op(Op::LocalSet(vector));
             }
-            DirectOperand::Load(None) => {
-                self.op(match width {
-                    Width::W8 => Op::I64Load8U(memory),
-                    Width::W16 => Op::I64Load16U(memory),
-                    Width::W32 => Op::I64Load32U(memory),
-                    Width::W64 => Op::I64Load(memory),
-                })
-                .op(Op::LocalSet(VALUE));
-            }
+            DirectOperand::Load(None) => self.direct_scalar_load(width, memory),
             DirectOperand::Store => {
-                self.op(Op::LocalGet(RESULT)).op(match width {
-                    Width::W8 => Op::I64Store8(memory),
-                    Width::W16 => Op::I64Store16(memory),
-                    Width::W32 => Op::I64Store32(memory),
-                    Width::W64 => Op::I64Store(memory),
-                });
+                self.op(Op::LocalGet(RESULT));
+                self.direct_scalar_store(width, memory);
                 self.op(Op::I32Const(1)).op(Op::LocalSet(STORE_STATUS));
             }
         }
         self.op(Op::End);
         true
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    fn direct_scalar_load(&mut self, width: Width, memory: MemArg) {
+        self.op(match width {
+            Width::W8 => Op::I64Load8U(memory),
+            Width::W16 => Op::I64Load16U(memory),
+            Width::W32 => Op::I64Load32U(memory),
+            Width::W64 => Op::I64Load(memory),
+        })
+        .op(Op::LocalSet(VALUE));
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    fn direct_scalar_store(&mut self, width: Width, memory: MemArg) {
+        self.op(match width {
+            Width::W8 => Op::I64Store8(memory),
+            Width::W16 => Op::I64Store16(memory),
+            Width::W32 => Op::I64Store32(memory),
+            Width::W64 => Op::I64Store(memory),
+        });
     }
 
     pub(super) fn load_address_slow(&mut self, width: Width, for_write: bool, exit_depth: u32) {
@@ -424,6 +450,24 @@ impl Emitter {
         next_pc: u64,
         exit_depth: u32,
     ) {
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if let Some((proof, host)) = self.proved_stack
+            && proof.writes
+            && let Some(offset) = proof.offset(address, width)
+        {
+            self.segment = address.segment;
+            self.op(Op::LocalGet(host));
+            self.data_operand(src, width);
+            self.direct_scalar_store(
+                width,
+                MemArg {
+                    offset,
+                    align: 0,
+                    memory_index: 0,
+                },
+            );
+            return;
+        }
         self.address(address, next_pc);
         self.op(Op::LocalSet(ADDRESS));
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]

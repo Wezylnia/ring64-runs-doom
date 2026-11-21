@@ -93,6 +93,17 @@ impl StructuredLoop {
         )
     }
 
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn stack_proof(self, unit: &super::Unit) -> Option<super::stack_slots::StackSlots> {
+        if !self.forward_edges() {
+            return None;
+        }
+        super::stack_slots::StackSlots::recognize(
+            &unit.context,
+            &unit.instructions[self.earlier as usize..=self.tail as usize],
+        )
+    }
+
     pub(super) fn precheck_gates_without_read_proof(self) -> bool {
         self.kind != LoopKind::Float
     }
@@ -386,8 +397,39 @@ impl Emitter {
         loop_depth: u32,
         write_segment_base: Option<u32>,
     ) {
-        let current_index = self.current_index;
         self.op(Op::If(BlockType::Empty));
+        self.emit_prechecked_body(instructions, body, loop_depth + 1, write_segment_base);
+        self.op(Op::End);
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn emit_stack_loops(
+        &mut self,
+        instructions: &[Instruction],
+        body: StructuredLoop,
+        loop_depth: u32,
+        write_segment_base: Option<u32>,
+        guard: super::stack_slots::StackGuard,
+    ) {
+        self.op(Op::If(BlockType::Empty));
+        self.guard_stack_slots(guard);
+        self.op(Op::If(BlockType::Empty));
+        self.proved_stack = Some((guard.slots, guard.host));
+        self.emit_prechecked_body(instructions, body, loop_depth + 2, write_segment_base);
+        self.proved_stack = None;
+        self.op(Op::Else);
+        self.emit_prechecked_body(instructions, body, loop_depth + 2, write_segment_base);
+        self.op(Op::End).op(Op::End);
+    }
+
+    fn emit_prechecked_body(
+        &mut self,
+        instructions: &[Instruction],
+        body: StructuredLoop,
+        loop_depth: u32,
+        write_segment_base: Option<u32>,
+    ) {
+        let current_index = self.current_index;
         for (bank, upper) in self.register_upper_dwords.into_iter().enumerate() {
             if let Some(upper) = upper {
                 self.op(Op::LocalGet(GPR + bank as u32))
@@ -399,10 +441,9 @@ impl Emitter {
             }
         }
         self.loop_gates_prechecked = true;
-        self.emit_structured_loop(instructions, body, loop_depth + 1, write_segment_base);
+        self.emit_structured_loop(instructions, body, loop_depth, write_segment_base);
         self.loop_gates_prechecked = false;
         self.current_index = current_index;
-        self.op(Op::End);
     }
 
     pub(super) fn restore_loop_registers(&mut self) {
