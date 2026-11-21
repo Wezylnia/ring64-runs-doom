@@ -1,5 +1,11 @@
 use super::{ADDRESS, Emitter, LHS, RESULT, RHS, STORE_STATUS, VALUE};
-use crate::x86::instruction::{Address, Alu, Instruction, MemoryAluOperands, Operation, Width};
+use crate::x86::{
+    float::{Format, Kind},
+    instruction::{
+        Address, Alu, Instruction, Location, MemoryAluOperands, Operation, VectorInstruction,
+        VectorOperand, Width,
+    },
+};
 use wasm_encoder::{BlockType, Instruction as Op, MemArg, ValType};
 
 const BOUNDARY: i32 = 29;
@@ -55,6 +61,69 @@ impl Scalar {
             mask: first + 4,
             payload: first + 5,
         }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct VectorSpanMemo {
+    key: Address,
+    offset: u32,
+    limit: u32,
+    canonical: u32,
+}
+
+impl VectorSpanMemo {
+    pub(super) fn new(key: Address, first: u32) -> Self {
+        Self {
+            key,
+            offset: first,
+            limit: first + 1,
+            canonical: first + 2,
+        }
+    }
+
+    pub(super) fn groups(instructions: &[Instruction]) -> [Option<Address>; 2] {
+        let mut groups = [None; 2];
+        for key in instructions.iter().filter_map(|i| Self::key(i.operation)) {
+            if groups.contains(&Some(key)) {
+                continue;
+            }
+            let Some(slot) = groups.iter_mut().find(|slot| slot.is_none()) else {
+                return [None; 2];
+            };
+            *slot = Some(key);
+        }
+        groups
+    }
+
+    fn key(operation: Operation) -> Option<Address> {
+        let address = match operation {
+            Operation::Float(float)
+                if float.op.scalar
+                    && float.op.format == Format::F32
+                    && matches!(float.op.kind, Kind::Add | Kind::Mul) =>
+            {
+                let Location::Memory(address) = float.src else {
+                    return None;
+                };
+                address
+            }
+            Operation::Vector(VectorInstruction::Move {
+                operand: VectorOperand::Memory(address),
+                bytes: 4,
+                aligned: false,
+                store: false,
+                ..
+            }) => address,
+            _ => return None,
+        };
+        if address.index.is_none() || !matches!(address.size, Width::W32 | Width::W64) {
+            return None;
+        }
+        Some(Address {
+            displacement: 0,
+            ..address
+        })
     }
 }
 
@@ -307,6 +376,41 @@ impl Emitter {
             return false;
         };
         debug_assert!(self.parallel_retry.is_none());
+        let span = self
+            .parallel_vector_span
+            .filter(|_| self.loop_gates_prechecked)
+            .and_then(|(helper, memos, budget_floor)| {
+                let key = VectorSpanMemo::key(self.current_operation)?;
+                let memo = memos.into_iter().flatten().find(|memo| memo.key == key)?;
+                Some((helper, memo, budget_floor))
+            });
+        let (helper, exit_depth) = if let Some((helper, memo, budget_floor)) = span {
+            let (body, _) = self.structured_loop.expect("shared vector span loop");
+            self.op(Op::LocalTee(scalar.payload))
+                .op(Op::LocalGet(memo.offset))
+                .op(Op::I64Sub)
+                .op(Op::LocalTee(scalar.old))
+                .op(Op::LocalGet(memo.limit))
+                .op(Op::I64LtU)
+                .op(Op::LocalGet(scalar.old))
+                .op(Op::I64Const(3))
+                .op(Op::I64And)
+                .op(Op::I64Eqz)
+                .op(Op::I32And)
+                .op(Op::If(BlockType::Result(ValType::I64)))
+                .op(Op::I64Const(i64::from(body.max_lap_len)))
+                .op(Op::LocalSet(budget_floor))
+                .op(Op::LocalGet(memo.canonical))
+                .op(Op::LocalGet(scalar.old))
+                .op(Op::I32WrapI64)
+                .op(Op::I32Add)
+                .op(Op::LocalSet(scalar.address));
+            self.read_shared_lane(scalar, Width::W32, false);
+            self.op(Op::Else).op(Op::LocalGet(scalar.payload));
+            (helper, exit_depth + 1)
+        } else {
+            (helper, exit_depth)
+        };
         let segment = self.segment as i32;
         self.op(Op::I32Const(segment))
             .op(Op::Call(helper))
@@ -317,6 +421,18 @@ impl Emitter {
             .op(Op::LocalGet(ADDRESS))
             .op(Op::I32WrapI64)
             .op(Op::LocalSet(scalar.address));
+        if let Some((_, memo, _)) = span {
+            // A successful direct admission grants an unpromoted stripe
+            // in this invocation. Slow reads still poll at their successor.
+            self.op(Op::LocalGet(scalar.address))
+                .op(Op::LocalSet(memo.canonical))
+                .op(Op::LocalGet(scalar.payload))
+                .op(Op::LocalSet(memo.offset))
+                .op(Op::LocalGet(ADDRESS))
+                .op(Op::I64Const(32))
+                .op(Op::I64ShrU)
+                .op(Op::LocalSet(memo.limit));
+        }
         self.read_shared_lane(scalar, Width::W32, false);
         self.op(Op::Else)
             .op(Op::LocalGet(ADDRESS))
@@ -324,6 +440,9 @@ impl Emitter {
             .op(Op::If(BlockType::Empty));
         self.vector_failure(exit_depth + 2);
         self.op(Op::End).op(Op::LocalGet(ADDRESS)).op(Op::End);
+        if span.is_some() {
+            self.op(Op::End);
+        }
         self.narrow(Width::W32);
         self.op(Op::LocalSet(ADDRESS))
             .op(Op::V128Const(0))

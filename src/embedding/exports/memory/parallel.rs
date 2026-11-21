@@ -3,7 +3,7 @@ use crate::memory::{MemoryError, SharedDword};
 
 #[unsafe(no_mangle)]
 pub extern "C" fn core_parallel_abi() -> u32 {
-    2
+    3
 }
 
 fn complete(bridge: &mut Bridge, result: Result<(), MemoryError>) -> i32 {
@@ -116,14 +116,41 @@ pub extern "C" fn core_parallel_resolve(
 
 #[unsafe(no_mangle)]
 pub extern "C" fn core_parallel_vector_dword(offset: u64, segment: u32) -> u64 {
+    parallel_vector_dword::<false>(offset, segment)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn core_parallel_vector_dword_span(offset: u64, segment: u32) -> u64 {
+    parallel_vector_dword::<true>(offset, segment)
+}
+
+fn parallel_vector_dword<const SPAN: bool>(offset: u64, segment: u32) -> u64 {
     BRIDGE.with_borrow_mut(|bridge| {
         let core = bridge.core.as_mut().expect("initialized parallel core");
         let Some(address) = core.vector_address(offset, 4, segment, 1, Access::Read) else {
             return 0;
         };
-        // Zero reports a fault. Positive returns a native byte offset, negative returns loaded bits.
-        match core.image.shared_vector_dword(address) {
-            Ok(SharedDword::Direct(absolute)) => (1 << 32) | u64::from(absolute),
+        // Zero is a fault. Negative carries loaded bits. Positive carries a
+        // native address and the exclusive upper bound for a dword delta.
+        match core.image.shared_vector_dword::<SPAN>(address) {
+            Ok(SharedDword::Direct { address, mut bytes }) => {
+                if SPAN
+                    && bytes > 4
+                    && core
+                        .context
+                        .translate(
+                            offset,
+                            bytes,
+                            Segment::from_id(segment),
+                            Access::Read,
+                            false,
+                        )
+                        .is_err()
+                {
+                    bytes = 4;
+                }
+                (u64::from(bytes - 3) << 32) | u64::from(address)
+            }
             Ok(SharedDword::Loaded(bits)) => (1 << 63) | u64::from(bits),
             Err(fault) => {
                 core.access_failure(AccessFailure::Linear(fault));

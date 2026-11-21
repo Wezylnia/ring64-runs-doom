@@ -61,7 +61,7 @@ pub(crate) struct SharedBacking {
 
 #[cfg(target_arch = "wasm32")]
 pub(crate) enum SharedDword {
-    Direct(u32),
+    Direct { address: u32, bytes: u32 },
     Loaded(u32),
 }
 
@@ -453,12 +453,15 @@ impl Image {
     }
 
     #[cfg(target_arch = "wasm32")]
-    pub(crate) fn shared_vector_dword(&self, address: u64) -> Result<SharedDword, Fault> {
+    pub(crate) fn shared_vector_dword<const SPAN: bool>(
+        &self,
+        address: u64,
+    ) -> Result<SharedDword, Fault> {
         let index = self.preflight::<false>(address, 4, Access::Read, false, true)?;
         let mut bytes = [0; 4];
         Ok(
-            match self.shared_read_after_preflight::<true>(address, &mut bytes, index) {
-                Some(absolute) => SharedDword::Direct(absolute),
+            match self.shared_read_after_preflight::<true, SPAN>(address, &mut bytes, index) {
+                Some((address, bytes)) => SharedDword::Direct { address, bytes },
                 None => SharedDword::Loaded(u32::from_le_bytes(bytes)),
             },
         )
@@ -546,17 +549,17 @@ impl Image {
     }
 
     pub(in crate::memory) fn shared_read(&self, address: u64, bytes: &mut [u8], index: usize) {
-        let direct = self.shared_read_after_preflight::<false>(address, bytes, index);
+        let direct = self.shared_read_after_preflight::<false, false>(address, bytes, index);
         debug_assert!(direct.is_none());
     }
 
     // A returned canonical byte address leaves the dword load to generated Wasm.
-    fn shared_read_after_preflight<const NATIVE_DWORD: bool>(
+    fn shared_read_after_preflight<const NATIVE_DWORD: bool, const SPAN: bool>(
         &self,
         address: u64,
         bytes: &mut [u8],
         index: usize,
-    ) -> Option<u32> {
+    ) -> Option<(u32, u32)> {
         let Some(layout) = self.shared else {
             unreachable!()
         };
@@ -576,7 +579,14 @@ impl Image {
                         let held = layout.try_hold(&stripes, crosses_lane);
                         if NATIVE_DWORD && held.as_ref().is_some_and(|held| held.count == 0) {
                             debug_assert!(!crosses_lane);
-                            return Some(absolute);
+                            let bytes = if SPAN && absolute & 3 == 0 {
+                                (mapping.length - relative)
+                                    .min(64 - (absolute & 63))
+                                    .min(64 - (address as u32 & 63))
+                            } else {
+                                4
+                            };
+                            return Some((absolute, bytes));
                         }
                         let _grant = held.is_none().then(|| {
                             let grant = SharedExclusive::acquire();

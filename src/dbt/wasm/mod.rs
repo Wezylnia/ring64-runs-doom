@@ -150,6 +150,8 @@ struct Emitter {
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     parallel_vector_dword: Option<u32>,
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+    parallel_vector_span: Option<(u32, [Option<parallel::VectorSpanMemo>; 2], u32)>,
+    #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     parallel_retry: Option<u32>,
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     parallel_address_memos: Vec<(u32, u32)>,
@@ -1552,6 +1554,26 @@ fn emit_body(
             run_index += 1;
             index
         });
+    #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+    let vector_span_groups = loop_body
+        .filter(|body| _extra_spans && parallel_vector_dword.is_some() && body.is_shared_float())
+        .map_or([None; 2], |body| {
+            parallel::VectorSpanMemo::groups(
+                &unit.instructions[body.head as usize..=body.tail as usize],
+            )
+        });
+    #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+    let parallel_vector_span = vector_span_groups.iter().any(Option::is_some).then(|| {
+        let signature = add_function_type(&mut types, [ValType::I64, ValType::I32], [ValType::I64]);
+        imports.import(
+            "env",
+            "parallel_vector_dword_span",
+            EntityType::Function(signature),
+        );
+        let index = run_index;
+        run_index += 1;
+        index
+    });
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let span_cycles: Vec<_> = unit
         .instructions
@@ -1726,6 +1748,22 @@ fn emit_body(
         parallel::Scalar::new(resolve, first)
     });
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+    let parallel_vector_span = parallel_vector_span.map(|resolve| {
+        let memos = vector_span_groups.map(|key| {
+            key.map(|key| {
+                let first = next_local;
+                locals.push((2, ValType::I64));
+                locals.push((1, ValType::I32));
+                next_local += 3;
+                parallel::VectorSpanMemo::new(key, first)
+            })
+        });
+        let budget_floor = next_local;
+        locals.push((1, ValType::I64));
+        next_local += 1;
+        (resolve, memos, budget_floor)
+    });
+    #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     let parallel_address_memos = if parallel_scalar.is_some()
         && unit.instructions.iter().any(|i| {
             matches!(i.operation, Operation::Jump { target } | Operation::Jcc { target, .. }
@@ -1838,6 +1876,8 @@ fn emit_body(
         parallel_scalar,
         #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
         parallel_vector_dword,
+        #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+        parallel_vector_span,
         #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
         parallel_retry: None,
         #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
@@ -2115,6 +2155,18 @@ fn emit_body(
     }
     let code_start = bytes.len();
     code.append_to(&mut bytes);
+    #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+    if bytes.len() > max_artifact_bytes && parallel_vector_span.is_some() {
+        return emit_body(
+            unit,
+            observed,
+            paged,
+            loop_body,
+            _guard_reads,
+            false,
+            max_artifact_bytes,
+        );
+    }
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     if bytes.len() > max_artifact_bytes
         && parallel_vector_dword.is_some()

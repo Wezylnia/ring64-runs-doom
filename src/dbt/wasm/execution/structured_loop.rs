@@ -27,7 +27,7 @@ pub(super) struct StructuredLoop {
     earlier: u32,
     pub(super) head: u32,
     pub(super) tail: u32,
-    max_lap_len: u32,
+    pub(super) max_lap_len: u32,
     kind: LoopKind,
     project_dwords: bool,
 }
@@ -165,6 +165,11 @@ impl StructuredLoop {
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     pub(super) fn select_shared_float(instructions: &[Instruction]) -> Option<Self> {
         Self::select_body(instructions, LoopKind::Float).filter(|body| body.max_lap_len <= 64)
+    }
+
+    #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+    pub(super) fn is_shared_float(self) -> bool {
+        self.kind == LoopKind::Float
     }
 
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
@@ -456,7 +461,35 @@ impl Emitter {
         write_segment_base: Option<u32>,
     ) {
         self.op(Op::If(BlockType::Empty));
+        #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+        let trial = if let Some((_, _, budget_floor)) = self.parallel_vector_span {
+            let lap = i64::from(body.max_lap_len);
+            let trial_cost = 3 * lap;
+            // Reuse the lap gate. If three laps find no hit, enter the
+            // original loop at its head with the already committed state.
+            self.op(Op::LocalGet(REMAINING))
+                .op(Op::I64Const(trial_cost + lap))
+                .op(Op::I64GeU)
+                .op(Op::If(BlockType::Result(wasm_encoder::ValType::I64)))
+                .op(Op::LocalGet(REMAINING))
+                .op(Op::I64Const(trial_cost - 1))
+                .op(Op::I64Sub)
+                .op(Op::Else)
+                .op(Op::I64Const(lap))
+                .op(Op::End)
+                .op(Op::LocalSet(budget_floor))
+                .op(Op::Block(BlockType::Empty));
+            self.emit_prechecked_body(instructions, body, loop_depth + 2, write_segment_base);
+            self.op(Op::End);
+            self.parallel_vector_span.take()
+        } else {
+            None
+        };
         self.emit_prechecked_body(instructions, body, loop_depth + 1, write_segment_base);
+        #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+        {
+            self.parallel_vector_span = trial;
+        }
         self.op(Op::End);
     }
 
@@ -555,10 +588,13 @@ impl Emitter {
         }
         self.op(Op::Loop(BlockType::Empty));
         if self.loop_gates_prechecked {
-            // Leave the guarded clone for the checked clone before a partial lap.
-            self.op(Op::LocalGet(REMAINING))
-                .op(Op::I64Const(i64::from(body.max_lap_len)))
-                .op(Op::I64LtU);
+            // Leave the guarded clone before a partial lap.
+            let minimum = Op::I64Const(i64::from(body.max_lap_len));
+            #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+            let minimum = self
+                .parallel_vector_span
+                .map_or(minimum, |(_, _, budget_floor)| Op::LocalGet(budget_floor));
+            self.op(Op::LocalGet(REMAINING)).op(minimum).op(Op::I64LtU);
             if self.register_upper_dwords.iter().any(Option::is_some) {
                 self.op(Op::If(BlockType::Empty));
                 self.restore_loop_registers();
