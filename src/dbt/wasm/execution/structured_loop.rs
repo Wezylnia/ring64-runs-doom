@@ -151,8 +151,10 @@ impl StructuredLoop {
 
     pub(super) fn precheck_gates_without_read_proof(self) -> bool {
         if cfg!(feature = "parallel") {
-            matches!(self.kind, LoopKind::Float | LoopKind::Registers)
-                || (cfg!(target_arch = "wasm32") && self.natural_forward_loop())
+            matches!(
+                self.kind,
+                LoopKind::Float | LoopKind::Registers | LoopKind::IntegerReads
+            ) || (cfg!(target_arch = "wasm32") && self.natural_forward_loop())
         } else {
             self.kind != LoopKind::Float
         }
@@ -207,6 +209,22 @@ impl StructuredLoop {
     }
 
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+    fn select_shared_integer_reads(unit: &super::Unit) -> Option<Self> {
+        if !(unit.context.is_long64()
+            || unit.context.mode() == Mode::Protected && unit.context.code32())
+        {
+            return None;
+        }
+        Self::select_body(&unit.instructions, LoopKind::IntegerReads)
+            .filter(|body| body.max_lap_len <= 64)
+    }
+
+    #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+    pub(super) fn shared_memory_prechecked(self) -> bool {
+        self.kind == LoopKind::IntegerReads || self.natural_forward_loop()
+    }
+
+    #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     pub(super) fn is_optional_shared_loop(self) -> bool {
         self.kind != LoopKind::Registers
     }
@@ -214,7 +232,10 @@ impl StructuredLoop {
     pub(super) fn select(unit: &super::Unit) -> Option<Self> {
         let instructions = &unit.instructions;
         if cfg!(feature = "parallel") {
-            return Self::select_body(instructions, LoopKind::Registers);
+            let body = Self::select_body(instructions, LoopKind::Registers);
+            #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+            let body = body.or_else(|| Self::select_shared_integer_reads(unit));
+            return body;
         }
         let existing = Self::select_body(instructions, LoopKind::Float)
             .or_else(|| Self::select_body(instructions, LoopKind::IntegerReads))

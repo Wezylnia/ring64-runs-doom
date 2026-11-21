@@ -442,6 +442,59 @@ export function parallelGuardedLoopScenarios(
       },
     },
     {
+      name: 'shared straight read loops preserve partial laps and repair the reached load',
+      async run() {
+        // Four dependent MOV EAX,[RSI+RAX*4] reads; SUB ECX,1; JNE head.
+        const code = hex('8b04868b04868b04868b048683e90175ef');
+        const stop = ENTRY + BigInt(code.length);
+        for (const long of [false, true]) {
+          const options = linearMachine(compiler, code);
+          if (!long) options.cpus[0]!.context = context('protected');
+          const words = new DataView(options.memory.backings[1]!.bytes.buffer);
+          for (let index = 0; index < 8; index++) words.setUint32(index * 4, index + 1, true);
+          const codeMapping = options.memory.mappings[0]!;
+          const full = span(RAM, 'data', 0, 32, 'r');
+          options.memory.mappings[1] = full;
+          await withMachine(factory, options, async (machine) => {
+            const cpu = machine.cpus[0]!;
+            const before = { ...cpuState(ENTRY, { 0: 0n, 1: 2n, 6: RAM }), flags: 0x202n };
+            await cpu.setState(before);
+            exit(
+              await cpu.run({ budget: 8n, stop }),
+              'budget',
+              8n,
+              8n,
+              changed(before, ENTRY + 6n, { 0: 6n, 1: 1n }),
+            );
+            done(await cpu.run({ budget: 12n, stop }), stop, 4n);
+
+            const read = ENTRY + 3n;
+            await machine.setMappings([codeMapping, span(RAM, 'data', 0, 20, 'r')]);
+            await cpu.setState(before);
+            const failed = await cpu.run({ budget: 20n, stop });
+            exit(failed, 'data-fault', 20n, 7n, changed(before, read, { 0: 5n, 1: 1n }));
+            fault(failed, {
+              instructionPc: read,
+              address: RAM + 20n,
+              width: 4,
+              access: 'read',
+              cause: 'unmapped',
+              failingAddress: RAM + 20n,
+              segment: 'ds',
+            });
+            await machine.setMappings([codeMapping, full]);
+            exit(
+              await cpu.run({ budget: 20n, stop }),
+              'stop',
+              20n,
+              5n,
+              changed(before, stop, { 0: 8n, 1: 0n }, 0x246n),
+            );
+          });
+        }
+      },
+    },
+    {
       name: 'shared natural read-store loops preserve short budgets and checked writes',
       async run() {
         // MOVZX EAX,[RSI]; CMP EAX,2; JB store; ADD EAX,64;

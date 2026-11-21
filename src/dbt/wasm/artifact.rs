@@ -1566,7 +1566,7 @@ fn emit_body(
     code.append_to(&mut bytes);
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     if bytes.len() > max_artifact_bytes
-        && loop_body.is_some_and(StructuredLoop::natural_forward_loop)
+        && loop_body.is_some_and(StructuredLoop::shared_memory_prechecked)
     {
         // Retry the original placement before trading a memory window for the clone.
         return (bytes, false);
