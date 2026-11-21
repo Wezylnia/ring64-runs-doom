@@ -391,6 +391,65 @@ export function parallelMemoryScenarios(
       },
     },
     {
+      name: 'shared indexed float reads keep exact bounds after promotion and remap',
+      async run() {
+        // MOVSS [RAX+RCX*4]; ADDSS [RBX+RCX*4]; accumulate; count; XCHG [RDI],RAX.
+        const options = linearMachine(compiler, 'f30f100488f30f58048bf30f58c883c10139d175eb488707');
+        const stop = ENTRY + 21n;
+        const right = RAM + 0x100n;
+        const code = options.memory.mappings[0]!;
+        const lhs = span(RAM, 'data', 0, 32);
+        const rhs = span(right, 'data', 256, 32, 'r');
+        options.memory.mappings = [code, lhs, rhs];
+        const data = new DataView(options.memory.backings[1]!.bytes.buffer);
+        for (let offset = 0; offset < 32; offset += 4) {
+          data.setFloat32(offset, 1, true);
+          data.setFloat32(256 + offset, 2, true);
+          data.setFloat32(512 + offset, 4, true);
+        }
+        await withMachine(factory, options, async (machine) => {
+          const [reader, writer] = machine.cpus;
+          const execute = async () => {
+            await reader!.setState(cpuState(ENTRY, { 0: RAM, 1: 0n, 2: 8n, 3: right }));
+            await reader!.setXmmState(Array<bigint>(16).fill(0n));
+            return reader!.run({ budget: 64n, stop });
+          };
+
+          done(await execute(), stop, 48n);
+          equal((await reader!.readXmmState())[1], 0x41c00000n, 'eight sums of three');
+          await writer!.setState(cpuState(stop, { 0: data.getBigUint64(5, true), 7: RAM + 5n }));
+          done(await writer!.run({ budget: 2n, stop: stop + 3n }), stop + 3n, 1n);
+          done(await execute(), stop, 48n);
+          equal(
+            (await reader!.readXmmState())[1],
+            0x41c00000n,
+            'same values after stripe promotion',
+          );
+
+          await machine.setMappings([code, span(RAM, 'data', 512, 32), rhs]);
+          done(await execute(), stop, 48n);
+          equal((await reader!.readXmmState())[1], 0x42400000n, 'remapped values');
+
+          const denied = span(RAM + 14n, 'data', 14, 18, 'r');
+          denied.permissions.read = false;
+          await machine.setMappings([code, span(RAM, 'data', 0, 14, 'r'), denied, rhs]);
+          const failure = await execute();
+          equal(failure.state.rip, ENTRY, 'fault at the next indexed MOVSS');
+          equal(failure.retired, 18n, 'three full iterations retired');
+          fault(failure, {
+            instructionPc: ENTRY,
+            address: RAM + 12n,
+            width: 4,
+            access: 'read',
+            cause: 'permission',
+            failingAddress: RAM + 14n,
+            segment: 'ds',
+          });
+          equal((await reader!.readXmmState())[1], 0x41100000n, 'three committed sums');
+        });
+      },
+    },
+    {
       name: 'shared SIMD dword reads preserve lanes and precise split faults',
       async run() {
         // MOVSS XMM0,FS:[RAX]; MOVSS XMM1,FS:[RBX].
