@@ -521,55 +521,70 @@ export function parallelMemoryScenarios(
     {
       name: 'shared indexed byte reads extend through the last mapped byte and resume after repair',
       async run() {
-        // MOVSX AX,[EDI+ESI]; MOVZX EDX,[EDI+ESI]; INC ESI; DEC ECX; JNE entry.
-        const code = hex('660fbe04370fb61437464975f3');
-        const options = linearMachine(compiler, code);
+        // MOVSX AX,[base+index]; MOVZX EDX,[base+index]; INC ESI; DEC ECX; JNE entry.
+        const code = hex('660fbe04370fb61437ffc6ffc975f1');
         const stop = ENTRY + BigInt(code.length);
-        const end = RAM + 16n;
-        options.cpus[0]!.context = context('protected');
-        options.memory.mappings[1] = span(RAM, 'data', 0, 16, 'r');
-        const data = options.memory.backings[1]!.bytes;
-        data.set([0x4d, 0x91], 6); // A window fill followed by the last byte of its atomic lane.
-        data.set([0xe2, 0x80], 15); // The last mapped byte and the byte exposed after repair.
-        const high = 0x1122334400000000n;
-        const registers = (ax: bigint, edx: bigint, count: bigint, offset: bigint) => ({
-          0: high | 0xabcd0000n | ax,
-          1: high | count,
-          2: high | edx,
-          6: high | offset,
-          7: high | RAM,
-        });
-        await withMachine(factory, options, async (machine) => {
-          const cpu = machine.cpus[0]!;
-          await cpu.setState(cpuState(ENTRY, registers(0x5678n, 0xdeadbeefn, 11n, 6n)));
-          exit(
-            await cpu.run({ budget: 10n, stop }),
-            'budget',
-            10n,
-            10n,
-            initial(ENTRY, registers(0xff91n, 0x91n, 9n, 8n), 6n),
-          );
-          const failed = await cpu.run({ budget: 48n, stop });
-          exit(failed, 'data-fault', 48n, 40n, cpuState(ENTRY, registers(0xffe2n, 0xe2n, 1n, 16n)));
-          fault(failed, {
-            instructionPc: ENTRY,
-            address: end,
-            width: 1,
-            access: 'read',
-            cause: 'unmapped',
-            failingAddress: end,
-            segment: 'ds',
+        const poison = 0x1122334400000000n;
+        for (const long of [false, true]) {
+          const options = linearMachine(compiler, code);
+          const base = long ? 0xffff_8000_0000_4000n : RAM;
+          const end = base + 16n;
+          if (!long) options.cpus[0]!.context = context('protected');
+          options.memory.mappings[1] = span(base, 'data', 0, 16, 'r');
+          const data = options.memory.backings[1]!.bytes;
+          data.set([0x4d, 0x91], 6); // A window fill followed by the last byte of its atomic lane.
+          data.set([0xe2, 0x80], 15); // The last mapped byte and the byte exposed after repair.
+          const upperDword = long ? 0n : poison;
+          const registers = (ax: bigint, edx: bigint, count: bigint, offset: bigint) => ({
+            0: poison | 0xabcd0000n | ax,
+            1: upperDword | count,
+            2: upperDword | edx,
+            6: upperDword | offset,
+            7: upperDword | base,
           });
+          await withMachine(factory, options, async (machine) => {
+            const cpu = machine.cpus[0]!;
+            await cpu.setState(
+              cpuState(ENTRY, { ...registers(0x5678n, 0n, 11n, 6n), 2: poison | 0xdeadbeefn }),
+            );
+            exit(
+              await cpu.run({ budget: 10n, stop }),
+              'budget',
+              10n,
+              10n,
+              initial(ENTRY, registers(0xff91n, 0x91n, 9n, 8n), 6n),
+            );
+            const failed = await cpu.run({ budget: 48n, stop });
+            exit(
+              failed,
+              'data-fault',
+              48n,
+              40n,
+              cpuState(ENTRY, registers(0xffe2n, 0xe2n, 1n, 16n)),
+            );
+            fault(failed, {
+              instructionPc: ENTRY,
+              address: end,
+              width: 1,
+              access: 'read',
+              cause: 'unmapped',
+              failingAddress: end,
+              segment: 'ds',
+            });
 
-          await machine.setMappings([options.memory.mappings[0]!, span(RAM, 'data', 0, 17, 'r')]);
-          exit(
-            await cpu.run({ budget: 8n, stop }),
-            'stop',
-            8n,
-            5n,
-            initial(stop, registers(0xff80n, 0x80n, 0n, 17n), 0x46n),
-          );
-        });
+            await machine.setMappings([
+              options.memory.mappings[0]!,
+              span(base, 'data', 0, 17, 'r'),
+            ]);
+            exit(
+              await cpu.run({ budget: 8n, stop }),
+              'stop',
+              8n,
+              5n,
+              initial(stop, registers(0xff80n, 0x80n, 0n, 17n), 0x46n),
+            );
+          });
+        }
       },
     },
     {
