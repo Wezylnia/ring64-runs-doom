@@ -30,8 +30,8 @@ fn compile_owner() -> u64 {
         )
         .unwrap()
     });
-    assert_eq!(mapped::core_publish(owner), 1);
-    assert_eq!(mapped::core_activate(owner), 1);
+    assert_eq!(translation::core_publish(owner), 1);
+    assert_eq!(translation::core_activate(owner), 1);
     owner
 }
 
@@ -117,7 +117,7 @@ fn one_entry_cache_admits_a_two_page_instruction_then_reconciles_evicted_source_
         26,
         "freshly exposed mapping must not execute the old generated MOV"
     );
-    assert_eq!(mapped::core_validity(old), 0);
+    assert_eq!(translation::core_validity(old), 0);
     BRIDGE.with_borrow(|bridge| {
         let core = bridge.core.as_ref().unwrap();
         assert!(core.image.active_changed());

@@ -13,7 +13,7 @@ fn reset_projection_is_not_finit_and_keeps_image_owner_ids_at_epoch_saturation()
             })
         };
         let owner = compile();
-        assert_eq!(mapped::core_publish(owner), 1);
+        assert_eq!(translation::core_publish(owner), 1);
         let pending = compile();
         BRIDGE.with_borrow_mut(|b| {
             let c = b.core.as_mut().unwrap();
@@ -29,8 +29,8 @@ fn reset_projection_is_not_finit_and_keeps_image_owner_ids_at_epoch_saturation()
             }
         });
         assert_eq!(super::super::reset::core_reset(), 0);
-        assert_eq!(mapped::core_validity(owner), 0);
-        assert_eq!(mapped::core_publish(pending), 0);
+        assert_eq!(translation::core_validity(owner), 0);
+        assert_eq!(translation::core_publish(pending), 0);
         BRIDGE.with_borrow_mut(|b| {
             let c = b.core.as_mut().unwrap();
             let s = unsafe { &*c.state.get() };
@@ -58,10 +58,10 @@ fn reset_projection_is_not_finit_and_keeps_image_owner_ids_at_epoch_saturation()
         });
         let fresh = compile();
         assert!(fresh > pending && pending > owner);
-        assert_eq!(mapped::core_publish(fresh), 1);
-        mapped::core_release(owner);
-        mapped::core_release(pending);
-        assert_eq!(mapped::core_activate(fresh), 1);
+        assert_eq!(translation::core_publish(fresh), 1);
+        translation::core_release(owner);
+        translation::core_release(pending);
+        assert_eq!(translation::core_activate(fresh), 1);
     }
 }
 

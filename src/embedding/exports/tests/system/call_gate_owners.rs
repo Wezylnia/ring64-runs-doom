@@ -109,9 +109,9 @@ fn call_gate_round_trip_cancels_pending_owners_even_when_context_epoch_is_exhaus
     for epoch in [0, u64::MAX - 1, u64::MAX] {
         setup(epoch);
         let installed = compile_pending();
-        assert_eq!(mapped::core_publish(installed), 1);
+        assert_eq!(translation::core_publish(installed), 1);
         let pending = compile_pending();
-        assert_eq!(mapped::core_activate(installed), 1);
+        assert_eq!(translation::core_activate(installed), 1);
         let caller = BRIDGE.with_borrow(|bridge| bridge.core.as_ref().unwrap().context.clone());
 
         assert_eq!(transfer(FarKind::Call, 0x4000), 0);
@@ -131,22 +131,22 @@ fn call_gate_round_trip_cancels_pending_owners_even_when_context_epoch_is_exhaus
             );
         });
         assert_eq!(
-            mapped::core_validity(installed),
+            translation::core_validity(installed),
             1,
             "source is dormant, not dead"
         );
         assert_eq!(
-            mapped::core_activate(installed),
+            translation::core_activate(installed),
             0,
             "callee cannot run caller code"
         );
         assert_eq!(
-            mapped::core_validity(pending),
+            translation::core_validity(pending),
             0,
             "gate cancels pending publication"
         );
         assert_eq!(
-            mapped::core_publish(pending),
+            translation::core_publish(pending),
             0,
             "cancelled work cannot adopt callee facts"
         );
@@ -165,26 +165,26 @@ fn call_gate_round_trip_cancels_pending_owners_even_when_context_epoch_is_exhaus
             );
         });
         assert_eq!(
-            mapped::core_publish(pending),
+            translation::core_publish(pending),
             0,
             "A/B/A cannot resurrect pending work"
         );
-        assert_eq!(mapped::core_activate(pending), 0);
+        assert_eq!(translation::core_activate(pending), 0);
         assert_eq!(
-            mapped::core_activate(installed),
+            translation::core_activate(installed),
             1,
             "published caller owner is reusable"
         );
         let fresh = compile_pending();
         assert_eq!(
-            mapped::core_publish(fresh),
+            translation::core_publish(fresh),
             1,
             "exhausted epoch admits fresh work"
         );
-        assert_eq!(mapped::core_activate(fresh), 1);
-        mapped::core_release(pending);
-        mapped::core_release(fresh);
-        mapped::core_release(fresh);
-        assert_eq!(mapped::core_validity(fresh), 0);
+        assert_eq!(translation::core_activate(fresh), 1);
+        translation::core_release(pending);
+        translation::core_release(fresh);
+        translation::core_release(fresh);
+        assert_eq!(translation::core_validity(fresh), 0);
     }
 }

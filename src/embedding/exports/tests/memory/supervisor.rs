@@ -139,31 +139,31 @@ fn supervisor_control_fences_cancel_pending_and_aba_owners_at_epoch_saturation()
         for bits in [SMEP, SMAP] {
             fixture(0, 0, false, epoch);
             let installed = compile();
-            assert_eq!(mapped::core_publish(installed), 1);
-            assert_eq!(mapped::core_activate(installed), 1);
+            assert_eq!(translation::core_publish(installed), 1);
+            assert_eq!(translation::core_activate(installed), 1);
             let pending = compile();
             set_flags(2 | AC);
-            assert_eq!(mapped::core_validity(installed), 1);
-            assert_eq!(mapped::core_validity(pending), 1);
+            assert_eq!(translation::core_validity(installed), 1);
+            assert_eq!(translation::core_validity(pending), 1);
             assert_eq!(
                 paging::core_paging_control(1, 4, 0x608, 0x1000, 2 | AC, 0),
                 0
             );
-            assert_eq!(mapped::core_validity(installed), 1);
+            assert_eq!(translation::core_validity(installed), 1);
             import_bits(bits);
-            assert_eq!(mapped::core_validity(installed), 0);
-            assert_eq!(mapped::core_validity(pending), 0);
+            assert_eq!(translation::core_validity(installed), 0);
+            assert_eq!(translation::core_validity(pending), 0);
             import_bits(0);
-            assert_eq!(mapped::core_publish(pending), 0);
-            assert_eq!(mapped::core_activate(installed), 0);
+            assert_eq!(translation::core_publish(pending), 0);
+            assert_eq!(translation::core_activate(installed), 0);
             let fresh = compile();
             assert!(fresh > pending);
-            assert_eq!(mapped::core_publish(fresh), 1);
+            assert_eq!(translation::core_publish(fresh), 1);
             assert_eq!(
                 paging::core_paging_control(1, 4, 0x608 | bits, 0x1000, 2 | AC, 0),
                 0
             );
-            assert_eq!(mapped::core_validity(fresh), 0);
+            assert_eq!(translation::core_validity(fresh), 0);
             BRIDGE.with_borrow(|bridge| {
                 let core = bridge.core.as_ref().unwrap();
                 assert_eq!(core.context_version, epoch.saturating_add(3));
@@ -178,11 +178,11 @@ fn supervisor_control_fences_cancel_pending_and_aba_owners_at_epoch_saturation()
 fn supervisor_source_probe_checks_smep_after_warm_owner_retirement() {
     fixture(0, 0, true, 0);
     let installed = compile();
-    assert_eq!(mapped::core_publish(installed), 1);
-    assert_eq!(mapped::core_activate(installed), 1);
+    assert_eq!(translation::core_publish(installed), 1);
+    assert_eq!(translation::core_activate(installed), 1);
     import_bits(SMEP);
     set_flags(2 | AC);
-    assert_eq!(mapped::core_validity(installed), 0);
+    assert_eq!(translation::core_validity(installed), 0);
     assert_eq!(core_probe(0x1000), PAGE_FAULT);
     let fault = metadata(PAGE_FAULT);
     assert_eq!(fault["address"], "0x1000");

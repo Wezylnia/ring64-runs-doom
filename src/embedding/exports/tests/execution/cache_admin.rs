@@ -9,7 +9,7 @@ fn compile_owner(publish: bool) -> u64 {
         u64::from_str_radix(info["owner"].as_str().unwrap().trim_start_matches("0x"), 16).unwrap()
     });
     if publish {
-        assert_eq!(mapped::core_publish(owner), 1);
+        assert_eq!(translation::core_publish(owner), 1);
     }
     owner
 }
@@ -87,10 +87,10 @@ fn unrelated_host_payload_write_revokes_tlb_and_pending_proofs_but_keeps_install
         BRIDGE.with_borrow_mut(|bridge| bridge.input = vec![0x99]);
         assert_eq!(core_write_memory(0xa010), 0);
         assert_eq!(retained_data_physical(), None);
-        assert_eq!(mapped::core_validity(installed), 1);
-        assert_eq!(mapped::core_validity(pending), 0);
-        assert_eq!(mapped::core_publish(pending), 0);
-        assert_eq!(mapped::core_activate(installed), 1);
+        assert_eq!(translation::core_validity(installed), 1);
+        assert_eq!(translation::core_validity(pending), 0);
+        assert_eq!(translation::core_publish(pending), 0);
+        assert_eq!(translation::core_activate(installed), 1);
         BRIDGE.with_borrow_mut(|bridge| {
             let core = bridge.core.as_mut().unwrap();
             assert_eq!(
@@ -118,9 +118,9 @@ fn rejected_host_write_preserves_cache_and_compiled_proofs() {
     BRIDGE.with_borrow_mut(|bridge| bridge.input = vec![0x99]);
     assert_eq!(core_write_memory(0x10000), 1);
     assert_eq!(retained_data_physical(), Some(0xa000));
-    assert_eq!(mapped::core_validity(installed), 1);
-    assert_eq!(mapped::core_validity(pending), 1);
-    assert_eq!(mapped::core_publish(pending), 1);
+    assert_eq!(translation::core_validity(installed), 1);
+    assert_eq!(translation::core_validity(pending), 1);
+    assert_eq!(translation::core_publish(pending), 1);
 }
 
 #[test]
@@ -129,10 +129,10 @@ fn host_code_alias_write_still_retires_the_affected_installed_owner() {
     BRIDGE.with_borrow_mut(|bridge| bridge.input = vec![2]);
     assert_eq!(core_write_memory(0x9001), 0);
     assert_eq!(retained_data_physical(), None);
-    assert_eq!(mapped::core_validity(installed), 0);
+    assert_eq!(translation::core_validity(installed), 0);
     let fresh = compile_owner(true);
     assert_ne!(fresh, installed);
-    assert_eq!(mapped::core_activate(fresh), 1);
+    assert_eq!(translation::core_activate(fresh), 1);
 }
 
 #[test]
@@ -141,7 +141,7 @@ fn pending_owner_cannot_publish_after_memory_admin_at_saturated_epoch() {
     BRIDGE.with_borrow_mut(|bridge| bridge.input = vec![0x99]);
     assert_eq!(core_write_memory(0xa010), 0);
     assert_eq!(
-        mapped::core_publish(pending),
+        translation::core_publish(pending),
         0,
         "memory administration must cancel pending publication even at saturated epoch"
     );

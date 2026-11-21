@@ -121,7 +121,7 @@ fn enabled_admission_preserves_default_mf_and_live_control_repair_on_the_same_ow
                 u64::from_str_radix(info["owner"].as_str().unwrap().trim_start_matches("0x"), 16)
                     .unwrap()
             });
-            assert_eq!(mapped::core_publish(owner), 1);
+            assert_eq!(translation::core_publish(owner), 1);
             for disabled in [cr0 | 4, cr0 | 8] {
                 assert_eq!(paging::core_paging_control(1, 0, disabled, PC, RF, 0), 0);
                 assert_eq!(boundary(reached, PC), DEVICE_NOT_AVAILABLE);
@@ -130,8 +130,8 @@ fn enabled_admission_preserves_default_mf_and_live_control_repair_on_the_same_ow
                     assert_eq!((fault.vector(), fault.instruction_pc), (7, PC));
                 });
                 assert_eq!(paging::core_paging_control(1, 0, cr0, PC, RF, 0), 0);
-                assert_eq!(mapped::core_validity(owner), 1);
-                assert_eq!(mapped::core_activate(owner), 1);
+                assert_eq!(translation::core_validity(owner), 1);
+                assert_eq!(translation::core_activate(owner), 1);
                 assert_eq!(boundary(reached, PC), 0);
                 BRIDGE.with_borrow_mut(|bridge| unsafe {
                     let core = bridge.core.as_mut().unwrap();

@@ -50,22 +50,22 @@ fn quartet_changes_and_same_cr3_reload_retire_primed_pending_and_aba_owners_at_e
     for epoch in [0, u64::MAX] {
         fixture(epoch);
         let installed = compile();
-        assert_eq!(mapped::core_publish(installed), 1);
-        assert_eq!(mapped::core_activate(installed), 1);
+        assert_eq!(translation::core_publish(installed), 1);
+        assert_eq!(translation::core_activate(installed), 1);
         let pending = compile();
         bank("0x5001");
-        assert_eq!(mapped::core_validity(installed), 0);
-        assert_eq!(mapped::core_validity(pending), 0);
+        assert_eq!(translation::core_validity(installed), 0);
+        assert_eq!(translation::core_validity(pending), 0);
         bank("0x3001");
-        assert_eq!(mapped::core_publish(pending), 0);
-        assert_eq!(mapped::core_activate(installed), 0);
+        assert_eq!(translation::core_publish(pending), 0);
+        assert_eq!(translation::core_activate(installed), 0);
         let fresh = compile();
         assert!(fresh > pending);
-        assert_eq!(mapped::core_publish(fresh), 1);
-        assert_eq!(mapped::core_activate(fresh), 1);
+        assert_eq!(translation::core_publish(fresh), 1);
+        assert_eq!(translation::core_activate(fresh), 1);
         assert_eq!(paging::core_paging_control(1, 3, 0x1000, 0x1000, 2, 0), 0);
         assert_eq!(
-            mapped::core_activate(fresh),
+            translation::core_activate(fresh),
             0,
             "same-value guest reload is a destructive fence"
         );

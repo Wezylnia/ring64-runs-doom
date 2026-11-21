@@ -79,24 +79,24 @@ fn boundary_profiles_guard_activation_without_invalidating_source_owners() {
         })
     };
     let (fast, observed) = compile();
-    assert_eq!(mapped::core_publish(fast), 1);
+    assert_eq!(translation::core_publish(fast), 1);
     assert!(!observed);
     scalar_input(0x102, 0);
     assert_eq!(core_import_state(), 0);
-    assert_eq!(mapped::core_validity(fast), 1);
-    assert_eq!(mapped::core_activate(fast), 0);
+    assert_eq!(translation::core_validity(fast), 1);
+    assert_eq!(translation::core_activate(fast), 0);
     let (step, observed) = compile();
-    assert_eq!(mapped::core_publish(step), 1);
+    assert_eq!(translation::core_publish(step), 1);
     assert!(observed);
-    assert_eq!(mapped::core_activate(step), 1);
+    assert_eq!(translation::core_activate(step), 1);
     scalar_input(2, 0);
     assert_eq!(core_import_state(), 0);
-    assert_eq!(mapped::core_validity(step), 1);
-    assert_eq!(mapped::core_activate(step), 0);
-    assert_eq!(mapped::core_activate(fast), 1);
-    mapped::core_release(step);
-    assert_eq!(mapped::core_activate(step), 0);
-    assert_eq!(mapped::core_activate(u64::MAX), 0);
+    assert_eq!(translation::core_validity(step), 1);
+    assert_eq!(translation::core_activate(step), 0);
+    assert_eq!(translation::core_activate(fast), 1);
+    translation::core_release(step);
+    assert_eq!(translation::core_activate(step), 0);
+    assert_eq!(translation::core_activate(u64::MAX), 0);
     BRIDGE.with_borrow(|bridge| {
         assert!(
             !bridge

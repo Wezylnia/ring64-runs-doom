@@ -60,3 +60,73 @@ impl Core {
         }
     }
 }
+
+#[unsafe(no_mangle)]
+pub extern "C" fn core_probe(pc: u64) -> i32 {
+    BRIDGE.with_borrow_mut(|bridge| {
+        let core = bridge.core.as_mut().unwrap();
+        core.debug_candidate = 0;
+        core.fault = None;
+        core.alignment_fault = None;
+        core.alignment_check = None;
+        core.simd_exception = None;
+        core.numeric_fault = None;
+        core.numeric_form = None;
+        core.general_protection = None;
+        core.protection_fault = None;
+        core.system_memory_fault = None;
+        core.segment_fault = None;
+        core.decode_fault = None;
+        unsafe { (*core.state.get()).fault_segment = Segment::Cs as u32 };
+        let (flags, shadow) = unsafe {
+            (
+                (*core.state.get()).flags,
+                (*core.state.get()).interruptibility,
+            )
+        };
+        let debug = core.debug_execute(pc, flags, shadow);
+        if debug != 0 {
+            return debug;
+        }
+        let decoded = if core.paging.is_some() {
+            core.paged_decode(pc)
+        } else {
+            decode::decode_with_context(pc, &core.context, |offset| {
+                core.context
+                    .fetch(&core.image, offset)
+                    .map_err(|failure| match failure {
+                        AccessFailure::Linear(fault) => DecodeError::Fetch(fault),
+                        AccessFailure::Segment(fault) => DecodeError::Segment(fault),
+                        AccessFailure::Paging(fault) => DecodeError::Paging(fault),
+                        AccessFailure::AlignmentCheck(_) => {
+                            unreachable!("instruction fetch is alignment exempt")
+                        }
+                    })
+            })
+        };
+        core.decode_fault = decoded
+            .as_ref()
+            .err()
+            .and_then(|error| error.architectural_fault());
+        match decoded {
+            Err(DecodeError::PagingRestart) => 26,
+            Err(DecodeError::Paging(failure)) => core.paging_failure(failure),
+            Ok(instruction) => core.instruction_admission(instruction.operation, pc, false),
+            Err(DecodeError::Segment(fault)) => {
+                core.segment_fault = Some(fault);
+                SEGMENT
+            }
+            Err(DecodeError::Unsupported) => UNSUPPORTED,
+            Err(DecodeError::Undefined) => UNSUPPORTED,
+            Err(
+                DecodeError::UndefinedEncoding
+                | DecodeError::Invalid
+                | DecodeError::InstructionLength,
+            ) => INVALID,
+            Err(DecodeError::Fetch(fault)) => {
+                core.fault = Some(fault);
+                FETCH
+            }
+        }
+    })
+}

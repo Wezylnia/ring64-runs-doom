@@ -20,12 +20,12 @@ fn context_import_is_atomic_preserves_raw_state_and_never_reuses_retired_owners(
     initialize(0x1000, &[0xb8, 1, 0, 0, 0]);
     assert_eq!(core_compile(0x1000, 8, 128, 65536), 0);
     assert_eq!(info()["contextVersion"], "0x0");
-    assert_eq!(mapped::core_validity(1), 1);
+    assert_eq!(translation::core_validity(1), 1);
     core_context_info();
     let initial = info();
     assert_eq!(set_context(initial), 0);
     assert_eq!(core_context_version(), 0);
-    assert_eq!(mapped::core_validity(1), 1);
+    assert_eq!(translation::core_validity(1), 1);
     BRIDGE.with_borrow_mut(|bridge| {
         let state = unsafe { &mut *bridge.core.as_mut().unwrap().state.get() };
         state.registers = [u64::MAX; 16];
@@ -36,7 +36,7 @@ fn context_import_is_atomic_preserves_raw_state_and_never_reuses_retired_owners(
     next["segments"]["cs"]["base"] = serde_json::json!("0x10000");
     assert_eq!(set_context(next.clone()), 0);
     assert_eq!(core_context_version(), 1);
-    assert_eq!(mapped::core_validity(1), 0);
+    assert_eq!(translation::core_validity(1), 0);
     assert_eq!(core_load(0x4000, 1), 0xa5);
     BRIDGE.with_borrow(|bridge| {
         let state = unsafe { &*bridge.core.as_ref().unwrap().state.get() };
@@ -52,8 +52,8 @@ fn context_import_is_atomic_preserves_raw_state_and_never_reuses_retired_owners(
     assert_eq!(set_context(protected()), 0);
     assert_eq!(core_compile(0x1000, 8, 128, 65536), 0);
     assert_eq!(info()["owner"], "0x2");
-    assert_eq!(mapped::core_validity(1), 0);
-    assert_eq!(mapped::core_validity(2), 1);
+    assert_eq!(translation::core_validity(1), 0);
+    assert_eq!(translation::core_validity(2), 1);
 }
 
 #[test]
@@ -63,10 +63,10 @@ fn context_version_saturation_cannot_resurrect_an_old_source_token() {
     BRIDGE.with_borrow_mut(|bridge| bridge.core.as_mut().unwrap().context_version = u64::MAX);
     assert_eq!(set_context(protected()), 0);
     assert_eq!(core_context_version(), u64::MAX);
-    assert_eq!(mapped::core_validity(1), 0);
+    assert_eq!(translation::core_validity(1), 0);
     assert_eq!(core_compile(0x1000, 8, 128, 65536), 0);
     assert_eq!(info()["owner"], "0x2");
-    assert_eq!(mapped::core_validity(2), 1);
+    assert_eq!(translation::core_validity(2), 1);
 }
 
 #[test]

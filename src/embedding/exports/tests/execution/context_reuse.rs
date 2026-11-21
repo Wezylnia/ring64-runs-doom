@@ -6,7 +6,7 @@ fn compile_and_publish() -> u64 {
         let info: serde_json::Value = serde_json::from_slice(&bridge.info).unwrap();
         u64::from_str_radix(info["owner"].as_str().unwrap().trim_start_matches("0x"), 16).unwrap()
     });
-    assert_eq!(mapped::core_publish(owner), 1);
+    assert_eq!(translation::core_publish(owner), 1);
     owner
 }
 
@@ -24,19 +24,19 @@ fn context_reuse_keeps_a_published_owner_alive_but_refuses_the_wrong_context() {
     second["segments"]["fs"]["base"] = serde_json::json!("0x10000");
     import_context(second);
     assert_eq!(
-        mapped::core_validity(owner),
+        translation::core_validity(owner),
         1,
         "context mismatch is dormancy, not death"
     );
     assert_eq!(
-        mapped::core_activate(owner),
+        translation::core_activate(owner),
         0,
         "dormant native code cannot run"
     );
     import_context(first);
-    assert_eq!(mapped::core_validity(owner), 1);
+    assert_eq!(translation::core_validity(owner), 1);
     assert_eq!(
-        mapped::core_activate(owner),
+        translation::core_activate(owner),
         1,
         "semantic A/B/A reuse ignores the publication epoch"
     );
@@ -57,9 +57,9 @@ fn context_reuse_activation_checks_the_captured_context_not_only_memory_and_prof
             context.attributes(Segment::Fs),
         );
     });
-    assert_eq!(mapped::core_validity(owner), 1);
+    assert_eq!(translation::core_validity(owner), 1);
     assert_eq!(
-        mapped::core_activate(owner),
+        translation::core_activate(owner),
         0,
         "unchanged bytes cannot validate an embedded old base"
     );
@@ -81,7 +81,7 @@ fn context_reuse_pending_aba_is_cancelled_even_when_epoch_saturates() {
         let installed = compile_and_publish();
         let pending = compile_pending();
         assert_eq!(
-            mapped::core_activate(pending),
+            translation::core_activate(pending),
             0,
             "publication precedes native admission"
         );
@@ -89,29 +89,29 @@ fn context_reuse_pending_aba_is_cancelled_even_when_epoch_saturates() {
         let mut second = first.clone();
         second["segments"]["gs"]["base"] = serde_json::json!("0xffff800000001000");
         import_context(second);
-        assert_eq!(mapped::core_validity(installed), 1);
-        assert_eq!(mapped::core_validity(pending), 0);
+        assert_eq!(translation::core_validity(installed), 1);
+        assert_eq!(translation::core_validity(pending), 0);
         import_context(first);
         assert_eq!(
-            mapped::core_publish(pending),
+            translation::core_publish(pending),
             0,
             "pending ABA cannot adopt current facts"
         );
         assert_eq!(
-            mapped::core_activate(installed),
+            translation::core_activate(installed),
             1,
             "published dormant owner ignores epoch"
         );
         let fresh = compile_pending();
         assert_eq!(
-            mapped::core_publish(fresh),
+            translation::core_publish(fresh),
             1,
             "saturation does not block fresh work"
         );
-        assert_eq!(mapped::core_activate(fresh), 1);
-        mapped::core_release(fresh);
-        mapped::core_release(fresh);
-        assert_eq!(mapped::core_validity(fresh), 0);
+        assert_eq!(translation::core_activate(fresh), 1);
+        translation::core_release(fresh);
+        translation::core_release(fresh);
+        assert_eq!(translation::core_validity(fresh), 0);
         BRIDGE.with_borrow(|bridge| {
             assert!(
                 !bridge
@@ -144,13 +144,13 @@ fn context_reuse_publication_refuses_late_context_profile_and_invalid_sources() 
                 _ => core.context_version += 1,
             }
         });
-        assert_eq!(mapped::core_publish(owner), 0, "{change}");
+        assert_eq!(translation::core_publish(owner), 0, "{change}");
         assert_eq!(
-            mapped::core_activate(owner),
+            translation::core_activate(owner),
             0,
             "unpublished {change} owner cannot run"
         );
-        mapped::core_release(owner);
+        translation::core_release(owner);
         BRIDGE.with_borrow(|bridge| {
             assert!(
                 !bridge
@@ -174,16 +174,16 @@ fn context_reuse_dormant_alias_writes_are_permanent_death_not_mismatch() {
     let mut second = first.clone();
     second["segments"]["fs"]["base"] = serde_json::json!("0x10000");
     import_context(second);
-    assert_eq!(mapped::core_validity(owner), 1);
+    assert_eq!(translation::core_validity(owner), 1);
     assert_eq!(
         core_store(0x4000, 1, 0x90),
         1,
         "identity write through alias still invalidates dormant code"
     );
-    assert_eq!(mapped::core_validity(owner), 0);
+    assert_eq!(translation::core_validity(owner), 0);
     import_context(first);
-    assert_eq!(mapped::core_activate(owner), 0);
-    assert_eq!(mapped::core_publish(owner), 0);
+    assert_eq!(translation::core_activate(owner), 0);
+    assert_eq!(translation::core_publish(owner), 0);
 }
 
 fn paged_fixture() {
@@ -218,7 +218,7 @@ fn paged_pending() -> u64 {
 
 fn paged_owner() -> u64 {
     let owner = paged_pending();
-    assert_eq!(mapped::core_publish(owner), 1);
+    assert_eq!(translation::core_publish(owner), 1);
     owner
 }
 
@@ -230,7 +230,7 @@ fn fsgsbase_only_changed_writes_cancel_pending_and_suspend_the_published_context
         paged_fixture();
         BRIDGE.with_borrow_mut(|bridge| bridge.core.as_mut().unwrap().context_version = epoch);
         let installed = paged_owner();
-        assert_eq!(mapped::core_activate(installed), 1);
+        assert_eq!(translation::core_activate(installed), 1);
         let pending = paged_pending();
         let gs = Segment::Gs as u32;
         let noncanonical = 1 << 47;
@@ -245,14 +245,14 @@ fn fsgsbase_only_changed_writes_cancel_pending_and_suspend_the_published_context
         assert_eq!(core_write_segment_base(gs, noncanonical), PROTECTION);
         assert_eq!(core_write_segment_base(gs, 0), 0);
         assert_eq!(context::core_context_version(), epoch);
-        assert_eq!(mapped::core_validity(pending), 1);
+        assert_eq!(translation::core_validity(pending), 1);
         assert_eq!(core_write_segment_base(gs, 0xffff_8000_0000_0000), 0);
-        assert_eq!(mapped::core_validity(pending), 0);
-        assert_eq!(mapped::core_validity(installed), 1);
-        assert_eq!(mapped::core_activate(installed), 0);
+        assert_eq!(translation::core_validity(pending), 0);
+        assert_eq!(translation::core_validity(installed), 1);
+        assert_eq!(translation::core_activate(installed), 0);
         assert_eq!(core_write_segment_base(gs, 0), 0);
-        assert_eq!(mapped::core_publish(pending), 0);
-        assert_eq!(mapped::core_activate(installed), 1);
+        assert_eq!(translation::core_publish(pending), 0);
+        assert_eq!(translation::core_activate(installed), 1);
     }
 }
 
@@ -271,35 +271,35 @@ fn changed_guest_root_fences_active_work_but_preserves_valid_root_bound_owners()
         });
         assert_eq!(core_probe(0x400000), 0); // same effective translation and walk survive in B
         let a = paged_owner();
-        assert_eq!(mapped::core_activate(a), 1);
+        assert_eq!(translation::core_activate(a), 1);
         let pending = paged_pending();
         assert_eq!(core_paging_control(1, 3, 0x5000, 0x400000, 2, 0), 0);
-        assert_eq!(mapped::core_validity(a), 1);
-        assert_eq!(mapped::core_validity(pending), 0);
+        assert_eq!(translation::core_validity(a), 1);
+        assert_eq!(translation::core_validity(pending), 0);
         BRIDGE.with_borrow_mut(|bridge| {
             let core = bridge.core.as_mut().unwrap();
             assert!(core.image.active_changed());
             core.context_changed();
         });
         assert_eq!(
-            mapped::core_activate(a),
+            translation::core_activate(a),
             0,
             "same bytes and context cannot admit A under B"
         );
-        assert_eq!(mapped::core_publish(a), 0, "dormant code belongs to A");
+        assert_eq!(translation::core_publish(a), 0, "dormant code belongs to A");
         let b = paged_owner();
         assert_ne!(a, b);
-        assert_eq!(mapped::core_activate(b), 1);
+        assert_eq!(translation::core_activate(b), 1);
         assert_eq!(core_paging_control(1, 3, 0x1000, 0x400000, 2, 0), 0);
         assert_eq!(
-            mapped::core_publish(pending),
+            translation::core_publish(pending),
             0,
             "ABA cannot revive unpublished work"
         );
-        mapped::core_release(b);
+        translation::core_release(b);
         BRIDGE.with_borrow(|bridge| assert!(bridge.core.as_ref().unwrap().image.active_changed()));
         assert_eq!(
-            mapped::core_activate(a),
+            translation::core_activate(a),
             1,
             "A's observational proof admits its own code"
         );
@@ -338,19 +338,19 @@ fn context_reuse_keeps_exact_paging_fences_and_dynamic_nonfences() {
             );
         }
         assert_eq!(
-            mapped::core_validity(owner),
+            translation::core_validity(owner),
             i32::from(!destructive),
             "kind{kind} register{register:x} value{value:x}"
         );
         if !destructive {
-            assert_eq!(mapped::core_activate(owner), 1);
+            assert_eq!(translation::core_activate(owner), 1);
         }
         // Restoring the root/control values never resurrects a destructively retired owner.
         BRIDGE.with_borrow_mut(|bridge| {
             bridge.input = br#"{"cr0":"0x80000033","cr2":"0xdead","cr3":"0x1000","cr4":"0x628","efer":"0x500"}"#.to_vec();
         });
         assert_eq!(core_import_paging(), 0);
-        assert_eq!(mapped::core_validity(owner), i32::from(!destructive));
+        assert_eq!(translation::core_validity(owner), i32::from(!destructive));
         if kind == 1 && register == 4 && value == 0x62c {
             assert_eq!(
                 context::core_context_version(),
@@ -368,7 +368,7 @@ fn context_reuse_keeps_exact_paging_fences_and_dynamic_nonfences() {
     });
     assert_eq!(core_import_paging(), 0);
     assert_eq!(
-        mapped::core_validity(owner),
+        translation::core_validity(owner),
         0,
         "host root replacement retires compiled owners"
     );
@@ -409,7 +409,7 @@ fn context_proof_all_seven_publishers_clear_a_primed_proof_even_at_saturation() 
                 compile_and_publish()
             };
             assert_eq!(
-                mapped::core_activate(owner),
+                translation::core_activate(owner),
                 1,
                 "prime writer{writer} epoch{epoch}"
             );
@@ -499,12 +499,12 @@ fn context_proof_all_seven_publishers_clear_a_primed_proof_even_at_saturation() 
                 ),
             }
             assert_eq!(
-                mapped::core_validity(owner),
+                translation::core_validity(owner),
                 1,
                 "retain writer{writer} epoch{epoch}"
             );
             assert_eq!(
-                mapped::core_activate(owner),
+                translation::core_activate(owner),
                 0,
                 "context proof invalidated writer{writer} epoch{epoch}"
             );
@@ -520,23 +520,23 @@ fn context_proof_does_not_override_image_alias_death_release_or_paging_fences() 
     );
     assert_eq!(mapped::core_init_mapped(0x1000, length), 0);
     let owner = compile_and_publish();
-    assert_eq!(mapped::core_activate(owner), 1);
+    assert_eq!(translation::core_activate(owner), 1);
     assert_eq!(core_store(0x4000, 1, 0x90), 2);
     assert_eq!(
-        mapped::core_activate(owner),
+        translation::core_activate(owner),
         0,
         "primed proof cannot bypass identity alias write"
     );
     let fresh = compile_and_publish();
-    assert_eq!(mapped::core_activate(fresh), 1);
-    mapped::core_release(fresh);
-    assert_eq!(mapped::core_activate(fresh), 0);
+    assert_eq!(translation::core_activate(fresh), 1);
+    translation::core_release(fresh);
+    assert_eq!(translation::core_activate(fresh), 0);
     paged_fixture();
     let owner = paged_owner();
-    assert_eq!(mapped::core_activate(owner), 1);
+    assert_eq!(translation::core_activate(owner), 1);
     assert_eq!(paging::core_paging_control(1, 3, 0x1000, 0x400000, 2, 0), 0);
     assert_eq!(
-        mapped::core_activate(owner),
+        translation::core_activate(owner),
         0,
         "same CR3 destructive fence clears primed record"
     );
@@ -549,7 +549,7 @@ fn numeric_publication_retains_live_guards_but_cancels_pending_aba_at_epoch_max(
         paged_fixture();
         BRIDGE.with_borrow_mut(|b| b.core.as_mut().unwrap().context_version = epoch);
         let installed = paged_owner();
-        assert_eq!(mapped::core_activate(installed), 1);
+        assert_eq!(translation::core_activate(installed), 1);
         assert_eq!(core_compile(0x400000, 8, 128, 65536), 0);
         let pending = BRIDGE.with_borrow(|b| {
             let info: serde_json::Value = serde_json::from_slice(&b.info).unwrap();
@@ -557,19 +557,19 @@ fn numeric_publication_retains_live_guards_but_cancels_pending_aba_at_epoch_max(
                 .unwrap()
         });
         assert_eq!(core_paging_control(1, 0, 0x8000003b, 0x400000, 2, 0), 0);
-        assert_eq!(mapped::core_validity(installed), 1);
+        assert_eq!(translation::core_validity(installed), 1);
         assert_eq!(
-            mapped::core_activate(installed),
+            translation::core_activate(installed),
             1,
             "unspecialized unit retains live admission"
         );
-        assert_eq!(mapped::core_validity(pending), 0);
+        assert_eq!(translation::core_validity(pending), 0);
         assert_eq!(core_paging_control(5, 0, 0, 0x400000, 2, 0), 0);
         assert_eq!(
-            mapped::core_publish(pending),
+            translation::core_publish(pending),
             0,
             "ABA cannot publish stale capture"
         );
-        assert_eq!(mapped::core_activate(installed), 1);
+        assert_eq!(translation::core_activate(installed), 1);
     }
 }

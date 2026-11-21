@@ -292,28 +292,46 @@ pub extern "C" fn core_set_mappings() -> i32 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn core_validity(owner: u64) -> i32 {
-    BRIDGE.with_borrow(|bridge| i32::from(bridge.core.as_ref().unwrap().owner_alive(owner)))
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn core_publish(owner: u64) -> i32 {
-    BRIDGE.with_borrow_mut(|bridge| i32::from(bridge.core.as_mut().unwrap().publish_owner(owner)))
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn core_activate(owner: u64) -> i32 {
+pub extern "C" fn core_read_memory(address: u64, length: u32) -> i32 {
     BRIDGE.with_borrow_mut(|bridge| {
-        let core = bridge.core.as_mut().unwrap();
-        i32::from(core.activate_owner(owner))
+        let core = bridge.core.as_ref().unwrap();
+        match if core.paging.is_some() {
+            core.image.physical_read_bytes(address, length)
+        } else {
+            core.image.read_bytes(address, length)
+        } {
+            Ok(bytes) => {
+                bridge.output = bytes;
+                0
+            }
+            Err(fault) => {
+                bridge.info = serde_json::to_vec(&fault_json(&fault)).unwrap();
+                1
+            }
+        }
     })
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn core_release(owner: u64) {
+pub extern "C" fn core_write_memory(address: u64) -> i32 {
     BRIDGE.with_borrow_mut(|bridge| {
-        let core = bridge.core.as_mut().unwrap();
-        core.translation_owners.release(owner);
-        core.image.release(owner);
-    });
+        let Bridge {
+            core, input, info, ..
+        } = bridge;
+        let core = core.as_mut().unwrap();
+        match if core.paging.is_some() {
+            core.image.physical_write_bytes(address, input)
+        } else {
+            core.image.write_bytes(address, input)
+        } {
+            Ok(()) => {
+                core.memory_admin_changed();
+                0
+            }
+            Err(fault) => {
+                *info = serde_json::to_vec(&fault_json(&fault)).unwrap();
+                1
+            }
+        }
+    })
 }

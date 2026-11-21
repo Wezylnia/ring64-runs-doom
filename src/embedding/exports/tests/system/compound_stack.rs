@@ -81,9 +81,9 @@ fn compound_payload_cancels_source_owners_at_saturated_epochs_even_after_a_late_
                 })
             };
             let installed = compile();
-            assert_eq!(mapped::core_publish(installed), 1);
+            assert_eq!(translation::core_publish(installed), 1);
             let pending = compile();
-            assert_eq!(mapped::core_activate(installed), 1);
+            assert_eq!(translation::core_activate(installed), 1);
             let status = super::super::compound_stack::core_compound_stack(
                 CompoundStack {
                     kind: CompoundStackKind::Enter {
@@ -96,12 +96,12 @@ fn compound_payload_cancels_source_owners_at_saturated_epochs_even_after_a_late_
             );
             assert_eq!(status, if failed_probe { DATA } else { 2 });
             assert_eq!(
-                mapped::core_publish(pending),
+                translation::core_publish(pending),
                 0,
                 "payload invalidates pending source regardless of epoch"
             );
             assert_eq!(
-                mapped::core_activate(installed),
+                translation::core_activate(installed),
                 0,
                 "payload invalidates active source even at retired0"
             );
@@ -125,8 +125,8 @@ fn compound_payload_cancels_source_owners_at_saturated_epochs_even_after_a_late_
             });
             let fresh = compile();
             assert!(fresh > pending);
-            assert_eq!(mapped::core_publish(fresh), 1);
-            assert_eq!(mapped::core_activate(fresh), 1);
+            assert_eq!(translation::core_publish(fresh), 1);
+            assert_eq!(translation::core_activate(fresh), 1);
         }
     }
 }

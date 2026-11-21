@@ -1,3 +1,6 @@
+use super::admission::core_probe;
+use super::mapped::{core_read_memory, core_write_memory};
+use super::translation::core_compile;
 use super::*;
 #[path = "memory/access_faults.rs"]
 mod access_faults;
@@ -257,16 +260,16 @@ fn mapped_exports_register_sources_and_report_active_write_status() {
         info["dependencies"],
         serde_json::json!([{ "start": "0x1000", "length": 5 }])
     );
-    assert_eq!(mapped::core_validity(owner), 1);
-    assert_eq!(mapped::core_publish(owner), 1);
-    assert_eq!(mapped::core_activate(owner), 1);
+    assert_eq!(translation::core_validity(owner), 1);
+    assert_eq!(translation::core_publish(owner), 1);
+    assert_eq!(translation::core_activate(owner), 1);
     assert_eq!(core_store(0x4007, 1, 0x77), 1);
-    assert_eq!(mapped::core_validity(owner), 1);
+    assert_eq!(translation::core_validity(owner), 1);
     assert_eq!(core_store(0x4000, 1, 0xb9), 2);
-    assert_eq!(mapped::core_validity(owner), 0);
+    assert_eq!(translation::core_validity(owner), 0);
     assert_eq!(core_access_failed(), 0);
-    mapped::core_release(owner);
-    assert_eq!(mapped::core_activate(owner), 0);
+    translation::core_release(owner);
+    assert_eq!(translation::core_activate(owner), 0);
     let length = mapped_input(serde_json::json!({ "id": "extra" }), &[0x11, 0x22]);
     assert_eq!(mapped::core_add_backing(length), 0);
     mapped_input(serde_json::json!("extra"), &[]);
@@ -297,7 +300,7 @@ fn rejected_mapped_exports_preserve_storage_and_owner_validity() {
         &[],
     );
     assert_eq!(mapped::core_set_mappings(), 1);
-    assert_eq!(mapped::core_validity(owner), 1);
+    assert_eq!(translation::core_validity(owner), 1);
     assert_eq!(core_load(0x4000, 8), 0xa5a5_a500_0000_01b8);
     assert_eq!(core_probe(0x1000), DISPATCH);
 }

@@ -191,7 +191,7 @@ fn xmm_import_clears_only_successful_diagnostics_and_preserves_live_execution_ow
     assert_eq!(metadata(DATA), serde_json::Value::Null);
     assert_eq!(metadata(SEGMENT), serde_json::Value::Null);
     assert_eq!(core_divide_failed(), 0);
-    assert_eq!(mapped::core_validity(1), 1);
+    assert_eq!(translation::core_validity(1), 1);
     assert_eq!(context::core_context_version(), 0);
     assert_eq!(core_load(0x4000, 8), 0xa5a5a5a5a5a5a5a5);
     BRIDGE.with_borrow(|bridge| {

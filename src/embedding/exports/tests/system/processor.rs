@@ -202,7 +202,7 @@ fn time_survives_context_epoch_saturation_prepare_and_owner_lifetimes() {
         core_fault_info(DATA);
         assert_eq!(time(), before, "prepare/diagnostics epoch{epoch}");
         let installed = compile();
-        assert_eq!(mapped::core_publish(installed), 1);
+        assert_eq!(translation::core_publish(installed), 1);
         let pending = compile();
         let original = BRIDGE.with_borrow(|bridge| bridge.core.as_ref().unwrap().context.to_json());
         let mut changed = original.clone();
@@ -217,11 +217,11 @@ fn time_survives_context_epoch_saturation_prepare_and_owner_lifetimes() {
             assert_eq!(core_clear_fault(), 0);
             assert_eq!(time(), before, "context ABA epoch{epoch}");
         }
-        assert_eq!(mapped::core_publish(pending), 0);
-        assert_eq!(mapped::core_activate(installed), 1);
-        mapped::core_release(installed);
+        assert_eq!(translation::core_publish(pending), 0);
+        assert_eq!(translation::core_activate(installed), 1);
+        translation::core_release(installed);
         BRIDGE.with_borrow_mut(|bridge| bridge.core.as_mut().unwrap().retire_translations());
-        assert_eq!(mapped::core_validity(installed), 0);
+        assert_eq!(translation::core_validity(installed), 0);
         assert_eq!(time(), before, "owner retirement epoch{epoch}");
     }
 }
