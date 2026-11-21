@@ -181,6 +181,7 @@ fn emit_placement(
         extra_spans: true,
         inline_f32_compares: true,
         inline_f32_sub: true,
+        inline_f32_packed: true,
     };
     let (bytes, extra_spans) = emit_body(
         unit,
@@ -251,6 +252,7 @@ struct OptionalLowering {
     extra_spans: bool,
     inline_f32_compares: bool,
     inline_f32_sub: bool,
+    inline_f32_packed: bool,
 }
 
 fn emit_body(
@@ -1338,6 +1340,7 @@ fn emit_body(
         float,
         inline_f32_compares: optional.inline_f32_compares,
         inline_f32_sub: optional.inline_f32_sub,
+        inline_f32_packed: optional.inline_f32_packed,
         load_mxcsr,
         store_mxcsr,
         x87,
@@ -1582,6 +1585,25 @@ fn emit_body(
     }
     let code_start = bytes.len();
     code.append_to(&mut bytes);
+    if bytes.len() > max_artifact_bytes
+        && optional.inline_f32_packed
+        && unit.instructions.iter().any(|instruction| {
+            matches!(instruction.operation, Operation::Float(float) if super::float::is_packed_f32_arithmetic(float))
+        })
+    {
+        return emit_body(
+            unit,
+            observed,
+            (paged, mmio),
+            loop_body,
+            _guard_reads,
+            OptionalLowering {
+                inline_f32_packed: false,
+                ..optional
+            },
+            max_artifact_bytes,
+        );
+    }
     if bytes.len() > max_artifact_bytes
         && optional.inline_f32_sub
         && unit.instructions.iter().any(|instruction| {

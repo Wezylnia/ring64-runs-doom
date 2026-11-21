@@ -20,6 +20,12 @@ pub(super) fn is_scalar_f32_sub(instruction: FloatInstruction) -> bool {
         && instruction.op.kind == Kind::Sub
 }
 
+pub(super) fn is_packed_f32_arithmetic(instruction: FloatInstruction) -> bool {
+    !instruction.op.scalar
+        && instruction.op.format == Format::F32
+        && matches!(instruction.op.kind, Kind::Add | Kind::Sub | Kind::Mul)
+}
+
 impl Emitter {
     pub(super) fn float(&mut self, instruction: FloatInstruction, next_pc: u64, exit_depth: u32) {
         let [left, right, result] = self.vector_temps();
@@ -83,6 +89,13 @@ impl Emitter {
             self.float_f32(instruction.op.kind, left, right, wide, normal);
             self.op(Op::Br(1)).op(Op::End);
             self.float_f32_fallback(instruction, left, right, exit_depth);
+            self.op(Op::End);
+        } else if self.inline_f32_packed && is_packed_f32_arithmetic(instruction) {
+            self.op(Op::Block(BlockType::Result(ValType::V128)))
+                .op(Op::Block(BlockType::Empty));
+            self.float_f32_packed_sticky(instruction.op.kind, left, right, result);
+            self.op(Op::Br(1)).op(Op::End);
+            self.float_helper(instruction, left, right, exit_depth + 1);
             self.op(Op::End);
         } else {
             self.float_helper(instruction, left, right, exit_depth);
@@ -371,6 +384,78 @@ impl Emitter {
             .op(Op::I32Const(MASKED_STICKY_PRECISION))
             .op(Op::I32Ne)
             .op(Op::If(BlockType::Empty));
+    }
+
+    fn float_f32_packed_sticky(&mut self, kind: Kind, left: u32, right: u32, result: u32) {
+        let arithmetic = match kind {
+            Kind::Add => Op::F32x4Add,
+            Kind::Sub => Op::F32x4Sub,
+            Kind::Mul => Op::F32x4Mul,
+            _ => unreachable!("guarded packed FP32 arithmetic"),
+        };
+        self.load_float_mxcsr();
+        self.op(Op::I32Const(ROUNDING_CONTROL | MASKED_STICKY_PRECISION))
+            .op(Op::I32And)
+            .op(Op::I32Const(MASKED_STICKY_PRECISION))
+            .op(Op::I32Ne)
+            .unlikely(Op::BrIf(0));
+        for operand in [left, right] {
+            // subtracting one excludes signed zero from the unsigned range test
+            self.op(Op::LocalGet(operand))
+                .op(Op::I32Const(0x7fff_ffff))
+                .op(Op::I32x4Splat)
+                .op(Op::V128And)
+                .op(Op::I32Const(1))
+                .op(Op::I32x4Splat)
+                .op(Op::I32x4Sub)
+                .op(Op::I32Const(0x007f_ffff))
+                .op(Op::I32x4Splat)
+                .op(Op::I32x4LtU);
+        }
+        self.op(Op::V128Or)
+            .op(Op::V128AnyTrue)
+            .unlikely(Op::BrIf(0))
+            .op(Op::LocalGet(left))
+            .op(Op::LocalGet(right))
+            .op(arithmetic)
+            .op(Op::LocalTee(result));
+
+        // leave the min-normal and max-normal exponent bands to the helper
+        self.op(Op::I32Const(23))
+            .op(Op::I32x4ShrU)
+            .op(Op::I32Const(255))
+            .op(Op::I32x4Splat)
+            .op(Op::V128And)
+            .op(Op::I32Const(2))
+            .op(Op::I32x4Splat)
+            .op(Op::I32x4Sub)
+            .op(Op::I32Const(251))
+            .op(Op::I32x4Splat)
+            .op(Op::I32x4LeU)
+            .op(Op::LocalGet(result))
+            .op(Op::V128Const(0))
+            .op(Op::F32x4Eq);
+        if kind == Kind::Mul {
+            for operand in [left, right] {
+                self.op(Op::LocalGet(operand))
+                    .op(Op::V128Const(0))
+                    .op(Op::F32x4Eq);
+            }
+            self.op(Op::V128Or);
+        } else {
+            self.op(Op::LocalGet(left)).op(Op::LocalGet(right));
+            if kind == Kind::Add {
+                self.op(Op::F32x4Neg);
+            }
+            self.op(Op::F32x4Eq);
+        }
+        // a zero result alone could be underflow. verify cancellation or multiplication by zero
+        self.op(Op::V128And)
+            .op(Op::V128Or)
+            .op(Op::I32x4AllTrue)
+            .op(Op::I32Eqz)
+            .unlikely(Op::BrIf(0))
+            .op(Op::LocalGet(result));
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]

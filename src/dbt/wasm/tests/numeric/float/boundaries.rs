@@ -4,6 +4,192 @@ fn access(op: Numeric, left: u128, right: u128, result: u128, reason: u32, mxcsr
     json!({"kind":"float","args":[op.encode(),format!("{:x}",left as u64),format!("{:x}",left>>64),format!("{:x}",right as u64),format!("{:x}",right>>64)],"result":{"value":format!("{result:x}"),"reason":reason,"mxcsr":mxcsr}})
 }
 
+fn packed_f32(values: [f32; 4]) -> u128 {
+    values.iter().enumerate().fold(0, |bits, (lane, value)| {
+        bits | (u128::from(value.to_bits()) << (32 * lane))
+    })
+}
+
+#[test]
+fn packed_f32_sticky_precision_accepts_interior_lanes_and_provable_signed_zero() {
+    let address = Address {
+        base: AddressBase::Register(0),
+        ..Address::default()
+    };
+    let mut cases = Vec::new();
+    for (kind, left, right, result) in [
+        (
+            Kind::Add,
+            [1.0, -0.0, 0.0, -4.0],
+            [2.0, -0.0, -0.0, 4.0],
+            [3.0, -0.0, 0.0, 0.0],
+        ),
+        (
+            Kind::Sub,
+            [3.0, -0.0, 0.0, -4.0],
+            [2.0, 0.0, -0.0, -4.0],
+            [1.0, -0.0, 0.0, 0.0],
+        ),
+        (
+            Kind::Mul,
+            [2.0, -0.0, 0.0, -4.0],
+            [2.0, 3.0, -5.0, 0.0],
+            [4.0, -0.0, -0.0, -0.0],
+        ),
+    ] {
+        let [left, right, result] = [left, right, result].map(packed_f32);
+        let op = Numeric {
+            scalar: false,
+            ..numeric(kind)
+        };
+        for src in [
+            Location::Register(RegisterView::low(1)),
+            Location::Memory(address),
+        ] {
+            let mut p = packet(
+                vec![Operation::Float(FloatInstruction { op, dst: 0, src })],
+                &[(0, left), (1, right)],
+                &[(0, result)],
+                1,
+                1,
+            );
+            p["mxcsr"] = json!(0x9fe0);
+            p["expected"]["mxcsr"] = p["mxcsr"].clone();
+            if src == Location::Memory(address) {
+                p["accesses"] = json!([{
+                    "kind": "vector_load", "args": ["1122334400000000", 16, Segment::Ds as u32, 16],
+                    "result": format!("{right:x}")
+                }]);
+            }
+            cases.push(p);
+        }
+    }
+    run_cases(cases);
+}
+
+#[test]
+fn packed_f32_sticky_precision_excludes_nonzero_underflow_and_invalid_lanes() {
+    let mut cases = Vec::new();
+    for (kind, left, right, mxcsr) in [
+        // multiplication can round to zero without an exactly zero operand
+        (
+            Kind::Mul,
+            [2.0, 2.0, 2.0, f32::MIN_POSITIVE],
+            [2.0, 2.0, 2.0, f32::MIN_POSITIVE],
+            0x97a0,
+        ),
+        // a zero-cancellation proof must reject infinity minus itself
+        (
+            Kind::Sub,
+            [2.0, 2.0, 2.0, f32::INFINITY],
+            [2.0, 2.0, 2.0, f32::INFINITY],
+            0x1f20,
+        ),
+        (
+            Kind::Mul,
+            [2.0, 2.0, 2.0, f32::INFINITY],
+            [2.0, 2.0, 2.0, 0.0],
+            0x1fa0,
+        ),
+        (
+            Kind::Add,
+            [2.0, 2.0, 2.0, f32::MAX],
+            [2.0, 2.0, 2.0, f32::MAX],
+            0x1fa0,
+        ),
+        (
+            Kind::Add,
+            [2.0, 2.0, 2.0, f32::from_bits(1)],
+            [2.0, 2.0, 2.0, 0.0],
+            0x1fe0,
+        ),
+        (
+            Kind::Add,
+            [2.0, 2.0, 2.0, 1.0],
+            [2.0, 2.0, 2.0, f32::from_bits(0x33800000)],
+            0x0fa0,
+        ),
+        (
+            Kind::Sub,
+            [2.0, 2.0, 2.0, 1.0],
+            [2.0, 2.0, 2.0, 1.0],
+            0x3fa0,
+        ),
+        (
+            Kind::Sub,
+            [2.0, 2.0, 2.0, 1.0],
+            [2.0, 2.0, 2.0, 1.0],
+            0x1f80,
+        ),
+    ] {
+        let [left, right] = [left, right].map(packed_f32);
+        let op = Numeric {
+            scalar: false,
+            ..numeric(kind)
+        };
+        let outcome = crate::x86::float::eval(op, left, right, mxcsr);
+        let helper_reason = if outcome.stage.is_some() { 13 } else { 0 };
+        let mut p = packet(
+            vec![Operation::Float(FloatInstruction {
+                op,
+                dst: 0,
+                src: Location::Register(RegisterView::low(1)),
+            })],
+            &[(0, left), (1, right)],
+            &[(0, outcome.value)],
+            if helper_reason == 0 { 1 } else { helper_reason },
+            u64::from(helper_reason == 0),
+        );
+        p["mxcsr"] = json!(mxcsr);
+        p["expected"]["mxcsr"] = json!(outcome.mxcsr);
+        p["accesses"] = json!([access(
+            op,
+            left,
+            right,
+            outcome.value,
+            helper_reason,
+            outcome.mxcsr
+        )]);
+        cases.push(p);
+    }
+    run_cases(cases);
+}
+
+#[test]
+fn tight_artifact_cap_restores_the_helper_for_packed_f32_arithmetic() {
+    let add = Numeric {
+        scalar: false,
+        ..numeric(Kind::Add)
+    };
+    let operation = Operation::Float(FloatInstruction {
+        op: add,
+        dst: 0,
+        src: Location::Register(RegisterView::low(1)),
+    });
+    let unit = unit(vec![instruction(0, operation)]);
+    let direct = emit(&unit);
+    let fallback = emit_profile(&unit, false, false, direct.len() - 1);
+    assert!(fallback.len() < direct.len());
+    let [left, right, result] = [
+        [1.0, -2.0, -0.0, 0.0],
+        [2.0, 2.0, -0.0, -0.0],
+        [3.0, 0.0, -0.0, 0.0],
+    ]
+    .map(packed_f32);
+    let mut p = packet(
+        vec![operation],
+        &[(0, left), (1, right)],
+        &[(0, result)],
+        1,
+        1,
+    );
+    p["bytes"] = json!(fallback);
+    p["mxcsr"] = json!(0x1fa0);
+    p["expected"]["mxcsr"] = json!(0x1fa0);
+    p["accesses"] = json!([access(add, left, right, result, 0, 0x1fa0)]);
+    run_cases(vec![p]);
+}
+
 #[test]
 fn tight_artifact_cap_keeps_direct_compare_but_uses_the_helper_for_subtraction() {
     let sub = numeric(Kind::Sub);
