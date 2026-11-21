@@ -127,7 +127,7 @@ a:hover {
 
 main {
   min-width: 0;
-  align-self: center;
+  align-self: start;
 }
 
 .intro {
@@ -413,7 +413,6 @@ h1 {
 
 @media (max-width: 37rem) {
   main {
-    align-self: start;
     padding-block-start: clamp(0.5rem, 5svh, 3rem);
   }
 
