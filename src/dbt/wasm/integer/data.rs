@@ -77,14 +77,14 @@ impl Emitter {
         dst: RegisterView,
         src: Location,
         width: Width,
-        condition: Condition,
+        (condition, source): (Condition, Option<super::loop_cfg::ConditionSource>),
         next_pc: u64,
         exit_depth: u32,
     ) {
         // Even a false condition must complete the source read before writes.
         self.source(src, width, next_pc, exit_depth);
         self.data_register(dst, width);
-        self.condition(condition);
+        self.cloned_condition(condition, source);
         self.op(Op::Select);
         self.write_register(dst, width);
     }

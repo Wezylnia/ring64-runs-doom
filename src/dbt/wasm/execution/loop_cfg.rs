@@ -1,6 +1,6 @@
 use crate::memory::canonical48;
 use crate::x86::context::ExecutionContext;
-use crate::x86::instruction::{Alu, Condition, Instruction, Location, Operation, Width};
+use crate::x86::instruction::{Alu, Condition, Instruction, Location, Operation, Unary, Width};
 
 #[derive(Clone, Copy)]
 pub(super) struct LoopOrder {
@@ -95,12 +95,18 @@ fn branch_target(operation: Operation) -> Option<u64> {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ConditionSource {
+    Operands(Width),
+    ResultSign(Width),
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) enum CompareAction {
     #[default]
     Ordinary,
-    KeepOperands,
-    Branch(Width),
+    SkipStatus,
+    Condition(ConditionSource),
     RestoreOnLoadFault(Width),
 }
 
@@ -133,6 +139,45 @@ pub(super) fn compare_predicates(
         let next_overwrites = |pc| {
             position_at(pc).is_some_and(|successor| successor > position && replaces[successor])
         };
+        if let Operation::Cmov {
+            condition,
+            src: Location::Register(_),
+            ..
+        } = instruction.operation
+        {
+            let producer = instructions[order.at(position as u32 - 1) as usize];
+            if !explicit_entry[position]
+                && next_overwrites(instruction.next_pc)
+                && producer.next_pc == instruction.pc
+            {
+                let source = match producer.operation {
+                    Operation::Alu {
+                        kind: Alu::Sub | Alu::Cmp,
+                        width: width @ (Width::W32 | Width::W64),
+                        ..
+                    } if matches!(condition, Condition::Less | Condition::GreaterOrEqual) => {
+                        Some(ConditionSource::Operands(width))
+                    }
+                    Operation::Unary {
+                        kind: Unary::Neg,
+                        dst: Location::Register(_),
+                        width: width @ (Width::W32 | Width::W64),
+                    }
+                    | Operation::Alu {
+                        kind: Alu::Sub,
+                        width: width @ (Width::W32 | Width::W64),
+                        ..
+                    } if matches!(condition, Condition::Sign | Condition::NotSign) => {
+                        Some(ConditionSource::ResultSign(width))
+                    }
+                    _ => None,
+                };
+                if let Some(source) = source {
+                    predicates[position - 1] = CompareAction::SkipStatus;
+                    predicates[position] = CompareAction::Condition(source);
+                }
+            }
+        }
         let Operation::Jcc { condition, target } = instruction.operation else {
             replaces[position] = match instruction.operation {
                 Operation::Alu { kind, .. } => !matches!(kind, Alu::Adc | Alu::Sbb),
@@ -196,8 +241,8 @@ pub(super) fn compare_predicates(
             // the compare operands in LHS and RHS until any access fault.
             predicates[load_position] = CompareAction::RestoreOnLoadFault(width);
         }
-        predicates[position - 1] = CompareAction::KeepOperands;
-        predicates[position] = CompareAction::Branch(width);
+        predicates[position - 1] = CompareAction::SkipStatus;
+        predicates[position] = CompareAction::Condition(ConditionSource::Operands(width));
     }
     predicates
 }

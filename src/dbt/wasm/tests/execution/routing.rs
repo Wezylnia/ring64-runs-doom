@@ -994,7 +994,7 @@ fn rotated_loop_preserves_both_backedges_and_original_entry_boundaries() {
 
 #[test]
 fn memory_compare_predicate_keeps_flags_at_faults_and_checked_entries() {
-    use super::super::loop_cfg::{CompareAction, compare_predicates, select};
+    use super::super::loop_cfg::{CompareAction, ConditionSource, compare_predicates, select};
     use crate::embedding::layout::DATA;
 
     let decrement = |bank| Operation::Alu {
@@ -1046,7 +1046,7 @@ fn memory_compare_predicate_keeps_flags_at_faults_and_checked_entries() {
         let context = crate::x86::context::ExecutionContext::default();
         assert_eq!(
             compare_predicates(&instructions, order, &context)[1],
-            CompareAction::Branch(width)
+            CompareAction::Condition(ConditionSource::Operands(width))
         );
         let mut faulting = instructions.clone();
         faulting[4].operation = Operation::Load {
@@ -1169,7 +1169,7 @@ fn memory_compare_predicate_keeps_flags_at_faults_and_checked_entries() {
 
 #[test]
 fn compare_predicate_restores_flags_only_on_its_fallthrough_load_fault() {
-    use super::super::loop_cfg::{CompareAction, compare_predicates, select};
+    use super::super::loop_cfg::{CompareAction, ConditionSource, compare_predicates, select};
     use crate::embedding::layout::DATA;
 
     let operations = [
@@ -1223,8 +1223,8 @@ fn compare_predicate_restores_flags_only_on_its_fallthrough_load_fault() {
     assert_eq!(
         plan[..3],
         [
-            CompareAction::KeepOperands,
-            CompareAction::Branch(Width::W32),
+            CompareAction::SkipStatus,
+            CompareAction::Condition(ConditionSource::Operands(Width::W32)),
             CompareAction::RestoreOnLoadFault(Width::W32),
         ]
     );
@@ -1377,6 +1377,121 @@ fn guarded_read_loop_publishes_preceding_add_flags_on_load_fault_and_budget() {
             ]);
         }
         packet["accesses"] = json!(accesses);
+        cases.push(packet);
+    }
+    run_cases(cases);
+}
+
+#[test]
+fn guarded_conditional_move_uses_comparison_and_result_sign_after_overflow() {
+    use crate::x86::instruction::{Location, Unary};
+
+    let operations = [
+        Operation::Jcc {
+            condition: Condition::Equal,
+            target: 0x1018,
+        },
+        Operation::Alu {
+            kind: Alu::Sub,
+            dst: RegisterView::low(0),
+            src: DataOperand::Immediate(1),
+            width: Width::W32,
+        },
+        Operation::Cmov {
+            dst: RegisterView::low(3),
+            src: Location::Register(RegisterView::low(0)),
+            width: Width::W32,
+            condition: Condition::Less,
+        },
+        Operation::Mov {
+            dst: RegisterView::low(2),
+            src: DataOperand::Immediate(0x80000000),
+            width: Width::W32,
+        },
+        Operation::Unary {
+            kind: Unary::Neg,
+            dst: Location::Register(RegisterView::low(2)),
+            width: Width::W32,
+        },
+        Operation::Cmov {
+            dst: RegisterView::low(6),
+            src: Location::Register(RegisterView::low(2)),
+            width: Width::W32,
+            condition: Condition::Sign,
+        },
+        Operation::Alu {
+            kind: Alu::Sub,
+            dst: RegisterView::low(1),
+            src: DataOperand::Immediate(1),
+            width: Width::W32,
+        },
+        Operation::Jcc {
+            condition: Condition::NotEqual,
+            target: 0x1000,
+        },
+        Operation::Nop,
+    ];
+    let unit = unit(
+        operations
+            .into_iter()
+            .enumerate()
+            .map(|(i, operation)| Instruction {
+                pc: 0x1000 + i as u64 * 4,
+                next_pc: 0x1004 + i as u64 * 4,
+                operation,
+            })
+            .collect(),
+    );
+    let bytes = emit(&unit);
+    assert_eq!(
+        wasm_loop_count(&bytes),
+        1 + usize::from(!cfg!(feature = "parallel"))
+    );
+    let entries: Vec<_> = unit.instructions.iter().map(|i| i.pc).collect();
+    let mut cases = Vec::new();
+    for (budget, next, flags, remaining, stop, expected) in [
+        (
+            8,
+            0x1000,
+            2,
+            0,
+            false,
+            vec![
+                (0, 0x7fffffff),
+                (1, 1),
+                (2, 0x80000000),
+                (3, 0x7fffffff),
+                (6, 0x80000000),
+            ],
+        ),
+        (8, 0x1008, 0x816, 6, true, vec![(0, 0x7fffffff)]),
+        (
+            8,
+            0x1014,
+            0x887,
+            3,
+            true,
+            vec![(0, 0x7fffffff), (2, 0x80000000), (3, 0x7fffffff)],
+        ),
+    ] {
+        let mut packet = execution_case(
+            &bytes,
+            &entries,
+            &[(0, 0x80000000), (1, 2)],
+            2,
+            0x1000,
+            budget,
+            (
+                &expected,
+                flags,
+                next,
+                if stop { STOP } else { BUDGET } as u32,
+                remaining,
+            ),
+        );
+        if stop {
+            packet["stop"] = json!(format!("{next:x}"));
+        }
         cases.push(packet);
     }
     run_cases(cases);

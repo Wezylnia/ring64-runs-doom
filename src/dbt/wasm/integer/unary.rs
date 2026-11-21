@@ -90,7 +90,8 @@ impl Emitter {
                     .op(Op::I64Or)
                     .op(Op::LocalSet(FLAGS));
             }
-            Unary::Neg => self.arithmetic_flags(Alu::Sub, width),
+            Unary::Neg if !self.omit_result_status => self.arithmetic_flags(Alu::Sub, width),
+            Unary::Neg => {}
         }
     }
 

@@ -490,14 +490,14 @@ impl Emitter {
                 (self.omit_result_status, flags_on_next_read_fault) =
                     can_omit_flags(&instructions[ordinal..=body.tail as usize]);
             }
-            self.omit_result_status |= compare == CompareAction::KeepOperands;
+            self.omit_result_status |= compare == CompareAction::SkipStatus;
             self.instruction(
                 instructions[ordinal],
                 instructions.get(ordinal + 1),
                 depth,
                 write_segment_base,
                 match compare {
-                    CompareAction::Branch(width) => Some(width),
+                    CompareAction::Condition(source) => Some(source),
                     _ => None,
                 },
             );

@@ -153,7 +153,37 @@ impl Emitter {
         }
     }
 
-    pub(super) fn compare_condition(&mut self, condition: Condition, width: Width) {
+    pub(super) fn cloned_condition(
+        &mut self,
+        condition: Condition,
+        source: Option<super::loop_cfg::ConditionSource>,
+    ) {
+        use super::loop_cfg::ConditionSource;
+        match source {
+            None => self.condition(condition),
+            Some(ConditionSource::Operands(width)) => self.compare_condition(condition, width),
+            Some(ConditionSource::ResultSign(width)) => {
+                self.op(Op::LocalGet(super::RESULT));
+                if width == Width::W32 {
+                    self.op(Op::I32WrapI64).op(Op::I32Const(0));
+                    self.op(if condition == Condition::Sign {
+                        Op::I32LtS
+                    } else {
+                        Op::I32GeS
+                    });
+                } else {
+                    self.op(Op::I64Const(0));
+                    self.op(if condition == Condition::Sign {
+                        Op::I64LtS
+                    } else {
+                        Op::I64GeS
+                    });
+                }
+            }
+        }
+    }
+
+    fn compare_condition(&mut self, condition: Condition, width: Width) {
         use Condition::*;
         let predicate = match (width, condition) {
             (Width::W32, Below) => Op::I32LtU,
@@ -168,7 +198,11 @@ impl Emitter {
             (Width::W64, NotEqual) => Op::I64Ne,
             (Width::W64, BelowOrEqual) => Op::I64LeU,
             (Width::W64, Above) => Op::I64GtU,
-            _ => unreachable!("admitted unsigned or equality comparison"),
+            (Width::W32, Less) => Op::I32LtS,
+            (Width::W32, GreaterOrEqual) => Op::I32GeS,
+            (Width::W64, Less) => Op::I64LtS,
+            (Width::W64, GreaterOrEqual) => Op::I64GeS,
+            _ => unreachable!("admitted direct comparison"),
         };
         for operand in [LHS, RHS] {
             self.op(Op::LocalGet(operand));

@@ -88,9 +88,7 @@ use wasm_encoder::{
 use super::unit::Unit;
 use crate::embedding::layout::DISPATCH;
 use crate::x86::context::{ExecutionContext, Segment};
-use crate::x86::instruction::{
-    Alu, Instruction, Location, MemoryAluOperands, Operation, Repeat, Width,
-};
+use crate::x86::instruction::{Alu, Instruction, Location, MemoryAluOperands, Operation, Repeat};
 use structured_loop::StructuredLoop;
 
 const ENTRY_INDEX: u32 = 4;
@@ -224,7 +222,7 @@ impl Emitter {
         next: Option<&Instruction>,
         loop_depth: u32,
         write_segment_base: Option<u32>,
-        compare_width: Option<Width>,
+        compare_source: Option<loop_cfg::ConditionSource>,
     ) {
         self.current_pc = instruction.pc;
         self.current_operation = instruction.operation;
@@ -501,7 +499,14 @@ impl Emitter {
                 src,
                 width,
                 condition,
-            } => self.cmov(dst, src, width, condition, instruction.next_pc, exit_depth),
+            } => self.cmov(
+                dst,
+                src,
+                width,
+                (condition, compare_source),
+                instruction.next_pc,
+                exit_depth,
+            ),
             Operation::Push { src, width } => {
                 self.push(src, width, instruction.next_pc, exit_depth)
             }
@@ -532,11 +537,7 @@ impl Emitter {
                 return;
             }
             Operation::Jcc { condition, target } => {
-                if let Some(width) = compare_width {
-                    self.compare_condition(condition, width);
-                } else {
-                    self.condition(condition);
-                }
+                self.cloned_condition(condition, compare_source);
                 self.op(Op::If(BlockType::Empty));
                 self.target(target, loop_depth + 1, exit_depth + 1);
                 self.op(Op::End);
