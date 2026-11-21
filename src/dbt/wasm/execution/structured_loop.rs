@@ -547,7 +547,7 @@ impl Emitter {
                 .copied()
                 .unwrap_or_default();
             self.flags_on_read_fault = match compare {
-                CompareAction::RestoreOnLoadFault(width) => Some((Alu::Cmp, width)),
+                CompareAction::RestoreOnLoadFault(kind, width) => Some((kind, width)),
                 _ => None,
             };
             // The complete-lap guard and the no-fault body rule hide intermediate status.

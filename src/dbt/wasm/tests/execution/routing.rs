@@ -1225,7 +1225,7 @@ fn compare_predicate_restores_flags_only_on_its_fallthrough_load_fault() {
         [
             CompareAction::SkipStatus,
             CompareAction::Condition(ConditionSource::Operands(Width::W32)),
-            CompareAction::RestoreOnLoadFault(Width::W32),
+            CompareAction::RestoreOnLoadFault(Alu::Cmp, Width::W32),
         ]
     );
 
@@ -1322,6 +1322,123 @@ fn compare_predicate_restores_flags_only_on_its_fallthrough_load_fault() {
         packets.push(packet);
     }
     run_cases(packets);
+}
+
+#[test]
+fn conditional_move_preserves_sub_flags_across_an_intervening_scalar_load() {
+    use super::super::loop_cfg::{CompareAction, ConditionSource, compare_predicates, select};
+    use crate::embedding::layout::DATA;
+
+    let artifact = compiled_fixture(
+        0x1000,
+        &[
+            0x74, 0x08, // je 0x100a
+            0x29, 0xf8, // sub eax,edi
+            0x0f, 0xb6, 0x3b, // movzx edi,[rbx]
+            0x0f, 0x4d, 0xf0, // cmovge esi,eax
+            0x83, 0xe9, 0x01, // sub ecx,1
+            0x75, 0xf1, // jne 0x1000
+            0x90,
+        ],
+        0x1000,
+    );
+    let context = crate::x86::context::ExecutionContext::default();
+    let predicates = |instructions: &[Instruction]| {
+        let (order, _) = select(instructions).unwrap();
+        compare_predicates(instructions, order, &context)
+    };
+    assert_eq!(
+        predicates(&artifact.instructions)[1..4],
+        [
+            CompareAction::SkipStatus,
+            CompareAction::RestoreOnLoadFault(Alu::Sub, Width::W32),
+            CompareAction::Condition(ConditionSource::Operands(Width::W32)),
+        ],
+    );
+    let mut joined = artifact.instructions;
+    for target in [0x1004, 0x1007] {
+        joined[0].operation = Operation::Jcc {
+            condition: Condition::Equal,
+            target,
+        };
+        assert_eq!(predicates(&joined)[1], CompareAction::Ordinary);
+    }
+
+    let complete = [(0, 0), (1, 0), (6, 0), (7, 0xff)];
+    let sub = [(0, 0x7fff_ffff)];
+    let loaded = [(0, 0x7fff_ffff), (7, 0xff)];
+    let alternate_cmov = [(1, 0), (6, 0x8000_0000)];
+    let mut cases = Vec::new();
+    for (entry, eax, budget, stop, read, expected) in [
+        (
+            0x1000,
+            1,
+            8,
+            0x100f,
+            Some(0),
+            (&complete[..], 0x46, 0x100f, STOP, 2),
+        ),
+        (
+            0x1000,
+            0x8000_0000,
+            8,
+            0x100f,
+            Some(DATA),
+            (&sub[..], 0x816, 0x1004, DATA, 6),
+        ),
+        (
+            0x1000,
+            0x8000_0000,
+            2,
+            0x100f,
+            None,
+            (&sub[..], 0x816, 0x1004, BUDGET, 0),
+        ),
+        (
+            0x1000,
+            0x8000_0000,
+            8,
+            0x1007,
+            Some(0),
+            (&loaded[..], 0x816, 0x1007, STOP, 5),
+        ),
+        (
+            0x1004,
+            0x8000_0000,
+            8,
+            0x100f,
+            Some(DATA),
+            (&[][..], 2, 0x1004, DATA, 8),
+        ),
+        (
+            0x1007,
+            0x8000_0000,
+            8,
+            0x100f,
+            None,
+            (&alternate_cmov[..], 0x46, 0x100f, STOP, 5),
+        ),
+    ] {
+        let (registers, flags, rip, reason, remaining) = expected;
+        let mut packet = execution_case(
+            &artifact.bytes,
+            &artifact.entries,
+            &[(0, eax), (1, 1), (3, 0x8000), (6, 0xee), (7, 1)],
+            2,
+            entry,
+            budget,
+            (registers, flags, rip, reason as u32, remaining),
+        );
+        packet["stop"] = json!(format!("{stop:x}"));
+        if let Some(status) = read {
+            packet["accesses"] = json!([
+                {"kind":"load","args":["8000",1],"result":"ff"},
+                {"kind":"access_failed","args":[],"result":status}
+            ]);
+        }
+        cases.push(packet);
+    }
+    run_cases(cases);
 }
 
 #[test]

@@ -107,7 +107,7 @@ pub(super) enum CompareAction {
     Ordinary,
     SkipStatus,
     Condition(ConditionSource),
-    RestoreOnLoadFault(Width),
+    RestoreOnLoadFault(Alu, Width),
 }
 
 pub(super) fn compare_predicates(
@@ -145,18 +145,39 @@ pub(super) fn compare_predicates(
             ..
         } = instruction.operation
         {
-            let producer = instructions[order.at(position as u32 - 1) as usize];
+            let previous_position = position - 1;
+            let previous = instructions[order.at(previous_position as u32) as usize];
+            // A unique scalar load keeps the arithmetic locals live. Restore
+            // their status only on its fault path, before leaving the lap.
+            let across_load = position > 1
+                && !explicit_entry[previous_position]
+                && previous.next_pc == instruction.pc
+                && matches!(
+                    previous.operation,
+                    Operation::Load { .. }
+                        | Operation::Extend {
+                            src: Location::Memory(_),
+                            ..
+                        }
+                );
+            let producer_position = previous_position - usize::from(across_load);
+            let producer = instructions[order.at(producer_position as u32) as usize];
+            let consumer_pc = if across_load {
+                previous.pc
+            } else {
+                instruction.pc
+            };
             if !explicit_entry[position]
                 && next_overwrites(instruction.next_pc)
-                && producer.next_pc == instruction.pc
+                && producer.next_pc == consumer_pc
             {
                 let source = match producer.operation {
                     Operation::Alu {
-                        kind: Alu::Sub | Alu::Cmp,
+                        kind: kind @ (Alu::Sub | Alu::Cmp),
                         width: width @ (Width::W32 | Width::W64),
                         ..
                     } if matches!(condition, Condition::Less | Condition::GreaterOrEqual) => {
-                        Some(ConditionSource::Operands(width))
+                        Some((ConditionSource::Operands(width), kind, width))
                     }
                     Operation::Unary {
                         kind: Unary::Neg,
@@ -168,12 +189,16 @@ pub(super) fn compare_predicates(
                         width: width @ (Width::W32 | Width::W64),
                         ..
                     } if matches!(condition, Condition::Sign | Condition::NotSign) => {
-                        Some(ConditionSource::ResultSign(width))
+                        Some((ConditionSource::ResultSign(width), Alu::Sub, width))
                     }
                     _ => None,
                 };
-                if let Some(source) = source {
-                    predicates[position - 1] = CompareAction::SkipStatus;
+                if let Some((source, kind, width)) = source {
+                    predicates[producer_position] = CompareAction::SkipStatus;
+                    if across_load {
+                        predicates[previous_position] =
+                            CompareAction::RestoreOnLoadFault(kind, width);
+                    }
                     predicates[position] = CompareAction::Condition(source);
                 }
             }
@@ -239,7 +264,7 @@ pub(super) fn compare_predicates(
             }
             // This load owns its fallthrough entry, and the load path leaves
             // the compare operands in LHS and RHS until any access fault.
-            predicates[load_position] = CompareAction::RestoreOnLoadFault(width);
+            predicates[load_position] = CompareAction::RestoreOnLoadFault(Alu::Cmp, width);
         }
         predicates[position - 1] = CompareAction::SkipStatus;
         predicates[position] = CompareAction::Condition(ConditionSource::Operands(width));
