@@ -31,6 +31,33 @@ pub(crate) fn emit_profile(
     max_artifact_bytes: usize,
 ) -> Vec<u8> {
     let observed = observed || paged;
+    #[cfg(not(feature = "parallel"))]
+    if paged && let Some(body) = StructuredLoop::select_paged_registers(&unit.instructions) {
+        if let Some(guarded) = body.within_paged_fetch(unit) {
+            let bytes = emit_placement(
+                unit,
+                observed,
+                (paged, false),
+                Some(guarded),
+                false,
+                max_artifact_bytes,
+            );
+            if bytes.len() <= max_artifact_bytes {
+                return bytes;
+            }
+        }
+        let bytes = emit_placement(
+            unit,
+            observed,
+            (paged, false),
+            Some(body),
+            false,
+            max_artifact_bytes,
+        );
+        if bytes.len() <= max_artifact_bytes {
+            return bytes;
+        }
+    }
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     if !observed
         && let Some(body) = StructuredLoop::select_shared_float(&unit.instructions)
@@ -620,6 +647,13 @@ fn emit_body(
         .iter()
         .any(|i| matches!(i.operation, Operation::SegmentBase { write: true, .. }))
         .then(|| add_function_type(&mut types, [ValType::I32, ValType::I64], [ValType::I32]));
+    let paged_loop_guard_type = loop_body.and_then(|body| body.paged_fetch_bytes).map(|_| {
+        add_function_type(
+            &mut types,
+            [ValType::I64, ValType::I32, ValType::I64, ValType::I32],
+            [ValType::I32],
+        )
+    });
     let debug_begin_type = observed.then(|| {
         add_function_type(
             &mut types,
@@ -821,6 +855,8 @@ fn emit_body(
         write_segment_base_type.map(|index| import_function("write_segment_base", index));
     let processor = processor_type.map(|index| import_function("processor", index));
     let protection_key = protection_key_type.map(|index| import_function("protection_key", index));
+    let paged_loop_guard =
+        paged_loop_guard_type.map(|index| import_function("paged_loop_guard", index));
     let debug_begin = debug_begin_type.map(|index| import_function("debug_begin", index));
     let debug_step = debug_type.map(|index| import_function("debug_finish", index));
     let external_step = external_step_type.map(|index| import_function("external_step", index));
@@ -1196,6 +1232,12 @@ fn emit_body(
         next_local += 3;
         parallel::ByteStoreSpan::new(resolve, first)
     });
+    let paged_loop_guard = paged_loop_guard.map(|guard| {
+        let attempts = next_local;
+        next_local += 1;
+        locals.push((1, ValType::I32));
+        (guard, attempts)
+    });
     let boundary_locals = observed.then(|| {
         let result = [next_local, next_local + 1, next_local + 2, next_local + 3];
         locals.push((4, ValType::I32));
@@ -1313,6 +1355,8 @@ fn emit_body(
         current_index: 0,
         structured_loop: None,
         loop_gates_prechecked: false,
+        paged_register_lap: false,
+        paged_loop_guard,
         register_upper_dwords,
         narrow_gprs,
         omit_result_status: false,
@@ -1427,7 +1471,7 @@ fn emit_body(
         }
         let loop_depth = count - index as u32;
         if let Some(loop_body) = loop_body.filter(|body| body.head == index as u32) {
-            if loop_body.precheck_gates_without_read_proof() {
+            if !observed && loop_body.precheck_gates_without_read_proof() {
                 // Partial laps and in-loop stops use the original entry labels.
                 emitter.exclude_loop_stop(&unit.instructions, loop_body);
                 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]

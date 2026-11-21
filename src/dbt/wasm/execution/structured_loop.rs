@@ -1,5 +1,5 @@
 use super::{
-    Emitter, GPR, REMAINING,
+    Emitter, GPR, REASON, REMAINING,
     control::InstructionRetirement,
     loop_cfg::{CompareAction, LoopOrder, ReadFaultFlags},
 };
@@ -35,6 +35,7 @@ pub(super) struct StructuredLoop {
     pub(super) max_lap_len: u32,
     kind: LoopKind,
     project_dwords: bool,
+    pub(super) paged_fetch_bytes: Option<u32>,
 }
 
 impl StructuredLoop {
@@ -96,7 +97,7 @@ impl StructuredLoop {
         writes
     }
 
-    #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+    #[cfg(any(not(feature = "parallel"), target_arch = "wasm32"))]
     pub(super) fn without_dword_projection(mut self) -> Self {
         self.project_dwords = false;
         self
@@ -183,6 +184,26 @@ impl StructuredLoop {
             head: self.head,
             tail: self.tail,
         }
+    }
+
+    #[cfg(not(feature = "parallel"))]
+    pub(super) fn select_paged_registers(instructions: &[Instruction]) -> Option<Self> {
+        Self::select_body(instructions, LoopKind::Registers).map(Self::without_dword_projection)
+    }
+
+    #[cfg(not(feature = "parallel"))]
+    pub(super) fn within_paged_fetch(mut self, unit: &super::Unit) -> Option<Self> {
+        if !unit.context.is_long64() {
+            return None;
+        }
+        let head = unit.instructions[self.head as usize].pc;
+        let end = unit.instructions[self.tail as usize].next_pc;
+        let length = end.checked_sub(head)?;
+        if length == 0 || length > 0x1000 - (head & 0xfff) || !crate::memory::canonical48(head) {
+            return None;
+        }
+        self.paged_fetch_bytes = Some(length as u32);
+        Some(self)
     }
 
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
@@ -288,6 +309,7 @@ impl StructuredLoop {
             max_lap_len,
             kind: LoopKind::ForwardEdges,
             project_dwords: true,
+            paged_fetch_bytes: None,
         }
     }
 
@@ -340,6 +362,7 @@ impl StructuredLoop {
                         max_lap_len: length as u32 + 1,
                         kind,
                         project_dwords: true,
+                        paged_fetch_bytes: None,
                     });
                 }
             }
@@ -629,6 +652,48 @@ impl Emitter {
         self.op(Op::End).op(Op::End);
     }
 
+    fn emit_paged_register_loop(
+        &mut self,
+        instructions: &[Instruction],
+        body: StructuredLoop,
+        loop_depth: u32,
+        (guard, attempts): (u32, u32),
+    ) {
+        self.op(Op::LocalGet(attempts))
+            .op(Op::I32Const(2))
+            .op(Op::I32LtU)
+            .op(Op::If(BlockType::Empty));
+        self.exclude_loop_stop(instructions, body);
+        self.op(Op::LocalGet(REMAINING))
+            .op(Op::I64Const(i64::from(body.max_lap_len)))
+            .op(Op::I64GeU)
+            .op(Op::I32And)
+            .op(Op::If(BlockType::Empty))
+            .op(Op::LocalGet(attempts))
+            .op(Op::I64Const(instructions[body.head as usize].pc as i64))
+            .op(Op::I32Const(body.paged_fetch_bytes.unwrap() as i32));
+        self.system_bits();
+        self.op(Op::LocalGet(super::SHADOW))
+            .op(Op::Call(guard))
+            .op(Op::LocalTee(REASON))
+            // A cold fetch returns 0 and earns one retry after the checked lap.
+            // Admission or a definitive rejection spends both attempts.
+            .op(Op::I32Add)
+            .op(Op::I32Const(1))
+            .op(Op::I32Add)
+            .op(Op::LocalSet(attempts))
+            .op(Op::LocalGet(REASON))
+            .op(Op::I32Const(1))
+            .op(Op::I32Eq)
+            .op(Op::I32Const(0))
+            .op(Op::LocalSet(REASON))
+            .op(Op::If(BlockType::Empty));
+        self.paged_register_lap = true;
+        self.emit_prechecked_body(instructions, body, loop_depth + 3, None);
+        self.paged_register_lap = false;
+        self.op(Op::End).op(Op::End).op(Op::End);
+    }
+
     pub(super) fn emit_prechecked_body(
         &mut self,
         instructions: &[Instruction],
@@ -765,6 +830,11 @@ impl Emitter {
                 .op(Op::BrIf(0));
         }
         self.op(Op::Loop(BlockType::Empty));
+        if !self.loop_gates_prechecked
+            && let Some(guard) = self.paged_loop_guard
+        {
+            self.emit_paged_register_loop(instructions, body, inner_depth, guard);
+        }
         if self.loop_gates_prechecked && !precheck_entry {
             // Leave the guarded clone before a partial lap.
             let minimum = Op::I64Const(i64::from(body.max_lap_len));
@@ -859,6 +929,7 @@ impl Emitter {
             // The complete-lap guard and the no-fault body rule hide intermediate status.
             // A worker signal can publish flags at any instruction entry.
             self.omit_result_status = !cfg!(feature = "parallel")
+                && !self.observed
                 && body.kind == LoopKind::Registers
                 && self.loop_gates_prechecked
                 && status_effect(instructions[ordinal].operation) == StatusEffect::Replace

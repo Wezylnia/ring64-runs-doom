@@ -14,6 +14,69 @@ import {
 export function pagingBoundaryReviewScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [
     {
+      name: 'paged register loop preserves checked reentry and observation boundaries',
+      async run() {
+        const head = 0x400000n;
+        const middle = head + 3n;
+        // ADD EAX,1; SUB ECX,1; JNE head.
+        await usingPaged(compiler, { code: '83c00183e90175f8' }, async (cpu) => {
+          const start = () => initial(head, { 0: 0n, 1: 3n }, 2n);
+          cpu.setState(start());
+          const partial = await cpu.run({ budget: 4n });
+          equal(partial.reason, 'budget', 'partial second lap stops at its next instruction');
+          equal(partial.retired, 4n, 'three instructions then the next addition');
+          equal(partial.state.rip, middle, 'precise second-lap continuation');
+          equal(partial.state.registers[0], 2n, 'both additions completed');
+          equal(partial.state.registers[1], 2n, 'only the first subtraction completed');
+          const resumed = await cpu.run({ budget: 10n, stop: head + 8n });
+          equal(resumed.reason, 'stop', 'resume directly at the saved middle entry');
+          equal(resumed.retired, 5n, 'the prior addition does not replay');
+          equal(resumed.state.registers[0], 3n, 'one addition per lap');
+
+          // A write outside the source range clears the retained paging cache.
+          cpu.writePhysicalMemory(0x9fffn, Uint8Array.of(0x82));
+          cpu.setState(start());
+          const complete = await cpu.run({ budget: 10n, stop: head + 8n });
+          equal(complete.reason, 'stop', 'funded laps finish after a cold cached entry');
+          equal(complete.resources.compilations, 0, 'the cached code owner survives the write');
+          equal(complete.retired, 9n, 'three full laps retire');
+          equal(complete.state.registers[0], 3n, 'all three additions complete');
+          equal(complete.state.flags, 0x46n, 'loop exit retains the last arithmetic flags');
+
+          cpu.setState(start());
+          const stopped = await cpu.run({ budget: 10n, stop: middle });
+          equal(stopped.reason, 'stop', 'stop wins inside a funded lap');
+          equal(stopped.retired, 1n, 'only the addition completed');
+
+          cpu.setState({ ...start(), flags: 0x102n });
+          const stepped = await cpu.run({ budget: 10n });
+          equal(stepped.reason, 'debug-exception', 'TF rejects a funded warm lap');
+          equal(stepped.retired, 1n, 'single-step observes the first completion');
+          equal(stepped.state.rip, middle, 'single-step reports the successor');
+
+          cpu.setState({ ...start(), flags: 0x102n });
+          const budgetStep = await cpu.run({ budget: 1n });
+          equal(budgetStep.reason, 'debug-exception', 'single-step precedes exact budget return');
+
+          cpu.setDebugState({ addresses: [head, 0n, 0n, 0n], dr6: 0n, dr7: 0x401n });
+          cpu.setState({ ...start(), flags: 0x10002n });
+          const broke = await cpu.run({ budget: 10n });
+          equal(broke.reason, 'debug-exception', 'execute breakpoint wins on the taken backedge');
+          equal(broke.retired, 3n, 'RF suppressed the initial breakpoint only');
+          equal(broke.state.rip, head, 'backedge reached the original entry');
+          equal(broke.state.flags & 0x10000n, 0n, 'RF was consumed before the backedge');
+
+          cpu.setDebugState({ ...cpu.readDebugState(), dr7: 0n });
+          cpu.setState({ ...start(), flags: 0x202n, interruptibility: { sti: true, ss: false } });
+          cpu.requestInterrupt(0x21);
+          const irq = await cpu.run({ budget: 10n, eventDelivery: { budget: 0n } });
+          equal(irq.reason, 'event-budget', 'eligible IRQ is captured after STI shadow expires');
+          equal(irq.retired, 1n, 'interrupt is observed after the first addition');
+          equal(irq.state.rip, middle, 'IRQ returns to the correct loop entry');
+        });
+      },
+    },
+    {
       name: 'paging review native cross-page fetch discards an owner invalidated by its one accessed-bit update',
       async run() {
         await usingPaged(

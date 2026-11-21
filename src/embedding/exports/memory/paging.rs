@@ -285,21 +285,63 @@ pub extern "C" fn core_paged_access_reason() -> i32 {
     })
 }
 
+impl Core {
+    fn clear_paged_instruction(&mut self) {
+        self.paging_work.clear();
+        self.alignment_check = None;
+        self.numeric_fault = None;
+        self.numeric_form = None;
+        self.paging_failure = None;
+        self.pdpte_load_fault = None;
+        self.paging_system = None;
+        self.debug_candidate = 0;
+        unsafe {
+            (*self.state.get()).fault_segment = Segment::Cs as u32;
+        }
+    }
+}
+
+// A cold entry may retry once after checked execution: 0 retry, 1 enter, 2 checked.
+#[cfg(not(feature = "parallel"))]
+#[unsafe(no_mangle)]
+pub extern "C" fn core_paged_loop_guard(pc: u64, bytes: u32, flags: u64, shadow: u32) -> i32 {
+    use crate::x86::flags::{RF, TF};
+
+    if flags & (RF | TF) != 0
+        || shadow != 0
+        || bytes == 0
+        || u64::from(bytes) > 0x1000 - (pc & 0xfff)
+    {
+        return 2;
+    }
+    BRIDGE.with_borrow_mut(|bridge| {
+        let core = bridge.core.as_mut().unwrap();
+        let state = unsafe { &*core.state.get() };
+        if !core.context.is_long64()
+            || state.event.kind != 0
+            || state.interrupts != Default::default()
+            || state.debug.registers.active()
+            || state.debug.continuation != Default::default()
+            || core.debug_candidate != 0
+        {
+            return 2;
+        }
+        if core.warm_paged_instruction(pc).is_none() {
+            return 0;
+        }
+        // The active owner covers every loop byte. A retained executable page
+        // covers the whole lap; register-only instructions cannot change it.
+        core.clear_paged_instruction();
+        core.reconcile_translation_changes();
+        1
+    })
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn core_paged_debug_begin(pc: u64, flags: u64, shadow: u32) -> i32 {
     BRIDGE.with_borrow_mut(|bridge| {
         let core = bridge.core.as_mut().unwrap();
-        core.paging_work.clear();
-        core.alignment_check = None;
-        core.numeric_fault = None;
-        core.numeric_form = None;
-        core.paging_failure = None;
-        core.pdpte_load_fault = None;
-        core.paging_system = None;
-        core.debug_candidate = 0;
-        unsafe {
-            (*core.state.get()).fault_segment = Segment::Cs as u32;
-        }
+        core.clear_paged_instruction();
         let debug = core.debug_execute(pc, flags, shadow);
         if debug != 0 {
             return debug;

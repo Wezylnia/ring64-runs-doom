@@ -159,8 +159,8 @@ fn activate_single_instruction() -> u64 {
 #[test]
 fn reached_long64_instruction_requires_a_live_tlb_hit() {
     let expected = fixture("long64", true, true);
-    activate_single_instruction();
-    let check_miss = || {
+    let owner = activate_single_instruction();
+    let check_miss = |guard_after_fetch| {
         BRIDGE.with_borrow(|bridge| {
             assert_eq!(
                 bridge.core.as_ref().unwrap().warm_paged_instruction(PC),
@@ -168,10 +168,20 @@ fn reached_long64_instruction_requires_a_live_tlb_hit() {
             );
         });
         physical_counts::take();
+        assert_eq!(paging::core_paged_loop_guard(PC, 3, 2, 0), 0);
+        assert_eq!(physical_counts::take(), [0; 6]);
         assert_eq!(paging::core_paged_debug_begin(PC, RF, 0), 0);
         assert_eq!(physical_counts::take(), [4, 32, 0, 0, 0, 0]);
+        assert_eq!(
+            paging::core_paged_loop_guard(PC, 3, 2, 0),
+            guard_after_fetch
+        );
+        for (bytes, flags, shadow) in [(3, RF, 0), (3, 0x102, 0), (3, 2, 1), (4097, 2, 0)] {
+            assert_eq!(paging::core_paged_loop_guard(PC, bytes, flags, shadow), 2);
+        }
+        assert_eq!(physical_counts::take(), [0; 6]);
     };
-    check_miss();
+    check_miss(1);
     BRIDGE.with_borrow_mut(|bridge| {
         let core = bridge.core.as_mut().unwrap();
         let exact = core.paged_decode(PC).unwrap();
@@ -187,7 +197,9 @@ fn reached_long64_instruction_requires_a_live_tlb_hit() {
         assert_eq!(unsafe { (*core.state.get()).flags }, RF);
         core.translation_cache.clear();
     });
-    check_miss();
+    check_miss(0);
+    assert_eq!(translation::core_activate(owner), 1);
+    assert_eq!(paging::core_paged_loop_guard(PC, 3, 2, 0), 1);
 }
 
 #[cfg(not(feature = "parallel"))]
@@ -222,6 +234,7 @@ fn reached_long64_instruction_keeps_byte_and_execute_source_invalidation() {
             assert!(core.image.active_changed());
             assert_eq!(core.warm_paged_instruction(PC), None);
         });
+        assert_eq!(paging::core_paged_loop_guard(PC, 3, 2, 0), 0);
         assert_eq!(translation::core_validity(owner), 0);
         if revoke_execute {
             assert_eq!(paging::core_paged_debug_begin(PC, RF, 0), 25);

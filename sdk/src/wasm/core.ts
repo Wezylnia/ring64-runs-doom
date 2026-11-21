@@ -1267,6 +1267,8 @@ export class Core {
       env.mmio_operand = this.#exports.core_mmio_operand;
     if (this.isPaged) {
       env.fast_system = this.#exports.core_fast_system;
+      if (this.#exports.core_paged_loop_guard)
+        env.paged_loop_guard = this.#exports.core_paged_loop_guard;
       if (this.#exports.core_write_segment_base)
         env.write_segment_base = this.#exports.core_write_segment_base;
       for (const [name, key] of Object.entries({

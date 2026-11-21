@@ -131,6 +131,24 @@ fn register_loop_reuses_the_checked_entries_for_partial_laps() {
     }
 }
 
+#[cfg(not(feature = "parallel"))]
+#[test]
+fn paged_register_loop_retains_dispatch_under_a_tight_artifact_limit() {
+    let code = [0x83, 0xc0, 1, 0x83, 0xe9, 1, 0x75, 0xf8];
+    let same_page = unit(compiled_fixture(0x1000, &code, 0x1000).instructions);
+    let cross_page = unit(compiled_fixture(0x1ffc, &code, 0x1ffc).instructions);
+    let guarded = emit_profile(&same_page, true, true, usize::MAX);
+    let checked = emit_profile(&same_page, true, true, guarded.len() - 1);
+    let dispatch = emit_profile(&same_page, true, true, checked.len() - 1);
+    let cross_page = emit_profile(&cross_page, true, true, usize::MAX);
+    assert!(checked.len() < guarded.len());
+    assert!(dispatch.len() < checked.len());
+    for (bytes, loops) in [(guarded, 3), (checked, 2), (dispatch, 1), (cross_page, 2)] {
+        assert_eq!(wasm_loop_count(&bytes), loops);
+        wasmparser::Validator::new().validate_all(&bytes).unwrap();
+    }
+}
+
 #[test]
 fn register_loop_keeps_carry_live_through_zero_count_and_partial_writers() {
     let code = [

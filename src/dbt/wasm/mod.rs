@@ -179,6 +179,8 @@ struct Emitter {
     current_index: u32,
     structured_loop: Option<(StructuredLoop, u32)>,
     loop_gates_prechecked: bool,
+    paged_register_lap: bool,
+    paged_loop_guard: Option<(u32, u32)>,
     register_upper_dwords: [Option<u32>; 16],
     narrow_gprs: bool,
     omit_result_status: bool,
