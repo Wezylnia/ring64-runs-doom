@@ -150,16 +150,11 @@ impl DwordWindow {
         }
     }
 
-    pub(super) fn eligible(operation: Operation) -> bool {
+    pub(super) fn eligible(operation: Operation, allow_bytes: bool) -> bool {
         let address = match operation {
             Operation::Load {
                 address,
-                width: Width::W8 | Width::W32,
-                ..
-            }
-            | Operation::Extend {
-                src: Location::Memory(address),
-                source_width: Width::W8,
+                width: Width::W32,
                 ..
             }
             | Operation::MemoryAlu {
@@ -168,6 +163,16 @@ impl DwordWindow {
                 kind: Alu::Cmp | Alu::Test,
                 ..
             } => address,
+            Operation::Load {
+                address,
+                width: Width::W8,
+                ..
+            }
+            | Operation::Extend {
+                src: Location::Memory(address),
+                source_width: Width::W8,
+                ..
+            } if allow_bytes => address,
             _ => return false,
         };
         address.segment == Segment::Ds && address.index.is_some()
@@ -422,7 +427,7 @@ impl Emitter {
         else {
             return false;
         };
-        if !DwordWindow::eligible(self.current_operation) {
+        if !DwordWindow::eligible(self.current_operation, !self.compact_shared_reads) {
             return false;
         }
         debug_assert!(self.parallel_retry.is_none());
@@ -540,11 +545,13 @@ impl Emitter {
                 .op(Op::LocalSet(scalar.address));
             self.read_shared_lane(scalar, Width::W32, false);
             self.op(Op::Else);
-            self.rearm_vector_span_trial(
-                lap,
-                i64::from(self.current_index - body.head),
-                budget_floor,
-            );
+            if !self.compact_shared_reads {
+                self.rearm_vector_span_trial(
+                    lap,
+                    i64::from(self.current_index - body.head),
+                    budget_floor,
+                );
+            }
             self.op(Op::LocalGet(scalar.payload));
             (helper, exit_depth + 1)
         } else {
