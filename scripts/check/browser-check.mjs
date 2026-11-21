@@ -1,46 +1,13 @@
-import { createServer } from 'node:http';
 import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
-import { resolve, extname, sep } from 'node:path';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { chromium } from 'playwright';
 import { awaitBrowserResult } from './browser-result.mjs';
+import { startBrowserServer } from './browser-server.mjs';
 
-const root = resolve('.');
-const build = resolve(root, 'build') + sep;
 const html = `<!doctype html><meta charset="utf-8"><title>ring64 execution checks</title>
 <script type="module" src="/build/tests/runners/browser.js"></script>`;
-
-const server = createServer(async (request, response) => {
-  try {
-    const pathname = new URL(request.url ?? '/', 'http://localhost').pathname;
-    if (pathname === '/') {
-      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-      response.end(html);
-      return;
-    }
-    const file = resolve(root, `.${pathname}`);
-    if (!file.startsWith(build)) {
-      response.writeHead(404);
-      response.end();
-      return;
-    }
-    const bytes = await readFile(file);
-    response.writeHead(200, {
-      'content-type': extname(file) === '.wasm' ? 'application/wasm' : 'text/javascript',
-      'cache-control': 'no-store',
-    });
-    response.end(bytes);
-  } catch {
-    response.writeHead(404);
-    response.end();
-  }
-});
-
-await new Promise((resolve, reject) => {
-  server.once('error', reject);
-  server.listen(0, '127.0.0.1', resolve);
-});
+const server = await startBrowserServer(html);
 let browser;
 try {
   let executablePath = process.env.RING64_BROWSER;
@@ -60,8 +27,7 @@ try {
   const page = await browser.newPage();
   const errors = [];
   page.on('pageerror', (error) => errors.push(error.message));
-  const address = server.address();
-  await page.goto(`http://127.0.0.1:${address.port}/`);
+  await page.goto(server.origin);
   const encoded = await awaitBrowserResult(
     page,
     'ring64Result',
@@ -103,6 +69,6 @@ try {
   try {
     await browser?.close();
   } finally {
-    await new Promise((resolve) => server.close(resolve));
+    await server.close();
   }
 }

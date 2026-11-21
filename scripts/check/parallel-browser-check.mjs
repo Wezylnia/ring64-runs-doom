@@ -1,51 +1,17 @@
-import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
 import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
-import { extname, resolve, sep } from 'node:path';
 import { chromium, firefox } from 'playwright';
 import { awaitBrowserResult } from './browser-result.mjs';
+import { startBrowserServer } from './browser-server.mjs';
 
-const root = resolve('.');
-const base = resolve(root, 'build') + sep;
 const only = process.argv[2];
 if (only && only !== 'chromium' && only !== 'firefox') {
   throw Error('usage: parallel-browser-check.mjs [chromium|firefox]');
 }
-const server = createServer(async (request, response) => {
-  try {
-    const pathname = new URL(request.url ?? '/', 'http://localhost').pathname;
-    if (pathname !== '/unisolated') {
-      response.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
-      response.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
-    }
-    response.setHeader('Cache-Control', 'no-store');
-    if (pathname === '/' || pathname === '/unisolated') {
-      response.setHeader('Content-Type', 'text/html; charset=utf-8');
-      response.end(
-        '<!doctype html><script type="module" src="/build/tests/runners/parallel-browser.js"></script>',
-      );
-      return;
-    }
-    const file = resolve(root, '.' + pathname);
-    if (!file.startsWith(base)) {
-      response.writeHead(404).end();
-      return;
-    }
-    const data = await readFile(file);
-    response.setHeader(
-      'Content-Type',
-      extname(file) === '.wasm' ? 'application/wasm' : 'text/javascript',
-    );
-    response.end(data);
-  } catch {
-    response.writeHead(404).end();
-  }
-});
-await new Promise((resolve, reject) => {
-  server.once('error', reject);
-  server.listen(0, '127.0.0.1', resolve);
-});
-const host = server.address();
+const server = await startBrowserServer(
+  '<!doctype html><script type="module" src="/build/tests/runners/parallel-browser.js"></script>',
+  { isolated: true },
+);
 try {
   const bytes = await readFile('build/ring64-parallel.wasm');
   const coreSha256 = createHash('sha256').update(bytes).digest('hex');
@@ -75,7 +41,7 @@ try {
       const page = await browser.newPage();
       const passed = [];
       for (const pathname of ['/', '/unisolated']) {
-        await page.goto(`http://127.0.0.1:${host.port}${pathname}`);
+        await page.goto(server.origin + pathname);
         const conformance = await awaitBrowserResult(
           page,
           'ring64Parallel',
@@ -96,5 +62,5 @@ try {
   }
   await writeFile('build/verification/parallel-browser.json', JSON.stringify(rows, null, 2) + '\n');
 } finally {
-  await new Promise((resolve) => server.close(resolve));
+  await server.close();
 }
