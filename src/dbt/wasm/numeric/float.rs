@@ -184,16 +184,24 @@ impl Emitter {
         }
 
         for ((vector, bits), known_normal) in [(left, LHS), (right, RHS)].into_iter().zip(normal) {
+            if rounding_prechecked && !known_normal {
+                // ADD and MUL cannot produce finite results from nonfinite inputs.
+                // The result check rejects these before any guest effects.
+                self.reject_denormal_f32_operand(vector);
+            }
             self.op(Op::LocalGet(vector));
             if let Some(wide) = wide {
-                self.op(Op::F64x2PromoteLowF32x4)
-                    .op(Op::LocalTee(wide))
-                    .op(Op::F64x2ExtractLane(0));
+                self.op(Op::F64x2PromoteLowF32x4);
+                if rounding_prechecked && kind == Kind::Mul {
+                    // No scalar operand bits are needed once denormals are excluded.
+                    continue;
+                }
+                self.op(Op::LocalTee(wide)).op(Op::F64x2ExtractLane(0));
             } else {
                 self.op(Op::F32x4ExtractLane(0)).op(Op::F64PromoteF32);
             }
             self.op(Op::I64ReinterpretF64).op(Op::LocalSet(bits));
-            if !known_normal {
+            if !rounding_prechecked && !known_normal {
                 self.reject_non_normal_f32(bits);
             }
             if let Some(wide) = wide {
@@ -313,17 +321,7 @@ impl Emitter {
     ) {
         for (vector, known_normal) in [left, right].into_iter().zip(normal) {
             if !known_normal {
-                // Signed zero is admissible. Nonfinite operands cannot
-                // produce an interior result and are rejected below.
-                self.op(Op::LocalGet(vector))
-                    .op(Op::I32x4ExtractLane(0))
-                    .op(Op::I32Const(0x7fff_ffff))
-                    .op(Op::I32And)
-                    .op(Op::I32Const(1))
-                    .op(Op::I32Sub)
-                    .op(Op::I32Const(0x007f_ffff))
-                    .op(Op::I32LtU)
-                    .unlikely(Op::BrIf(0));
+                self.reject_denormal_f32_operand(vector);
             }
         }
         if let Some(result) = wide {
@@ -355,6 +353,19 @@ impl Emitter {
             self.op(Op::LocalGet(STORE_STATUS))
                 .op(Op::I32x4ReplaceLane(0));
         }
+    }
+
+    fn reject_denormal_f32_operand(&mut self, vector: u32) {
+        // Unsigned subtraction excludes signed zero from this magnitude range.
+        self.op(Op::LocalGet(vector))
+            .op(Op::I32x4ExtractLane(0))
+            .op(Op::I32Const(0x7fff_ffff))
+            .op(Op::I32And)
+            .op(Op::I32Const(1))
+            .op(Op::I32Sub)
+            .op(Op::I32Const(0x007f_ffff))
+            .op(Op::I32LtU)
+            .unlikely(Op::BrIf(0));
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
