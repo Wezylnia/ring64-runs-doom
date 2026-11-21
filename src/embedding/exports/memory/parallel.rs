@@ -3,7 +3,7 @@ use crate::memory::{MemoryError, SharedDword};
 
 #[unsafe(no_mangle)]
 pub extern "C" fn core_parallel_abi() -> u32 {
-    4
+    5
 }
 
 fn complete(bridge: &mut Bridge, result: Result<(), MemoryError>) -> i32 {
@@ -170,19 +170,32 @@ pub extern "C" fn core_parallel_dword_window(offset: u64) -> i32 {
             .translate(offset, 4, segment, Access::Read, false)
             .ok()
             .filter(|&address| address == offset)
-            .and_then(|address| u32::try_from(address).ok())
         else {
             return 0;
         };
-        let limit = core.context.segment(segment).limit;
-        let Some(window) = core.image.shared_dword_window(address, limit) else {
+        let segmented = !core.context.is_long64();
+        let segment_limit = segmented.then(|| core.context.segment(segment).limit);
+        let Some((base, [limit, host, guard_bias])) =
+            core.image.shared_dword_window(address, segment_limit)
+        else {
             return 0;
         };
+        // Long64 returns the bound in the result and uses two scratch
+        // words for the guest base. Protected32 retains the ABI 4 layout.
+        let second = if segmented {
+            limit
+        } else {
+            (base >> 32) as u32
+        };
         let scratch = unsafe { &mut (*core.state.get()).vector_scratch };
-        for (slot, field) in scratch.chunks_exact_mut(4).zip(window) {
+        for (slot, field) in
+            scratch
+                .chunks_exact_mut(4)
+                .zip([base as u32, second, host, guard_bias])
+        {
             slot.copy_from_slice(&field.to_le_bytes());
         }
-        1
+        if segmented { 1 } else { limit as i32 }
     })
 }
 

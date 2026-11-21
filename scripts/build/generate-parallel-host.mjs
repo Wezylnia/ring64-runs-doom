@@ -34,7 +34,7 @@ function coreBody(input) {
     source,
     'const exports = instance.exports;',
     `const exports = instance.exports;
-            if (typeof exports.core_parallel_abi !== 'function' || ![1, 2, 3, 4].includes(exports.core_parallel_abi()) ||
+            if (typeof exports.core_parallel_abi !== 'function' || ![1, 2, 3, 4, 5].includes(exports.core_parallel_abi()) ||
                 exports.memory !== binding.privateMemory)
                 throw new Error('parallel core ABI mismatch');`,
   );

@@ -137,20 +137,22 @@ pub(super) struct DwordWindow {
     limit: u32,
     host: u32,
     guard_bias: u32,
+    wide: bool,
 }
 
 impl DwordWindow {
-    pub(super) fn new(resolve: u32, first: u32) -> Self {
+    pub(super) fn new(resolve: u32, first: u32, wide: bool) -> Self {
         Self {
             resolve,
             base: first,
             limit: first + 1,
             host: first + 2,
             guard_bias: first + 3,
+            wide,
         }
     }
 
-    pub(super) fn eligible(operation: Operation, allow_bytes: bool) -> bool {
+    pub(super) fn eligible(operation: Operation, allow_bytes: bool, wide: bool) -> bool {
         let address = match operation {
             Operation::Load {
                 address,
@@ -172,10 +174,12 @@ impl DwordWindow {
                 src: Location::Memory(address),
                 source_width: Width::W8,
                 ..
-            } if allow_bytes => address,
+            } if allow_bytes && !wide => address,
             _ => return false,
         };
-        address.segment == Segment::Ds && address.index.is_some()
+        address.segment == Segment::Ds
+            && address.index.is_some()
+            && (!wide || address.size == Width::W64)
     }
 }
 
@@ -427,42 +431,54 @@ impl Emitter {
         else {
             return false;
         };
-        if !DwordWindow::eligible(self.current_operation, !self.compact_shared_reads) {
+        if !DwordWindow::eligible(
+            self.current_operation,
+            !self.compact_shared_reads,
+            window.wide,
+        ) {
             return false;
         }
         debug_assert!(self.parallel_retry.is_none());
         debug_assert!(matches!(width, Width::W8 | Width::W32));
         // Byte reads reuse the dword-start bounds. The checked read handles the tail.
+        let delta = if window.wide {
+            scalar.old
+        } else {
+            STORE_STATUS
+        };
         self.op(Op::Block(BlockType::Result(ValType::I32)));
-        self.dword_window_delta(window);
+        self.dword_window_delta(window, delta);
         self.op(Op::LocalGet(window.limit))
-            .op(Op::I32GeU)
+            .op(if window.wide { Op::I64GeU } else { Op::I32GeU })
             .op(Op::If(BlockType::Empty))
             .op(Op::LocalGet(ADDRESS))
-            .op(Op::Call(window.resolve))
-            .op(Op::I32Eqz)
+            .op(Op::Call(window.resolve));
+        if window.wide {
+            self.op(Op::LocalTee(scalar.address));
+        }
+        self.op(Op::I32Eqz)
             .op(Op::If(BlockType::Empty))
             .op(Op::I32Const(0))
             .op(Op::Br(2))
             .op(Op::End);
-        let scratch = std::mem::offset_of!(RunState, vector_scratch) as u64;
-        for (field, offset) in [window.base, window.limit, window.host, window.guard_bias]
-            .into_iter()
-            .zip((0..16).step_by(4))
-        {
-            self.op(Op::LocalGet(0))
-                .op(Op::I32Load(MemArg {
-                    offset: scratch + offset,
-                    align: 2,
-                    memory_index: 0,
-                }))
-                .op(Op::LocalSet(field));
+        if window.wide {
+            self.op(Op::LocalGet(scalar.address))
+                .op(Op::I64ExtendI32U)
+                .op(Op::LocalSet(window.limit));
+            self.dword_window_field(window.base, 0, true);
+        } else {
+            self.dword_window_field(window.base, 0, false);
+            self.dword_window_field(window.limit, 4, false);
         }
-        self.dword_window_delta(window);
+        self.dword_window_field(window.host, 8, false);
+        self.dword_window_field(window.guard_bias, 12, false);
+        self.dword_window_delta(window, delta);
         self.op(Op::Drop).op(Op::End);
-        self.op(Op::LocalGet(STORE_STATUS))
-            .op(Op::LocalGet(window.host))
-            .op(Op::I32Add);
+        self.op(Op::LocalGet(delta));
+        if window.wide {
+            self.op(Op::I32WrapI64);
+        }
+        self.op(Op::LocalGet(window.host)).op(Op::I32Add);
         if width == Width::W32 {
             self.op(Op::LocalTee(scalar.address))
                 .op(Op::I32Const(7))
@@ -499,12 +515,29 @@ impl Emitter {
         true
     }
 
-    fn dword_window_delta(&mut self, window: DwordWindow) {
-        self.op(Op::LocalGet(ADDRESS))
-            .op(Op::I32WrapI64)
-            .op(Op::LocalGet(window.base))
-            .op(Op::I32Sub)
-            .op(Op::LocalTee(STORE_STATUS));
+    fn dword_window_field(&mut self, field: u32, offset: u64, wide: bool) {
+        let memory = MemArg {
+            offset: std::mem::offset_of!(RunState, vector_scratch) as u64 + offset,
+            align: if wide { 3 } else { 2 },
+            memory_index: 0,
+        };
+        self.op(Op::LocalGet(0))
+            .op(if wide {
+                Op::I64Load(memory)
+            } else {
+                Op::I32Load(memory)
+            })
+            .op(Op::LocalSet(field));
+    }
+
+    fn dword_window_delta(&mut self, window: DwordWindow, delta: u32) {
+        self.op(Op::LocalGet(ADDRESS));
+        if !window.wide {
+            self.op(Op::I32WrapI64);
+        }
+        self.op(Op::LocalGet(window.base))
+            .op(if window.wide { Op::I64Sub } else { Op::I32Sub })
+            .op(Op::LocalTee(delta));
     }
 
     pub(super) fn parallel_vector_dword(&mut self, exit_depth: u32) -> bool {

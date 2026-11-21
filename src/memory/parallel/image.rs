@@ -468,27 +468,34 @@ impl Image {
     }
 
     #[cfg(target_arch = "wasm32")]
-    pub(crate) fn shared_dword_window(&self, address: u32, segment_limit: u32) -> Option<[u32; 4]> {
+    pub(crate) fn shared_dword_window(
+        &self,
+        address: u64,
+        segment_limit: Option<u32>,
+    ) -> Option<(u64, [u32; 3])> {
         let layout = self.shared?;
-        let mapping = &self.mappings[self.locate_index(u64::from(address))?];
+        let mapping = &self.mappings[self.locate_index(address)?];
         if !mapping.permissions.read {
             return None;
         }
-        let base = u32::try_from(mapping.base).ok()?;
-        let segment_length = (u64::from(segment_limit) + 1).checked_sub(u64::from(base))?;
-        let limit = u32::try_from(
-            segment_length
-                .min(u64::from(mapping.length))
-                .checked_sub(3)?,
-        )
-        .ok()?;
-        if address - base >= limit {
+        let base = mapping.base;
+        let length = if let Some(segment_limit) = segment_limit {
+            let segment_length = (u64::from(segment_limit) + 1).checked_sub(base)?;
+            segment_length.min(u64::from(mapping.length))
+        } else {
+            // A physical mapping can cover bytes in the linear canonical hole.
+            super::super::address::span_failure(base, u64::from(mapping.length))
+                .is_none()
+                .then_some(u64::from(mapping.length))?
+        };
+        let limit = u32::try_from(length.checked_sub(3)?).ok()?;
+        if address - base >= u64::from(limit) {
             return None;
         }
         let backing = self.backings[mapping.backing].shared?;
         let host = backing.offset + mapping.offset;
         let guard_bias = layout.guards.wrapping_sub((layout.base / 64) * 4);
-        Some([base, limit, host, guard_bias])
+        Some((base, [limit, host, guard_bias]))
     }
 
     #[cfg(target_arch = "wasm32")]

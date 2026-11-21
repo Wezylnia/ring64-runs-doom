@@ -712,9 +712,10 @@ fn emit_placement(
     let reads = if cfg!(all(feature = "parallel", target_arch = "wasm32")) {
         let indexed = !observed
         && !paged
-        && unit.context.mode() == crate::x86::context::Mode::Protected
-        && unit.context.code32()
-        && unit.context.translate(0, 4, Segment::Ds, crate::memory::Access::Read, false).ok() == Some(0)
+        && (unit.context.is_long64()
+            || unit.context.mode() == crate::x86::context::Mode::Protected
+            && unit.context.code32()
+            && unit.context.translate(0, 4, Segment::Ds, crate::memory::Access::Read, false).ok() == Some(0))
         && unit.instructions.iter().any(|i| {
             matches!(i.operation, Operation::Jcc { target, .. } | Operation::Jump { target } if target < i.pc)
         });
@@ -1573,10 +1574,13 @@ fn emit_body(
     let compact_shared_reads = matches!(_guard_reads, GuardedReads::Shared { compact: true, .. });
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     let window_resolve = (matches!(_guard_reads, GuardedReads::Shared { indexed: true, .. })
-        && unit
-            .instructions
-            .iter()
-            .any(|i| parallel::DwordWindow::eligible(i.operation, !compact_shared_reads)))
+        && unit.instructions.iter().any(|i| {
+            parallel::DwordWindow::eligible(
+                i.operation,
+                !compact_shared_reads,
+                unit.context.is_long64(),
+            )
+        }))
     .then(|| {
         let signature = add_function_type(&mut types, [ValType::I64], [ValType::I32]);
         imports.import(
@@ -1819,9 +1823,14 @@ fn emit_body(
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     let parallel_dword_window = window_resolve.map(|resolver| {
         let first = next_local;
-        locals.push((4, ValType::I32));
+        let wide = unit.context.is_long64();
+        if wide {
+            locals.extend([(2, ValType::I64), (2, ValType::I32)]);
+        } else {
+            locals.push((4, ValType::I32));
+        }
         next_local += 4;
-        parallel::DwordWindow::new(resolver, first)
+        parallel::DwordWindow::new(resolver, first, wide)
     });
     let boundary_locals = observed.then(|| {
         let result = [next_local, next_local + 1, next_local + 2, next_local + 3];
@@ -2204,12 +2213,27 @@ fn emit_body(
     if bytes.len() > max_artifact_bytes
         && let GuardedReads::Shared { indexed, compact } = _guard_reads
     {
+        if unit.context.is_long64() && parallel_dword_window.is_some() {
+            // Retry the original Long64 placement before compacting other reads.
+            return emit_body(
+                unit,
+                observed,
+                paged,
+                loop_body,
+                GuardedReads::Shared {
+                    indexed: false,
+                    compact,
+                },
+                _extra_spans,
+                max_artifact_bytes,
+            );
+        }
         if !compact
             && (parallel_vector_span.is_some()
                 || parallel_dword_window.is_some()
                     && unit.instructions.iter().any(|i| {
-                        parallel::DwordWindow::eligible(i.operation, true)
-                            && !parallel::DwordWindow::eligible(i.operation, false)
+                        parallel::DwordWindow::eligible(i.operation, true, false)
+                            && !parallel::DwordWindow::eligible(i.operation, false, false)
                     }))
         {
             // Retry the existing dword and FP32 paths before removing either one.
