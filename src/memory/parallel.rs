@@ -1,12 +1,14 @@
 #[cfg(all(feature = "parallel", any(target_arch = "wasm32", test)))]
 mod image;
+#[cfg(all(feature = "parallel", any(target_arch = "wasm32", test)))]
+mod ram;
 #[cfg(test)]
 mod tests;
 
 #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
 pub(crate) use image::SharedDword;
 #[cfg(all(feature = "parallel", any(target_arch = "wasm32", test)))]
-pub(crate) use image::{SharedBacking, SharedExclusive, SharedHeld, SharedLayout};
+pub(crate) use ram::{SharedBacking, SharedExclusive, SharedHeld, SharedLayout};
 
 // A generated store and its checked fallback can each spend one pass.
 pub(crate) const CAS_ATTEMPTS: usize = 8;
