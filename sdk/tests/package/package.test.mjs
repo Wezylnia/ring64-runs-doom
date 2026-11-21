@@ -45,7 +45,8 @@ test(
       'ring64.wasm',
       'ring64-parallel.wasm',
       'parallel/worker.js',
-      'parallel/engine.generated.js',
+      'parallel/engine.js',
+      'parallel/engine.d.ts',
       'parallel/core.js',
       'parallel/core.d.ts',
     ])
@@ -53,6 +54,7 @@ test(
     for (const file of files) {
       assert.ok(!file.split('/').some((part) => part === 'src' || part === 'tests'), file);
       assert.ok(!/\.test\.(?:js|d\.ts)$/.test(file), file);
+      assert.ok(!/\.generated\.(?:js|d\.ts)$/.test(file), file);
     }
     await exec(
       'npm',

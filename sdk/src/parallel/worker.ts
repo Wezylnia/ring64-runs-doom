@@ -1,12 +1,11 @@
 import { SIGNAL, SLOT, STARTUP_WORD, SharedControl, cpuOffset, nextIdentity } from './control.js';
-import { createCpu } from './engine.generated.js';
+import { createParallelEngine, type ParallelCpu } from './engine.js';
 import type { IoWidth } from '../embedding/io.js';
 import type {
   Binding,
   Command,
   FromWorker,
   ParallelCore,
-  ParallelEngine,
   Range,
   Start,
   ToWorker,
@@ -280,7 +279,7 @@ class WorkerRuntime implements Binding {
     }
   }
 
-  async invoke(cpu: ParallelEngine, command: Command): Promise<unknown> {
+  async invoke(cpu: ParallelCpu, command: Command): Promise<unknown> {
     if (command.permit !== undefined) {
       if (
         command.permit !== this.#control.phase ||
@@ -327,7 +326,7 @@ class WorkerRuntime implements Binding {
 }
 
 let runtime: WorkerRuntime | undefined;
-let cpu: ParallelEngine | undefined;
+let cpu: ParallelCpu | undefined;
 
 async function receive(data: ToWorker, send: (event: FromWorker) => void): Promise<void> {
   if (data.kind === 'phase') {
@@ -342,13 +341,12 @@ async function receive(data: ToWorker, send: (event: FromWorker) => void): Promi
     if (runtime) throw new Error('parallel worker initialized twice');
     const current = new WorkerRuntime(data, send);
     runtime = current;
-    cpu = await createCpu(
+    cpu = await createParallelEngine(
       {
         compiler: data.compiler,
         memory: {
           memoryModel: data.model,
           entry: data.state.entry,
-          backings: [],
           ...data.memory,
           ...(data.state.paging ? { paging: data.state.paging } : {}),
           ...(data.state.fastSystem ? { fastSystem: data.state.fastSystem } : {}),

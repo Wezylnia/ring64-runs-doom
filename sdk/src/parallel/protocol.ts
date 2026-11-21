@@ -1,4 +1,3 @@
-import type { ExecutionContext } from '../state/system/context.js';
 import type { Cpu, Limits, RunResult } from '../cpu/cpu.js';
 import type { IoWidth } from '../embedding/io.js';
 import type { InitialMemory, MemoryModel } from '../embedding/memory.js';
@@ -118,21 +117,3 @@ export interface Binding {
   watch(core: ParallelCore, owner: bigint): void;
   unwatch(owner: bigint): void;
 }
-
-export type ParallelEngine = Cpu & {
-  parallelOwner: ParallelCore;
-  parallelAdmin(method: Command['method'], args: unknown[]): unknown;
-};
-export type CreateEngine = (
-  options: {
-    compiler: WebAssembly.Module;
-    memory: InitialMemory;
-    context?: ExecutionContext;
-    limits: Limits;
-    io?: {
-      read(port: number, width: IoWidth): number;
-      write(port: number, width: IoWidth, value: number): void;
-    };
-  },
-  binding: Binding,
-) => Promise<ParallelEngine>;

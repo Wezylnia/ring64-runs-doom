@@ -72,6 +72,14 @@ interface CommonOptions {
 
 export type Options = CommonOptions & MemoryOptions;
 
+export type RunOptions = {
+  budget: bigint;
+  stop?: bigint | undefined;
+  repeatBudget?: bigint | undefined;
+  exceptionDelivery?: { budget: bigint } | undefined;
+  eventDelivery?: { budget: bigint } | undefined;
+};
+
 export interface RunResult {
   reason: string;
   retired: bigint;
@@ -114,7 +122,7 @@ export interface RunResult {
   };
 }
 
-function checkedLimits(limits: Limits): Limits {
+export function checkedLimits(limits: Limits): Limits {
   const names = [
     'maxInstructions',
     'maxSourceBytes',
@@ -133,7 +141,11 @@ function checkedLimits(limits: Limits): Limits {
   return result;
 }
 
-const CONSTRUCTION = Symbol('createCpu');
+export const CONSTRUCTION = Symbol('createCpu');
+export const BEGIN_RUN = Symbol('beginRun');
+export const FINISH_RUN = Symbol('finishRun');
+export const FAIL_RUN = Symbol('failRun');
+export const LEAVE_RUN = Symbol('leaveRun');
 // [] -> [] with v128.const followed by drop: fixed SIMD, no relaxed operations.
 const SIMD_PROBE = Uint8Array.of(
   0,
@@ -166,9 +178,33 @@ const SIMD_PROBE = Uint8Array.of(
   11,
 );
 
+export function requireSimd(): void {
+  if (!WebAssembly.validate(SIMD_PROBE)) throw new TypeError('WebAssembly SIMD is required');
+}
+
+export function captureInitialContext(
+  contextInput: ExecutionContext | undefined,
+  memoryModel: MemoryModel | undefined,
+): ExecutionContext | undefined {
+  const context =
+    contextInput === undefined
+      ? undefined
+      : captureContext(contextInput, memoryModel === 'physical');
+  if (memoryModel === 'physical' && context === undefined)
+    throw new TypeError('physical memory requires a non-undefined context');
+  if (
+    memoryModel === 'ia32e-paged' &&
+    context &&
+    context.mode !== 'long64' &&
+    context.mode !== 'compatibility'
+  )
+    throw new TypeError('paged memory requires a Long64 or compatibility context');
+  return context;
+}
+
 export async function createCpu(options: Options): Promise<Cpu> {
   const began = performance.now();
-  if (!WebAssembly.validate(SIMD_PROBE)) throw new TypeError('WebAssembly SIMD is required');
+  requireSimd();
   const limits = checkedLimits(options.limits);
   const io = captureIo(options);
   const memory = captureInitialMemory(options);
@@ -177,20 +213,7 @@ export async function createCpu(options: Options): Promise<Cpu> {
     memory.fastSystem =
       'fastSystem' in options ? captureFastSystemState(options.fastSystem!) : zeroFastSystemState();
   }
-  const contextInput = options.context;
-  const context =
-    contextInput === undefined
-      ? undefined
-      : captureContext(contextInput, memory.memoryModel === 'physical');
-  if (memory.memoryModel === 'physical' && context === undefined)
-    throw new TypeError('physical memory requires a non-undefined context');
-  if (
-    memory.memoryModel === 'ia32e-paged' &&
-    context &&
-    context.mode !== 'long64' &&
-    context.mode !== 'compatibility'
-  )
-    throw new TypeError('paged memory requires a Long64 or compatibility context');
+  const context = captureInitialContext(options.context, memory.memoryModel);
   const core = await Core.create(options.compiler, memory, context, io);
   return new Cpu(
     CONSTRUCTION,
@@ -265,7 +288,7 @@ export class Cpu {
     return this.#core;
   }
 
-  private pruneTranslations(): void {
+  protected pruneTranslations(): void {
     try {
       this.#cache.prune((artifact) => this.#engine.valid(artifact.metadata.owner));
     } catch (cause) {
@@ -488,13 +511,7 @@ export class Cpu {
     return this.#cache.inspect();
   }
 
-  async run(options: {
-    budget: bigint;
-    stop?: bigint | undefined;
-    repeatBudget?: bigint | undefined;
-    exceptionDelivery?: { budget: bigint } | undefined;
-    eventDelivery?: { budget: bigint } | undefined;
-  }): Promise<RunResult> {
+  protected [BEGIN_RUN](options: RunOptions) {
     const generation = this.requireIdle();
     const {
       budget,
@@ -544,6 +561,100 @@ export class Cpu {
       executionMs: 0,
       totalMs: 0,
     };
+    return {
+      budget,
+      stop,
+      repeatBudget,
+      deliveryBudget,
+      resources,
+      timings,
+      began,
+      cache: this.#cache,
+      limits: this.#limits,
+    };
+  }
+
+  protected [FINISH_RUN](
+    run: ReturnType<Cpu[typeof BEGIN_RUN]>,
+    reason: string,
+    remaining: bigint,
+    remainingRepeatBudget: bigint,
+    remainingDeliveryBudget: bigint | undefined,
+  ): RunResult {
+    const { budget, repeatBudget, deliveryBudget, resources, timings, began } = run;
+    this.pruneTranslations();
+    const numeric = this.#engine.numericFault?.(reason);
+    const fault = this.#engine.fault(reason);
+    const segmentFault = this.#engine.segmentFault(reason);
+    const alignmentFault = this.#engine.alignmentFault(reason);
+    const alignmentCheck =
+      reason === 'alignment-check' ? this.#engine.alignmentCheck(reason) : undefined;
+    const simdException =
+      reason === 'simd-exception' ? this.#engine.simdException(reason) : undefined;
+    const generalProtectionFault =
+      reason === 'general-protection' ? this.#engine.generalProtectionFault(reason) : undefined;
+    const x87Exception = reason === 'x87-exception' ? this.#engine.x87Exception(reason) : undefined;
+    const protectionFault =
+      reason === 'protection-fault' ? this.#engine.protectionFault(reason) : undefined;
+    const systemMemoryFault =
+      reason === 'system-memory-fault' ? this.#engine.systemMemoryFault(reason) : undefined;
+    const debugException =
+      reason === 'debug-exception' ? this.#engine.debugException(reason) : undefined;
+    const pageFault = reason === 'page-fault' ? this.#engine.pageFault(reason) : undefined;
+    const physicalMemoryFault =
+      reason === 'physical-memory-fault' ? this.#engine.physicalMemoryFault(reason) : undefined;
+    const result = {
+      reason,
+      retired: budget - remaining,
+      remaining,
+      repeatIterations: repeatBudget - remainingRepeatBudget,
+      remainingRepeatBudget,
+      ...(deliveryBudget === undefined
+        ? {}
+        : {
+            deliveryAttempts: deliveryBudget - remainingDeliveryBudget!,
+            remainingDeliveryBudget: remainingDeliveryBudget!,
+          }),
+      state: this.#engine.snapshot(),
+      ...(numeric?.vector === 7
+        ? { deviceNotAvailable: numeric }
+        : numeric?.vector === 6
+          ? { numericControlFault: numeric }
+          : {}),
+      ...(fault ? { fault } : {}),
+      ...(segmentFault ? { segmentFault } : {}),
+      ...(alignmentFault ? { alignmentFault } : {}),
+      ...(alignmentCheck ? { alignmentCheck } : {}),
+      ...(simdException ? { simdException } : {}),
+      ...(generalProtectionFault ? { generalProtectionFault } : {}),
+      ...(x87Exception ? { x87Exception } : {}),
+      ...(protectionFault ? { protectionFault } : {}),
+      ...(systemMemoryFault ? { systemMemoryFault } : {}),
+      ...(debugException ? { debugException } : {}),
+      ...(pageFault ? { pageFault } : {}),
+      ...(physicalMemoryFault ? { physicalMemoryFault } : {}),
+      resources: { ...resources, ...this.#cache.resources() },
+      timings,
+    };
+    timings.totalMs = performance.now() - began;
+    return result;
+  }
+
+  protected [FAIL_RUN](cause: unknown): never {
+    this.#lifecycle = 'failed';
+    throw new Error('cpu engine failed', { cause });
+  }
+
+  protected [LEAVE_RUN](deliveryBudget: bigint | undefined): void {
+    if (this.#lifecycle === 'running') {
+      if (deliveryBudget !== undefined) this.#engine.configureDelivery(false);
+      this.#lifecycle = 'idle';
+    }
+  }
+
+  async run(options: RunOptions): Promise<RunResult> {
+    const run = this[BEGIN_RUN](options);
+    const { budget, stop, repeatBudget, deliveryBudget, resources, timings } = run;
     let remaining = budget;
     let remainingRepeatBudget = repeatBudget;
     let remainingDeliveryBudget = deliveryBudget;
@@ -553,65 +664,8 @@ export class Cpu {
       admissionRestarts++;
       return true;
     };
-    const finish = (reason: string): RunResult => {
-      this.pruneTranslations();
-      const numeric = this.#engine.numericFault?.(reason);
-      const fault = this.#engine.fault(reason);
-      const segmentFault = this.#engine.segmentFault(reason);
-      const alignmentFault = this.#engine.alignmentFault(reason);
-      const alignmentCheck =
-        reason === 'alignment-check' ? this.#engine.alignmentCheck(reason) : undefined;
-      const simdException =
-        reason === 'simd-exception' ? this.#engine.simdException(reason) : undefined;
-      const generalProtectionFault =
-        reason === 'general-protection' ? this.#engine.generalProtectionFault(reason) : undefined;
-      const x87Exception =
-        reason === 'x87-exception' ? this.#engine.x87Exception(reason) : undefined;
-      const protectionFault =
-        reason === 'protection-fault' ? this.#engine.protectionFault(reason) : undefined;
-      const systemMemoryFault =
-        reason === 'system-memory-fault' ? this.#engine.systemMemoryFault(reason) : undefined;
-      const debugException =
-        reason === 'debug-exception' ? this.#engine.debugException(reason) : undefined;
-      const pageFault = reason === 'page-fault' ? this.#engine.pageFault(reason) : undefined;
-      const physicalMemoryFault =
-        reason === 'physical-memory-fault' ? this.#engine.physicalMemoryFault(reason) : undefined;
-      const result = {
-        reason,
-        retired: budget - remaining,
-        remaining,
-        repeatIterations: repeatBudget - remainingRepeatBudget,
-        remainingRepeatBudget,
-        ...(deliveryBudget === undefined
-          ? {}
-          : {
-              deliveryAttempts: deliveryBudget - remainingDeliveryBudget!,
-              remainingDeliveryBudget: remainingDeliveryBudget!,
-            }),
-        state: this.#engine.snapshot(),
-        ...(numeric?.vector === 7
-          ? { deviceNotAvailable: numeric }
-          : numeric?.vector === 6
-            ? { numericControlFault: numeric }
-            : {}),
-        ...(fault ? { fault } : {}),
-        ...(segmentFault ? { segmentFault } : {}),
-        ...(alignmentFault ? { alignmentFault } : {}),
-        ...(alignmentCheck ? { alignmentCheck } : {}),
-        ...(simdException ? { simdException } : {}),
-        ...(generalProtectionFault ? { generalProtectionFault } : {}),
-        ...(x87Exception ? { x87Exception } : {}),
-        ...(protectionFault ? { protectionFault } : {}),
-        ...(systemMemoryFault ? { systemMemoryFault } : {}),
-        ...(debugException ? { debugException } : {}),
-        ...(pageFault ? { pageFault } : {}),
-        ...(physicalMemoryFault ? { physicalMemoryFault } : {}),
-        resources: { ...resources, ...this.#cache.resources() },
-        timings,
-      };
-      timings.totalMs = performance.now() - began;
-      return result;
-    };
+    const finish = (reason: string) =>
+      this[FINISH_RUN](run, reason, remaining, remainingRepeatBudget, remainingDeliveryBudget);
     try {
       if (deliveryBudget !== undefined) this.#engine.configureDelivery(true);
       let servicingEvent = false;
@@ -847,13 +901,9 @@ export class Cpu {
         resources.dispatches++;
       }
     } catch (cause) {
-      this.#lifecycle = 'failed';
-      throw new Error('cpu engine failed', { cause });
+      return this[FAIL_RUN](cause);
     } finally {
-      if (this.#lifecycle === 'running') {
-        if (deliveryBudget !== undefined) this.#engine.configureDelivery(false);
-        this.#lifecycle = 'idle';
-      }
+      this[LEAVE_RUN](deliveryBudget);
     }
   }
 
