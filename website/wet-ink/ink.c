@@ -168,7 +168,10 @@ static void advect(Ink *ink, uint32_t tick) {
     ink->totalDark = totalDark;
 }
 
+// The ELF linker script places step at the start of the flat guest image.
+#if defined(__ELF__)
 __attribute__((section(".text.step")))
+#endif
 void step(Ink *ink, uint32_t tick, uint32_t x, uint32_t y, uint32_t previous, uint32_t active) {
     if (tick == 0) {
         seed(ink);
