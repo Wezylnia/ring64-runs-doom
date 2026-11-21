@@ -2,6 +2,10 @@ use super::{Format, Kind, Op};
 use rustc_apfloat::ieee::{Double, IeeeFloat, Semantics, Single};
 use rustc_apfloat::{Float, FloatConvert, Round, Status, StatusAnd};
 
+#[cfg(test)]
+#[path = "arithmetic_differential.rs"]
+mod differential;
+
 struct Wide32;
 impl Semantics for Wide32 {
     const BITS: usize = 39;
@@ -34,10 +38,29 @@ fn calculate<F: Float>(kind: Kind, a: F, b: F, rc: Round) -> StatusAnd<F> {
 
 fn flags<S: Semantics, W: Semantics>(
     bounded: StatusAnd<IeeeFloat<S>>,
+    wide: impl FnOnce() -> StatusAnd<IeeeFloat<W>>,
+    mxcsr: u32,
+) -> (u64, u32) {
+    let value = bounded.value.to_bits() as u64;
+    let exponent_mask = (1u64 << S::EXP_BITS) - 1;
+    let exponent = (value >> (S::PRECISION - 1)) & exponent_mask;
+    if (2..exponent_mask - 1).contains(&exponent) {
+        // Both formats have the same precision here. An interior normal
+        // result cannot have been clipped at either exponent boundary.
+        return (
+            value,
+            u32::from(bounded.status.contains(Status::INEXACT)) << 5,
+        );
+    }
+    range_flags::<S, W>(value, bounded.status, wide(), mxcsr)
+}
+
+fn range_flags<S: Semantics, W: Semantics>(
+    mut value: u64,
+    bounded_status: Status,
     wide: StatusAnd<IeeeFloat<W>>,
     mxcsr: u32,
 ) -> (u64, u32) {
-    let mut value = bounded.value.to_bits() as u64;
     let overflow = wide.value.is_finite()
         && !wide.value.is_zero()
         && wide.value.ilogb() > IeeeFloat::<S>::MAX_EXP;
@@ -60,10 +83,10 @@ fn flags<S: Semantics, W: Semantics>(
         } else if mxcsr & (1 << 15) != 0 {
             value &= 1 << (IeeeFloat::<S>::BITS - 1);
             raised |= 48;
-        } else if bounded.status.contains(Status::INEXACT) {
+        } else if bounded_status.contains(Status::INEXACT) {
             raised |= 48;
         }
-    } else if bounded.status.contains(Status::INEXACT) {
+    } else if bounded_status.contains(Status::INEXACT) {
         raised |= 32;
     }
     (value, raised)
@@ -78,11 +101,13 @@ fn arithmetic<S: Semantics, W: Semantics>(
     let rc = round(mxcsr);
     let a = IeeeFloat::<S>::from_bits(left as u128);
     let b = IeeeFloat::<S>::from_bits(right as u128);
-    let wa: StatusAnd<IeeeFloat<W>> = a.convert_r(rc, &mut false);
-    let wb: StatusAnd<IeeeFloat<W>> = b.convert_r(rc, &mut false);
     flags(
         calculate(kind, a, b, rc),
-        calculate(kind, wa.value, wb.value, rc),
+        || {
+            let wa: StatusAnd<IeeeFloat<W>> = a.convert_r(rc, &mut false);
+            let wb: StatusAnd<IeeeFloat<W>> = b.convert_r(rc, &mut false);
+            calculate(kind, wa.value, wb.value, rc)
+        },
         mxcsr,
     )
 }
@@ -105,8 +130,11 @@ pub(super) fn convert(format: Format, value: u64, mxcsr: u32) -> (u64, u32) {
         Format::F64 => {
             let a = Double::from_bits(value as u128);
             let bounded: StatusAnd<Single> = a.convert_r(rc, &mut false);
-            let wide: StatusAnd<IeeeFloat<Wide32>> = a.convert_r(rc, &mut false);
-            flags(bounded, wide, mxcsr)
+            flags(
+                bounded,
+                || -> StatusAnd<IeeeFloat<Wide32>> { a.convert_r(rc, &mut false) },
+                mxcsr,
+            )
         }
     }
 }
