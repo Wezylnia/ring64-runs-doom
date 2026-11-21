@@ -57,6 +57,24 @@ impl Entries {
             })
     }
 
+    fn readable_span(
+        &self,
+        state: &State,
+        request: Request,
+        keys: &ProtectionKeys,
+        width: u32,
+    ) -> Option<(usize, u64)> {
+        debug_assert_eq!(request.access, Access::Read);
+        let index = self.find(state, request)?;
+        let translation = self.slots[index].unwrap().translation.at(request.linear);
+        if translation.remaining < u64::from(width)
+            || translation.rights.authorize(state, request, keys).is_err()
+        {
+            return None;
+        }
+        Some((index, translation.physical))
+    }
+
     fn touch(&mut self, index: usize) {
         if self.clock == u64::MAX {
             let mut ordered: Vec<_> = self.slots[..self.capacity]
@@ -169,17 +187,33 @@ impl Cache {
         keys: &ProtectionKeys,
         width: u32,
     ) -> Option<u64> {
-        debug_assert_eq!(request.access, Access::Read);
         let mut entries = self.entries.borrow_mut();
-        let index = entries.find(state, request)?;
-        let translation = entries.slots[index].unwrap().translation.at(request.linear);
-        if translation.remaining < u64::from(width)
-            || translation.rights.authorize(state, request, keys).is_err()
-        {
-            return None;
-        }
+        let (index, physical) = entries.readable_span(state, request, keys, width)?;
         entries.touch(index);
-        Some(translation.physical)
+        Some(physical)
+    }
+
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    pub(crate) fn read_then_fetch_dword(
+        &self,
+        state: &State,
+        request: Request,
+        keys: &ProtectionKeys,
+        read: impl FnOnce(u64) -> Option<u32>,
+    ) -> Option<u32> {
+        let mut entries = self.entries.borrow_mut();
+        // The admitted same-page loop makes the code entry most recent and
+        // always has a successor fetch after a successful load.
+        let fetch = entries
+            .hint
+            .filter(|&index| entries.slots[index].is_some())?;
+        let (data, physical) = entries.readable_span(state, request, keys, 4)?;
+        let value = read(physical)?;
+        entries.touch(data);
+        if fetch != data {
+            entries.touch(fetch);
+        }
+        Some(value)
     }
 
     /// Pure retained-view projection: no A/D, fill, eviction or LRU effects.

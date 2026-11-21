@@ -318,6 +318,42 @@ pub extern "C" fn core_paged_loop_guard(pc: u64, bytes: u32, flags: u64, shadow:
     })
 }
 
+#[cfg(not(feature = "parallel"))]
+#[unsafe(no_mangle)]
+pub extern "C" fn core_paged_loop_read_dword(address: u64) -> u64 {
+    let read = || {
+        if address & 3 != 0 || !crate::memory::canonical48(address) {
+            return None;
+        }
+        BRIDGE.with_borrow(|bridge| {
+            let core = bridge.core.as_ref().unwrap();
+            let paging = core.paging.as_ref()?;
+            let state = unsafe { &*core.state.get() };
+            let class = paging::walk::AccessClass::operand(
+                core.context.cpl(),
+                state.flags & crate::x86::flags::AC != 0,
+            );
+            let request = paging::walk::Request {
+                linear: address,
+                access: Access::Read,
+                class,
+            };
+            core.translation_cache.read_then_fetch_dword(
+                paging,
+                request,
+                &state.protection_keys,
+                |physical| {
+                    core.image
+                        .physical_read(physical, 4)
+                        .ok()
+                        .map(|value| value as u32)
+                },
+            )
+        })
+    };
+    read().map_or(u64::MAX, u64::from)
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn core_paged_debug_begin(pc: u64, flags: u64, shadow: u32) -> i32 {
     BRIDGE.with_borrow_mut(|bridge| {

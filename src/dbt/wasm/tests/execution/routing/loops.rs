@@ -218,6 +218,23 @@ fn guarded_paged_register_loop_uses_the_full_linear_cs_span() {
     }
 }
 
+#[cfg(not(feature = "parallel"))]
+#[test]
+fn paged_dword_read_loop_keeps_original_dispatch_under_a_tight_artifact_limit() {
+    let code = [
+        0x8b, 0x07, 0x8b, 0x4f, 4, 0x8b, 0x57, 8, 0x8b, 0x1e, 0x83, 0xed, 1, 0x75, 0xf1,
+    ];
+    let same_page = unit(compiled_fixture(0x1000, &code, 0x1000).instructions);
+    let split_page = unit(compiled_fixture(0x1ff8, &code, 0x1ff8).instructions);
+    let guarded = emit_profile(&same_page, true, true, usize::MAX);
+    let limited = emit_profile(&same_page, true, true, guarded.len() - 1);
+    let split_page = emit_profile(&split_page, true, true, usize::MAX);
+    for (bytes, loops) in [(guarded, 3), (limited, 1), (split_page, 1)] {
+        assert_eq!(wasm_loop_count(&bytes), loops);
+        wasmparser::Validator::new().validate_all(&bytes).unwrap();
+    }
+}
+
 #[test]
 fn register_loop_keeps_carry_live_through_zero_count_and_partial_writers() {
     let code = [

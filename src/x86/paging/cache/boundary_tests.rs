@@ -62,6 +62,66 @@ fn observation_does_not_fill_evict_or_promote_lru() {
     assert!(!cache.take_changed());
 }
 
+#[cfg(not(feature = "parallel"))]
+#[test]
+fn guarded_read_ages_data_then_code_only_on_success() {
+    for clock_overflow in [false, true] {
+        let (mut image, state, data) = fixture();
+        image.physical_write(0x4010, 8, 0xb067).unwrap();
+        image.physical_write(0x4018, 8, 0xc067).unwrap();
+        let code = Request {
+            linear: 0x2234,
+            access: Access::Execute,
+            ..data
+        };
+        let missing = Request {
+            linear: 0x3234,
+            ..data
+        };
+        let cache = Cache::with_capacity(2);
+        insert(&cache, &mut image, &state, data);
+        insert(&cache, &mut image, &state, code);
+        assert!(cache.touch_current_fetch(&state, code, 0xb234));
+        if clock_overflow {
+            cache.entries.borrow_mut().clock = u64::MAX;
+        }
+        let clock = cache.entries.borrow().clock;
+        assert_eq!(
+            cache.read_then_fetch_dword(&state, missing, &ProtectionKeys::ZERO, |_| unreachable!()),
+            None
+        );
+        assert_eq!(
+            cache.read_then_fetch_dword(&state, data, &ProtectionKeys::ZERO, |_| None),
+            None
+        );
+        assert_eq!(cache.entries.borrow().clock, clock);
+        assert_eq!(
+            cache.read_then_fetch_dword(&state, data, &ProtectionKeys::ZERO, |physical| {
+                assert_eq!(physical, 0xa234);
+                Some(u32::MAX)
+            }),
+            Some(u32::MAX)
+        );
+        assert_eq!(
+            cache.entries.borrow().clock,
+            if clock_overflow { 4 } else { clock + 2 }
+        );
+        insert(&cache, &mut image, &state, missing);
+        assert!(
+            cache
+                .observe(&state, data, &ProtectionKeys::ZERO)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            cache
+                .observe(&state, code, &ProtectionKeys::ZERO)
+                .unwrap()
+                .is_some()
+        );
+    }
+}
+
 #[test]
 fn current_pcid_non_global_precedes_global_and_targeted_eviction_keeps_global() {
     let (mut image, mut first, request) = fixture();

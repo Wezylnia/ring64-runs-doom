@@ -24,6 +24,8 @@ enum LoopKind {
     Float,
     Registers,
     IntegerReads,
+    #[cfg(not(feature = "parallel"))]
+    PagedReads,
     ForwardEdges,
 }
 
@@ -192,6 +194,39 @@ impl StructuredLoop {
     }
 
     #[cfg(not(feature = "parallel"))]
+    pub(super) fn select_paged_reads(unit: &super::Unit) -> Option<Self> {
+        if !unit.context.is_long64() {
+            return None;
+        }
+        let dword = |op| {
+            matches!(op, Operation::Load { width: Width::W32, address, .. }
+                if address.segment == crate::x86::context::Segment::Ds)
+        };
+        Self::select_straight_body(
+            &unit.instructions,
+            LoopKind::PagedReads,
+            |op| inside_register_body(op) || dword(op),
+            |body| {
+                body.iter()
+                    .filter(|instruction| dword(instruction.operation))
+                    .take(4)
+                    .count()
+                    == 4
+            },
+        )?
+        .without_dword_projection()
+        .within_paged_fetch(unit)
+    }
+
+    pub(super) fn is_paged_read_loop(self) -> bool {
+        match self.kind {
+            #[cfg(not(feature = "parallel"))]
+            LoopKind::PagedReads => true,
+            _ => false,
+        }
+    }
+
+    #[cfg(not(feature = "parallel"))]
     pub(super) fn within_paged_fetch(mut self, unit: &super::Unit) -> Option<Self> {
         let head = unit.instructions[self.head as usize].pc;
         let end = unit.instructions[self.tail as usize].next_pc;
@@ -315,6 +350,8 @@ impl StructuredLoop {
             LoopKind::Float => inside_float_body,
             LoopKind::Registers => inside_register_body,
             LoopKind::IntegerReads => inside_integer_read_body,
+            #[cfg(not(feature = "parallel"))]
+            LoopKind::PagedReads => unreachable!("paged reads use guarded admission"),
             LoopKind::ForwardEdges => unreachable!("forward edges use graph admission"),
         };
         Self::select_straight_body(instructions, kind, inside, |body| match kind {
@@ -329,6 +366,8 @@ impl StructuredLoop {
                     .count()
                     == MIN_READS
             }
+            #[cfg(not(feature = "parallel"))]
+            LoopKind::PagedReads => unreachable!("paged reads use guarded admission"),
             LoopKind::ForwardEdges => unreachable!("forward edges use graph admission"),
         })
     }
@@ -649,7 +688,7 @@ impl Emitter {
         self.op(Op::End).op(Op::End);
     }
 
-    fn emit_paged_register_loop(
+    fn emit_guarded_paged_loop(
         &mut self,
         instructions: &[Instruction],
         body: StructuredLoop,
@@ -685,9 +724,9 @@ impl Emitter {
             .op(Op::I32Const(0))
             .op(Op::LocalSet(REASON))
             .op(Op::If(BlockType::Empty));
-        self.paged_register_lap = true;
+        self.guarded_paged_lap = true;
         self.emit_prechecked_body(instructions, body, loop_depth + 3, None);
-        self.paged_register_lap = false;
+        self.guarded_paged_lap = false;
         self.op(Op::End).op(Op::End).op(Op::End);
     }
 
@@ -830,7 +869,7 @@ impl Emitter {
         if !self.loop_gates_prechecked
             && let Some(guard) = self.paged_loop_guard
         {
-            self.emit_paged_register_loop(instructions, body, inner_depth, guard);
+            self.emit_guarded_paged_loop(instructions, body, inner_depth, guard);
         }
         if self.loop_gates_prechecked && !precheck_entry {
             // Leave the guarded clone before a partial lap.

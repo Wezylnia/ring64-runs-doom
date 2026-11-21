@@ -109,6 +109,69 @@ export function pagingBoundaryReviewScenarios(compiler: WebAssembly.Module): Sce
       },
     },
     {
+      name: 'paged dword loop keeps the completed prefix when its fourth read faults',
+      async run() {
+        const head = 0x400000n;
+        const badRead = head + 13n;
+        const badData = 0x402000n;
+        // Warm [RDI] before the lap. Three loads and an ADD precede the failing MOV EBX,[RSI].
+        const code = '8b078b078b4f048b570883c0018b1e83ed0175ee';
+        for (const reason of ['page-fault', 'debug-exception', 'event-budget'] as const) {
+          await usingPaged(
+            compiler,
+            {
+              code,
+              words: [
+                [0x1000n, 0x2027n],
+                [0x2000n, 0x3027n],
+                [0x3010n, 0x4027n],
+                [0x4000n, 0x9027n],
+                [0x4008n, 0xa027n],
+              ],
+              spans: [{ physical: 0xa000n, bytes: little([0x12345678ffffffffn, 42n]) }],
+            },
+            async (cpu) => {
+              const start = initial(head, { 3: 0x1234n, 5: 2n, 6: badData, 7: 0x401000n }, 2n);
+              if (reason === 'debug-exception')
+                cpu.setDebugState({ addresses: [badRead, 0n, 0n, 0n], dr6: 0n, dr7: 0x401n });
+              if (reason === 'event-budget') {
+                cpu.setState({
+                  ...start,
+                  flags: 0x202n,
+                  interruptibility: { sti: true, ss: false },
+                });
+                cpu.requestInterrupt(0x21);
+                const irq = await cpu.run({ budget: 20n, eventDelivery: { budget: 0n } });
+                equal(irq.reason, reason, 'IRQ leaves before the first lap');
+                equal(irq.retired, 1n, 'the STI shadow is one instruction');
+                equal(irq.state.rip, head + 2n, 'restart at the first lap instruction');
+                return;
+              }
+              cpu.setState(start);
+              const result = await cpu.run({ budget: 20n });
+              equal(result.reason, reason, 'precise checked reason at the fourth read');
+              equal(result.retired, 5n, 'only the preload and completed prefix retire');
+              equal(result.state.rip, badRead, 'restart at the faulting read');
+              equal(result.state.registers[0], 0n, 'the wrapping addition completed');
+              equal(result.state.registers[1], 0x12345678n, 'second read completed');
+              equal(result.state.registers[2], 42n, 'third read completed');
+              equal(result.state.registers[3], 0x1234n, 'the fourth destination remains unchanged');
+              equal(result.state.registers[5], 2n, 'the latch has not run');
+              equal(
+                result.state.flags & 0x8d7n,
+                0x57n,
+                'fault keeps the preceding ADD status flags',
+              );
+              if (reason === 'page-fault')
+                equal(result.pageFault?.address, badData, 'the operand supplies the PF address');
+              else
+                equal(cpu.readPagingState().cr2, 0n, 'execute #DB precedes the operand page walk');
+            },
+          );
+        }
+      },
+    },
+    {
       name: 'paging review native cross-page fetch discards an owner invalidated by its one accessed-bit update',
       async run() {
         await usingPaged(

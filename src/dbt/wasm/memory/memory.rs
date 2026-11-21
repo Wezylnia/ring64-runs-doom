@@ -177,6 +177,25 @@ impl Emitter {
         next_pc: u64,
         exit_depth: u32,
     ) {
+        if self.guarded_paged_lap
+            && let Some(read) = self.paged_loop_read
+        {
+            let entry = self.current_index as i32;
+            self.address(address, next_pc);
+            self.op(Op::Call(read))
+                .op(Op::LocalTee(VALUE))
+                .op(Op::I64Const(-1))
+                .op(Op::I64Eq)
+                .op(Op::If(BlockType::Empty))
+                // The failed probe left this instruction unstarted. Enter its
+                // checked label with the already-retired prefix still local.
+                .op(Op::I32Const(entry))
+                .op(Op::LocalSet(super::ENTRY))
+                .op(Op::Br(exit_depth))
+                .op(Op::End);
+            self.write_loaded_value(dst, width);
+            return;
+        }
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         if width == Width::W32
             && self.loop_gates_prechecked

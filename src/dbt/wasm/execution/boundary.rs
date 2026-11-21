@@ -120,7 +120,7 @@ impl Emitter {
     }
 
     pub(super) fn begin(&mut self, operation: Operation, exit_depth: u32) {
-        if !self.observed || self.paged_register_lap {
+        if !self.observed || self.guarded_paged_lap {
             return;
         }
         self.op(Op::I64Const(self.current_pc as i64));
@@ -224,7 +224,7 @@ impl Emitter {
     }
 
     pub(super) fn finish_instruction(&mut self, exit_depth: u32) -> bool {
-        if self.paged_register_lap {
+        if self.guarded_paged_lap {
             return false;
         }
         let ss = self.ss_producer();

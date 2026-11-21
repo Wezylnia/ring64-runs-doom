@@ -58,6 +58,20 @@ pub(crate) fn emit_profile(
             return bytes;
         }
     }
+    #[cfg(not(feature = "parallel"))]
+    if paged && let Some(body) = StructuredLoop::select_paged_reads(unit) {
+        let bytes = emit_placement(
+            unit,
+            observed,
+            (paged, false),
+            Some(body),
+            false,
+            max_artifact_bytes,
+        );
+        if bytes.len() <= max_artifact_bytes {
+            return bytes;
+        }
+    }
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     if !observed
         && let Some(body) = StructuredLoop::select_shared_float(&unit.instructions)
@@ -654,6 +668,9 @@ fn emit_body(
             [ValType::I32],
         )
     });
+    let paged_loop_read_type = loop_body
+        .is_some_and(StructuredLoop::is_paged_read_loop)
+        .then(|| add_function_type(&mut types, [ValType::I64], [ValType::I64]));
     let debug_begin_type = observed.then(|| {
         add_function_type(
             &mut types,
@@ -857,6 +874,8 @@ fn emit_body(
     let protection_key = protection_key_type.map(|index| import_function("protection_key", index));
     let paged_loop_guard =
         paged_loop_guard_type.map(|index| import_function("paged_loop_guard", index));
+    let paged_loop_read =
+        paged_loop_read_type.map(|index| import_function("paged_loop_read_dword", index));
     let debug_begin = debug_begin_type.map(|index| import_function("debug_begin", index));
     let debug_step = debug_type.map(|index| import_function("debug_finish", index));
     let external_step = external_step_type.map(|index| import_function("external_step", index));
@@ -1355,8 +1374,9 @@ fn emit_body(
         current_index: 0,
         structured_loop: None,
         loop_gates_prechecked: false,
-        paged_register_lap: false,
+        guarded_paged_lap: false,
         paged_loop_guard,
+        paged_loop_read,
         register_upper_dwords,
         narrow_gprs,
         omit_result_status: false,
