@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { createCpu, type MemoryMapping } from '../../../src/index.js';
-import { LIMITS, fault, hex, initial } from '../../../../tests/support/fixture.js';
+import { protectedSnapshot } from '../../../../tests/support/context.js';
+import { LIMITS, changed, exit, fault, hex, initial } from '../../../../tests/support/fixture.js';
 
 const compiler = await WebAssembly.compile(
   new Uint8Array(await readFile(new URL('../../../../build/ring64.wasm', import.meta.url))),
@@ -39,6 +40,63 @@ function floats(...values: number[]): Uint8Array<ArrayBuffer> {
 function mapping(base: bigint, backing: string, length: number): MemoryMapping {
   return { backing, base, length, offset: 0, permissions: readOnly };
 }
+
+test('affine byte reads keep ADD flags at a denied span and resume after remapping', async () => {
+  const code = hex(
+    '0fb6040b01c6' + // MOVZX EAX,[EBX+ECX]; ADD ESI,EAX
+      '0fb6540b0101d7' + // MOVZX EDX,[EBX+ECX+1]; ADD EDI,EDX
+      '0fb6440b0201c6' +
+      '0fb6540b0301d7' +
+      '83c10483f90875dd', // ADD ECX,4; CMP ECX,8; JNE head
+  );
+  const data = hex('ff02030405060708');
+  const codeMap = {
+    ...mapping(head, 'code', code.length),
+    permissions: { ...readOnly, execute: true },
+  };
+  const dataMap = mapping(row, 'bytes', data.length);
+  const cpu = await createCpu({
+    compiler,
+    entry: head,
+    context: protectedSnapshot(),
+    limits: LIMITS,
+    memory: {
+      backings: [
+        { id: 'code', bytes: code },
+        { id: 'bytes', bytes: data },
+      ],
+      mappings: [codeMap, dataMap],
+    },
+    memoryLimits: { maxBackings: 2, maxMappings: 2, maxBackingBytes: code.length + data.length },
+  });
+  try {
+    const input = initial(head, { 0: 0n, 1: 0n, 2: 0n, 3: row, 6: 1n, 7: 0n });
+    const budget = 30n;
+    const stop = head + BigInt(code.length);
+    const output = changed(input, stop, { 0: 7n, 1: 8n, 2: 8n, 6: 271n, 7: 20n }, 0x46n);
+    cpu.setState(input);
+    exit(await cpu.run({ budget, stop }), 'stop', budget, 22n, output);
+
+    cpu.setMappings([codeMap, { ...dataMap, length: 1 }]);
+    cpu.setState(input);
+    const denied = await cpu.run({ budget, stop });
+    const next = head + 6n;
+    exit(denied, 'data-fault', budget, 2n, changed(input, next, { 0: 255n, 6: 256n }, 0x16n));
+    fault(denied, {
+      instructionPc: next,
+      address: row + 1n,
+      width: 1,
+      access: 'read',
+      cause: 'unmapped',
+      failingAddress: row + 1n,
+      segment: 'ds',
+    });
+    cpu.setMappings([codeMap, dataMap]);
+    exit(await cpu.run({ budget, stop }), 'stop', budget, 20n, output);
+  } finally {
+    cpu.dispose();
+  }
+});
 
 test('SIMD read loops resume from interior PCs and validate every backing after remapping', async () => {
   const code = body();
