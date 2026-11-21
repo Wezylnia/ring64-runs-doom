@@ -162,6 +162,27 @@ impl Cache {
         true
     }
 
+    #[cfg(not(feature = "parallel"))]
+    pub(super) fn touch_read_span(
+        &self,
+        state: &State,
+        request: Request,
+        keys: &ProtectionKeys,
+        width: u32,
+    ) -> Option<u64> {
+        debug_assert_eq!(request.access, Access::Read);
+        let mut entries = self.entries.borrow_mut();
+        let index = entries.find(state, request)?;
+        let translation = entries.slots[index].unwrap().translation.at(request.linear);
+        if translation.remaining < u64::from(width)
+            || translation.rights.authorize(state, request, keys).is_err()
+        {
+            return None;
+        }
+        entries.touch(index);
+        Some(translation.physical)
+    }
+
     /// Pure retained-view projection: no A/D, fill, eviction or LRU effects.
     pub fn observe(
         &self,

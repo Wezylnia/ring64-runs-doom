@@ -378,8 +378,34 @@ impl<'a> Memory<'a> {
         intent: Intent,
     ) -> Result<[u8; 16], AccessFailure> {
         assert!(width <= 16);
-        let prepared = self.prepare_aligned(address, width, Access::Read, false, class, intent)?;
         let mut bytes = [0; 16];
+        #[cfg(not(feature = "parallel"))]
+        if width != 0
+            && class != AccessClass::ImplicitSupervisor
+            && !(self.alignment_controls && class.is_user() && intent != Intent::Exempt)
+            && let Some(cache) = self.cache
+        {
+            check_span(address, width, Access::Read).map_err(AccessFailure::Linear)?;
+            let request = Request {
+                linear: address,
+                access: Access::Read,
+                class,
+            };
+            if let Some(physical) = cache.touch_read_span(self.paging, request, self.keys, width) {
+                // As in prepare, a valid TLB hit is touched before physical admission.
+                self.storage
+                    .borrow()
+                    .image
+                    .physical_read_into(physical, &mut bytes[..width as usize])
+                    .map_err(|fault| {
+                        AccessFailure::Paging(
+                            request.physical_failure(fault, PhysicalPhase::FinalAccess),
+                        )
+                    })?;
+                return Ok(bytes);
+            }
+        }
+        let prepared = self.prepare_aligned(address, width, Access::Read, false, class, intent)?;
         self.read_prepared(&prepared, &mut bytes);
         Ok(bytes)
     }

@@ -58,6 +58,63 @@ fn fixture(second: u64, data_write: bool, protected_pte: bool) -> (Image, State)
     )
 }
 
+#[cfg(not(feature = "parallel"))]
+#[test]
+fn retained_scalar_vector_and_split_reads_keep_bytes_and_alignment_priority() {
+    let (mut image, mut state) = fixture(0xa027, true, false);
+    state.cr0 |= 1 << 18;
+    image.physical_write(0x9ffc, 4, 0x4030_2010).unwrap();
+    image.physical_write(0xa000, 4, 0x8070_6050).unwrap();
+    let cache = Cache::default();
+    let mut work = AccessState::default();
+    let memory =
+        Memory::new(&mut image, &state, 3, 1 << 18, &mut work, &Keys::ZERO).with_cache(&cache);
+    assert_eq!(memory.read(0x1ffc, 4), Ok(0x4030_2010));
+    assert_eq!(memory.read(0x2000, 4), Ok(0x8070_6050));
+    Image::take_physical_preflight_count();
+    assert_eq!(memory.read(0x1ffc, 4), Ok(0x4030_2010));
+    assert_eq!(Image::take_physical_preflight_count(), 1);
+    let mut output = [0; 16];
+    output[..4].copy_from_slice(&[0x10, 0x20, 0x30, 0x40]);
+    assert_eq!(memory.read_vector(0x1ffc, 4), Ok(output));
+    assert_eq!(Image::take_physical_preflight_count(), 1);
+    output[4..8].copy_from_slice(&[0x50, 0x60, 0x70, 0x80]);
+    assert_eq!(memory.read_vector(0x1ffc, 8), Ok(output));
+    assert_eq!(Image::take_physical_preflight_count(), 4);
+    assert!(matches!(
+        memory.read_aligned(0x1ffd, 2, Intent::Natural(2)),
+        Err(AccessFailure::AlignmentCheck(fault)) if fault.address == 0x1ffd && fault.width == 2
+    ));
+}
+
+#[cfg(not(feature = "parallel"))]
+#[test]
+fn retained_read_reports_the_original_physical_mapping_fault() {
+    let (mut image, state) = write_probe_fixture(0x9027, true);
+    let cache = Cache::default();
+    let request = Request {
+        linear: 0x1000,
+        access: Access::Read,
+        class: AccessClass::User,
+    };
+    let translation = walk::walk(&mut image, &state, request, &Keys::ZERO).unwrap();
+    cache.fill(&state, request, translation);
+    let expected = image
+        .physical_check_access(0x9000, 4, Access::Read, false)
+        .unwrap_err();
+    let mut work = AccessState::default();
+    let memory = Memory::new(&mut image, &state, 3, 0, &mut work, &Keys::ZERO).with_cache(&cache);
+    Image::take_physical_preflight_count();
+    assert_eq!(
+        memory.read(0x1000, 4),
+        Err(AccessFailure::Paging(
+            request.physical_failure(expected, PhysicalPhase::FinalAccess)
+        ))
+    );
+    assert_eq!(Image::take_physical_preflight_count(), 1);
+    assert!(!cache.take_changed());
+}
+
 #[test]
 fn supervisor_protection_smap_denies_supervisor_operand_data() {
     let (mut image, mut state) = fixture(0, true, false);

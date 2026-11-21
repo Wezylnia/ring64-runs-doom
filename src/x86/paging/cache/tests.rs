@@ -83,6 +83,50 @@ fn retained_mapping_and_live_rights_are_distinct_from_current_pte_bytes() {
     assert_eq!(fresh.physical, 0xb234);
 }
 
+#[cfg(not(feature = "parallel"))]
+#[test]
+fn read_span_touches_only_the_authorized_whole_operand() {
+    let (mut image, mut state, request) = fixture();
+    let cache = Cache::default();
+    let translation = walk::walk(&mut image, &state, request, &ProtectionKeys::ZERO).unwrap();
+    cache.fill(&state, request, translation);
+    let clock = cache.entries.borrow().clock;
+    assert_eq!(
+        cache.touch_read_span(&state, request, &ProtectionKeys::ZERO, 16),
+        Some(0xa234)
+    );
+    assert_eq!(cache.entries.borrow().clock, clock + 1);
+    for linear in [0x1fff, 0x2000] {
+        assert_eq!(
+            cache.touch_read_span(
+                &state,
+                Request { linear, ..request },
+                &ProtectionKeys::ZERO,
+                2
+            ),
+            None
+        );
+        assert_eq!(cache.entries.borrow().clock, clock + 1);
+        assert!(!cache.take_changed());
+    }
+    state.cr4 |= 1 << 21;
+    let supervisor = Request {
+        class: AccessClass::Supervisor { ac: false },
+        ..request
+    };
+    assert_eq!(
+        cache.touch_read_span(&state, supervisor, &ProtectionKeys::ZERO, 4),
+        None
+    );
+    assert_eq!(cache.entries.borrow().clock, clock + 1);
+    assert!(!cache.take_changed());
+    assert!(matches!(
+        cache.lookup(&state, supervisor, &ProtectionKeys::ZERO),
+        Err(Failure::Page(_))
+    ));
+    assert!(cache.take_changed());
+}
+
 #[test]
 fn dirty_zero_write_intent_evicts_before_cached_denial() {
     let (mut image, state, request) = fixture();
