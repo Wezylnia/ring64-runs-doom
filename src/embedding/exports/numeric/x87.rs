@@ -3,6 +3,27 @@ use crate::embedding::layout::X87_EXCEPTION;
 use crate::x86::context::Mode;
 use crate::x86::x87::{self, Op};
 
+#[derive(Default)]
+pub(super) struct DecodedOperations([Option<(u32, Op)>; 32]);
+
+impl DecodedOperations {
+    fn index(word: u32) -> usize {
+        (word.wrapping_mul(0x9e37_79b9) >> 27) as usize
+    }
+
+    fn get(&mut self, word: u32) -> Option<Op> {
+        let entry = &mut self.0[Self::index(word)];
+        if let Some((cached, operation)) = *entry
+            && cached == word
+        {
+            return Some(operation);
+        }
+        let operation = Op::try_decode(word)?;
+        *entry = Some((word, operation));
+        Some(operation)
+    }
+}
+
 fn saved_pointer(context: &ExecutionContext, offset: u64, segment: Segment) -> u64 {
     match context.mode() {
         Mode::Long64 => offset,
@@ -45,13 +66,13 @@ fn core_x87_impl<const OBSERVED: bool, const PAGED: bool>(
     flags: u64,
     rax: u64,
 ) -> i32 {
-    let Some(operation) = Op::try_decode(operation) else {
-        return -1;
-    };
     let Some(segment) = Segment::ALL.get(segment as usize).copied() else {
         return -1;
     };
     BRIDGE.with_borrow_mut(|bridge| {
+        let Some(operation) = bridge.x87_operations.get(operation) else {
+            return -1;
+        };
         let core = bridge.core.as_mut().unwrap();
         core.fault = None;
         core.segment_fault = None;
@@ -209,6 +230,34 @@ impl Core {
             UNSUPPORTED
         } else {
             X87_EXCEPTION
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decoded_operations_distinguish_colliding_opcodes_and_malformed_words() {
+        let first = Op {
+            kind: x87::Kind::Load,
+            format: x87::Format::F32,
+            ..Op::default()
+        }
+        .encode();
+        let index = DecodedOperations::index(first);
+        let collision = |bits| {
+            (1..0x800)
+                .map(|encoding| first | bits | (encoding << 19))
+                .find(|&word| DecodedOperations::index(word) == index)
+                .unwrap()
+        };
+        let second = collision(0);
+        let malformed = collision(1 << 30);
+        let mut cache = DecodedOperations::default();
+        for word in [first, first, malformed, second, second, first] {
+            assert_eq!(cache.get(word), Op::try_decode(word));
         }
     }
 }

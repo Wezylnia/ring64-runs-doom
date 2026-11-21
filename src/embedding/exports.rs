@@ -172,6 +172,7 @@ impl InitialImage {
 #[derive(Default)]
 struct Bridge {
     core: Option<Core>,
+    x87_operations: x87::DecodedOperations,
     input: Vec<u8>,
     output: Vec<u8>,
     info: Vec<u8>,
