@@ -299,6 +299,52 @@ export function parallelMemoryScenarios(
       },
     },
     {
+      name: 'shared float loops preserve instruction boundaries after a guarded read',
+      async run() {
+        // MOVSS XMM0,[EAX]; MULSS XMM0,[EAX+4]; ADDSS XMM1,XMM0; SUB ECX,1; JNE entry.
+        const code = hex('f30f1000f30f594004f30f58c883e90175ee');
+        const stop = ENTRY + BigInt(code.length);
+        for (const long of [false, true]) {
+          const options = linearMachine(compiler, code);
+          if (!long) options.cpus[0]!.context = context('protected');
+          const input = new DataView(options.memory.backings[1]!.bytes.buffer);
+          input.setFloat32(5, 2, true); // This dword promotes the stripe on the first run.
+          input.setFloat32(9, 3, true);
+          await withMachine(factory, options, async (machine) => {
+            const cpu = machine.cpus[0]!;
+            const upper = 0x1234567890abcdef13579bdf00000000n;
+            const xmm = [upper, upper | 0x3f800000n, ...Array<bigint>(14).fill(upper)];
+            const resetInputs = async () => {
+              await cpu.setState(cpuState(ENTRY, { 0: RAM + 5n, 1: 2n }));
+              await cpu.setXmmState(xmm);
+            };
+            const expectXmm = async (product: bigint, sum: bigint) => {
+              same(await cpu.readXmmState(), [product, upper | sum, ...xmm.slice(2)], 'XMM state');
+            };
+
+            await resetInputs();
+            done(await cpu.run({ budget: 12n, stop }), stop, 10n);
+            await expectXmm(0x40c00000n, 0x41500000n);
+
+            await resetInputs();
+            const partial = await cpu.run({ budget: 6n, stop });
+            equal(partial.reason, 'budget', 'one lap and one MOVSS');
+            equal(partial.retired, 6n, 'six original instructions');
+            equal(partial.state.rip, ENTRY + 4n, 'resume at the second MULSS');
+            equal(partial.state.registers[1], 1n, 'only the first subtraction retired');
+            await expectXmm(0x40000000n, 0x40e00000n);
+            done(await cpu.run({ budget: 8n, stop }), stop, 4n);
+            await expectXmm(0x40c00000n, 0x41500000n);
+
+            await resetInputs();
+            const interior = ENTRY + 9n;
+            done(await cpu.run({ budget: 12n, stop: interior }), interior, 2n);
+            await expectXmm(0x40c00000n, 0x3f800000n);
+          });
+        }
+      },
+    },
+    {
       name: 'shared SIMD dword reads preserve lanes and precise split faults',
       async run() {
         // MOVSS XMM0,FS:[RAX]; MOVSS XMM1,FS:[RBX].
