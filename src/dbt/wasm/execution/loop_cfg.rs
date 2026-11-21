@@ -380,6 +380,13 @@ pub(super) fn compare_predicates(
         let offset = source.binary_search_by_key(&pc, |i| i.pc).ok()?;
         Some(order.position(order.earlier + offset as u32)? as usize)
     };
+    let valid_jump_target = |target| {
+        if context.is_long64() {
+            canonical48(target)
+        } else {
+            target <= context.code_limit()
+        }
+    };
     let len = order.len() as usize;
     let mut explicit_entry = vec![false; len];
     for position in source
@@ -484,6 +491,11 @@ pub(super) fn compare_predicates(
                     ..
                 }
                 | Operation::Nop => next_overwrites(instruction.next_pc),
+                Operation::Jump { target }
+                    if order.earlier == order.head && valid_jump_target(target) =>
+                {
+                    next_overwrites(target)
+                }
                 _ => false,
             };
             continue;
@@ -498,11 +510,7 @@ pub(super) fn compare_predicates(
                     | Condition::BelowOrEqual
                     | Condition::Above
             )
-            || !(if context.is_long64() {
-                canonical48(target)
-            } else {
-                target <= context.code_limit()
-            })
+            || !valid_jump_target(target)
         {
             continue;
         }
