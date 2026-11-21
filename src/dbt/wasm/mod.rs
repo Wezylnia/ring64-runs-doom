@@ -678,7 +678,9 @@ fn emit_placement(
     guard_reads: bool,
     max_artifact_bytes: usize,
 ) -> Vec<u8> {
-    let reads = if !guard_reads {
+    let reads = if cfg!(all(feature = "parallel", target_arch = "wasm32")) {
+        GuardedReads::SharedDword
+    } else if !guard_reads {
         GuardedReads::Checked
     } else if cfg!(all(not(feature = "parallel"), target_arch = "wasm32")) {
         GuardedReads::Outlined {
@@ -725,6 +727,7 @@ fn emit_placement(
 enum GuardedReads {
     Checked,
     Inline,
+    SharedDword,
     Outlined { sticky: bool, dyadic: bool },
 }
 
@@ -1509,17 +1512,21 @@ fn emit_body(
         index
     });
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
-    let parallel_vector_dword = (parallel_resolve.is_some() && vector_banks.loads).then(|| {
-        let signature = add_function_type(&mut types, [ValType::I64, ValType::I32], [ValType::I64]);
-        imports.import(
-            "env",
-            "parallel_vector_dword",
-            EntityType::Function(signature),
-        );
-        let index = run_index;
-        run_index += 1;
-        index
-    });
+    let parallel_vector_dword = (_guard_reads == GuardedReads::SharedDword
+        && parallel_resolve.is_some()
+        && vector_banks.loads)
+        .then(|| {
+            let signature =
+                add_function_type(&mut types, [ValType::I64, ValType::I32], [ValType::I64]);
+            imports.import(
+                "env",
+                "parallel_vector_dword",
+                EntityType::Function(signature),
+            );
+            let index = run_index;
+            run_index += 1;
+            index
+        });
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let span_cycles: Vec<_> = unit
         .instructions
@@ -2083,6 +2090,19 @@ fn emit_body(
     }
     let code_start = bytes.len();
     code.append_to(&mut bytes);
+    #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+    if bytes.len() > max_artifact_bytes && parallel_vector_dword.is_some() {
+        // Keep the original checked dword form available under tight limits.
+        return emit_body(
+            unit,
+            observed,
+            paged,
+            loop_body,
+            GuardedReads::Checked,
+            _extra_spans,
+            max_artifact_bytes,
+        );
+    }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if bytes.len() > max_artifact_bytes
         && let Some(outline) = &float_outline
