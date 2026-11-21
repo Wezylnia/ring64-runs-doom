@@ -29,29 +29,34 @@
 
           <div class="ink-essay-story">
             <section class="ink-essay-section">
-              <h2>why ink</h2>
+              <h2>a bit of red</h2>
               <p class="ink-essay-prose">
-                i wanted the slow pull of a lava lamp, with edges that spread like ink in water.
-                mostly i wanted to pass through the red and take a little of it with me.
+                i like how much you can tell about somebody’s taste from a few seconds of a
+                cracktro. the demoscene pieces i was looking at made me want a little piece of my
+                own for ring64. the red felt right early on. finding the movement took longer. i
+                wanted the shapes to pull apart like they do in a lava lamp and spread like ink in
+                water. something i could pass through and take a little of the red with me.
               </p>
             </section>
 
             <section class="ink-essay-section">
-              <h2>ink in code</h2>
+              <h2>ink from scratch</h2>
               <p class="ink-essay-prose">
-                i wanted wet ink to work like the demoscene pieces i’d been trying. i feed my
-                pointer position to a small c program that moves the pigment. the renderer gives it
-                color and draws it on the canvas.
+                every shape comes from two pigments on a grid. a small c program makes the first
+                pattern and moves the pigment from one frame to the next. when i brush across it,
+                the ink moves with the pointer and keeps curling after i stop. the renderer smooths
+                the grid and paints the colors. a little paper grain sits over the canvas.
               </p>
             </section>
 
             <section class="ink-essay-section">
-              <h2>why ring64</h2>
+              <h2>the little binary</h2>
               <div class="ink-essay-prose">
                 <p>
-                  i compile the c program to x86-64 because i want ring64 to run it. the browser
-                  needs an emulator for those instructions. ring64 translates them into webassembly
-                  as the program runs. i could compile the same c straight to webassembly, too.
+                  the binary below is the x86-64 build of the c program. the browser needs an
+                  emulator to execute those instructions. ring64 translates them into webassembly as
+                  it runs the program. i could compile the same c straight to webassembly, too. i
+                  wanted the math that moves the ink to be something i could watch ring64 run.
                 </p>
                 <div class="ink-essay-files">
                   <a href="../assets/wet-ink/ink.c.txt">read ink.c</a>
