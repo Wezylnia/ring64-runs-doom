@@ -10,7 +10,10 @@ mod access;
 mod descriptor;
 mod faults;
 pub mod operands;
-pub use faults::{access_fault, alignment_fault, system_fault};
+pub use faults::{
+    Failure, ProtectionFault, ProtectionPhase, SystemMemoryFault, SystemPagingFault, SystemPhase,
+    SystemReference, Table, access_fault, alignment_fault, system_fault,
+};
 pub mod event;
 pub mod far;
 pub mod io;
@@ -37,111 +40,6 @@ mod ss_tests;
 
 #[cfg(test)]
 mod alignment_tests;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ProtectionPhase {
-    Privilege,
-    Selector,
-    Descriptor,
-    Target,
-}
-
-impl ProtectionPhase {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Privilege => "privilege",
-            Self::Selector => "selector",
-            Self::Descriptor => "descriptor",
-            Self::Target => "target",
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ProtectionFault {
-    pub vector: u8,
-    pub error_code: u16,
-    pub phase: ProtectionPhase,
-    pub selector: Option<u16>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Table {
-    Gdt,
-    Ldt,
-    Ivt,
-    Idt,
-    Tss,
-}
-
-impl Table {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Gdt => "gdt",
-            Self::Ldt => "ldt",
-            Self::Ivt => "ivt",
-            Self::Idt => "idt",
-            Self::Tss => "tss",
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SystemPhase {
-    DescriptorRead,
-    AccessedWrite,
-    BusyWrite,
-    GateRead,
-    TssRead,
-    TssWrite,
-}
-
-impl SystemPhase {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::DescriptorRead => "descriptor-read",
-            Self::AccessedWrite => "descriptor-accessed-write",
-            Self::BusyWrite => "descriptor-busy-write",
-            Self::GateRead => "gate-read",
-            Self::TssRead => "tss-read",
-            Self::TssWrite => "tss-write",
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SystemReference {
-    Selector(u16),
-    Vector(u8),
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SystemMemoryFault {
-    pub address: u128,
-    pub width: u32,
-    pub access: Access,
-    pub cause: Cause,
-    pub failing_address: u128,
-    pub phase: SystemPhase,
-    pub table: Table,
-    pub reference: SystemReference,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SystemPagingFault {
-    pub failure: crate::x86::paging::walk::Failure,
-    pub phase: SystemPhase,
-    pub table: Table,
-    pub reference: SystemReference,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Failure {
-    Operand(AccessFailure),
-    Protection(ProtectionFault),
-    SystemMemory(SystemMemoryFault),
-    SystemPaging(SystemPagingFault),
-}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Outcome {

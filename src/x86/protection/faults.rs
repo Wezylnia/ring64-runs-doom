@@ -1,5 +1,110 @@
-use super::*;
-use crate::x86::context::SegmentCause;
+use crate::memory::{Access, Cause};
+use crate::x86::context::{AccessFailure, ExecutionContext, Mode, Segment, SegmentCause};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProtectionPhase {
+    Privilege,
+    Selector,
+    Descriptor,
+    Target,
+}
+
+impl ProtectionPhase {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Privilege => "privilege",
+            Self::Selector => "selector",
+            Self::Descriptor => "descriptor",
+            Self::Target => "target",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ProtectionFault {
+    pub vector: u8,
+    pub error_code: u16,
+    pub phase: ProtectionPhase,
+    pub selector: Option<u16>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Table {
+    Gdt,
+    Ldt,
+    Ivt,
+    Idt,
+    Tss,
+}
+
+impl Table {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Gdt => "gdt",
+            Self::Ldt => "ldt",
+            Self::Ivt => "ivt",
+            Self::Idt => "idt",
+            Self::Tss => "tss",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SystemPhase {
+    DescriptorRead,
+    AccessedWrite,
+    BusyWrite,
+    GateRead,
+    TssRead,
+    TssWrite,
+}
+
+impl SystemPhase {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::DescriptorRead => "descriptor-read",
+            Self::AccessedWrite => "descriptor-accessed-write",
+            Self::BusyWrite => "descriptor-busy-write",
+            Self::GateRead => "gate-read",
+            Self::TssRead => "tss-read",
+            Self::TssWrite => "tss-write",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SystemReference {
+    Selector(u16),
+    Vector(u8),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SystemMemoryFault {
+    pub address: u128,
+    pub width: u32,
+    pub access: Access,
+    pub cause: Cause,
+    pub failing_address: u128,
+    pub phase: SystemPhase,
+    pub table: Table,
+    pub reference: SystemReference,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SystemPagingFault {
+    pub failure: crate::x86::paging::walk::Failure,
+    pub phase: SystemPhase,
+    pub table: Table,
+    pub reference: SystemReference,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Failure {
+    Operand(AccessFailure),
+    Protection(ProtectionFault),
+    SystemMemory(SystemMemoryFault),
+    SystemPaging(SystemPagingFault),
+}
 
 fn runtime(vector: u8) -> ProtectionFault {
     ProtectionFault {
