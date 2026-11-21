@@ -35,7 +35,7 @@ import {
   type PageFault,
   type PhysicalMemoryFault,
 } from '../wasm/core.js';
-import { Translations, type Artifact, type InstalledEntry } from './translations.js';
+import { Translations, type InstalledEntry } from './translations.js';
 import {
   captureState,
   captureXmmState,
@@ -745,20 +745,14 @@ export class Cpu {
             at = performance.now();
             const module = await WebAssembly.compile(new Uint8Array(output.bytes));
             timings.browserCompileMs += performance.now() - at;
-            if (
-              this.#engine.contextVersion() !== output.metadata.contextVersion ||
-              this.#engine.boundaryObserved() !== (output.metadata.boundaryObserved ?? false) ||
-              !this.#engine.valid(output.metadata.owner)
-            )
-              continue;
-            at = performance.now();
-            const artifact: Artifact = {
-              run: this.#engine.instantiate(module, output.metadata.boundaryObserved),
-              metadata: output.metadata,
-            };
-            timings.instantiationMs += performance.now() - at;
-            if (!this.#engine.publish(output.metadata.owner)) continue;
-            if (!this.#cache.install(artifact)) return finish('resource-limit');
+            const artifact = this.#cache.installCompiled(
+              this.#engine,
+              module,
+              output.metadata,
+              timings,
+            );
+            if (!artifact) continue;
+            if (artifact === 'resource-limit') return finish(artifact);
             installed = true;
             entry = this.#cache
               .candidates(pc, output.metadata.boundaryObserved)

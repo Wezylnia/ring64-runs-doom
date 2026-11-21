@@ -1,5 +1,5 @@
 import type { GeneratedRun } from '../wasm/abi.js';
-import type { UnitMetadata } from '../wasm/core.js';
+import type { Core, UnitMetadata } from '../wasm/core.js';
 
 export interface Artifact {
   run: GeneratedRun;
@@ -36,6 +36,29 @@ export class Translations {
 
   canFit(bytes: number): boolean {
     return bytes <= this.maxBytes;
+  }
+
+  installCompiled(
+    core: Core,
+    module: WebAssembly.Module,
+    metadata: UnitMetadata,
+    timings: { instantiationMs: number },
+  ): Artifact | 'resource-limit' | undefined {
+    if (
+      core.contextVersion() !== metadata.contextVersion ||
+      core.boundaryObserved() !== (metadata.boundaryObserved ?? false) ||
+      !core.valid(metadata.owner)
+    )
+      return undefined;
+
+    const began = performance.now();
+    const artifact: Artifact = {
+      run: core.instantiate(module, metadata.boundaryObserved),
+      metadata,
+    };
+    timings.instantiationMs += performance.now() - began;
+    if (!core.publish(metadata.owner)) return undefined;
+    return this.install(artifact) ? artifact : 'resource-limit';
   }
 
   install(artifact: Artifact): boolean {
