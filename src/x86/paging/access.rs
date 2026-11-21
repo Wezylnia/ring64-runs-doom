@@ -379,7 +379,6 @@ impl<'a> Memory<'a> {
     ) -> Result<[u8; 16], AccessFailure> {
         assert!(width <= 16);
         let mut bytes = [0; 16];
-        #[cfg(not(feature = "parallel"))]
         if width != 0
             && class != AccessClass::ImplicitSupervisor
             && !(self.alignment_controls && class.is_user() && intent != Intent::Exempt)

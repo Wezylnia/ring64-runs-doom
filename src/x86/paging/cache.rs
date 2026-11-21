@@ -162,7 +162,6 @@ impl Cache {
         true
     }
 
-    #[cfg(not(feature = "parallel"))]
     pub(super) fn touch_read_span(
         &self,
         state: &State,

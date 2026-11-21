@@ -58,7 +58,6 @@ fn fixture(second: u64, data_write: bool, protected_pte: bool) -> (Image, State)
     )
 }
 
-#[cfg(not(feature = "parallel"))]
 #[test]
 fn retained_scalar_vector_and_split_reads_keep_bytes_and_alignment_priority() {
     let (mut image, mut state) = fixture(0xa027, true, false);
@@ -87,7 +86,6 @@ fn retained_scalar_vector_and_split_reads_keep_bytes_and_alignment_priority() {
     ));
 }
 
-#[cfg(not(feature = "parallel"))]
 #[test]
 fn retained_read_reports_the_original_physical_mapping_fault() {
     let (mut image, state) = write_probe_fixture(0x9027, true);

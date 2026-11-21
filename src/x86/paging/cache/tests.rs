@@ -83,7 +83,6 @@ fn retained_mapping_and_live_rights_are_distinct_from_current_pte_bytes() {
     assert_eq!(fresh.physical, 0xb234);
 }
 
-#[cfg(not(feature = "parallel"))]
 #[test]
 fn read_span_touches_only_the_authorized_whole_operand() {
     let (mut image, mut state, request) = fixture();

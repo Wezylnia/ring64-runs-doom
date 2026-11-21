@@ -56,6 +56,108 @@ export function parallelPagingMemoryScenarios(
 ): Scenario[] {
   return [
     {
+      name: 'warm shared paged reads preserve split bytes and exact physical read refusal',
+      async run() {
+        const options = pagedOptions(compiler, '488b03', [0xa007n, 0xb007n]);
+        const data = PC + 0x1000n;
+        const deniedStart = span(0xa080n, 'old', 0x80, 8);
+        options.memory.mappings.splice(
+          2,
+          1,
+          span(0xa000n, 'old', 0, 0x80),
+          { ...deniedStart, permissions: { ...deniedStart.permissions, read: false } },
+          span(0xa088n, 'old', 0x88, 0xf78),
+        );
+        const [, , old, next] = options.memory.backings;
+        old!.bytes.set(asBytes(0x8877665544332211n), 0x3d);
+        old!.bytes.set(Uint8Array.of(0x01, 0x23, 0x45), 0xffd);
+        next!.bytes.set(Uint8Array.of(0x67, 0x89, 0xab, 0xcd, 0xef));
+        await withMachine(factory, options, async (machine) => {
+          const [reader, peer] = machine.cpus;
+          const read = async (cpu: TestCpu, address: bigint) => {
+            await cpu.setState(cpuState(PC, { 0: 0xabadcafen, 3: address }));
+            return cpu.run({ budget: 2n, stop: PC + 3n });
+          };
+          const load = async (cpu: TestCpu, address: bigint, want: bigint, label: string) => {
+            const result = await read(cpu, address);
+            done(result, PC + 3n, 1n);
+            equal(result.state.registers[0], want, label);
+          };
+          await load(reader!, data, 0n, 'first page admitted');
+          await load(reader!, data + 0x1000n, 0xefcdab8967n, 'second page admitted');
+          await load(reader!, data + 0x3dn, 0x8877665544332211n, 'warm read crosses a stripe');
+          await load(reader!, data + 0xffdn, 0xefcdab8967452301n, 'warm read crosses guest pages');
+          const denied = await read(reader!, data + 0x7dn);
+          equal(denied.reason, 'physical-memory-fault', 'whole operand refused by the tail');
+          equal(denied.retired, 0n, 'faulting read is unretired');
+          equal(denied.state.rip, PC, 'faulting instruction retained');
+          equal(denied.state.registers[0], 0xabadcafen, 'read publishes no partial register');
+          same(
+            denied.physicalMemoryFault,
+            {
+              instructionPc: PC,
+              address: data + 0x7dn,
+              access: 'read',
+              physicalAddress: 0xa07dn,
+              width: 8,
+              failingPhysicalAddress: 0xa080n,
+              physicalAccess: 'read',
+              cause: 'permission',
+              phase: 'final-access',
+              segment: 'ds',
+            },
+            'exact physical read failure',
+          );
+          await load(peer!, data + 0x3dn, 0x8877665544332211n, 'peer independently reads RAM');
+        });
+      },
+    },
+    {
+      name: 'warm shared paged MOVSS stays coherent across canonical lanes through an alias',
+      async run() {
+        const writerCode = '488703ffc975f9'; // XCHG [RBX],RAX; DEC ECX; JNZ writer.
+        const readerCode =
+          'f30f1003660f7ec0' + // MOVSS XMM0,[RBX]; MOVD EAX,XMM0
+          '39f0740439f87505' + // CMP EAX,ESI; JE next; CMP EAX,EDI; JNE bad
+          'ffc975ec900f0b'; // next: DEC ECX; JNZ reader; NOP; bad: UD2
+        const reader = PC + BigInt(writerCode.length / 2);
+        const stop = reader + 20n;
+        const readerData = PC + 0x1005n;
+        const writerData = PC + 0x2005n;
+        const low = 0x7766554433221100n;
+        const high = 0xcafedecab00badc0n;
+        const options = pagedOptions(compiler, writerCode + readerCode, [0xa007n, 0xa007n]);
+        options.memory.backings[2]!.bytes.set(asBytes(low), 5);
+        const readState = (count: bigint) =>
+          cpuState(reader, {
+            1: count,
+            3: readerData,
+            6: low & 0xffffffffn,
+            7: high & 0xffffffffn,
+          });
+        await withMachine(factory, options, async (machine) => {
+          const [writer, observer] = machine.cpus;
+          await observer!.setState(readState(1n));
+          done(await observer!.run({ budget: 9n, stop }), stop, 6n);
+          await writer!.setState(cpuState(PC, { 0: high, 1: 2n, 3: writerData }));
+          done(await writer!.run({ budget: 7n, stop: reader }), reader, 6n);
+
+          const count = 1024n;
+          await writer!.setState(cpuState(PC, { 0: high, 1: count, 3: writerData }));
+          await observer!.setState(readState(count));
+          const [w, r] = await Promise.all([
+            writer!.run({ budget: count * 3n + 1n, stop: reader }),
+            observer!.run({ budget: count * 8n + 1n, stop }),
+          ]);
+          done(w, reader, count * 3n);
+          done(r, stop);
+          equal(r.state.registers[1], 0n, 'every aliased MOVSS returned a complete dword');
+          equal(await physicalWord(machine, 0xa005n), low, 'even swaps restore the original qword');
+          equal(w.state.registers[0], high, 'writer keeps the other complete qword');
+        });
+      },
+    },
+    {
       name: 'guest PTE replacement preserves both local TLBs until the selected CPU executes INVLPG',
       async run() {
         // mov rax,[rbx]; mov [rcx],rdx; invlpg [rbx]. The third VA aliases the PTE page.

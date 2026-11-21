@@ -74,7 +74,7 @@ pub(super) fn record_preflight() {
     PREFLIGHTS.with(|count| count.set(count.get() + 1));
 }
 
-#[cfg(all(test, not(feature = "parallel")))]
+#[cfg(test)]
 impl Image {
     pub(crate) fn take_physical_preflight_count() -> usize {
         PREFLIGHTS.with(|count| count.replace(0))
