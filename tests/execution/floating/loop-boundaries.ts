@@ -1,4 +1,4 @@
-import { CODE, DATA, fault } from '../../support/fixture.js';
+import { CODE, DATA, equal, fault } from '../../support/fixture.js';
 import {
   LONG,
   banks,
@@ -34,24 +34,31 @@ export function loopBoundaryScenarios(compiler: WebAssembly.Module): Scenario[] 
           async (cpu) => {
             const before = input(CODE, { 0: 0n, 1: 8n, 6: DATA }, 2n);
             const raw = banks();
-            for (const [budget, stop, reason, retired, rip, index, flags, low] of [
+            for (const [budget, stop, reason, retired, rip, index, flags, low, end = 8n] of [
               [7n, undefined, 'budget', 7n, 0n, 4n, 0x97n, 0x41500000n],
               [13n, undefined, 'budget', 13n, 30n, 8n, 0x46n, 0x42aa0000n],
+              [14n, CODE + 32n, 'budget', 14n, 32n, 8n, 0x46n, 0x42aa0000n],
               [2n, CODE + 11n, 'budget', 2n, 11n, 0n, 2n, 0x40400000n],
               [7n, CODE + 11n, 'stop', 2n, 11n, 0n, 2n, 0x40400000n],
               [15n, CODE + 32n, 'stop', 14n, 32n, 8n, 0x46n, 0x42aa0000n],
+              [6n, CODE + 32n, 'budget', 6n, 30n, 4n, 0x46n, 0x41500000n, 4n],
+              [7n, CODE + 32n, 'budget', 7n, 32n, 4n, 0x46n, 0x41500000n, 4n],
+              [8n, CODE + 32n, 'stop', 7n, 32n, 4n, 0x46n, 0x41500000n, 4n],
             ] as const) {
-              cpu.setState(before);
+              const initial = input(CODE, { 0: 0n, 1: end, 6: DATA }, 2n);
+              cpu.setState(initial);
+              cpu.setTimeState({ tsc: 7n, tscAux: 0 });
               cpu.setXmmState(raw);
               const result = await cpu.run({ budget, stop, repeatBudget: 0n });
               outcome(result, reason, budget, retired, 0n, 0n, {
-                ...changed(before, CODE + rip, { 0: index }),
+                ...changed(initial, CODE + rip, { 0: index }),
                 flags,
               });
               const expected = raw.slice();
               expected[0] = low;
               xmm(cpu, expected);
               mxcsr(cpu, 0x1f80);
+              equal(cpu.readTimeState().tsc, 7n + retired, 'guarded loop TSC');
               noFault(result);
             }
 
@@ -66,6 +73,41 @@ export function loopBoundaryScenarios(compiler: WebAssembly.Module): Scenario[] 
             xmm(cpu, operands);
           },
           { data: [{ base: DATA, bytes: data }] },
+        );
+      },
+    },
+    {
+      name: 'guarded floating loop replays a rejected header before retirement',
+      async run() {
+        await using(
+          compiler,
+          'f30f580486' + code.slice(10),
+          LONG,
+          async (cpu) => {
+            const before = input(CODE, { 0: 0n, 1: 8n, 6: DATA }, 2n);
+            const raw = banks();
+            raw[0] = (raw[0]! & ~0xffffffffn) | 0x3f800000n;
+            cpu.setState(before);
+            cpu.setXmmState(raw);
+            cpu.setMxcsr(0x1e80);
+            const result = await cpu.run({ budget: 14n, repeatBudget: 0n });
+            outcome(result, 'simd-exception', 14n, 0n, 0n, 0n, before);
+            simdFault(result, 0x1e80, 0x1e82, 2, 2, 'pre-computation', CODE);
+            xmm(cpu, raw);
+
+            cpu.setState(before);
+            cpu.setXmmState(raw);
+            cpu.setMxcsr(0x1f80);
+            const resumed = await cpu.run({ budget: 14n, repeatBudget: 0n });
+            outcome(resumed, 'budget', 14n, 14n, 0n, 0n, {
+              ...changed(before, CODE + 32n, { 0: 8n }),
+              flags: 0x46n,
+            });
+            raw[0] = (raw[0]! & ~0xffffffffn) | 0x43300000n;
+            xmm(cpu, raw);
+            mxcsr(cpu, 0x1fa2);
+          },
+          { data: [{ base: DATA, bytes: '01000000' + data.slice(8) }] },
         );
       },
     },
