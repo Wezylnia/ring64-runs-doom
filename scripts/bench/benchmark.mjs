@@ -149,20 +149,7 @@ async function browserRun() {
         return;
       }
       let file;
-      if (
-        pathname === '/kernels.mjs' ||
-        pathname === '/x87.mjs' ||
-        pathname === '/numeric-state.mjs' ||
-        pathname === '/streaming.mjs' ||
-        pathname === '/protection.mjs' ||
-        pathname === '/far-control.mjs' ||
-        pathname === '/system-flags.mjs' ||
-        pathname === '/software-events.mjs' ||
-        pathname === '/event-delivery.mjs' ||
-        pathname === '/external-interrupts.mjs' ||
-        pathname === '/access-faults.mjs' ||
-        pathname === '/debug.mjs'
-      )
+      if (benchmarkFiles.includes(pathname.slice(1)))
         file = resolve(root, 'benchmarks', pathname.slice(1));
       else {
         const [, label, ...parts] = pathname.split('/'),
@@ -234,6 +221,7 @@ const environment = {
 };
 const benchmarkFiles = [
   'kernels.mjs',
+  'basic-kernels.mjs',
   'x87.mjs',
   'numeric-state.mjs',
   'streaming.mjs',
