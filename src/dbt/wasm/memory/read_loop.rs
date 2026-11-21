@@ -57,14 +57,8 @@ impl ReadLoop {
         if self.byte_reads {
             return None;
         }
-        let mut inputs = (1 << self.index) | (1 << end);
-        let mut biases = 0;
-        for stream in self.streams.into_iter().flatten() {
-            if let AddressBase::Register(register) = stream.first.base {
-                inputs |= 1 << register;
-            }
-            biases += 1;
-        }
+        let inputs = (1 << self.index) | (1 << end);
+        let biases = self.streams.into_iter().flatten().count();
         Some((inputs, self.index, biases))
     }
 
@@ -277,6 +271,7 @@ impl ReadLoop {
         }
     }
 
+    #[cfg(test)]
     pub(super) fn stream_for(self, operation: Operation) -> Option<u32> {
         let address = Self::read_operand(operation, self.byte_reads)??;
         self.stream_for_address(address)
@@ -287,6 +282,28 @@ impl ReadLoop {
         if !self.byte_reads {
             return None;
         }
+        self.slot(address)
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn vector_slot(self, address: Address) -> Option<(u32, Address, u64)> {
+        if self.byte_reads {
+            return None;
+        }
+        let (slot, first, offset) = self.slot(address)?;
+        Some((
+            slot,
+            Address {
+                base: AddressBase::None,
+                displacement: 0,
+                ..first
+            },
+            offset,
+        ))
+    }
+
+    #[cfg(any(test, all(not(feature = "parallel"), target_arch = "wasm32")))]
+    fn slot(self, address: Address) -> Option<(u32, Address, u64)> {
         let slot = self.stream_for_address(address)?;
         let stream = self.streams[slot as usize]?;
         if address.displacement > stream.last_displacement {
@@ -298,6 +315,7 @@ impl ReadLoop {
         Some((slot, stream.first, u64::try_from(offset).ok()?))
     }
 
+    #[cfg(any(test, all(not(feature = "parallel"), target_arch = "wasm32")))]
     fn stream_for_address(self, address: Address) -> Option<u32> {
         self.streams
             .iter()
@@ -458,8 +476,20 @@ impl Emitter {
                     3,
                 )))
                 .op(Op::I32WrapI64)
-                .op(Op::I32Sub)
-                .op(Op::LocalSet(first_bias + slot as u32));
+                .op(Op::I32Sub);
+            if !proof.byte_reads {
+                // Fold the invariant guest base and first displacement into
+                // the bias. Each vector load adds just its scaled index and offset.
+                self.address(
+                    Address {
+                        index: None,
+                        ..stream.first
+                    },
+                    0,
+                );
+                self.op(Op::I32WrapI64).op(Op::I32Add);
+            }
+            self.op(Op::LocalSet(first_bias + slot as u32));
         }
     }
 }

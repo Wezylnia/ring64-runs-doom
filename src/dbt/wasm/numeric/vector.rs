@@ -165,6 +165,23 @@ impl Emitter {
         next_pc: u64,
         exit_depth: u32,
     ) {
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if bytes == 4
+            && !aligned
+            && let Some((proof, first_bias)) = self.proved_reads
+            && let Some((slot, index, offset)) = proof.vector_slot(address)
+        {
+            self.address(index, next_pc);
+            self.op(Op::I32WrapI64)
+                .op(Op::LocalGet(first_bias + slot))
+                .op(Op::I32Add)
+                .op(Op::V128Load32Zero(MemArg {
+                    offset,
+                    align: 0,
+                    memory_index: 0,
+                }));
+            return;
+        }
         self.address(address, next_pc);
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         if bytes == 4 && !aligned {

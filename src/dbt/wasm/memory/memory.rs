@@ -264,21 +264,6 @@ impl Emitter {
         exit_depth: u32,
         load_slow: impl FnOnce(&mut Self, u32),
     ) -> bool {
-        if let (Some(vector), Some((proof, first_bias))) = (vector_result, self.proved_reads)
-            && let Some(stream) = proof.stream_for(self.current_operation)
-        {
-            debug_assert_eq!(width, Width::W32);
-            self.op(Op::I32WrapI64)
-                .op(Op::LocalGet(first_bias + stream))
-                .op(Op::I32Add)
-                .op(Op::V128Load32Zero(MemArg {
-                    offset: 0,
-                    align: 0,
-                    memory_index: 0,
-                }))
-                .op(Op::LocalSet(vector));
-            return true;
-        }
         self.direct_access(
             width,
             DirectOperand::Load(vector_result),
