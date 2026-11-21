@@ -618,3 +618,108 @@ test('a read loop interleaving stack and data still faults at the first denied s
     cpu.dispose();
   }
 });
+
+test('rotated read branches publish the selected CMP at exits and partial laps', async () => {
+  const code = hex(
+    'eb06' + // JMP head
+      '89d339dd7316' + // MOV EBX,EDX; CMP EBP,EBX; JAE upperExit
+      '89de29eed1ee8d142e' + // head: MOV ESI,EBX; SUB ESI,EBP; SHR ESI,1; LEA EDX,[ESI+EBP]
+      '393c9173ec' + // CMP [ECX+EDX*4],EDI; JAE upper arm
+      '01f54539dd72eb' + // ADD EBP,ESI; INC EBP; CMP EBP,EBX; JB head
+      '9090', // separate lower and upper exit PCs
+  );
+  const entry = head + 8n;
+  const lowerExit = head + 29n;
+  const upperExit = head + 30n;
+  const data = hex('0100000002000000030000000400000005000000060000000700000008000000');
+  const context = protectedSnapshot();
+  const cpu = await createCpu({
+    compiler,
+    entry,
+    context,
+    limits: LIMITS,
+    memory: {
+      backings: [
+        { id: 'code', bytes: code },
+        { id: 'table', bytes: data },
+      ],
+      mappings: [
+        { ...mapping(head, 'code', code.length), permissions: { ...readOnly, execute: true } },
+        mapping(row, 'table', data.length),
+      ],
+    },
+    memoryLimits: { maxBackings: 2, maxMappings: 2, maxBackingBytes: code.length + data.length },
+  });
+  const upper = 0x1234_5678_0000_0000n;
+  const input = (length: bigint, key: bigint) =>
+    initial(
+      entry,
+      { 1: row, 2: upper, 3: upper | length, 5: upper, 6: upper, 7: upper | key },
+      0x602n,
+    );
+  try {
+    for (const [key, stop, retired, bound] of [
+      [2n, lowerExit, 10n, 1n],
+      [0n, upperExit, 9n, 0n],
+    ] as const) {
+      const state = input(1n, key);
+      cpu.setState(state);
+      exit(
+        await cpu.run({ budget: 20n, stop }),
+        'stop',
+        20n,
+        retired,
+        changed(state, stop, { 3: upper | bound, 5: upper | bound }, 0x646n),
+      );
+    }
+
+    const lower = input(8n, 9n);
+    cpu.setState(lower);
+    exit(
+      await cpu.run({ budget: 10n }),
+      'budget',
+      10n,
+      10n,
+      changed(lower, entry, { 2: upper | 4n, 5: upper | 5n, 6: upper | 4n }, 0x693n),
+    );
+
+    // The shorter upper arm leaves budget for the next MOV, which preserves CMP flags.
+    const higher = input(8n, 0n);
+    cpu.setState(higher);
+    exit(
+      await cpu.run({ budget: 10n }),
+      'budget',
+      10n,
+      10n,
+      changed(higher, entry + 2n, { 2: upper | 4n, 3: upper | 4n, 6: upper | 4n }, 0x697n),
+    );
+
+    // One funded backedge executes, then the original read fails in the next lap.
+    context.segments.ds.limit = Number(row + 19n);
+    cpu.setContext(context);
+    cpu.setState(lower);
+    cpu.setTimeState({ tsc: 0xffff_ffff_ffff_fff8n, tscAux: 19 });
+    const denied = await cpu.run({ budget: 30n });
+    const read = head + 17n;
+    exit(
+      denied,
+      'segment-fault',
+      30n,
+      14n,
+      changed(lower, read, { 2: upper | 6n, 5: upper | 5n, 6: upper | 1n }, 0x603n),
+    );
+    assert.equal(denied.reason, 'segment-fault');
+    assert.deepEqual(denied.segmentFault, {
+      access: 'read',
+      cause: 'limit',
+      failingOffset: row + 24n,
+      offset: row + 24n,
+      segment: 'ds',
+      width: 4,
+      instructionPc: read,
+    });
+    assert.deepEqual(cpu.readTimeState(), { tsc: 6n, tscAux: 19 });
+  } finally {
+    cpu.dispose();
+  }
+});
