@@ -7,6 +7,7 @@ import {
   cpuState,
   done,
   equal,
+  hex,
   linearMachine,
   same,
   span,
@@ -252,6 +253,48 @@ export function parallelMemoryScenarios(
           );
           same(await words(machine, at, 1), [low], 'even swap count returns original full value');
           equal(w.state.registers[0], high, 'writer register holds the other complete value');
+        });
+      },
+    },
+    {
+      name: 'shared MOVSS reads a coherent dword across two canonical lanes',
+      async run() {
+        // Writer: XCHG [RBX],RAX; DEC ECX; JNZ writer.
+        const writerCode = hex('488703ffc975f9');
+        const readerCode = hex(
+          'f30f1003660f7ec0' + // MOVSS XMM0,[RBX]; MOVD EAX,XMM0
+            '39f0740439f87505' + // CMP EAX,ESI; JE next; CMP EAX,EDI; JNE bad
+            'ffc975ec900f0b', // next: DEC ECX; JNZ reader; NOP; bad: UD2
+        );
+        const options = linearMachine(compiler, Uint8Array.of(...writerCode, ...readerCode));
+        const reader = ENTRY + BigInt(writerCode.length);
+        const stop = reader + 20n;
+        const at = RAM + 5n;
+        const low = 0x7766554433221100n;
+        const high = 0xcafedecab00badc0n;
+        options.memory.backings[1]!.bytes.set(asBytes(low), 5);
+        const readerState = (count: bigint) =>
+          cpuState(reader, { 1: count, 3: at, 6: low & 0xffffffffn, 7: high & 0xffffffffn });
+        await withMachine(factory, options, async (machine) => {
+          const [writer, observer] = machine.cpus;
+          // First promote the stripe and compile both loops before contending on it.
+          await observer!.setState(readerState(1n));
+          done(await observer!.run({ budget: 9n, stop }), stop, 6n);
+          await writer!.setState(cpuState(ENTRY, { 0: high, 1: 2n, 3: at }));
+          done(await writer!.run({ budget: 7n, stop: reader }), reader, 6n);
+
+          const count = 20_000n;
+          await writer!.setState(cpuState(ENTRY, { 0: high, 1: count, 3: at }));
+          await observer!.setState(readerState(count));
+          const [w, r] = await Promise.all([
+            writer!.run({ budget: count * 3n + 1n, stop: reader }),
+            observer!.run({ budget: count * 8n + 1n, stop }),
+          ]);
+          done(w, reader, count * 3n);
+          done(r, stop);
+          equal(r.state.registers[1], 0n, 'every MOVSS returned an allowed dword');
+          same(await words(machine, at, 1), [low], 'even swaps restore the full qword');
+          equal(w.state.registers[0], high, 'writer holds the other full qword');
         });
       },
     },
