@@ -70,6 +70,7 @@ impl Emitter {
         self.write_location(dst, width, exit_depth);
         match kind {
             Unary::Not => {}
+            Unary::Inc if self.omit_result_status => {}
             Unary::Inc | Unary::Dec => {
                 self.op(Op::LocalGet(FLAGS))
                     .op(Op::I64Const(1))
