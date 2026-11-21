@@ -147,7 +147,7 @@ export function addressingObservationScenarios(core: WebAssembly.Module): Scenar
           { tail: '488dc4', reason: 'invalid-encoding' },
           { tail: '488d04', reason: 'fetch-fault' },
           { tail: '488b048b', reason: 'resource-limit' },
-        ]) {
+        ] as const) {
           await using(
             'b801000000' + item.tail,
             async (cpu) => {

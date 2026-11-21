@@ -379,7 +379,7 @@ export function dataBoundaryScenarios(core: WebAssembly.Module): Scenario[] {
               for (const gate of [
                 { budget: 0n, stop: undefined, reason: 'budget' },
                 { budget: 1n, stop: CODE, reason: 'stop' },
-              ]) {
+              ] as const) {
                 cpu.setState(before);
                 const result = await cpu.run(
                   gate.stop === undefined

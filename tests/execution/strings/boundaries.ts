@@ -43,12 +43,12 @@ export function boundaryScenarios(compiler: WebAssembly.Module): Scenario[] {
           ['f0a4', 'invalid-encoding'],
           ['f3', 'fetch-fault'],
           ['66'.repeat(15), 'invalid-encoding'],
-        ])
-          await using(compiler, code!, LONG, async (cpu) => {
+        ] as const)
+          await using(compiler, code, LONG, async (cpu) => {
             const before = input(0x1000n, { 1: 2n, 6: 0x4000n, 7: 0x5000n });
             cpu.setState(before);
             const result = await cpu.run({ budget: 1n, repeatBudget: 0n });
-            outcome(result, reason!, 1n, 0n, 0n, 0n, before);
+            outcome(result, reason, 1n, 0n, 0n, 0n, before);
             if (reason === 'fetch-fault')
               fault(result, {
                 instructionPc: 0x1000n,

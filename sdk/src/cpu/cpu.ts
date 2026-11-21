@@ -80,8 +80,46 @@ export type RunOptions = {
   eventDelivery?: { budget: bigint } | undefined;
 };
 
+const runReasonNames = [
+  'budget',
+  'stop',
+  'unsupported',
+  'fetch-fault',
+  'target-fault',
+  'data-fault',
+  'invalid-encoding',
+  'resource-limit',
+  'divide-error',
+  'segment-fault',
+  'repeat-budget',
+  'alignment-fault',
+  'simd-exception',
+  'general-protection',
+  'x87-exception',
+  'protection-fault',
+  'system-memory-fault',
+  'debug-exception',
+  'event-budget',
+  'pending-exception',
+  'shutdown',
+  'pending-interrupt',
+  'halted',
+  'page-fault',
+  'physical-memory-fault',
+  'device-not-available',
+  'alignment-check',
+  'paused',
+] as const;
+
+export type RunReason = (typeof runReasonNames)[number];
+const runReasons: ReadonlySet<string> = new Set(runReasonNames);
+
+function isRunReason(reason: string): reason is RunReason {
+  return runReasons.has(reason);
+}
+
 export interface RunResult {
-  reason: string;
+  reason: RunReason;
   retired: bigint;
   remaining: bigint;
   repeatIterations: bigint;
@@ -581,6 +619,7 @@ export class Cpu {
     remainingRepeatBudget: bigint,
     remainingDeliveryBudget: bigint | undefined,
   ): RunResult {
+    if (!isRunReason(reason)) throw new Error(`core returned an invalid run reason: ${reason}`);
     const { budget, repeatBudget, deliveryBudget, resources, timings, began } = run;
     this.pruneTranslations();
     const numeric = this.#engine.numericFault?.(reason);

@@ -8,6 +8,25 @@ import {
 // @ts-expect-error Internal modules have no package export.
 import type { Core } from 'ring64/wasm/core.js';
 
+type StandaloneReason = Awaited<ReturnType<Cpu['run']>>['reason'];
+type ParallelReason = Awaited<ReturnType<Machine['cpus'][number]['run']>>['reason'];
+type RunReason = import('ring64').RunReason;
+type ParallelRunReason = import('ring64/parallel').RunReason;
+
+const stopped: StandaloneReason = 'stop';
+const paused: ParallelReason = 'paused';
+const publicReason: RunReason = stopped;
+const parallelPublicReason: ParallelRunReason = paused;
+// @ts-expect-error Native dispatch continues inside the SDK.
+const dispatch: StandaloneReason = 'dispatch';
+// @ts-expect-error Paging restart continues inside the SDK.
+const restart: StandaloneReason = 'paging-restart';
+// @ts-expect-error Worker slice boundaries continue inside the SDK.
+const boundary: ParallelReason = 'parallel-boundary';
+// @ts-expect-error The worker's result reason has a closed set of values.
+const typo: ParallelReason = 'page-fualt';
+void [stopped, paused, publicReason, parallelPublicReason, dispatch, restart, boundary, typo];
+
 const cpuCompiler: Promise<WebAssembly.Module> = loadCpuCompiler();
 const parallelCompiler: Promise<WebAssembly.Module> = loadParallelCompiler();
 void [cpuCompiler, parallelCompiler];

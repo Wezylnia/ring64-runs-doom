@@ -164,7 +164,7 @@ export function dataObservationScenarios(core: WebAssembly.Module): Scenario[] {
             for (const gate of [
               { budget: 1n, stop: undefined, reason: 'budget' },
               { budget: 3n, stop: 0x1003n, reason: 'stop' },
-            ]) {
+            ] as const) {
               cpu.writeMemory(setup.ramBase, hex(original));
               cpu.setState(before);
               const result = await cpu.run(

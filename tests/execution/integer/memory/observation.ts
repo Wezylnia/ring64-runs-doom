@@ -46,7 +46,7 @@ export function observationScenarios(core: WebAssembly.Module): Scenario[] {
             for (const gated of [
               { budget: 1n, stop: undefined, reason: 'budget', remaining: 0n },
               { budget: 3n, stop: 0x1003n, reason: 'stop', remaining: 2n },
-            ]) {
+            ] as const) {
               cpu.writeMemory(0x4000n, new Uint8Array(16));
               cpu.setState(before);
               const result = await cpu.run(

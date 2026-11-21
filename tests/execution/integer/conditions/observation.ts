@@ -104,7 +104,7 @@ export function observationScenarios(core: WebAssembly.Module): Scenario[] {
                 pc: 0x1007n,
                 stored: false,
               },
-            ]) {
+            ] as const) {
               cpu.writeMemory(0x3ff8n, hex(ram));
               cpu.setState(before);
               const result = await cpu.run(

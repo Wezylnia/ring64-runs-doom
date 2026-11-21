@@ -24,7 +24,7 @@ export function limitScenarios(core: WebAssembly.Module): Scenario[] {
             for (const gate of [
               { budget: 0n, reason: 'budget' },
               { budget: 1n, reason: 'stop' },
-            ]) {
+            ] as const) {
               const result = await cpu.run({ budget: gate.budget, stop: CODE });
               exit(result, gate.reason, gate.budget, 0n, before);
               noFault(result);

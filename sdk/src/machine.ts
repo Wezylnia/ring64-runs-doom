@@ -37,6 +37,7 @@ import {
 } from './parallel/transport.js';
 
 export type { MachineOptions, ParallelCpu, ParallelRunResult, RunOptions };
+export type { RunReason } from './cpu/cpu.js';
 export { ParallelError };
 
 /** Compile the packaged parallel Core for reuse across machines. */

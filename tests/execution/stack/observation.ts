@@ -340,7 +340,7 @@ export function observationScenarios(core: WebAssembly.Module): Scenario[] {
                   operation === 'call'
                     ? stack(CODE + BigInt(instruction.length / 2), 24)
                     : original;
-                for (const phase of ['budget', 'stop', 'reached']) {
+                for (const phase of ['budget', 'stop', 'reached'] as const) {
                   cpu.writeMemory(0x4000n, hex(original));
                   cpu.setState(before);
                   const budget = phase === 'budget' ? 1n : 2n;
