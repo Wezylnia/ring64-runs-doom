@@ -366,6 +366,7 @@ export class Core {
   readonly #layout: CoreStateLayout;
   readonly #statePointer: number;
   #stateDataView?: DataView;
+  #standaloneStateBuffer: ArrayBuffer | undefined;
 
   protected constructor(
     exports: CoreExports,
@@ -730,12 +731,14 @@ export class Core {
   }
 
   protected stateView(): DataView {
-    const buffer = this.#exports.memory.buffer;
     let view = this.#stateDataView;
-    // memory.grow(0) can replace the buffer without changing its size.
+    // Growing non-shared memory detaches its fixed buffer, even for grow(0).
+    if (view !== undefined && this.#standaloneStateBuffer?.byteLength) return view;
+    const buffer = this.#exports.memory.buffer;
     if (view === undefined || view.buffer !== buffer) {
       view = new DataView(buffer, this.#statePointer, this.#layout.size);
       this.#stateDataView = view;
+      this.#standaloneStateBuffer = buffer instanceof ArrayBuffer ? buffer : undefined;
     }
     return view;
   }
