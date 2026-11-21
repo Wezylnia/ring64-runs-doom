@@ -1,4 +1,9 @@
-# ring64
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="./assets/logo-dark.svg">
+    <img alt="ring64" src="./assets/logo.svg" width="240">
+  </picture>
+</h1>
 
 an x86 and x86-64 cpu emulator for the browser
 
