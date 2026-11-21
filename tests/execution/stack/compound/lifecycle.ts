@@ -1,9 +1,9 @@
-import { createCpu, type Cpu, type Options } from '../../../sdk/src/index.js';
-import { Core } from '../../../sdk/src/wasm/core.js';
-import { longSnapshot } from '../../support/context.js';
-import { LIMITS, check, initial, exit } from '../../support/fixture.js';
-import { using as usingProfile, type Profile } from '../identity-time/oracle.js';
-import { PC, expected, same, equal, hex, bytes, type Scenario } from './compound-fixture.js';
+import { createCpu, type Cpu, type Options } from '../../../../sdk/src/index.js';
+import { Core } from '../../../../sdk/src/wasm/core.js';
+import { longSnapshot } from '../../../support/context.js';
+import { LIMITS, check, initial, exit } from '../../../support/fixture.js';
+import { using as usingProfile, type Profile } from '../../identity-time/oracle.js';
+import { PC, expected, same, equal, hex, bytes, type Scenario } from './fixture.js';
 
 export function compoundLifecycleScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [

@@ -1,5 +1,5 @@
-import { createCpu, type ExecutionContextSnapshot } from '../../../sdk/src/index.js';
-import { exit, initial } from '../../support/fixture.js';
+import { createCpu, type ExecutionContextSnapshot } from '../../../../sdk/src/index.js';
+import { exit, initial } from '../../../support/fixture.js';
 import {
   fixture,
   families,
@@ -10,8 +10,8 @@ import {
   preserved,
   AC,
   SMAP,
-} from '../supervisor-access/fixture.js';
-import { equal, merge, expected, PC, type Scenario } from './compound-fixture.js';
+} from '../../supervisor-access/fixture.js';
+import { equal, merge, expected, PC, type Scenario } from './fixture.js';
 
 const side = (compiler: WebAssembly.Module) => ({ createCpu, compiler });
 

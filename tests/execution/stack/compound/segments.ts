@@ -1,6 +1,6 @@
-import { createCpu } from '../../../sdk/src/index.js';
-import { exit, memory as scalarMemory, initial } from '../../support/fixture.js';
-import { using as usingProfile, type Profile } from '../identity-time/oracle.js';
+import { createCpu } from '../../../../sdk/src/index.js';
+import { exit, memory as scalarMemory, initial } from '../../../support/fixture.js';
+import { using as usingProfile, type Profile } from '../../identity-time/oracle.js';
 import {
   PC,
   compoundProfiles,
@@ -13,7 +13,7 @@ import {
   hex,
   type CompoundProfile,
   type Scenario,
-} from './compound-fixture.js';
+} from './fixture.js';
 
 export function compoundSegmentScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [

@@ -1,4 +1,4 @@
-import { memory as scalarMemory, exit, fault } from '../../support/fixture.js';
+import { memory as scalarMemory, exit, fault } from '../../../support/fixture.js';
 import {
   PC,
   RAM_BASE,
@@ -16,7 +16,7 @@ import {
   bytes,
   type CompoundProfile,
   type Scenario,
-} from './compound-fixture.js';
+} from './fixture.js';
 
 const protected32 = compoundProfiles.find((p) => p.name === 'protected/32/32')!;
 const protectedWordStack = compoundProfiles.find((p) => p.name === 'protected/32/16')!;

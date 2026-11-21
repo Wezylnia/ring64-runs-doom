@@ -17,7 +17,7 @@ import {
   hex,
   type CompoundProfile,
   type Scenario,
-} from './compound-fixture.js';
+} from './fixture.js';
 
 // Expected values use slot ordinals and raw register masks, never a decoder or
 // the portable compound-stack implementation.

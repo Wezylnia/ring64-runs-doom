@@ -1,7 +1,7 @@
-import { createCpu, type ExecutionContextSnapshot } from '../../../sdk/src/index.js';
-import { exit, initial } from '../../support/fixture.js';
-import { fixture, using, memory as physicalMemory, put } from '../supervisor-access/fixture.js';
-import { gate } from '../software-events/fixture.js';
+import { createCpu, type ExecutionContextSnapshot } from '../../../../sdk/src/index.js';
+import { exit, initial } from '../../../support/fixture.js';
+import { fixture, using, memory as physicalMemory, put } from '../../supervisor-access/fixture.js';
+import { gate } from '../../software-events/fixture.js';
 import {
   PC,
   RAM_BASE,
@@ -15,7 +15,7 @@ import {
   equal,
   hex,
   type Scenario,
-} from './compound-fixture.js';
+} from './fixture.js';
 
 export function compoundEventScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [

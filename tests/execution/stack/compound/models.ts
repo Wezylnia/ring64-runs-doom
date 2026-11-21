@@ -1,14 +1,22 @@
-import { createCpu } from '../../../sdk/src/index.js';
-import { exit } from '../../support/fixture.js';
+import { createCpu } from '../../../../sdk/src/index.js';
+import { exit } from '../../../support/fixture.js';
 import {
   profiles,
   using as usingModel,
   input,
   execution,
   type Profile,
-} from '../identity-time/oracle.js';
-import { fixture, using, put, memory, preserved, same, hex } from '../supervisor-access/fixture.js';
-import { expected, merge, PC, equal, type Scenario } from './compound-fixture.js';
+} from '../../identity-time/oracle.js';
+import {
+  fixture,
+  using,
+  put,
+  memory,
+  preserved,
+  same,
+  hex,
+} from '../../supervisor-access/fixture.js';
+import { expected, merge, PC, equal, type Scenario } from './fixture.js';
 
 const modelProfiles: Profile[] = [
   ...profiles

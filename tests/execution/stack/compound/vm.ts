@@ -14,7 +14,7 @@ import {
   same,
   equal,
   type Scenario,
-} from '../software-events/fixture.js';
+} from '../../software-events/fixture.js';
 
 export function compoundVmScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [
