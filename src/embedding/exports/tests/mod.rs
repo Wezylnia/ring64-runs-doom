@@ -1,6 +1,7 @@
 use super::admission::core_probe;
 use super::mapped::{core_read_memory, core_write_memory};
 use super::scalar::*;
+use super::state::core_import_state;
 use super::translation::core_compile;
 use super::*;
 #[path = "memory/access_faults.rs"]
@@ -55,7 +56,9 @@ mod system_flags_review;
 mod system_provenance;
 #[path = "numeric/x87_bridge.rs"]
 mod x87_bridge;
-use crate::embedding::layout::{BUDGET, DATA, DISPATCH, DIVIDE_ERROR, REPEAT_BUDGET, STOP};
+use crate::embedding::layout::{
+    BUDGET, DATA, DISPATCH, DIVIDE_ERROR, REPEAT_BUDGET, RawEventState, SCALAR_STATE_SIZE, STOP,
+};
 
 fn initialize(code_base: u64, code: &[u8]) {
     BRIDGE.with_borrow_mut(|bridge| {
