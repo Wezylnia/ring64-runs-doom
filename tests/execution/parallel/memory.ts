@@ -657,6 +657,69 @@ export function parallelMemoryScenarios(
       },
     },
     {
+      name: 'shared indexed byte stores preserve their effects and retry after stripe promotion',
+      async run() {
+        // MOV [RDI+RSI],DL; XCHG [RDI+RSI],EAX; MOV [RDI+RSI+1],CL;
+        // MOV [RDI+RSI+4],DL; DEC EBX; JNE entry.
+        const code = hex('881437870437884c370188543704ffcb75ee');
+        const options = linearMachine(compiler, code);
+        const base = 0xffff_8000_0000_4000n;
+        const denied = base + 9n;
+        const stop = ENTRY + BigInt(code.length);
+        const store = ENTRY + 10n;
+        const codeMap = options.memory.mappings[0]!;
+        options.memory.mappings = [
+          codeMap,
+          span(base, 'data', 0, 9),
+          span(denied, 'data', 9, 1, 'r'),
+        ];
+        options.memory.backings[1]!.bytes.set([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+
+        await withMachine(factory, options, async (machine) => {
+          const cpu = machine.cpus[0]!;
+          const before = cpuState(ENTRY, {
+            0: 0x11223344n,
+            1: 0xbbn,
+            2: 0xaan,
+            3: 1n,
+            6: 5n,
+            7: base,
+          });
+          await cpu.setState(before);
+          const failed = await cpu.run({ budget: 8n, stop });
+          // The unaligned four-byte exchange crosses two atomic lanes.
+          const committed = changed(before, store, { 0: 0x080706aan });
+          exit(failed, 'data-fault', 8n, 3n, committed);
+          fault(failed, {
+            instructionPc: store,
+            address: denied,
+            width: 1,
+            access: 'write',
+            cause: 'permission',
+            failingAddress: denied,
+            segment: 'ds',
+          });
+          const memory = [0, 1, 2, 3, 4, 0x44, 0xbb, 0x22, 0x11, 9];
+          same(
+            [...(await machine.readMemory(base, 10))],
+            memory,
+            'only the first three stores took effect',
+          );
+
+          await machine.setMappings([codeMap, span(base, 'data', 0, 10)]);
+          exit(
+            await cpu.run({ budget: 8n, stop }),
+            'stop',
+            8n,
+            3n,
+            changed(committed, stop, { 3: 0n }, 0x46n),
+          );
+          memory[9] = 0xaa;
+          same([...(await machine.readMemory(base, 10))], memory, 'only the repaired byte changes');
+        });
+      },
+    },
+    {
       name: 'shared indexed float reads keep exact bounds after promotion and remap',
       async run() {
         // MOVSS [RAX+RCX*4]; ADDSS [RBX+RCX*4]; accumulate; count; XCHG [RDI],RAX.
