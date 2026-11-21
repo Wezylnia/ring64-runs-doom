@@ -98,6 +98,7 @@ fn branch_target(operation: Operation) -> Option<u64> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ConditionSource {
     Operands(Width),
+    OperandsWithTakenFlags(Width),
     ResultSign(Width),
 }
 
@@ -206,9 +207,13 @@ pub(super) fn compare_predicates(
         let Operation::Jcc { condition, target } = instruction.operation else {
             replaces[position] = match instruction.operation {
                 Operation::Alu { kind, .. } => !matches!(kind, Alu::Adc | Alu::Sbb),
-                Operation::Mov { .. } | Operation::Lea { .. } | Operation::Nop => {
-                    next_overwrites(instruction.next_pc)
+                Operation::Mov { .. }
+                | Operation::Lea { .. }
+                | Operation::Extend {
+                    src: Location::Register(_),
+                    ..
                 }
+                | Operation::Nop => next_overwrites(instruction.next_pc),
                 _ => false,
             };
             continue;
@@ -228,8 +233,12 @@ pub(super) fn compare_predicates(
             } else {
                 target <= context.code_limit()
             })
-            || !next_overwrites(target)
         {
+            continue;
+        }
+        let fallthrough_overwrites = next_overwrites(instruction.next_pc);
+        let restore_taken = !next_overwrites(target);
+        if restore_taken && (position_at(target).is_some() || !fallthrough_overwrites) {
             continue;
         }
         let producer = instructions[order.at(position as u32 - 1) as usize];
@@ -250,7 +259,7 @@ pub(super) fn compare_predicates(
             _ => continue,
         };
 
-        if !next_overwrites(instruction.next_pc) {
+        if !fallthrough_overwrites {
             let Some(load_position) = position_at(instruction.next_pc)
                 .filter(|&i| i == position + 1 && !explicit_entry[i])
             else {
@@ -267,7 +276,13 @@ pub(super) fn compare_predicates(
             predicates[load_position] = CompareAction::RestoreOnLoadFault(Alu::Cmp, width);
         }
         predicates[position - 1] = CompareAction::SkipStatus;
-        predicates[position] = CompareAction::Condition(ConditionSource::Operands(width));
+        predicates[position] = CompareAction::Condition(if restore_taken {
+            // The fallthrough replaces flags before exposing them. The
+            // external edge publishes the actual CMP state before routing.
+            ConditionSource::OperandsWithTakenFlags(width)
+        } else {
+            ConditionSource::Operands(width)
+        });
     }
     predicates
 }

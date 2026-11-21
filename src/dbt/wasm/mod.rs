@@ -556,6 +556,12 @@ impl Emitter {
             Operation::Jcc { condition, target } => {
                 self.cloned_condition(condition, compare_source);
                 self.op(Op::If(BlockType::Empty));
+                if let Some(loop_cfg::ConditionSource::OperandsWithTakenFlags(width)) =
+                    compare_source
+                {
+                    self.arithmetic_result(Alu::Cmp, width);
+                    self.arithmetic_flags(Alu::Cmp, width);
+                }
                 self.target(target, loop_depth + 1, exit_depth + 1);
                 self.op(Op::End);
                 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]

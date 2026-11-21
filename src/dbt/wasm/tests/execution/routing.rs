@@ -1325,6 +1325,106 @@ fn compare_predicate_restores_flags_only_on_its_fallthrough_load_fault() {
 }
 
 #[test]
+fn compare_predicate_restores_status_on_a_taken_loop_exit() {
+    use super::super::loop_cfg::{CompareAction, ConditionSource, compare_predicates, select};
+    use crate::embedding::layout::DATA;
+
+    let artifact = compiled_fixture(
+        0x1000,
+        &[
+            0x74, 0x07, // je 0x1009
+            0x3b, 0x07, // cmp eax,[rdi]
+            0x73, 0x09, // jae 0x100f
+            0x0f, 0xb6, 0xd0, // movzx edx,al
+            0x83, 0xe9, 0x01, // sub ecx,1
+            0x75, 0xf2, // jne 0x1000
+            0x90, 0x90,
+        ],
+        0x1000,
+    );
+    let context = crate::x86::context::ExecutionContext::default();
+    let predicates = |instructions: &[Instruction]| {
+        let (order, _) = select(instructions).unwrap();
+        compare_predicates(instructions, order, &context)
+    };
+    assert_eq!(
+        predicates(&artifact.instructions)[1..3],
+        [
+            CompareAction::SkipStatus,
+            CompareAction::Condition(ConditionSource::OperandsWithTakenFlags(Width::W32)),
+        ]
+    );
+    let mut flags_live = artifact.instructions;
+    flags_live[4].operation = Operation::Nop;
+    assert_eq!(predicates(&flags_live)[1], CompareAction::Ordinary);
+
+    let continued = [(1, 0), (2, 0x80)];
+    let mut cases = Vec::new();
+    for (eax, entry, budget, stop, read, expected) in [
+        (
+            0x8000_0000,
+            0x1000,
+            8,
+            0x100f,
+            Some(("1", 0)),
+            (&[][..], 0x816, 0x100f, STOP, 5),
+        ),
+        (
+            0x80,
+            0x1000,
+            8,
+            0x100e,
+            Some(("ff", 0)),
+            (&continued[..], 0x46, 0x100e, STOP, 2),
+        ),
+        (
+            0x80,
+            0x1004,
+            8,
+            0x100e,
+            None,
+            (&continued[..], 0x46, 0x100e, STOP, 4),
+        ),
+        (
+            0x8000_0000,
+            0x1000,
+            2,
+            0x100f,
+            Some(("1", 0)),
+            (&[][..], 0x816, 0x1004, BUDGET, 0),
+        ),
+        (
+            0x8000_0000,
+            0x1000,
+            8,
+            0x100f,
+            Some(("1", DATA)),
+            (&[][..], 0x803, 0x1002, DATA, 7),
+        ),
+    ] {
+        let (registers, flags, rip, reason, remaining) = expected;
+        let mut packet = execution_case(
+            &artifact.bytes,
+            &artifact.entries,
+            &[(0, eax), (1, 1), (7, 0x8000)],
+            0x803,
+            entry,
+            budget,
+            (registers, flags, rip, reason as u32, remaining),
+        );
+        packet["stop"] = json!(format!("{stop:x}"));
+        if let Some((value, status)) = read {
+            packet["accesses"] = json!([
+                {"kind":"load","args":["8000",4],"result":value},
+                {"kind":"access_failed","args":[],"result":status}
+            ]);
+        }
+        cases.push(packet);
+    }
+    run_cases(cases);
+}
+
+#[test]
 fn conditional_move_preserves_sub_flags_across_an_intervening_scalar_load() {
     use super::super::loop_cfg::{CompareAction, ConditionSource, compare_predicates, select};
     use crate::embedding::layout::DATA;

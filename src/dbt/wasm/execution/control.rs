@@ -161,7 +161,9 @@ impl Emitter {
         use super::loop_cfg::ConditionSource;
         match source {
             None => self.condition(condition),
-            Some(ConditionSource::Operands(width)) => self.compare_condition(condition, width),
+            Some(
+                ConditionSource::Operands(width) | ConditionSource::OperandsWithTakenFlags(width),
+            ) => self.compare_condition(condition, width),
             Some(ConditionSource::ResultSign(width)) => {
                 self.op(Op::LocalGet(super::RESULT));
                 if width == Width::W32 {
