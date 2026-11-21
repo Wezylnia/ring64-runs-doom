@@ -1,3 +1,4 @@
+import { context } from '../modes/fixture.js';
 import { RESET_BANK, resetContext } from '../reset/fixture.js';
 import type { Scenario } from '../../support/fixture.js';
 import {
@@ -58,6 +59,33 @@ export function parallelLifecycleScenarios(
             true,
             'resumes saved instruction, without replaying loop prologue',
           );
+        });
+      },
+    },
+    {
+      name: 'shared Protected32 register loops preserve upper halves across partial laps',
+      async run() {
+        // SHL EAX,1; SUB ECX,1; JNZ entry.
+        const options = linearMachine(compiler, 'd1e083e90175f9');
+        options.cpus[0]!.context = context('protected');
+        const stop = ENTRY + 7n;
+        const eax = 0x1234567800000000n;
+        const ecx = 0x90abcdef00000000n;
+        await withMachine(factory, options, async (machine) => {
+          const cpu = machine.cpus[0]!;
+          await cpu.setState(cpuState(ENTRY, { 0: eax | 1n, 1: ecx | 3n }));
+          const partial = await cpu.run({ budget: 5n, stop });
+          equal(partial.reason, 'budget', 'one full lap and two instructions');
+          equal(partial.retired, 5n, 'exact instruction count');
+          equal(partial.state.rip, ENTRY + 5n, 'resume at JNZ');
+          same(
+            partial.state.registers.slice(0, 2),
+            [eax | 4n, ecx | 1n],
+            'partial register values',
+          );
+          const finished = await cpu.run({ budget: 8n, stop });
+          done(finished, stop, 4n);
+          same(finished.state.registers.slice(0, 2), [eax | 8n, ecx], 'final register values');
         });
       },
     },
