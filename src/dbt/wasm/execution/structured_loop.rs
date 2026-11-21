@@ -729,29 +729,34 @@ impl Emitter {
             .op(Op::I64GeU)
             .op(Op::I32And)
             .op(Op::If(BlockType::Empty))
-            .op(Op::LocalGet(attempts))
             .op(Op::I64Const(instructions[body.head as usize].pc as i64))
             .op(Op::I32Const(body.paged_fetch_bytes.unwrap() as i32));
         self.system_bits();
         self.op(Op::LocalGet(super::SHADOW))
             .op(Op::Call(guard))
             .op(Op::LocalTee(REASON))
-            // A cold fetch returns 0 and earns one retry after the checked lap.
-            // Admission or a definitive rejection spends both attempts.
+            .op(Op::I32Const(1))
+            .op(Op::I32Eq)
+            .op(Op::If(BlockType::Empty))
+            .op(Op::I32Const(0))
+            .op(Op::LocalSet(REASON));
+        self.guarded_paged_lap = true;
+        self.emit_prechecked_body(instructions, body, loop_depth + 3, None);
+        self.guarded_paged_lap = false;
+        // Later visits can revalidate after a successful clone. A cold failure
+        // spends one attempt and an observer rejection disables the clone.
+        self.op(Op::Else)
+            .op(Op::LocalGet(attempts))
+            .op(Op::LocalGet(REASON))
             .op(Op::I32Add)
             .op(Op::I32Const(1))
             .op(Op::I32Add)
             .op(Op::LocalSet(attempts))
-            .op(Op::LocalGet(REASON))
-            .op(Op::I32Const(1))
-            .op(Op::I32Eq)
             .op(Op::I32Const(0))
             .op(Op::LocalSet(REASON))
-            .op(Op::If(BlockType::Empty));
-        self.guarded_paged_lap = true;
-        self.emit_prechecked_body(instructions, body, loop_depth + 3, None);
-        self.guarded_paged_lap = false;
-        self.op(Op::End).op(Op::End).op(Op::End);
+            .op(Op::End)
+            .op(Op::End)
+            .op(Op::End);
     }
 
     pub(super) fn emit_prechecked_body(

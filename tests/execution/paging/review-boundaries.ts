@@ -245,6 +245,53 @@ export function pagingBoundaryReviewScenarios(compiler: WebAssembly.Module): Sce
       },
     },
     {
+      name: 'paged MOVZX inner loop preserves state across repeat visits and a retained miss',
+      async run() {
+        const head = 0x400000n;
+        // Preload, then two outer visits of two inner laps with four MOVZX loads.
+        const code = '0fb607b9020000000fb6070fb657010fb65f020fb677034101c0ffc975eaffcd75e1';
+        for (const miss of [false, true]) {
+          const data = miss ? 0x401ffdn : 0x401000n;
+          await usingPaged(
+            compiler,
+            {
+              code,
+              words: [
+                [0x1000n, 0x2027n],
+                [0x2000n, 0x3027n],
+                [0x3010n, 0x4027n],
+                [0x4000n, 0x9027n],
+                [0x4008n, 0xa027n],
+                [0x4010n, 0xb027n],
+              ],
+              spans: miss
+                ? [
+                    { physical: 0xaffdn, bytes: Uint8Array.of(0xff, 10, 11) },
+                    { physical: 0xb000n, bytes: Uint8Array.of(12) },
+                  ]
+                : [{ physical: 0xa000n, bytes: Uint8Array.of(0xff, 10, 11, 12) }],
+            },
+            async (cpu) => {
+              cpu.setState(initial(head, { 5: 2n, 7: data, 8: 0n }, 2n));
+              const result = await cpu.run({ budget: 36n, stop: head + 34n });
+              equal(result.reason, 'stop', 'both outer visits finish');
+              equal(result.resources.nativeEntries, 1, 'both visits use one generated activation');
+              equal(result.retired, 35n, 'all inner laps retire exactly once');
+              equal(result.state.registers[1], 0n, 'the inner counter finishes');
+              equal(result.state.registers[5], 0n, 'the outer counter finishes');
+              equal(result.state.registers[6], 12n, 'the fourth read commits on both mapped pages');
+              equal(
+                result.state.registers[8],
+                1020n,
+                'the four guarded or checked additions commit',
+              );
+              equal(result.state.flags, 0x46n, 'the outer loop exit publishes the last DEC');
+            },
+          );
+        }
+      },
+    },
+    {
       name: 'paging review native cross-page fetch discards an owner invalidated by its one accessed-bit update',
       async run() {
         await usingPaged(

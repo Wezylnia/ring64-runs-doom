@@ -215,6 +215,7 @@ impl Emitter {
             }
         {
             let entry = self.current_index as i32;
+            let (_, attempts) = self.paged_loop_guard.expect("paged loop guard");
             self.address(address, next_pc);
             self.op(Op::Call(read))
                 .op(Op::LocalTee(VALUE))
@@ -223,6 +224,8 @@ impl Emitter {
                 .op(Op::If(BlockType::Empty))
                 // The failed probe left this instruction unstarted. Enter its
                 // checked label with the already-retired prefix still local.
+                .op(Op::I32Const(2))
+                .op(Op::LocalSet(attempts))
                 .op(Op::I32Const(entry))
                 .op(Op::LocalSet(super::ENTRY))
                 .op(Op::Br(exit_depth))
