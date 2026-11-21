@@ -3,8 +3,10 @@ import { resolve } from 'node:path';
 import { encode, hash, manifest, root } from './paging-support.mjs';
 
 const families = {
-  'src/embedding/exports.rs': ['load', 'load_for_write', 'store'],
-  'src/embedding/exports/system/context.rs': [
+  'src/embedding/exports/memory/scalar.rs': [
+    'load',
+    'load_for_write',
+    'store',
     'segmented_load',
     'segmented_load_for_write',
     'segmented_store',
@@ -48,8 +50,11 @@ for (const [path, names] of Object.entries(families)) {
 }
 for (const [path, anchors] of Object.entries({
   'src/embedding/exports.rs': ['macro_rules! guest_access', 'macro_rules! guest_semantics'],
-  'src/dbt/wasm/mod.rs': [
-    'emit_profile(unit, observed, false)',
+  'src/dbt/mod.rs': [
+    'compile_with_paging(image, context, None, entry, limits, observed)',
+    'let bytes = wasm::emit_profile(\n        &unit,\n        observed,\n        paging.is_some(),',
+  ],
+  'src/dbt/wasm/artifact.rs': [
     'let observed = observed || paged;',
     'let access_reason = (segmented || paged).then',
   ],
@@ -92,29 +97,10 @@ const evidence = {
   files,
   wrappers,
   references,
-  staticWarmFetchCostModel: {
-    measured: false,
-    conditions:
-      'Successful stable required-byte decode, every relevant A bit already set, four-level4KiB mapping, no alias changes/faults/debug source. Derived from the source hashes above, not a runtime walk counter.',
-    tableWordReadsForNBytes: '4 * (n*(n-1)/2 + 2*n)',
-    examples: {
-      twoByteInstruction: 20,
-      threeByteInstruction: 36,
-      fifteenByteInstruction: 540,
-      threeByteLoadPlusTwoByteLoopPlusDataWalk: 60,
-    },
-    explanation:
-      'Each required byte has one actual walk and a pure current-byte rewalk, plus a pure rewalk of every previously consumed byte. One ordinary4KiB data access adds four table-word reads. This excludes cold A/D paths, discovery/compilation, backing probes, data/code copies, allocator and event work.',
-    ceiling:
-      'Warm means warmed A/D metadata and reused artifact, not retained instruction/data translation; no instruction TLB is implemented or claimed.',
-  },
   findings: [
-    'All18 legacy memory/system families explicitly instantiate const PAGED=false, including all17 existing debug-observed variants. guest_access/guest_semantics choose Image directly in that compile-time branch; no mutable PG check is added to these successful guest accesses.',
-    'The shared backing preflight also selects linear versus physical domain through const PHYSICAL, not a per-access mutable memory-model branch. Image retains the inherited linear canonical check; physical entry points instantiate the physical check.',
-    'The existing artifact emission profile supplies paged=false for linear owners. Paged mode adds its own admission/finish helpers through one-time host instantiation binding selection, rather than changing the five-argument generated invocation.',
-    'Inactive means paging absent here: existing debug-observed artifacts remain part of the strict inherited byte/import/helper-count proof; they are not excluded as active debug work.',
-    'Source specialization and unchanged generated modules do not imply identical compiled core helper bodies, zero host snapshot overhead, or universal no-regression. Core struct/code layout and frontend/error checks changed and require matched timing controls.',
-    'The paging bank stays an explicit projection. Only frozen vector14 source transport is appended to RunState; existing numeric/scalar/event/debug offsets are verified through the runtime descriptor by paging-observer.mjs.',
+    'The recorded linear memory and system exports instantiate their helpers with PAGED=false, including the observed variants where available.',
+    'Linear and physical backing preflight select the address domain through const PHYSICAL.',
+    'The compiler selects the paged artifact profile from the optional paging state.',
   ],
 };
 await mkdir(resolve(root, 'build/verification'), { recursive: true });

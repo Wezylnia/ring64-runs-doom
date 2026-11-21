@@ -2,6 +2,7 @@ const access = 'src/x86/paging/access.rs';
 const intent = 'src/x86/alignment.rs';
 const exceptions = 'src/x86/exception.rs';
 const controls = 'src/x86/paging/controls.rs';
+const scalar = 'src/embedding/exports/memory/scalar.rs';
 const frameGate = 'alignment_uses_current_controls_and_prospective_frame_privilege';
 const granular = 'semantic operand granules suppress all candidate numeric and RMW state';
 const edit = (file, old, replacement) => ({ file, old, replacement });
@@ -46,9 +47,17 @@ export const mutants = [
     'aligned-effective-offset-suppresses-linear-natural-check',
     'final segmented linear address reverses effective-offset residues',
     edit(
-      'src/embedding/exports/system/context.rs',
-      '        match guest_access!(core, PAGED, read(address, width)) {',
-      `        match guest_access!(core, PAGED,
+      scalar,
+      `            false,
+        ) else {
+            return 0;
+        };
+        match guest_access!(core, PAGED, read(address, width)) {`,
+      `            false,
+        ) else {
+            return 0;
+        };
+        match guest_access!(core, PAGED,
             read_aligned(address, width, if offset & u64::from(width - 1) == 0 {
                 crate::x86::alignment::Intent::Exempt
             } else { crate::x86::alignment::Intent::Natural(width) })) {`,
@@ -314,7 +323,7 @@ fn participates`,
             self.load_address_value(width, false, exit_depth);`,
     ),
     edit(
-      'src/dbt/wasm/mod.rs',
+      'src/dbt/wasm/artifact.rs',
       '    let write_intent = unit.instructions.iter().any(|instruction| {',
       `    let write_intent = unit.instructions.iter().any(|instruction| matches!(instruction.operation,
         Operation::String { kind: crate::x86::instruction::StringKind::Movs, .. }))
@@ -539,7 +548,7 @@ fn participates`,
     'successful-scalar-helper-keeps-stale-ac',
     'each_operand_admission_clears_a_previous_alignment_refusal',
     edit(
-      'src/embedding/exports.rs',
+      scalar,
       `fn core_load_impl<const OBSERVED: bool, const PAGED: bool>(address: u64, width: u32) -> u64 {
     BRIDGE.with_borrow_mut(|bridge| {
         let core = bridge.core.as_mut().unwrap();

@@ -18,6 +18,7 @@ const access = 'src/x86/paging/access.rs';
 const paging = 'src/embedding/exports/memory/paging.rs';
 const exception = 'src/x86/exception.rs';
 const delivery = 'src/embedding/exports/events/exception_delivery.rs';
+const translation = 'src/embedding/exports/execution/translation.rs';
 const walk = 'src/x86/paging/walk.rs';
 const mutants = [
   {
@@ -138,7 +139,7 @@ const mutants = [
   },
   {
     name: 'speculative-successor-compilation-publishes-accessed',
-    file: 'src/embedding/exports.rs',
+    file: translation,
     old: '        let observed = core.boundary_observed();\n        match dbt::compile_with_paging',
     replacement:
       '        let observed = core.boundary_observed();\n        if let Some(bank) = core.paging { let request = crate::x86::paging::walk::Request { linear: (pc & !0xfff).wrapping_add(0x1000), access: Access::Execute, user: core.context.cpl() == 3 }; let _ = crate::x86::paging::walk::walk(&mut core.image, &bank, request); }\n        match dbt::compile_with_paging',
@@ -146,7 +147,7 @@ const mutants = [
   },
   {
     name: 'page-table-source-dependencies-omitted',
-    file: 'src/embedding/exports.rs',
+    file: translation,
     old: '                    artifact.read_dependencies.iter().map(|range| (range.start, range.length)),',
     replacement: '                    std::iter::empty::<(u64, u32)>(),',
     filter: 'warm code PTE remap',

@@ -22,7 +22,7 @@ const stamp = new Date().toISOString().replaceAll(/[:.]/g, '-');
 const work = resolve(arg('--work', `/tmp/ring64-context-reuse-mutations-${stamp}`));
 const evidence = resolve(arg('--evidence', `/tmp/ring64-context-reuse-mutation-evidence-${stamp}`));
 const hash = (bytes) => createHash('sha256').update(bytes).digest('hex');
-const owners = 'src/dbt/ownership.rs';
+const owners = 'src/dbt/ownership/mod.rs';
 const adapter = 'src/embedding/exports/execution/translation.rs';
 const validity = 'src/memory/validity.rs';
 const fieldOracle = 'context_reuse_assumptions_distinguish_every_normalized_context_field';
@@ -98,7 +98,7 @@ const mutants = [
   {
     name: 'released-assumptions-leak',
     kind: 'rust-owner',
-    file: 'src/embedding/exports/memory/mapped.rs',
+    file: adapter,
     old: '        core.translation_owners.release(owner);',
     replacement: '        let _ = owner;',
     filter: 'context_reuse_pending_aba_is_cancelled_even_when_epoch_saturates',
@@ -148,9 +148,9 @@ const mutants = [
     name: 'activation-clears-deferred-history',
     kind: 'public-cpu',
     file: adapter,
-    old: '    pub(super) fn activate_owner(&mut self, owner: u64) -> bool {',
+    old: '    fn activate_owner(&mut self, owner: u64) -> bool {',
     replacement:
-      '    pub(super) fn activate_owner(&mut self, owner: u64) -> bool {\n        unsafe { (*self.state.get()).debug.continuation = Default::default(); }',
+      '    fn activate_owner(&mut self, owner: u64) -> bool {\n        unsafe { (*self.state.get()).debug.continuation = Default::default(); }',
     filter: 'completion consumes SS-deferred history',
   },
   {
