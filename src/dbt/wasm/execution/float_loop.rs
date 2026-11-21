@@ -3,6 +3,7 @@ use super::{
     float::MASKED_STICKY_PRECISION, read_loop::ReadLoop, vector::Banks,
 };
 use crate::memory::canonical48;
+use crate::x86::instruction::{Alu, Operation};
 use wasm_encoder::{BlockType, Function, Instruction as Op, TypeSection, ValType};
 
 pub(super) const HEADER_REJECTION: i32 = -1;
@@ -11,6 +12,7 @@ pub(super) struct FloatOutline {
     index: u32,
     pub(super) signature: u32,
     pub(super) sticky_index: Option<u32>,
+    induction_input: (u32, u32),
     inputs: Vec<(u32, ValType)>,
     outputs: Vec<(u32, ValType)>,
 }
@@ -70,6 +72,8 @@ impl FloatOutline {
         for bias in 0..biases as u32 {
             inputs.push((first_bias + bias, ValType::I32));
         }
+        let induction = GPR + u32::from(induction);
+        let induction_parameter = inputs.iter().position(|&(local, _)| local == induction)?;
         let signature = types.len();
         types.ty().function(
             inputs.iter().map(|(_, ty)| *ty),
@@ -79,6 +83,7 @@ impl FloatOutline {
             index,
             signature,
             sticky_index: None,
+            induction_input: (induction_parameter as u32, induction),
             inputs,
             outputs,
         })
@@ -125,6 +130,24 @@ impl Emitter {
         self.loop_gates_prechecked = true;
         self.emit_structured_loop(instructions, loop_body, 0, None);
         self.loop_gates_prechecked = false;
+        self.op(Op::End);
+        let (parameter, induction) = outline.induction_input;
+        // An unchanged induction register means no complete lap retired.
+        // Otherwise the final visible status belongs to its latch compare.
+        self.body.instruction(&Op::LocalGet(parameter));
+        self.op(Op::LocalGet(induction))
+            .op(Op::I64Ne)
+            .op(Op::If(BlockType::Empty));
+        let Operation::Alu {
+            kind: Alu::Cmp,
+            dst,
+            src,
+            width,
+        } = instructions[loop_body.tail as usize - 1].operation
+        else {
+            unreachable!("proved float loop comparison");
+        };
+        self.integer(Alu::Cmp, dst, src, width, None);
         self.op(Op::End);
         for (local, _) in &outline.outputs {
             self.op(Op::LocalGet(*local));

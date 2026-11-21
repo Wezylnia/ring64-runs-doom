@@ -522,6 +522,10 @@ impl Emitter {
             }
         }
         let order = body.order();
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        let outlined_float = self.float_outline_params != 0;
+        #[cfg(not(all(not(feature = "parallel"), target_arch = "wasm32")))]
+        let outlined_float = false;
         let (predicates, read_prefix_len) =
             if !cfg!(feature = "parallel") && self.loop_gates_prechecked && body.forward_edges() {
                 // Batching the protected dword prefix removes a hot spill
@@ -587,6 +591,18 @@ impl Emitter {
                 compare,
                 CompareAction::SkipStatus | CompareAction::SkipStatusAndRestoreOnLoadFault(_)
             );
+            let condition = if outlined_float && self.current_index == body.tail {
+                let Operation::Alu { width, .. } = instructions[ordinal - 1].operation else {
+                    unreachable!("proved float loop comparison");
+                };
+                Some(super::loop_cfg::ConditionSource::Operands(width))
+            } else if let CompareAction::Condition(source) = compare {
+                Some(source)
+            } else {
+                None
+            };
+            self.omit_result_status |=
+                outlined_float && matches!(body.tail - self.current_index, 1 | 2);
             self.instruction_retirement = if position < read_prefix_len {
                 InstructionRetirement::Deferred
             } else if read_prefix_len != 0 && position == read_prefix_len {
@@ -599,10 +615,7 @@ impl Emitter {
                 instructions.get(ordinal + 1),
                 depth,
                 write_segment_base,
-                match compare {
-                    CompareAction::Condition(source) => Some(source),
-                    _ => None,
-                },
+                condition,
             );
             #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
             if prove_zero_upper {
