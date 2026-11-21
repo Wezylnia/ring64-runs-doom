@@ -679,7 +679,10 @@ fn emit_placement(
     let reads = if !guard_reads {
         GuardedReads::Checked
     } else if cfg!(all(not(feature = "parallel"), target_arch = "wasm32")) {
-        GuardedReads::OutlinedSticky
+        GuardedReads::Outlined {
+            sticky: true,
+            dyadic: true,
+        }
     } else {
         GuardedReads::Inline
     };
@@ -720,9 +723,7 @@ fn emit_placement(
 enum GuardedReads {
     Checked,
     Inline,
-    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    Outlined,
-    OutlinedSticky,
+    Outlined { sticky: bool, dyadic: bool },
 }
 
 fn emit_body(
@@ -1714,10 +1715,7 @@ fn emit_body(
         [next_local, next_local + 1, next_local + 2]
     });
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    let float_outline = if matches!(
-        _guard_reads,
-        GuardedReads::Outlined | GuardedReads::OutlinedSticky
-    ) {
+    let float_outline = if let GuardedReads::Outlined { sticky, dyadic } = _guard_reads {
         loop_body
             .zip(proved_reads)
             .and_then(|(body, (proof, _, first_bias, _, _))| {
@@ -1730,8 +1728,18 @@ fn emit_body(
                     run_index + 1 + u32::from(dynamic_targets),
                     &mut types,
                 )?;
-                if _guard_reads == GuardedReads::OutlinedSticky {
+                if sticky {
                     outline.enable_sticky();
+                }
+                if dyadic {
+                    let first_local =
+                        vector_temporaries.expect("outlined Float temporaries")[2] + 1;
+                    outline.dyadic = float_dyadic::DyadicReduction::recognize(
+                        proof,
+                        body,
+                        &unit.instructions,
+                        first_local,
+                    );
                 }
                 Some(outline)
             })
@@ -2060,17 +2068,21 @@ fn emit_body(
     let code_start = bytes.len();
     code.append_to(&mut bytes);
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    if _guard_reads == GuardedReads::OutlinedSticky
-        && float_outline.is_some()
-        && bytes.len() > max_artifact_bytes
+    if bytes.len() > max_artifact_bytes
+        && let Some(outline) = &float_outline
+        && let GuardedReads::Outlined { sticky, .. } = _guard_reads
+        && (outline.dyadic.is_some() || sticky)
     {
-        // The extra specialization must not displace the original branch hints.
+        // Drop packed reduction before displacing an existing outline or its hints.
         return emit_body(
             unit,
             observed,
             paged,
             loop_body,
-            GuardedReads::Outlined,
+            GuardedReads::Outlined {
+                sticky: sticky && outline.dyadic.is_some(),
+                dyadic: false,
+            },
             _extra_spans,
             max_artifact_bytes,
         );

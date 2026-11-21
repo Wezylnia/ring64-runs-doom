@@ -13,6 +13,7 @@ pub(super) struct FloatOutline {
     index: u32,
     pub(super) signature: u32,
     pub(super) sticky_index: Option<u32>,
+    pub(super) dyadic: Option<DyadicReduction>,
     induction_input: (u32, u32),
     inputs: Vec<(u32, ValType)>,
     outputs: Vec<(u32, ValType)>,
@@ -84,6 +85,7 @@ impl FloatOutline {
             index,
             signature,
             sticky_index: None,
+            dyadic: None,
             induction_input: (induction_parameter as u32, induction),
             inputs,
             outputs,
@@ -114,13 +116,7 @@ impl Emitter {
         // here correspond to the parent function's leading parameters.
         let mut declarations = vec![(1, ValType::I32), (2, ValType::I64), (2, ValType::I32)];
         declarations.extend_from_slice(locals);
-        let dyadic = if sticky {
-            None
-        } else {
-            let (proof, _) = self.proved_reads.expect("outlined Float read proof");
-            let first_local = declarations.iter().map(|(count, _)| count).sum();
-            DyadicReduction::recognize(proof, loop_body, instructions, first_local)
-        };
+        let dyadic = if sticky { None } else { outline.dyadic };
         if dyadic.is_some() {
             declarations.extend_from_slice(&DyadicReduction::LOCALS);
         }

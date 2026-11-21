@@ -139,7 +139,7 @@ impl Emitter {
     pub(super) fn admit_dyadic_accumulator(&mut self, reduction: DyadicReduction) {
         let (proof, _) = self.proved_reads.expect("dyadic read proof");
         // Inputs are multiples of 1/16. Keep every product and partial sum
-        // within 24 coefficient bits on the 1/256 grid so regrouping is exact.
+        // on the 1/256 grid within binary32's exact integer range.
         const MAX_COEFFICIENT: i32 = 1 << 24;
         const LAP_COEFFICIENT: i32 = 4 * 128 * 128;
         self.op(Op::Block(BlockType::Result(ValType::I32)))
