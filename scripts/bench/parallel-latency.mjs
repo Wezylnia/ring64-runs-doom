@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { cpus, tmpdir } from 'node:os';
@@ -158,7 +159,10 @@ async function instrument() {
             if (paused !== 0n) this.latencyTrace.mark(traceEvents.pauseSafe, paused);`,
     ],
   ]);
-  await patch('parallel/core.generated.js', [
+  const nativeExecution = existsSync(resolve(build, 'host/parallel/core.js'))
+    ? 'wasm/core.js'
+    : 'parallel/core.generated.js';
+  await patch(nativeExecution, [
     [
       '            return this.reason(run(this.#statePointer, budget, stop ?? 0n, stop === undefined ? 0 : 1, entryIndex), true);',
       `            const started = this.parallelBinding.beginTrace();
