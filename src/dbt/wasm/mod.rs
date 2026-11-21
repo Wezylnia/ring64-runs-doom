@@ -720,7 +720,11 @@ fn emit_placement(
             matches!(i.operation, Operation::Jcc { target, .. } | Operation::Jump { target } if target < i.pc)
         });
         GuardedReads::Shared {
-            indexed,
+            indexed: if indexed {
+                SharedIndexedReads::IncludeBytes
+            } else {
+                SharedIndexedReads::Disabled
+            },
             compact: false,
         }
     } else if !guard_reads {
@@ -767,11 +771,25 @@ fn emit_placement(
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
+enum SharedIndexedReads {
+    Disabled,
+    #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+    DwordsOnly,
+    IncludeBytes,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum GuardedReads {
     Checked,
     Inline,
-    Shared { indexed: bool, compact: bool },
-    Outlined { sticky: bool, dyadic: bool },
+    Shared {
+        indexed: SharedIndexedReads,
+        compact: bool,
+    },
+    Outlined {
+        sticky: bool,
+        dyadic: bool,
+    },
 }
 
 fn emit_body(
@@ -1573,14 +1591,20 @@ fn emit_body(
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     let compact_shared_reads = matches!(_guard_reads, GuardedReads::Shared { compact: true, .. });
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
-    let window_resolve = (matches!(_guard_reads, GuardedReads::Shared { indexed: true, .. })
-        && unit.instructions.iter().any(|i| {
-            parallel::DwordWindow::eligible(
-                i.operation,
-                !compact_shared_reads,
-                unit.context.is_long64(),
-            )
-        }))
+    let allow_indexed_bytes = matches!(
+        _guard_reads,
+        GuardedReads::Shared {
+            indexed: SharedIndexedReads::IncludeBytes,
+            compact: false
+        }
+    );
+    #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+    let window_resolve = (matches!(
+        _guard_reads,
+        GuardedReads::Shared { indexed, .. } if indexed != SharedIndexedReads::Disabled
+    ) && unit.instructions.iter().any(|i| {
+        parallel::DwordWindow::eligible(i.operation, allow_indexed_bytes, unit.context.is_long64())
+    }))
     .then(|| {
         let signature = add_function_type(&mut types, [ValType::I64], [ValType::I32]);
         imports.import(
@@ -1830,7 +1854,7 @@ fn emit_body(
             locals.push((4, ValType::I32));
         }
         next_local += 4;
-        parallel::DwordWindow::new(resolver, first, wide)
+        parallel::DwordWindow::new(resolver, first, wide, allow_indexed_bytes)
     });
     let boundary_locals = observed.then(|| {
         let result = [next_local, next_local + 1, next_local + 2, next_local + 3];
@@ -2213,53 +2237,36 @@ fn emit_body(
     if bytes.len() > max_artifact_bytes
         && let GuardedReads::Shared { indexed, compact } = _guard_reads
     {
-        if unit.context.is_long64() && parallel_dword_window.is_some() {
-            // Retry the original Long64 placement before compacting other reads.
+        let wide = unit.context.is_long64();
+        let has_indexed_bytes = allow_indexed_bytes
+            && parallel_dword_window.is_some()
+            && unit.instructions.iter().any(|i| {
+                parallel::DwordWindow::eligible(i.operation, true, wide)
+                    && !parallel::DwordWindow::eligible(i.operation, false, wide)
+            });
+        let retry = if wide && parallel_dword_window.is_some() {
+            // Retry with the dword window before compacting the original Long64 placement.
+            let indexed = if has_indexed_bytes {
+                SharedIndexedReads::DwordsOnly
+            } else {
+                SharedIndexedReads::Disabled
+            };
+            Some((indexed, compact))
+        } else if !compact && (parallel_vector_span.is_some() || has_indexed_bytes) {
+            // Keep the existing dword and FP32 paths while compacting.
+            Some((indexed, true))
+        } else if parallel_dword_window.is_some() {
+            Some((SharedIndexedReads::Disabled, compact))
+        } else {
+            None
+        };
+        if let Some((indexed, compact)) = retry {
             return emit_body(
                 unit,
                 observed,
                 paged,
                 loop_body,
-                GuardedReads::Shared {
-                    indexed: false,
-                    compact,
-                },
-                _extra_spans,
-                max_artifact_bytes,
-            );
-        }
-        if !compact
-            && (parallel_vector_span.is_some()
-                || parallel_dword_window.is_some()
-                    && unit.instructions.iter().any(|i| {
-                        parallel::DwordWindow::eligible(i.operation, true, false)
-                            && !parallel::DwordWindow::eligible(i.operation, false, false)
-                    }))
-        {
-            // Retry the existing dword and FP32 paths before removing either one.
-            return emit_body(
-                unit,
-                observed,
-                paged,
-                loop_body,
-                GuardedReads::Shared {
-                    indexed,
-                    compact: true,
-                },
-                _extra_spans,
-                max_artifact_bytes,
-            );
-        }
-        if parallel_dword_window.is_some() {
-            return emit_body(
-                unit,
-                observed,
-                paged,
-                loop_body,
-                GuardedReads::Shared {
-                    indexed: false,
-                    compact,
-                },
+                GuardedReads::Shared { indexed, compact },
                 _extra_spans,
                 max_artifact_bytes,
             );

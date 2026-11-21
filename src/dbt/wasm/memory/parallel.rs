@@ -138,10 +138,11 @@ pub(super) struct DwordWindow {
     host: u32,
     guard_bias: u32,
     wide: bool,
+    allow_bytes: bool,
 }
 
 impl DwordWindow {
-    pub(super) fn new(resolve: u32, first: u32, wide: bool) -> Self {
+    pub(super) fn new(resolve: u32, first: u32, wide: bool, allow_bytes: bool) -> Self {
         Self {
             resolve,
             base: first,
@@ -149,6 +150,7 @@ impl DwordWindow {
             host: first + 2,
             guard_bias: first + 3,
             wide,
+            allow_bytes,
         }
     }
 
@@ -174,7 +176,7 @@ impl DwordWindow {
                 src: Location::Memory(address),
                 source_width: Width::W8,
                 ..
-            } if allow_bytes && !wide => address,
+            } if allow_bytes => address,
             _ => return false,
         };
         address.segment == Segment::Ds
@@ -431,11 +433,7 @@ impl Emitter {
         else {
             return false;
         };
-        if !DwordWindow::eligible(
-            self.current_operation,
-            !self.compact_shared_reads,
-            window.wide,
-        ) {
+        if !DwordWindow::eligible(self.current_operation, window.allow_bytes, window.wide) {
             return false;
         }
         debug_assert!(self.parallel_retry.is_none());
