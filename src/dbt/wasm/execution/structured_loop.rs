@@ -120,7 +120,7 @@ impl StructuredLoop {
     }
 
     pub(super) fn precheck_gates_without_read_proof(self) -> bool {
-        self.kind != LoopKind::Float
+        self.kind != LoopKind::Float || cfg!(feature = "parallel")
     }
 
     pub(super) fn active_labels(self, ordinal: u32) -> u32 {
@@ -142,6 +142,16 @@ impl StructuredLoop {
             head: self.head,
             tail: self.tail,
         }
+    }
+
+    #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+    pub(super) fn select_shared_float(instructions: &[Instruction]) -> Option<Self> {
+        Self::select_body(instructions, LoopKind::Float).filter(|body| body.max_lap_len <= 64)
+    }
+
+    #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+    pub(super) fn is_shared_float(self) -> bool {
+        self.kind == LoopKind::Float
     }
 
     pub(super) fn select(instructions: &[Instruction]) -> Option<Self> {
