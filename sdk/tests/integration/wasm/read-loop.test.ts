@@ -122,6 +122,69 @@ test('affine byte reads keep ADD flags at a denied span and resume after remappi
   }
 });
 
+test('dependent dword reads wrap the scaled index and resume at the faulting instruction', async () => {
+  const code = hex(
+    '8b4483fc'.repeat(4) + // MOV EAX,[EBX+EAX*4-4] four times
+      '83e90175eb', // SUB ECX,1; JNE head
+  );
+  const data = hex('01000040020000000300000001000000');
+  const codeMap = {
+    ...mapping(head, 'code', code.length),
+    permissions: { ...readOnly, execute: true },
+  };
+  const dataMap = mapping(row, 'indices', data.length);
+  const cpu = await createCpu({
+    compiler,
+    entry: head,
+    context: protectedSnapshot(),
+    limits: LIMITS,
+    memory: {
+      backings: [
+        { id: 'code', bytes: code },
+        { id: 'indices', bytes: data },
+      ],
+      mappings: [codeMap, { ...dataMap, length: 12 }],
+    },
+    memoryLimits: { maxBackings: 2, maxMappings: 2, maxBackingBytes: code.length + data.length },
+  });
+  try {
+    const upper = 0x1122334400000000n;
+    const input = initial(head, { 0: upper, 1: upper | 1n, 3: upper | (row + 4n) }, 0x893n);
+    const time = { tsc: 0xffff_ffff_ffff_fffen, tscAux: 33 };
+    const stop = head + BigInt(code.length);
+    cpu.setState(input);
+    cpu.setTimeState(time);
+
+    // The first load returns 0x40000001; scaling that fresh index wraps to four.
+    const partial = await cpu.run({ budget: 2n, stop });
+    exit(partial, 'budget', 2n, 2n, changed(input, head + 8n, { 0: upper | 2n }));
+    assert.deepEqual(cpu.readTimeState(), { ...time, tsc: 0n });
+
+    cpu.setState(input);
+    cpu.setTimeState(time);
+    const faultPc = head + 12n;
+    const denied = await cpu.run({ budget: 12n, stop });
+    exit(denied, 'data-fault', 12n, 3n, changed(input, faultPc, { 0: upper | 3n }));
+    fault(denied, {
+      instructionPc: faultPc,
+      address: row + 12n,
+      width: 4,
+      access: 'read',
+      cause: 'unmapped',
+      failingAddress: row + 12n,
+      segment: 'ds',
+    });
+    assert.deepEqual(cpu.readTimeState(), { ...time, tsc: 1n });
+
+    cpu.setMappings([codeMap, dataMap]);
+    const repaired = await cpu.run({ budget: 12n, stop });
+    exit(repaired, 'stop', 12n, 3n, changed(input, stop, { 0: upper | 1n, 1: upper }, 0x46n));
+    assert.deepEqual(cpu.readTimeState(), { ...time, tsc: 4n });
+  } finally {
+    cpu.dispose();
+  }
+});
+
 test('SIMD read loops resume from interior PCs and validate every backing after remapping', async () => {
   const code = body();
   const stop = head + BigInt(code.length);
