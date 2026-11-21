@@ -769,17 +769,13 @@ impl GuestMemory for Memory<'_> {
 }
 
 #[cfg(test)]
-#[path = "access_tests.rs"]
 mod tests;
 
 #[cfg(test)]
-#[path = "alignment_tests.rs"]
 mod alignment_tests;
 
 #[cfg(test)]
-#[path = "retained_tests.rs"]
 mod retained_tests;
 
 #[cfg(test)]
-#[path = "pg0_prepared_tests.rs"]
 mod pg0_prepared_tests;
