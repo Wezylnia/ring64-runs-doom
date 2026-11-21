@@ -76,10 +76,10 @@ test(
     const quickstart = await readFile(resolve(root, 'website/docs/examples/add.ts'), 'utf8');
     const readme = await readFile(resolve(root, 'README.md'), 'utf8');
     assert.ok(readme.includes('```ts\n' + quickstart.trimEnd() + '\n```'));
-    await writeFile(join(project, 'add.mts'), quickstart);
+    await writeFile(join(project, 'add.ts'), quickstart);
     const quickstartResult = await exec(
       process.execPath,
-      ['--experimental-strip-types', 'add.mts'],
+      ['--experimental-strip-types', 'add.ts'],
       { cwd: project, timeout: 30_000 },
     );
     assert.equal(quickstartResult.stdout.trim(), '42n');
