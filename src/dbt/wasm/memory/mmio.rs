@@ -34,11 +34,11 @@ impl Emitter {
             // partial overlap uses the reached operand helper below.
             let operand = if matches!(instruction, Move::Read(_)) {
                 self.op(Op::I32Const(1)).op(Op::LocalSet(STORE_STATUS));
-                DirectOperand::Load(None)
+                DirectOperand::ScalarLoad(width)
             } else {
-                DirectOperand::Store
+                DirectOperand::ScalarStore(width)
             };
-            self.direct_access(width, operand, exit_depth, |emitter, depth| {
+            self.direct_access(operand, exit_depth, |emitter, depth| {
                 emitter.mmio_effect(descriptor, depth)
             })
         };

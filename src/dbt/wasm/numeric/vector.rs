@@ -1,3 +1,5 @@
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+use super::memory::DirectOperand;
 use super::{ADDRESS, Emitter, REASON, RHS, STORE_STATUS};
 use crate::dbt::unit::Unit;
 use crate::embedding::layout::RunState;
@@ -200,11 +202,15 @@ impl Emitter {
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         if bytes == 4 && !aligned {
             let [_, vector, _] = self.vector_temps();
-            if self.direct_load(Width::W32, Some(vector), exit_depth, |emitter, depth| {
-                emitter.op(Op::LocalGet(ADDRESS));
-                emitter.vector_load_offset(bytes, aligned, depth);
-                emitter.op(Op::LocalSet(vector));
-            }) {
+            if self.direct_access(
+                DirectOperand::VectorDword(vector),
+                exit_depth,
+                |emitter, depth| {
+                    emitter.op(Op::LocalGet(ADDRESS));
+                    emitter.vector_load_offset(bytes, aligned, depth);
+                    emitter.op(Op::LocalSet(vector));
+                },
+            ) {
                 self.op(Op::LocalGet(vector));
                 return;
             }
@@ -345,6 +351,31 @@ impl Emitter {
                 aligned,
                 store,
             } => {
+                #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+                if self.direct_vector_loads
+                    && bytes == 16
+                    && !aligned
+                    && !store
+                    && let VectorOperand::Memory(address) = operand
+                {
+                    let dst = self.xmm(register);
+                    self.address(address, next_pc);
+                    if self.direct_access(
+                        DirectOperand::VectorBlock(dst),
+                        exit_depth,
+                        |emitter, depth| {
+                            emitter.op(Op::LocalGet(ADDRESS));
+                            emitter.vector_load_offset(bytes, false, depth);
+                            emitter.op(Op::LocalSet(dst));
+                        },
+                    ) {
+                        self.used_direct_vector_load = true;
+                    } else {
+                        self.vector_load_offset(bytes, false, exit_depth);
+                        self.op(Op::LocalSet(dst));
+                    }
+                    return;
+                }
                 let (dst, src) = if store {
                     (operand, VectorOperand::Register(register))
                 } else {

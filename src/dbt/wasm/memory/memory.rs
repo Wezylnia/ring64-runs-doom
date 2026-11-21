@@ -30,8 +30,10 @@ impl SpanCache {
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 pub(super) enum DirectOperand {
-    Load(Option<u32>),
-    Store,
+    ScalarLoad(Width),
+    ScalarStore(Width),
+    VectorDword(u32),
+    VectorBlock(u32),
 }
 
 impl Emitter {
@@ -415,9 +417,13 @@ impl Emitter {
     pub(super) fn load_address_value(&mut self, width: Width, for_write: bool, exit_depth: u32) {
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         if !for_write
-            && self.direct_load(width, None, exit_depth, |emitter, depth| {
-                emitter.load_address_slow(width, false, depth);
-            })
+            && self.direct_access(
+                DirectOperand::ScalarLoad(width),
+                exit_depth,
+                |emitter, depth| {
+                    emitter.load_address_slow(width, false, depth);
+                },
+            )
         {
             return;
         }
@@ -433,45 +439,33 @@ impl Emitter {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) fn direct_load(
-        &mut self,
-        width: Width,
-        vector_result: Option<u32>,
-        exit_depth: u32,
-        load_slow: impl FnOnce(&mut Self, u32),
-    ) -> bool {
-        self.direct_access(
-            width,
-            DirectOperand::Load(vector_result),
-            exit_depth,
-            load_slow,
-        )
-    }
-
-    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     pub(super) fn direct_access(
         &mut self,
-        width: Width,
         operand: DirectOperand,
         exit_depth: u32,
         slow: impl FnOnce(&mut Self, u32),
     ) -> bool {
         use crate::memory::{Access, DirectSpan as Descriptor};
-        let (span, access) = match operand {
-            DirectOperand::Load(_) => {
-                let span = if self.segment == Segment::Ss {
-                    self.stack_read_span.or(self.read_span)
-                } else {
-                    self.read_span
-                };
-                (span, Access::Read)
+        let bytes = match operand {
+            DirectOperand::ScalarLoad(width) | DirectOperand::ScalarStore(width) => {
+                u32::from(width.bytes())
             }
-            DirectOperand::Store => (self.write_span(), Access::Write),
+            DirectOperand::VectorDword(_) => 4,
+            DirectOperand::VectorBlock(_) => 16,
+        };
+        let (span, access) = if matches!(operand, DirectOperand::ScalarStore(_)) {
+            (self.write_span(), Access::Write)
+        } else {
+            let span = if self.segment == Segment::Ss {
+                self.stack_read_span.or(self.read_span)
+            } else {
+                self.read_span
+            };
+            (span, Access::Read)
         };
         let Some(span) = span else {
             return false;
         };
-        let bytes = u32::from(width.bytes());
         let last_offset = if self.context.is_long64() {
             None
         } else {
@@ -488,8 +482,11 @@ impl Emitter {
             }
             Some(i64::from(self.context.segment(self.segment).limit) + 1 - i64::from(bytes))
         };
-        if matches!(operand, DirectOperand::Load(Some(_))) {
-            // Scalar SIMD passes its original effective offset on the stack.
+        if matches!(
+            operand,
+            DirectOperand::VectorDword(_) | DirectOperand::VectorBlock(_)
+        ) {
+            // SIMD passes its original effective offset on the stack.
             self.op(Op::LocalSet(ADDRESS));
         }
         self.op(Op::Block(BlockType::Empty));
@@ -558,12 +555,14 @@ impl Emitter {
             .op(Op::I32Add);
         let memory = field(0, 0);
         match operand {
-            DirectOperand::Load(Some(vector)) => {
-                debug_assert_eq!(width, Width::W32);
+            DirectOperand::VectorDword(vector) => {
                 self.op(Op::V128Load32Zero(memory)).op(Op::LocalSet(vector));
             }
-            DirectOperand::Load(None) => self.direct_scalar_load(width, memory),
-            DirectOperand::Store => {
+            DirectOperand::VectorBlock(vector) => {
+                self.op(Op::V128Load(memory)).op(Op::LocalSet(vector));
+            }
+            DirectOperand::ScalarLoad(width) => self.direct_scalar_load(width, memory),
+            DirectOperand::ScalarStore(width) => {
                 self.op(Op::LocalGet(RESULT));
                 self.direct_scalar_store(width, memory);
                 self.op(Op::I32Const(1)).op(Op::LocalSet(STORE_STATUS));
@@ -669,9 +668,13 @@ impl Emitter {
         if self.write_span().is_some() {
             self.data_operand(src, width);
             self.op(Op::LocalSet(RESULT));
-            if !self.direct_access(width, DirectOperand::Store, exit_depth, |emitter, depth| {
-                emitter.store_result_slow(width, depth);
-            }) {
+            if !self.direct_access(
+                DirectOperand::ScalarStore(width),
+                exit_depth,
+                |emitter, depth| {
+                    emitter.store_result_slow(width, depth);
+                },
+            ) {
                 self.store_result_slow(width, exit_depth);
             }
             return;

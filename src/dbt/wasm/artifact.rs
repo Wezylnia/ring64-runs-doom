@@ -223,6 +223,8 @@ fn emit_placement(
         inline_f32_compares: true,
         inline_f32_sub: true,
         inline_f32_packed: true,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        direct_vector_loads: true,
     };
     let (bytes, extra_spans) = emit_body(
         unit,
@@ -294,6 +296,8 @@ struct OptionalLowering {
     inline_f32_compares: bool,
     inline_f32_sub: bool,
     inline_f32_packed: bool,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    direct_vector_loads: bool,
 }
 
 fn emit_body(
@@ -1414,6 +1418,10 @@ fn emit_body(
         inline_f32_compares: optional.inline_f32_compares,
         inline_f32_sub: optional.inline_f32_sub,
         inline_f32_packed: optional.inline_f32_packed,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        direct_vector_loads: optional.direct_vector_loads && !observed && !paged && !mmio,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        used_direct_vector_load: false,
         load_mxcsr,
         store_mxcsr,
         x87,
@@ -1658,6 +1666,21 @@ fn emit_body(
     }
     let code_start = bytes.len();
     code.append_to(&mut bytes);
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    if bytes.len() > max_artifact_bytes && emitter.used_direct_vector_load {
+        return emit_body(
+            unit,
+            observed,
+            (paged, mmio),
+            loop_body,
+            _guard_reads,
+            OptionalLowering {
+                direct_vector_loads: false,
+                ..optional
+            },
+            max_artifact_bytes,
+        );
+    }
     if bytes.len() > max_artifact_bytes
         && optional.inline_f32_packed
         && unit.instructions.iter().any(|instruction| {
