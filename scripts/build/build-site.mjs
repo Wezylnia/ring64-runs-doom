@@ -1,6 +1,16 @@
 import { execFileSync } from 'node:child_process';
-import { copyFile, cp, mkdir, mkdtemp, readdir, rename, rm } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import {
+  copyFile,
+  cp,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
+import { dirname, join, resolve } from 'node:path';
 import { build } from 'esbuild';
 
 const root = resolve(import.meta.dirname, '../..');
@@ -24,7 +34,20 @@ try {
   await mkdir(demo, { recursive: true });
 
   const entries = await readdir(source, { withFileTypes: true });
-  await copyFile(join(source, 'index.html'), join(staged, 'index.html'));
+  const [canvas, controls] = await Promise.all(
+    ['canvas.html', 'controls.html'].map((name) => readFile(join(wetInk, name), 'utf8')),
+  );
+  for (const page of ['index.html']) {
+    const html = await readFile(join(source, page), 'utf8');
+    const destination = join(staged, page);
+    await mkdir(dirname(destination), { recursive: true });
+    await writeFile(
+      destination,
+      html
+        .replace('<!-- wet-ink-canvas -->', () => canvas.trim())
+        .replace('<!-- wet-ink-controls -->', () => controls.trim()),
+    );
+  }
   for (const entry of entries) {
     if (entry.isFile() && entry.name.endsWith('.css'))
       await copyFile(join(source, entry.name), join(staged, entry.name));
