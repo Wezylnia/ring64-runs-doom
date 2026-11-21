@@ -1,4 +1,4 @@
-import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { dirname, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -6,6 +6,7 @@ import os from 'node:os';
 import { chromium } from 'playwright';
 import { encode, freeze, hash, manifest, root } from '../paging/paging-support.mjs';
 import { callGateNames, checkCallGates, measureCallGates } from './call-gate-kernels.mjs';
+import { systemChromeExecutable } from '../../support/browser.mjs';
 
 // This driver freezes existing artifacts. Build and CPU scheduling belong to the caller.
 const args = process.argv.slice(2);
@@ -106,14 +107,7 @@ if (!browserMode) {
   await new Promise((done) => server.listen(0, '127.0.0.1', done));
   let browser;
   try {
-    let executablePath = process.env.RING64_BROWSER;
-    if (!executablePath)
-      try {
-        await access('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome');
-        executablePath = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
-      } catch {
-        /* Playwright default */
-      }
+    const executablePath = process.env.RING64_BROWSER || (await systemChromeExecutable());
     browser = await chromium.launch({
       headless: true,
       ...(executablePath ? { executablePath } : {}),

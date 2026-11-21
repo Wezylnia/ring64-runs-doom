@@ -53,11 +53,16 @@ export async function freeze(path, name) {
   await cp(resolve(path, 'build/host'), resolve(target, 'build/host'), { recursive: true });
   await cp(resolve(path, 'build/ring64.wasm'), resolve(target, 'build/ring64.wasm'));
   await cp(resolve(root, 'benchmarks'), resolve(target, 'benchmarks'), { recursive: true });
-  await mkdir(resolve(target, 'scripts/bench'), { recursive: true });
   await Promise.all(
-    ['benchmark.mjs', 'emitted-host.mjs'].map((name) =>
-      cp(resolve(root, 'scripts/bench', name), resolve(target, 'scripts/bench', name)),
-    ),
+    [
+      'scripts/bench/benchmark.mjs',
+      'scripts/bench/emitted-host.mjs',
+      'scripts/support/browser.mjs',
+    ].map(async (name) => {
+      const destination = resolve(target, name);
+      await mkdir(dirname(destination), { recursive: true });
+      await cp(resolve(root, name), destination);
+    }),
   );
   await writeFile(resolve(target, 'package.json'), '{"type":"module"}\n');
   try {

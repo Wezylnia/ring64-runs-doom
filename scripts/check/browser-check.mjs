@@ -1,25 +1,17 @@
-import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { chromium } from 'playwright';
 import { awaitBrowserResult } from './browser-result.mjs';
 import { startBrowserServer } from './browser-server.mjs';
+import { chromiumExecutable } from '../support/browser.mjs';
 
 const html = `<!doctype html><meta charset="utf-8"><title>ring64 execution checks</title>
 <script type="module" src="/build/tests/runners/browser.js"></script>`;
 const server = await startBrowserServer(html);
 let browser;
 try {
-  let executablePath = process.env.RING64_BROWSER;
-  if (!executablePath && process.platform === 'darwin') {
-    const chrome = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
-    try {
-      await access(chrome);
-      executablePath = chrome;
-    } catch {
-      /* use Playwright Chromium */
-    }
-  }
+  const executablePath = await chromiumExecutable();
   browser = await chromium.launch({
     headless: true,
     ...(executablePath ? { executablePath } : {}),

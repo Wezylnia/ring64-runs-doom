@@ -55,7 +55,11 @@ test('frozen benchmarks preserve saved source and refuse changed artifacts befor
   const directory = await mkdtemp(join(tmpdir(), 'ring64-benchmark-'));
   try {
     await mkdir(join(directory, 'build'));
-    await mkdir(join(directory, 'scripts/bench'), { recursive: true });
+    await Promise.all(
+      ['scripts/bench', 'scripts/support'].map((path) =>
+        mkdir(join(directory, path), { recursive: true }),
+      ),
+    );
     await Promise.all([
       cp(join(root, 'build/host'), join(directory, 'build/host'), { recursive: true }),
       cp(join(root, 'build/ring64.wasm'), join(directory, 'build/ring64.wasm')),
@@ -65,6 +69,7 @@ test('frozen benchmarks preserve saved source and refuse changed artifacts befor
         join(root, 'scripts/bench/emitted-host.mjs'),
         join(directory, 'scripts/bench/emitted-host.mjs'),
       ),
+      cp(join(root, 'scripts/support/browser.mjs'), join(directory, 'scripts/support/browser.mjs')),
       symlink(
         join(root, 'node_modules'),
         join(directory, 'node_modules'),

@@ -1,4 +1,4 @@
-import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { dirname, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -13,6 +13,7 @@ import {
   root,
 } from './fast-system-support.mjs';
 import { measureFast, fastNames } from './fast-system-kernels.mjs';
+import { systemChromeExecutable } from '../../support/browser.mjs';
 
 const args = process.argv.slice(2);
 const value = (name, fallback) => (args.includes(name) ? args[args.indexOf(name) + 1] : fallback);
@@ -76,14 +77,7 @@ if (!browserMode) {
   await new Promise((done) => server.listen(0, '127.0.0.1', done));
   let browser;
   try {
-    let executablePath = process.env.RING64_BROWSER;
-    if (!executablePath)
-      try {
-        await access('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome');
-        executablePath = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
-      } catch {
-        /* Playwright default */
-      }
+    const executablePath = process.env.RING64_BROWSER || (await systemChromeExecutable());
     browser = await chromium.launch({
       headless: true,
       ...(executablePath ? { executablePath } : {}),

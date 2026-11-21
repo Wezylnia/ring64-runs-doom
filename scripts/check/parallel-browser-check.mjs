@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto';
-import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { chromium, firefox } from 'playwright';
 import { awaitBrowserResult } from './browser-result.mjs';
 import { startBrowserServer } from './browser-server.mjs';
+import { chromiumExecutable } from '../support/browser.mjs';
 
 const only = process.argv[2];
 if (only && only !== 'chromium' && only !== 'firefox') {
@@ -22,17 +23,8 @@ try {
     ['firefox', firefox],
   ]) {
     if (only && only !== name) continue;
-    let executablePath =
-      name === 'firefox' ? process.env.RING64_FIREFOX : process.env.RING64_BROWSER;
-    if (!executablePath && name === 'chromium' && process.platform === 'darwin') {
-      const chrome = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
-      try {
-        await access(chrome);
-        executablePath = chrome;
-      } catch {
-        // Use the pinned Playwright runtime when system Chrome is absent.
-      }
-    }
+    const executablePath =
+      name === 'firefox' ? process.env.RING64_FIREFOX : await chromiumExecutable();
     const browser = await engine.launch({
       headless: true,
       ...(executablePath ? { executablePath } : {}),

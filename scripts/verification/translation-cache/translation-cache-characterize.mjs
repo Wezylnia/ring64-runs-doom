@@ -1,4 +1,4 @@
-import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { dirname, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -10,6 +10,7 @@ import {
   translationCacheCommonNames,
   translationCachePlan,
 } from './translation-cache-kernels.mjs';
+import { chromiumExecutable } from '../../support/browser.mjs';
 
 // The caller owns artifact builds, process inventory and the serialized quiet window.
 const values = {},
@@ -152,16 +153,7 @@ async function browserRun() {
   });
   let browser;
   try {
-    let executablePath = process.env.RING64_BROWSER;
-    if (!executablePath && process.platform === 'darwin') {
-      const chrome = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
-      try {
-        await access(chrome);
-        executablePath = chrome;
-      } catch {
-        /* use bundled Chromium */
-      }
-    }
+    const executablePath = await chromiumExecutable();
     browser = await chromium.launch({
       headless: true,
       ...(executablePath ? { executablePath } : {}),

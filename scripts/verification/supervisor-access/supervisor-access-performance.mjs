@@ -1,4 +1,4 @@
-import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { dirname, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -6,6 +6,7 @@ import os from 'node:os';
 import { chromium } from 'playwright';
 import { encode, freeze, hash, manifest, root } from '../paging/paging-support.mjs';
 import { supervisorAccessNames, supervisorAccessPlan } from './supervisor-access-kernels.mjs';
+import { systemChromeExecutable } from '../../support/browser.mjs';
 
 // The caller owns the quiet measurement window; this driver never builds or starts other jobs.
 const args = process.argv.slice(2),
@@ -110,14 +111,7 @@ if (!browserMode) {
   });
   let browser;
   try {
-    let executablePath = process.env.RING64_BROWSER;
-    if (!executablePath)
-      try {
-        await access('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome');
-        executablePath = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
-      } catch {
-        /* Playwright default */
-      }
+    const executablePath = process.env.RING64_BROWSER || (await systemChromeExecutable());
     browser = await chromium.launch({
       headless: true,
       ...(executablePath ? { executablePath } : {}),

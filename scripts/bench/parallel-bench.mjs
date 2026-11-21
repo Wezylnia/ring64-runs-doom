@@ -1,11 +1,12 @@
 import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
-import { access, readFile, writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { extname, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { chromium } from 'playwright';
 import { measureParallel, parallelWorkloads } from '../../benchmarks/parallel.mjs';
 import { hostIdentity } from './emitted-host.mjs';
+import { chromiumExecutable } from '../support/browser.mjs';
 
 const [runtime, candidate, baseline, output, workers, max, replicates, ...flags] =
   process.argv.slice(2);
@@ -117,16 +118,7 @@ if (runtime === 'node') {
   });
   let browser;
   try {
-    let executablePath = process.env.RING64_BROWSER;
-    if (!executablePath && process.platform === 'darwin') {
-      const chrome = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
-      try {
-        await access(chrome);
-        executablePath = chrome;
-      } catch {
-        /* use Playwright Chromium */
-      }
-    }
+    const executablePath = await chromiumExecutable();
     browser = await chromium.launch({
       headless: true,
       ...(executablePath ? { executablePath } : {}),

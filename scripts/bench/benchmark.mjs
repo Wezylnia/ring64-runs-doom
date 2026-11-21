@@ -1,5 +1,5 @@
 import { createServer } from 'node:http';
-import { readFile, mkdir, writeFile, access } from 'node:fs/promises';
+import { readFile, mkdir, writeFile } from 'node:fs/promises';
 import { resolve, dirname, relative, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
@@ -8,6 +8,7 @@ import os from 'node:os';
 import { chromium } from 'playwright';
 import { loadSides, measure, workloadNames } from '../../benchmarks/kernels.mjs';
 import { hostIdentity } from './emitted-host.mjs';
+import { chromiumExecutable } from '../support/browser.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 function options(args) {
@@ -187,16 +188,7 @@ async function browserRun() {
   });
   let browser;
   try {
-    let executablePath = process.env.RING64_BROWSER;
-    if (!executablePath && process.platform === 'darwin') {
-      const chrome = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
-      try {
-        await access(chrome);
-        executablePath = chrome;
-      } catch {
-        /* use installed Playwright Chromium */
-      }
-    }
+    const executablePath = await chromiumExecutable();
     browser = await chromium.launch({
       headless: true,
       ...(executablePath ? { executablePath } : {}),

@@ -1,5 +1,5 @@
 import { createServer } from 'node:http';
-import { readFile, writeFile, mkdir, access } from 'node:fs/promises';
+import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { resolve, dirname, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import os from 'node:os';
@@ -10,6 +10,7 @@ import {
   reuseNames,
   populationNames,
 } from '../context-reuse/context-reuse-kernels.mjs';
+import { systemChromeExecutable } from '../../support/browser.mjs';
 const scriptRoot = dirname(fileURLToPath(import.meta.url));
 const options = {
   iterations: 100001,
@@ -152,16 +153,8 @@ async function browserRun() {
     server.listen(0, '127.0.0.1', done);
   });
   try {
-    let executablePath;
-    if (process.platform === 'darwin') {
-      const chrome = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
-      try {
-        await access(chrome);
-        executablePath = chrome;
-      } catch {
-        /* bundled Chromium */
-      }
-    }
+    const executablePath =
+      process.platform === 'darwin' ? await systemChromeExecutable() : undefined;
     browser = await chromium.launch({
       headless: true,
       ...(executablePath ? { executablePath } : {}),
