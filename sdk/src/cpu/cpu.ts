@@ -118,15 +118,7 @@ function isRunReason(reason: string): reason is RunReason {
   return runReasons.has(reason);
 }
 
-export interface RunResult {
-  reason: RunReason;
-  retired: bigint;
-  remaining: bigint;
-  repeatIterations: bigint;
-  remainingRepeatBudget: bigint;
-  deliveryAttempts?: bigint;
-  remainingDeliveryBudget?: bigint;
-  state: StateSnapshot;
+interface RunDiagnostics {
   fault?: Fault;
   segmentFault?: SegmentFault;
   alignmentFault?: AlignmentFault;
@@ -141,6 +133,16 @@ export interface RunResult {
   debugException?: DebugException;
   pageFault?: PageFault;
   physicalMemoryFault?: PhysicalMemoryFault;
+}
+
+interface RunResultBase extends RunDiagnostics {
+  retired: bigint;
+  remaining: bigint;
+  repeatIterations: bigint;
+  remainingRepeatBudget: bigint;
+  deliveryAttempts?: bigint;
+  remainingDeliveryBudget?: bigint;
+  state: StateSnapshot;
   resources: {
     pagingRestarts?: number;
     compilations: number;
@@ -158,6 +160,43 @@ export interface RunResult {
     executionMs: number;
     totalMs: number;
   };
+}
+
+// The optional numeric ABI can omit details even for a matching reason.
+const runDiagnosticFields = {
+  'fetch-fault': 'fault',
+  'target-fault': 'fault',
+  'data-fault': 'fault',
+  'segment-fault': 'segmentFault',
+  'alignment-fault': 'alignmentFault',
+  'alignment-check': 'alignmentCheck',
+  'simd-exception': 'simdException',
+  'general-protection': 'generalProtectionFault',
+  'x87-exception': 'x87Exception',
+  'protection-fault': 'protectionFault',
+  'system-memory-fault': 'systemMemoryFault',
+  'debug-exception': 'debugException',
+  'page-fault': 'pageFault',
+  'physical-memory-fault': 'physicalMemoryFault',
+} as const satisfies Partial<Record<RunReason, keyof RunDiagnostics>>;
+
+type DiagnosedReason = keyof typeof runDiagnosticFields;
+type DiagnosedRun = {
+  [Reason in DiagnosedReason]: { reason: Reason } & Required<
+    Pick<RunDiagnostics, (typeof runDiagnosticFields)[Reason]>
+  >;
+}[DiagnosedReason];
+
+export type RunResult = RunResultBase &
+  (DiagnosedRun | { reason: Exclude<RunReason, DiagnosedReason> });
+
+function validateRunDiagnostic(
+  result: RunResultBase & { reason: RunReason },
+): asserts result is RunResult {
+  const fields: Partial<Record<RunReason, keyof RunDiagnostics>> = runDiagnosticFields;
+  const field = fields[result.reason];
+  if (field !== undefined && result[field] === undefined)
+    throw new Error(`core omitted ${field} for ${result.reason}`);
 }
 
 export function checkedLimits(limits: Limits): Limits {
@@ -675,6 +714,7 @@ export class Cpu {
       resources: { ...resources, ...this.#cache.resources() },
       timings,
     };
+    validateRunDiagnostic(result);
     timings.totalMs = performance.now() - began;
     return result;
   }

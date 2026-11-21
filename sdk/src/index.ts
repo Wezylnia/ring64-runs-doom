@@ -6,7 +6,7 @@ export async function loadCpuCompiler(): Promise<WebAssembly.Module> {
   return loadCompiler(new URL('./ring64.wasm', import.meta.url));
 }
 
-export type { Cpu, Limits, Options, RunReason, RunResult } from './cpu/cpu.js';
+export type { Cpu, Limits, Options, RunOptions, RunReason, RunResult } from './cpu/cpu.js';
 export type {
   State,
   StateSnapshot,

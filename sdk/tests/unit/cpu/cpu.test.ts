@@ -672,6 +672,21 @@ for (const reason of ['parallel-boundary', 'unknown-core-exit']) {
   });
 }
 
+test('a fault cannot become a public run result without its diagnostic', async () => {
+  const { cpu } = await fixture([{ reason: 'fetch-fault', remaining: 1n, repeatRemaining: 0n }]);
+  try {
+    await assert.rejects(cpu.run({ budget: 2n }), (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.ok(error.cause instanceof Error);
+      assert.equal(error.cause.message, 'core omitted fault for fetch-fault');
+      return true;
+    });
+    await assert.rejects(cpu.run({ budget: 0n }), /cpu is failed/);
+  } finally {
+    cpu.dispose();
+  }
+});
+
 test('pending and failed CPUs reject XMM access before capturing user inputs', async () => {
   const { cpu } = await fixture([{ reason: 'budget', remaining: 0n, repeatRemaining: 0n }]);
   cpu.setXmmState(Array<bigint>(16).fill(17n));

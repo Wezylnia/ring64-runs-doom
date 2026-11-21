@@ -1,4 +1,4 @@
-import { createCpu, loadCpuCompiler, type Limits, type Options } from 'ring64';
+import { createCpu, loadCpuCompiler, type Limits, type Options, type RunResult } from 'ring64';
 import type { MachineOptions } from 'ring64/parallel';
 
 const entry = 0x1000n;
@@ -12,6 +12,11 @@ const limits: Limits = {
   maxCachedBytes: 4194304,
   maxTranslationsPerRun: 32,
 };
+
+function checkFetchFault(result: RunResult): void {
+  if (result.reason !== 'fetch-fault' || result.fault.address !== run.stop)
+    throw new Error('expected a fetch fault after the end of code');
+}
 
 export async function checkCpu(): Promise<void> {
   const options = {
@@ -34,6 +39,7 @@ export async function checkCpu(): Promise<void> {
     const result = await cpu.run(run);
     if (result.reason !== 'stop' || result.retired !== 1n || result.state.registers[0] !== 42n)
       throw new Error('unexpected standalone CPU result');
+    checkFetchFault(await cpu.run({ budget: 1n }));
   } finally {
     cpu.dispose();
   }
@@ -72,6 +78,8 @@ export async function checkParallel(): Promise<void> {
       )
     )
       throw new Error('unexpected parallel CPU result');
+    for (const result of await Promise.all(machine.cpus.map((vcpu) => vcpu.run({ budget: 1n }))))
+      checkFetchFault(result);
   } finally {
     await machine.dispose();
   }
