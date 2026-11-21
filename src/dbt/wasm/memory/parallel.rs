@@ -1,6 +1,6 @@
 use super::{ADDRESS, Emitter, LHS, RESULT, RHS, STORE_STATUS, VALUE};
 use crate::x86::instruction::{Address, Alu, Instruction, MemoryAluOperands, Operation, Width};
-use wasm_encoder::{BlockType, Instruction as Op, MemArg};
+use wasm_encoder::{BlockType, Instruction as Op, MemArg, ValType};
 
 const BOUNDARY: i32 = 29;
 const ATTEMPTS: i32 = crate::memory::SHARED_CAS_ATTEMPTS as i32;
@@ -287,6 +287,49 @@ impl Emitter {
         }
         self.op(Op::LocalGet(scalar.address))
             .op(Op::If(BlockType::Empty));
+        self.read_shared_lane(scalar, width, locked);
+        self.narrow(width);
+        self.op(Op::LocalSet(VALUE)).op(Op::Else);
+        if locked {
+            self.enter_parallel_guarded(u32::from(width.bytes()));
+        }
+        self.load_address_slow(width, for_write, exit_depth + 1);
+        self.op(Op::End);
+        true
+    }
+
+    pub(super) fn parallel_vector_dword(&mut self, exit_depth: u32) -> bool {
+        let (Some(helper), Some(scalar)) = (self.parallel_vector_dword, self.parallel_scalar)
+        else {
+            return false;
+        };
+        debug_assert!(self.parallel_retry.is_none());
+        let segment = self.segment as i32;
+        self.op(Op::I32Const(segment))
+            .op(Op::Call(helper))
+            .op(Op::LocalTee(ADDRESS))
+            .op(Op::I64Const(0))
+            .op(Op::I64GtS)
+            .op(Op::If(BlockType::Result(ValType::I64)))
+            .op(Op::LocalGet(ADDRESS))
+            .op(Op::I32WrapI64)
+            .op(Op::LocalSet(scalar.address));
+        self.read_shared_lane(scalar, Width::W32, false);
+        self.op(Op::Else)
+            .op(Op::LocalGet(ADDRESS))
+            .op(Op::I64Eqz)
+            .op(Op::If(BlockType::Empty));
+        self.vector_failure(exit_depth + 2);
+        self.op(Op::End).op(Op::LocalGet(ADDRESS)).op(Op::End);
+        self.narrow(Width::W32);
+        self.op(Op::LocalSet(ADDRESS))
+            .op(Op::V128Const(0))
+            .op(Op::LocalGet(ADDRESS))
+            .op(Op::I64x2ReplaceLane(0));
+        true
+    }
+
+    fn read_shared_lane(&mut self, scalar: Scalar, width: Width, locked: bool) {
         self.lane_address(scalar);
         self.op(Op::I64AtomicLoad(LANE));
         if locked {
@@ -295,15 +338,7 @@ impl Emitter {
         if width != Width::W64 {
             self.lane_shift(scalar);
             self.op(Op::I64ShrU);
-            self.narrow(width);
         }
-        self.op(Op::LocalSet(VALUE)).op(Op::Else);
-        if locked {
-            self.enter_parallel_guarded(u32::from(width.bytes()));
-        }
-        self.load_address_slow(width, for_write, exit_depth + 1);
-        self.op(Op::End);
-        true
     }
 
     fn masked_payload(&mut self, scalar: Scalar, width: Width) {

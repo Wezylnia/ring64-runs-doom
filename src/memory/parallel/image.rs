@@ -59,6 +59,12 @@ pub(crate) struct SharedBacking {
     pub incarnation: u64,
 }
 
+#[cfg(target_arch = "wasm32")]
+pub(crate) enum SharedDword {
+    Direct(u32),
+    Loaded(u32),
+}
+
 impl SharedBacking {
     fn padded_end(self) -> u64 {
         u64::from(self.offset) + u64::from(self.length).next_multiple_of(4096)
@@ -418,7 +424,7 @@ impl Image {
         access: Access,
         physical: bool,
         rmw: bool,
-    ) -> Result<Option<(u32, u32)>, Fault> {
+    ) -> Result<Option<u32>, Fault> {
         let Some(layout) = self.shared else {
             return Ok(None);
         };
@@ -443,7 +449,19 @@ impl Image {
         {
             return Ok(None);
         }
-        Ok(Some((lane(absolute), shift(absolute))))
+        Ok(Some(absolute))
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn shared_vector_dword(&self, address: u64) -> Result<SharedDword, Fault> {
+        let index = self.preflight::<false>(address, 4, Access::Read, false, true)?;
+        let mut bytes = [0; 4];
+        Ok(
+            match self.shared_read_after_preflight::<true>(address, &mut bytes, index) {
+                Some(absolute) => SharedDword::Direct(absolute),
+                None => SharedDword::Loaded(u32::from_le_bytes(bytes)),
+            },
+        )
     }
 
     #[cfg(target_arch = "wasm32")]
@@ -528,6 +546,17 @@ impl Image {
     }
 
     pub(in crate::memory) fn shared_read(&self, address: u64, bytes: &mut [u8], index: usize) {
+        let direct = self.shared_read_after_preflight::<false>(address, bytes, index);
+        debug_assert!(direct.is_none());
+    }
+
+    // A returned canonical byte address leaves the dword load to generated Wasm.
+    fn shared_read_after_preflight<const NATIVE_DWORD: bool>(
+        &self,
+        address: u64,
+        bytes: &mut [u8],
+        index: usize,
+    ) -> Option<u32> {
         let Some(layout) = self.shared else {
             unreachable!()
         };
@@ -545,6 +574,10 @@ impl Image {
                         let stripes = [layout.stripe(absolute)];
                         // Same one-attempt hold and exclusive promotion order as access().
                         let held = layout.try_hold(&stripes, crosses_lane);
+                        if NATIVE_DWORD && held.as_ref().is_some_and(|held| held.count == 0) {
+                            debug_assert!(!crosses_lane);
+                            return Some(absolute);
+                        }
                         let _grant = held.is_none().then(|| {
                             let grant = SharedExclusive::acquire();
                             if crosses_lane {
@@ -561,7 +594,7 @@ impl Image {
                             low
                         };
                         bytes.copy_from_slice(&(value as u32).to_le_bytes());
-                        return;
+                        return None;
                     }
                 }
             }
@@ -572,7 +605,7 @@ impl Image {
                 gather(&layout, offsets, bytes);
                 Some(())
             });
-            return;
+            return None;
         }
         self.pieces(address, bytes.len(), index, |absolute, done, count| {
             let offsets = std::array::from_fn::<_, 8, _>(|i| lane(absolute) + i as u32);
@@ -583,6 +616,7 @@ impl Image {
                 Some(())
             });
         });
+        None
     }
 
     pub(in crate::memory) fn shared_write(&mut self, address: u64, bytes: &[u8], index: usize) {

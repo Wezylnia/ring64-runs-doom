@@ -34,7 +34,7 @@ function coreBody(input) {
     source,
     'const exports = instance.exports;',
     `const exports = instance.exports;
-            if (typeof exports.core_parallel_abi !== 'function' || exports.core_parallel_abi() !== 1 ||
+            if (typeof exports.core_parallel_abi !== 'function' || ![1, 2].includes(exports.core_parallel_abi()) ||
                 exports.memory !== binding.privateMemory)
                 throw new Error('parallel core ABI mismatch');`,
   );
@@ -72,6 +72,7 @@ function coreBody(input) {
             parallel_begin: this.parallelBinding.imports.enter_exclusive,
             parallel_end: this.parallelBinding.imports.leave_exclusive,
             parallel_resolve: this.#exports.core_parallel_resolve,
+            parallel_vector_dword: this.#exports.core_parallel_vector_dword,
             parallel_guard: this.#exports.core_parallel_guard,
             parallel_unguard: this.#exports.core_parallel_unguard,
         });

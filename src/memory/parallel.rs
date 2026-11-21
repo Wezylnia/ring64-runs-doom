@@ -3,6 +3,8 @@ mod image;
 #[cfg(test)]
 mod tests;
 
+#[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+pub(crate) use image::SharedDword;
 #[cfg(all(feature = "parallel", any(target_arch = "wasm32", test)))]
 pub(crate) use image::{SharedBacking, SharedExclusive, SharedHeld, SharedLayout};
 

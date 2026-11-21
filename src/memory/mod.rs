@@ -33,7 +33,7 @@ mod vector_read_tests;
 mod parallel;
 
 #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
-pub(crate) use parallel::CAS_ATTEMPTS as SHARED_CAS_ATTEMPTS;
+pub(crate) use parallel::{CAS_ATTEMPTS as SHARED_CAS_ATTEMPTS, SharedDword};
 
 #[cfg(all(feature = "parallel", any(target_arch = "wasm32", test)))]
 pub(crate) use parallel::SharedExclusive;

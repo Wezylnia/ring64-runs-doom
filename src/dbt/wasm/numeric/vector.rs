@@ -184,12 +184,7 @@ impl Emitter {
         }
         self.address(address, next_pc);
         #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
-        if bytes == 4 && !aligned && self.parallel_scalar.is_some() {
-            self.op(Op::LocalSet(ADDRESS));
-            self.load_address_slow(Width::W32, false, exit_depth);
-            self.op(Op::V128Const(0))
-                .op(Op::LocalGet(super::VALUE))
-                .op(Op::I64x2ReplaceLane(0));
+        if bytes == 4 && !aligned && self.parallel_vector_dword(exit_depth) {
             return;
         }
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]

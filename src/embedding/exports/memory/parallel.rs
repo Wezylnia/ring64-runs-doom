@@ -1,9 +1,9 @@
 use super::*;
-use crate::memory::MemoryError;
+use crate::memory::{MemoryError, SharedDword};
 
 #[unsafe(no_mangle)]
 pub extern "C" fn core_parallel_abi() -> u32 {
-    1
+    2
 }
 
 fn complete(bridge: &mut Bridge, result: Result<(), MemoryError>) -> i32 {
@@ -110,7 +110,26 @@ pub extern "C" fn core_parallel_resolve(
             .shared_direct_lane(address, width, kind, false, access == 2)
             .ok()
             .flatten()
-            .map_or(0, |(lane, shift)| lane + shift / 8)
+            .unwrap_or(0)
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn core_parallel_vector_dword(offset: u64, segment: u32) -> u64 {
+    BRIDGE.with_borrow_mut(|bridge| {
+        let core = bridge.core.as_mut().expect("initialized parallel core");
+        let Some(address) = core.vector_address(offset, 4, segment, 1, Access::Read) else {
+            return 0;
+        };
+        // Zero reports a fault. Positive returns a native byte offset, negative returns loaded bits.
+        match core.image.shared_vector_dword(address) {
+            Ok(SharedDword::Direct(absolute)) => (1 << 32) | u64::from(absolute),
+            Ok(SharedDword::Loaded(bits)) => (1 << 63) | u64::from(bits),
+            Err(fault) => {
+                core.access_failure(AccessFailure::Linear(fault));
+                0
+            }
+        }
     })
 }
 

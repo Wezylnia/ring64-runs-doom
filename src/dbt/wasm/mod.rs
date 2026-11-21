@@ -148,6 +148,8 @@ struct Emitter {
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     parallel_scalar: Option<parallel::Scalar>,
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+    parallel_vector_dword: Option<u32>,
+    #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     parallel_retry: Option<u32>,
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     parallel_address_memos: Vec<(u32, u32)>,
@@ -1506,6 +1508,18 @@ fn emit_body(
         run_index += 1;
         index
     });
+    #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+    let parallel_vector_dword = (parallel_resolve.is_some() && vector_banks.loads).then(|| {
+        let signature = add_function_type(&mut types, [ValType::I64, ValType::I32], [ValType::I64]);
+        imports.import(
+            "env",
+            "parallel_vector_dword",
+            EntityType::Function(signature),
+        );
+        let index = run_index;
+        run_index += 1;
+        index
+    });
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let span_cycles: Vec<_> = unit
         .instructions
@@ -1790,6 +1804,8 @@ fn emit_body(
         parallel_atomic,
         #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
         parallel_scalar,
+        #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+        parallel_vector_dword,
         #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
         parallel_retry: None,
         #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
