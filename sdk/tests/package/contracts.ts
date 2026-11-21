@@ -32,3 +32,14 @@ function checkParallel(options: MachineOptions, machine: Machine): Promise<Machi
 
 export { checkCpu, checkParallel };
 export type HiddenCore = Core;
+
+async function checkRegisterCount(cpu: Cpu | Machine['cpus'][number]): Promise<16> {
+  const state = await cpu.readState();
+  // @ts-expect-error A scalar state must supply all sixteen registers.
+  await cpu.setState({ ...state, registers: [0n] });
+  // @ts-expect-error The scalar register bank ends at R15.
+  void state.registers[16];
+  return state.registers.length;
+}
+
+export { checkRegisterCount };

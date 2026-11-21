@@ -1,3 +1,4 @@
+import type { Registers } from '../../../sdk/src/index.js';
 import {
   createCpu,
   snapshot,
@@ -108,7 +109,7 @@ export function aliasScenarios(compiler: WebAssembly.Module): Scenario[] {
                   : index === 4
                     ? 0x7014n
                     : value,
-            ),
+            ) as Registers,
             rip: 0x2000n,
             flags: 0xc96n,
           };

@@ -387,14 +387,22 @@ export function invpcidScenarios(compiler: WebAssembly.Module): Scenario[] {
           cpu.setTimeState({ tsc: 100n, tscAux: AUX });
           const warm = await cpu.run({ budget: 1n });
           same(warm.reason, 'budget', 'required NOP fills the old source page');
-          const writer = { ...warm.state, rip: 0x2000n, registers: [...warm.state.registers] };
+          const writer: typeof warm.state = {
+            ...warm.state,
+            rip: 0x2000n,
+            registers: [...warm.state.registers],
+          };
           writer.registers[6] = 0x1a007n;
           writer.registers[7] = 0x5000n + BigInt(f.width);
           cpu.setState(writer);
           const retarget = await cpu.run({ budget: 1n });
           same(retarget.reason, 'budget', 'guest-only code PTE retarget');
           same(word(cpu, f.pt + f.width), 0x1a007n, 'replacement source has not been walked');
-          const input = { ...retarget.state, rip: PC, registers: [...retarget.state.registers] };
+          const input: typeof retarget.state = {
+            ...retarget.state,
+            rip: PC,
+            registers: [...retarget.state.registers],
+          };
           input.registers[0] = 2n;
           input.registers[3] = DATA;
           cpu.setState(input);
@@ -461,7 +469,11 @@ export function invpcidScenarios(compiler: WebAssembly.Module): Scenario[] {
             0x16023n,
             'completed descriptor walk establishes A without D',
           );
-          const writer = { ...fault.state, rip: 0x2000n, registers: [...fault.state.registers] };
+          const writer: typeof fault.state = {
+            ...fault.state,
+            rip: 0x2000n,
+            registers: [...fault.state.registers],
+          };
           writer.registers[6] = 0x17003n;
           writer.registers[7] = 0x5000n + BigInt(6 * f.width);
           cpu.setState(writer);

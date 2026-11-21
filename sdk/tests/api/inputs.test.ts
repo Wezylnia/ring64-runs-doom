@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import { registerBank } from '../../../tests/support/fixture.js';
 import { createCpu, type Options, type RunResult } from '../../src/index.js';
 import type { State } from '../../src/index.js';
 
@@ -32,7 +33,7 @@ function options(): Options & {
 
 function state(): State {
   return {
-    registers: Array.from({ length: 16 }, (_, index) => BigInt(index + 3)),
+    registers: registerBank((index) => BigInt(index + 3)),
     flags: 2n,
     rip: CODE,
     interruptibility: { sti: false, ss: false },

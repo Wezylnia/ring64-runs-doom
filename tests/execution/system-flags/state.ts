@@ -1,3 +1,4 @@
+import { registerBank } from '../../support/fixture.js';
 import {
   using,
   snapshot,
@@ -35,7 +36,7 @@ export function stateScenarios(compiler: WebAssembly.Module): Scenario[] {
               throws(
                 () =>
                   cpu.setState({
-                    registers: Array<bigint>(16).fill(0n),
+                    registers: registerBank(),
                     flags: 2n,
                     rip: 0x1000n,
                     interruptibility: {

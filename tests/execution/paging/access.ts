@@ -1,3 +1,4 @@
+import type { Registers } from '../../../sdk/src/index.js';
 import {
   BANK,
   PC,
@@ -289,7 +290,7 @@ export function pagingAccessScenarios(compiler: WebAssembly.Module): Scenario[] 
               ...suppressed.state,
               registers: suppressed.state.registers.map((value, i) =>
                 i === 7 ? 0x580000n : value,
-              ),
+              ) as Registers,
             });
             const waiting = await cpu.run({ budget: 1n });
             equal(waiting.reason, 'x87-exception', 'old MF beats absent operand translation');

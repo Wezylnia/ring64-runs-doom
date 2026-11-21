@@ -1,3 +1,4 @@
+import { registerBank } from '../../support/fixture.js';
 import { equal, hex, physicalCpu, put, resetContext, type Scenario } from './fixture.js';
 export function systemScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [
@@ -20,7 +21,7 @@ export function systemScenarios(compiler: WebAssembly.Module): Scenario[] {
           context,
         );
         try {
-          const registers = Array<bigint>(16).fill(0n);
+          const registers = registerBank();
           registers[4] = 0x8000n;
           cpu.setState({ registers, flags: 0x202n, rip: 0x1000n });
           const entered = await cpu.run({ budget: 1n });
@@ -72,7 +73,7 @@ export function systemScenarios(compiler: WebAssembly.Module): Scenario[] {
           context,
         );
         try {
-          const registers = Array<bigint>(16).fill(0n);
+          const registers = registerBank();
           registers[0] = 7n;
           cpu.setState({ registers, flags: 2n, rip: 0x1000n });
           const xmm = Array<bigint>(16).fill(0n);
@@ -117,7 +118,7 @@ export function systemScenarios(compiler: WebAssembly.Module): Scenario[] {
           context,
         );
         try {
-          const registers = Array<bigint>(16).fill(0n);
+          const registers = registerBank();
           registers[0] = 0x32n;
           cpu.setState({ registers, flags: 0x102n, rip: 0x1000n });
           const result = await cpu.run({ budget: 1n });
@@ -149,7 +150,7 @@ export function systemScenarios(compiler: WebAssembly.Module): Scenario[] {
         );
         try {
           cpu.setState({
-            registers: Array<bigint>(16).fill(0n),
+            registers: registerBank(),
             flags: 2n,
             rip: 0x1000n,
             event: {

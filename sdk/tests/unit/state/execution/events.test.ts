@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { registerBank } from '../../../../../tests/support/fixture.js';
 import { Core } from '../../../../src/wasm/core.js';
 import { captureState, type State } from '../../../../src/state/execution/registers.js';
 import { createCpu } from '../../../../src/cpu/cpu.js';
@@ -241,7 +242,7 @@ test('event capture rejects malformed records and primitive fields without coerc
 });
 
 test('scalar event omission selects ready but explicitly undefined is rejected', () => {
-  const source: State = { registers: Array<bigint>(16).fill(0n), flags: 2n, rip: 0x1000n };
+  const source: State = { registers: registerBank(), flags: 2n, rip: 0x1000n };
   assert.deepEqual(captureState(source).event, { kind: 'ready' });
   for (const event of [undefined, null])
     assert.throws(() => captureState({ ...source, event } as unknown as State), TypeError);
@@ -312,7 +313,7 @@ test('disposal during event capture prevents scalar publication and later captur
   }
   let reads = 0;
   const source: State = {
-    registers: Array<bigint>(16).fill(0n),
+    registers: registerBank(),
     flags: 2n,
     rip: 0x1000n,
     get event() {

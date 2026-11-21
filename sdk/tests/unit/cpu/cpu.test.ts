@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { registerBank } from '../../../../tests/support/fixture.js';
 import { Core } from '../../../src/wasm/core.js';
 import { Cpu, createCpu } from '../../../src/cpu/cpu.js';
 
@@ -49,7 +50,7 @@ test('boundary getters cannot publish an outer state import after run or disposa
     ]);
     let pending: Promise<unknown> | undefined;
     const source = {
-      registers: Array<bigint>(16).fill(9n),
+      registers: registerBank(9n),
       flags: 2n,
       rip: 0x3000n,
       interruptibility: {
@@ -120,7 +121,7 @@ test('an invalid nested run attempt does not invalidate a state capture', async 
   let nested: Promise<unknown> | undefined;
   try {
     f.cpu.setState({
-      registers: Array<bigint>(16).fill(9n),
+      registers: registerBank(9n),
       rip: 0x2000n,
       get flags() {
         nested = f.cpu.run({ budget: -1n });
@@ -183,7 +184,7 @@ async function fixture(steps: Step[] = []) {
   const engine = {
     current: () => current,
     snapshot: () => ({
-      registers: Array<bigint>(16).fill(0n),
+      registers: registerBank(),
       flags: 2n,
       rip: current.rip,
       interruptibility: { sti: false, ss: false },
@@ -393,7 +394,7 @@ test('nested intake during capture survives rejected scalar input and remains vi
     assert.throws(
       () =>
         f.cpu.setState({
-          registers: Array<bigint>(16).fill(0n),
+          registers: registerBank(),
           flags: 2n,
           rip: 0x1000n,
           get interrupts() {

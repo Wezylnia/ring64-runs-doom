@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import { registerBank } from '../../../../tests/support/fixture.js';
 import { createCpu, type Cpu, type FastSystemState, type Options } from '../../../src/index.js';
 
 const compiler = await WebAssembly.compile(
@@ -118,7 +119,7 @@ test('real fast-system repair preserves a frozen PF source and unrelated bank, q
   const cpu = await createCpu(options());
   try {
     cpu.setState({
-      registers: Array.from({ length: 16 }, (_, i) => 0x1122334400000000n + BigInt(i)),
+      registers: registerBank((i) => 0x1122334400000000n + BigInt(i)),
       flags: 0x202n,
       rip: 0x400000n,
       interruptibility: { sti: false, ss: true },

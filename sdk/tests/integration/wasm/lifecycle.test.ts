@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import { registerBank } from '../../../../tests/support/fixture.js';
 import { createCpu, type Limits } from '../../../src/index.js';
 import type { State } from '../../../src/index.js';
 
@@ -19,7 +20,7 @@ const limits: Limits = {
 };
 
 function state(seed = 0x1122_3344_0000_0000n, flags = 2n): State {
-  const registers = Array.from({ length: 16 }, (_, index) => seed + BigInt(index));
+  const registers = registerBank((index) => seed + BigInt(index));
   registers[3] = RAM;
   return {
     registers,

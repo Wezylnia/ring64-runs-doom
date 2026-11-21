@@ -1,4 +1,8 @@
-import { createCpu, type ExecutionContextSnapshot } from '../../../sdk/src/index.js';
+import {
+  createCpu,
+  type ExecutionContextSnapshot,
+  type Registers,
+} from '../../../sdk/src/index.js';
 import { usingPaged, PC } from '../paging/fixture.js';
 import {
   legacyOptions,
@@ -158,7 +162,7 @@ export function legacyEventScenarios(compiler: WebAssembly.Module): Scenario[] {
         options.context = context;
         const cpu = await createCpu(options);
         try {
-          const registers = [...saved.registers];
+          const registers: Registers = [...saved.registers];
           registers[4] = 0xa000n;
           cpu.setState({ ...saved, registers });
           const bank = cpu.readPagingState();

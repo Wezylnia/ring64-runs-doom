@@ -8,7 +8,7 @@ import {
   transitionProgram,
   type Scenario,
 } from './fixture.js';
-import { LIMITS } from '../../support/fixture.js';
+import { LIMITS, registerBank } from '../../support/fixture.js';
 function protected32() {
   const c = resetContext();
   c.mode = 'protected';
@@ -79,7 +79,7 @@ export function boundaryScenarios(compiler: WebAssembly.Module): Scenario[] {
           protected32(),
         );
         try {
-          const registers = Array<bigint>(16).fill(0n);
+          const registers = registerBank();
           registers[0] = 0x80000033n;
           cpu.setState({ registers, flags: 2n, rip: 0x1000n });
           const write = await cpu.run({ budget: 1n });
@@ -133,7 +133,7 @@ export function boundaryScenarios(compiler: WebAssembly.Module): Scenario[] {
           limits: LIMITS,
         });
         try {
-          const registers = Array<bigint>(16).fill(0n);
+          const registers = registerBank();
           registers[0] = 0x33n;
           cpu.setState({ registers, flags: 2n, rip: 0x1000n });
           const writer = await cpu.run({ budget: 1n });
@@ -177,7 +177,7 @@ export function boundaryScenarios(compiler: WebAssembly.Module): Scenario[] {
           cpu = await physicalCpu(compiler, ram, rom, bank, c);
         let restored: Awaited<ReturnType<typeof physicalCpu>> | undefined;
         try {
-          const registers = Array<bigint>(16).fill(0n);
+          const registers = registerBank();
           registers[4] = 0x8000n;
           cpu.setState({ registers, flags: 2n, rip: 0x1000n });
           const snap = cpu.readContext();

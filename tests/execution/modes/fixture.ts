@@ -6,7 +6,7 @@ import {
   type Limits,
   type State,
 } from '../../../sdk/src/index.js';
-import { LIMITS, hex, type Scenario } from '../../support/fixture.js';
+import { LIMITS, hex, type Scenario, registerBank } from '../../support/fixture.js';
 export type { Scenario };
 export const LONG: ExecutionContext = { mode: 'long64', fsBase: 0n, gsBase: 0n };
 export function segment(
@@ -43,7 +43,7 @@ export function input(
   registers: Record<number, bigint> = {},
   flags = 0x8d7n,
 ): State {
-  const banks = Array.from({ length: 16 }, (_, index) => 0x1122334400000000n + BigInt(index));
+  const banks = registerBank((index) => 0x1122334400000000n + BigInt(index));
   banks[0] = 0x1122334455667788n;
   for (const [index, value] of Object.entries(registers)) banks[Number(index)] = value;
   return { registers: banks, flags, rip };
@@ -54,7 +54,7 @@ export function changed(
   registers: Record<number, bigint> = {},
   flags = state.flags,
 ): State {
-  const banks = [...state.registers];
+  const banks: State['registers'] = [...state.registers];
   for (const [index, value] of Object.entries(registers)) banks[Number(index)] = value;
   return { registers: banks, flags, rip };
 }

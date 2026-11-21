@@ -1,3 +1,4 @@
+import { registerBank } from '../../../../tests/support/fixture.js';
 import { DEBUG_LAYOUT } from '../../../../tests/support/debug-layout.js';
 import { TIME_LAYOUT } from '../../../../tests/support/time-layout.js';
 import {
@@ -214,7 +215,7 @@ test('XMM transport is little endian, owns snapshots, and preserves XMM state ac
   const snapshot = core.readXmmState();
   snapshot[0] = 0n;
   assert.deepEqual(core.readXmmState(), bank);
-  core.setState({ registers: Array<bigint>(16).fill(9n), flags: 2n, rip: 0x1000n });
+  core.setState({ registers: registerBank(9n), flags: 2n, rip: 0x1000n });
   assert.deepEqual(core.readXmmState(), bank);
   assert.throws(() => core.setXmmState([...bank.slice(0, 15), -1n]), TypeError);
   assert.equal(fixture.imported(), 1);
@@ -299,7 +300,7 @@ test('scalar boundary transport uses existing padding and returns detached snaps
       [{ sti: false, ss: true }, 2],
     ] as [Interruptibility, number][]) {
       core.setState({
-        registers: Array<bigint>(16).fill(9n),
+        registers: registerBank(9n),
         flags: 0x202n,
         rip: 0x1000n,
         interruptibility,
@@ -312,7 +313,7 @@ test('scalar boundary transport uses existing padding and returns detached snaps
       assert.deepEqual(core.snapshot().interruptibility, interruptibility);
       assert.equal(core.snapshot().registers[0], 9n);
     }
-    core.setState({ registers: Array<bigint>(16).fill(1n), flags: 2n, rip: 0x2000n });
+    core.setState({ registers: registerBank(1n), flags: 2n, rip: 0x2000n });
     assert.deepEqual(core.snapshot().interruptibility, { sti: false, ss: false });
   } finally {
     core.dispose();
@@ -334,7 +335,7 @@ test('pending trap transport retains source provenance through private IDT refus
         savedFlags: 0x302n,
       },
     };
-    core.setState({ registers: Array<bigint>(16).fill(0n), flags: 0x302n, rip: 0x1010n, event });
+    core.setState({ registers: registerBank(), flags: 0x302n, rip: 0x1010n, event });
     assert.equal(core.eventKind(), 'pending');
     assert.deepEqual(core.snapshot().event, event);
     const captured = core.snapshot().event;
@@ -354,7 +355,7 @@ test('pending trap transport retains source provenance through private IDT refus
     const fault = core.systemMemoryFault('system-memory-fault');
     assert.equal(fault?.instructionPc, 0x1000n);
     assert.equal(core.current().rip, 0x1010n, 'continuation remains separately observable');
-    core.setState({ registers: Array<bigint>(16).fill(0n), flags: 2n, rip: 0x2000n });
+    core.setState({ registers: registerBank(), flags: 2n, rip: 0x2000n });
     assert.deepEqual(core.snapshot().event, { kind: 'ready' });
     assert.equal(core.systemMemoryFault('system-memory-fault')?.instructionPc, 0x2000n);
   } finally {
@@ -456,7 +457,7 @@ test('unsigned wasm32 XMM transport supports an extent ending at private memory 
   assert.ok(pointer > 0x7fffffff);
   const fixture = await mockedCore(layout, pointer, memory, undefined, pointer - 512);
   assert.ok(fixture.core);
-  const bank = Array.from({ length: 16 }, (_, index) => BigInt(index) << 120n);
+  const bank = registerBank((index) => BigInt(index) << 120n);
   fixture.core.setTimeState({ tsc: 0xfedcba9876543210n, tscAux: 0x89abcdef });
   fixture.core.setXmmState(bank);
   assert.deepEqual(fixture.core.readXmmState(), bank);
@@ -487,7 +488,7 @@ test('missing standard SIMD rejects construction before allocating a Core', asyn
 
 async function cpuFixture() {
   let bank = Array<bigint>(16).fill(0n);
-  let state = { registers: Array<bigint>(16).fill(0n), flags: 2n, rip: 0x1000n };
+  let state = { registers: registerBank(), flags: 2n, rip: 0x1000n };
   const engine = {
     readXmmState: () => [...bank],
     setXmmState: (next: bigint[]) => {
@@ -516,7 +517,7 @@ test('reentrant XMM imports publish complete banks last and retain independent s
     Object.defineProperty(outer, 0, {
       get() {
         cpu.setXmmState(Array<bigint>(16).fill(7n));
-        cpu.setState({ registers: Array<bigint>(16).fill(9n), flags: 2n, rip: 0x2000n });
+        cpu.setState({ registers: registerBank(9n), flags: 2n, rip: 0x2000n });
         return 3n;
       },
     });

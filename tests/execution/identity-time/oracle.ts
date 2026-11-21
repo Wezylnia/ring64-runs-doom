@@ -1,3 +1,4 @@
+import { registerBank } from '../../support/fixture.js';
 // Independent public oracle: literal byte programs and direct BigInt retirement steps.
 // No decoder, time implementation, transport layout, or production retirement count supplies expectations.
 import type {
@@ -112,7 +113,7 @@ export function execution(profile: Profile): ExecutionContextSnapshot {
   };
 }
 export function input(profile: Profile, rip = ENTRY): State {
-  const registers = Array.from({ length: 16 }, (_, i) => 0xa1b2c3d4e5f60000n + BigInt(i));
+  const registers = registerBank((i) => 0xa1b2c3d4e5f60000n + BigInt(i));
   registers[4] = 0x9000n;
   return {
     registers,

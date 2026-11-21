@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { Worker } from 'node:worker_threads';
+import { registerBank } from '../../../../tests/support/fixture.js';
+import type { Registers } from '../../../src/index.js';
 import type { createMachine as create, Machine, MachineOptions } from '../../../src/machine.js';
 import { SharedControl, SLOT } from '../../../src/parallel/control.js';
 import type { FromWorker, ToWorker } from '../../../src/parallel/protocol.js';
@@ -52,8 +54,8 @@ async function machine(code: number[], io?: MachineOptions['io']): Promise<Machi
   });
 }
 
-function registers(rdi: bigint): bigint[] {
-  return Array.from({ length: 16 }, (_, index) => (index === 7 ? rdi : 0n));
+function registers(rdi: bigint): Registers {
+  return registerBank((index) => (index === 7 ? rdi : 0n));
 }
 
 test(

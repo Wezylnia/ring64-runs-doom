@@ -2,6 +2,7 @@ import {
   createCpu,
   type Cpu,
   type Limits,
+  type Registers,
   type RunResult,
   type State,
 } from '../../sdk/src/index.js';
@@ -63,8 +64,16 @@ export function memory(cpu: Cpu, base: bigint, expected: string): void {
   );
 }
 
+export function registerBank(value: bigint | ((index: number) => bigint) = 0n): Registers {
+  return (
+    typeof value === 'function'
+      ? Array.from({ length: 16 }, (_, index) => value(index))
+      : Array<bigint>(16).fill(value)
+  ) as Registers;
+}
+
 export function initial(rip = CODE, registers: Record<number, bigint> = {}, flags = 2n): State {
-  const banks = Array.from({ length: 16 }, (_, index) => 0x1122334400000000n + BigInt(index));
+  const banks = registerBank((index) => 0x1122334400000000n + BigInt(index));
   banks[3] = DATA;
   for (const [index, value] of Object.entries(registers)) banks[Number(index)] = value;
   return {
@@ -83,7 +92,7 @@ export function changed(
   registers: Record<number, bigint> = {},
   flags = input.flags,
 ): State {
-  const banks = [...input.registers];
+  const banks: Registers = [...input.registers];
   for (const [index, value] of Object.entries(registers)) banks[Number(index)] = value;
   return {
     registers: banks,

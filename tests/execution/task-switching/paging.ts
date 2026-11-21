@@ -1,3 +1,4 @@
+import type { Registers } from '../../../sdk/src/index.js';
 import { preserveNumeric } from '../far-control/fixture.js';
 import {
   CALL,
@@ -44,7 +45,9 @@ export function taskPagingScenarios(compiler: WebAssembly.Module): Scenario[] {
           write32(cpu, TSS_B + 84n, 0x10);
           const unchangedNumeric = preserveNumeric(cpu);
           const state = cpu.readState();
-          const registers = state.registers.map((low, i) => (BigInt(i + 1) << 40n) | low);
+          const registers = state.registers.map(
+            (low, i) => (BigInt(i + 1) << 40n) | low,
+          ) as Registers;
           cpu.setState({ ...state, registers });
           const switched = await cpu.run({ budget: 1n });
           equal(switched.reason, 'budget', 'completed transfer with paging disabled');

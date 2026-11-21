@@ -1,3 +1,4 @@
+import { registerBank } from '../../../../../tests/support/fixture.js';
 import { DEBUG_LAYOUT } from '../../../../../tests/support/debug-layout.js';
 import { TIME_LAYOUT } from '../../../../../tests/support/time-layout.js';
 import {
@@ -278,7 +279,7 @@ test('x87 state and import pointers retain unsigned wasm32 values through exact 
 
 async function publicFixture() {
   let x87 = state(),
-    scalar = { registers: Array<bigint>(16).fill(0n), flags: 2n, rip: 0x1000n };
+    scalar = { registers: registerBank(), flags: 2n, rip: 0x1000n };
   let xmm = Array<bigint>(16).fill(0n),
     mxcsr = 0x1f80;
   let imports = 0;
@@ -345,7 +346,7 @@ test('reentrant x87 capture replaces its whole projection last and preserves oth
     Object.defineProperty(outer.registers, 0, {
       get() {
         cpu.setX87State(inner);
-        cpu.setState({ registers: Array<bigint>(16).fill(9n), flags: 2n, rip: 0x2222n });
+        cpu.setState({ registers: registerBank(9n), flags: 2n, rip: 0x2222n });
         cpu.setXmmState(Array<bigint>(16).fill(7n));
         cpu.setMxcsr(0xffff);
         return state().registers[0];

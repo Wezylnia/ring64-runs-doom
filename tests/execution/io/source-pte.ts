@@ -72,11 +72,12 @@ export function ioSourcePteScenarios(compiler: WebAssembly.Module): Scenario[] {
           equal(first.retired, 0n, 'unfinished REP');
           equal(first.state.registers[7], 0x600an, 'committed index');
           equal(first.state.registers[1], 1n, 'committed count');
-          const helper = {
+          const helper: typeof first.state = {
             ...first.state,
             rip: 0x2000n,
-            registers: first.state.registers.map((value, i) => (i === 3 ? 0x1000n : value)),
+            registers: [...first.state.registers],
           };
+          helper.registers[3] = 0x1000n;
           cpu.setState(helper);
           const invalidate = await cpu.run({ budget: 1n });
           equal(invalidate.reason, 'budget', 'guest INVLPG completes on another code page');

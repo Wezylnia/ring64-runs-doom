@@ -1,3 +1,4 @@
+import type { Registers } from '../../../sdk/src/index.js';
 import {
   using,
   snapshot,
@@ -36,7 +37,7 @@ export function reviewScenarios(compiler: WebAssembly.Module): Scenario[] {
               ...loaded.state,
               registers: loaded.state.registers.map((value, index) =>
                 index === 3 ? 0x6000n : value,
-              ),
+              ) as Registers,
               flags: 0x10102n,
               rip: 0x2000n,
             };

@@ -1,5 +1,5 @@
 import { createCpu, equal, hex, physicalCpu, resetContext, type Scenario } from './fixture.js';
-import { LIMITS } from '../../support/fixture.js';
+import { LIMITS, registerBank } from '../../support/fixture.js';
 function protected32() {
   const c = resetContext();
   c.mode = 'protected';
@@ -37,7 +37,7 @@ export function negativeScenarios(compiler: WebAssembly.Module): Scenario[] {
             protected32(),
           );
           try {
-            const registers = Array<bigint>(16).fill(0n);
+            const registers = registerBank();
             registers[0] = value;
             cpu.setState({ registers, flags: 0x10002n, rip: 0x1000n });
             const result = await cpu.run({ budget: 1n });
@@ -73,7 +73,7 @@ export function negativeScenarios(compiler: WebAssembly.Module): Scenario[] {
             context,
           );
           try {
-            const registers = Array<bigint>(16).fill(0n);
+            const registers = registerBank();
             registers[0] = 0x80040033n;
             cpu.setState({ registers, flags: 2n, rip: 0x1000n });
             const result = await cpu.run({ budget: 1n });
@@ -104,7 +104,7 @@ export function negativeScenarios(compiler: WebAssembly.Module): Scenario[] {
           protected32(),
         );
         try {
-          const registers = Array<bigint>(16).fill(0n);
+          const registers = registerBank();
           registers[0] = 0x1122334400000000n;
           cpu.setState({ registers, flags: 2n, rip: 0x1000n });
           const first = await cpu.run({ budget: 1n });
@@ -149,7 +149,7 @@ export function negativeScenarios(compiler: WebAssembly.Module): Scenario[] {
           context,
         );
         try {
-          cpu.setState({ registers: Array<bigint>(16).fill(0n), flags: 2n, rip: 0x1000n });
+          cpu.setState({ registers: registerBank(), flags: 2n, rip: 0x1000n });
           const wrappedStart = await cpu.run({ budget: 1n });
           equal(wrappedStart.retired, 1n, 'formed start wraps once');
           equal(wrappedStart.state.registers[0], 0x5an, 'identity low-byte load');
@@ -185,7 +185,7 @@ export function negativeScenarios(compiler: WebAssembly.Module): Scenario[] {
               } catch {
                 denied = true;
               }
-              return Array<bigint>(16).fill(0n);
+              return registerBank();
             },
             flags: 2n,
             rip: 0x1000n,
@@ -251,7 +251,7 @@ export function negativeScenarios(compiler: WebAssembly.Module): Scenario[] {
             context,
           );
           try {
-            cpu.setState({ registers: Array<bigint>(16).fill(0n), flags: 2n, rip: 0x1000n });
+            cpu.setState({ registers: registerBank(), flags: 2n, rip: 0x1000n });
             cpu.setDebugState({ addresses: [0n, 0n, 0n, 0n], dr6: 0xffff0ff0n, dr7: 0x2400n });
             const result = await cpu.run({ budget: 1n });
             equal(result.reason, de ? 'invalid-encoding' : 'protection-fault', 'VM86 order');
@@ -279,7 +279,7 @@ export function negativeScenarios(compiler: WebAssembly.Module): Scenario[] {
           context,
         );
         try {
-          cpu.setState({ registers: Array<bigint>(16).fill(0n), flags: 2n, rip: 0x1000n });
+          cpu.setState({ registers: registerBank(), flags: 2n, rip: 0x1000n });
           await cpu.run({ budget: 2n });
           const owner = cpu.inspectTranslations()[0]!.owner;
           cpu.setState({ ...cpu.readState(), rip: 0x1001n });

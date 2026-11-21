@@ -1,3 +1,4 @@
+import type { Registers } from '../../../sdk/src/index.js';
 import { memory } from '../../support/fixture.js';
 import {
   LONG,
@@ -229,7 +230,7 @@ export function matrixScenarios(compiler: WebAssembly.Module): Scenario[] {
               }
               const old = (before.registers[dst]! >> BigInt(shift)) & mask(width);
               const source = before.registers[src]! & mask(width);
-              const banks = [...before.registers];
+              const banks: Registers = [...before.registers];
               let flags = before.flags;
               const write = (bank: number, value: bigint, offset = 0) => {
                 banks[bank] = merge(banks[bank]!, value, width, true, offset);

@@ -1,3 +1,4 @@
+import { registerBank } from '../../support/fixture.js';
 import { equal, hex, physicalCpu, put, resetContext, type Scenario } from './fixture.js';
 function context32() {
   const c = resetContext();
@@ -38,7 +39,7 @@ export function pagingSwitchScenarios(compiler: WebAssembly.Module): Scenario[] 
             context32(),
           );
         try {
-          const registers = Array<bigint>(16).fill(0n);
+          const registers = registerBank();
           registers[0] = 0x628n;
           cpu.setState({ registers, flags: 2n, rip: 0x20000n });
           const result = await cpu.run({ budget: 3n });
@@ -49,9 +50,10 @@ export function pagingSwitchScenarios(compiler: WebAssembly.Module): Scenario[] 
           equal(cpu.readPhysicalMemory(0x91000n, 1)[0], 0x22, 'PAE witness');
           // Re-execute only the control form with the non-PAE value. The effective
           // low-32 root and its raw 0x20 field survive the round trip.
+          registers[0] = 0x608n;
           cpu.setState({
             ...cpu.readState(),
-            registers: [0x608n, ...registers.slice(1)],
+            registers,
             rip: 0x2000an,
           });
           const back = await cpu.run({ budget: 1n });
@@ -78,7 +80,7 @@ export function pagingSwitchScenarios(compiler: WebAssembly.Module): Scenario[] 
           context32(),
         );
         try {
-          const registers = Array<bigint>(16).fill(0n);
+          const registers = registerBank();
           registers[0] = 0x628n;
           cpu.setState({ registers, flags: 2n, rip: 0x20000n });
           const result = await cpu.run({ budget: 1n });
@@ -112,7 +114,7 @@ export function pagingSwitchScenarios(compiler: WebAssembly.Module): Scenario[] 
         try {
           cpu.writePhysicalMemory(0x3000n, hex('03400000'));
           cpu.writePhysicalMemory(0x4004n, hex('03100000'));
-          const registers = Array<bigint>(16).fill(0n);
+          const registers = registerBank();
           registers[0] = 0x628n;
           cpu.setState({ registers, flags: 2n, rip: 0x1000n });
           const result = await cpu.run({ budget: 2n });

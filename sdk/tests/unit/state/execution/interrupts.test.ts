@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { registerBank } from '../../../../../tests/support/fixture.js';
 import { captureState, type State } from '../../../../src/state/execution/registers.js';
 import {
   captureEventState,
@@ -52,7 +53,7 @@ test('halted and source-aware external checkpoints retain independent IRQ and NM
 test('interrupt checkpoint capture owns each field and omission differs from explicit undefined', () => {
   const reads = { interrupts: 0, irq: 0, nmiPending: 0, nmiBlocked: 0 };
   const input = {
-    registers: Array<bigint>(16).fill(0n),
+    registers: registerBank(),
     flags: 2n,
     rip: 0x1000n,
     get interrupts() {

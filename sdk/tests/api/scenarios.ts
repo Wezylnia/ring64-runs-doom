@@ -1,4 +1,4 @@
-import { createCpu } from '../../src/index.js';
+import { createCpu, type Registers } from '../../src/index.js';
 import {
   createFixture,
   type Scenario,
@@ -85,10 +85,11 @@ export function embeddingScenarios(core: WebAssembly.Module): Scenario[] {
             state(cpu.readState(), input);
           }
           throws(
+            // @ts-expect-error JavaScript callers still need runtime length validation.
             () => cpu.setState({ ...input, registers: input.registers.slice(0, 15) }),
             'short register bank',
           );
-          const invalidRegisters = [...input.registers];
+          const invalidRegisters: Registers = [...input.registers];
           invalidRegisters[7] = -1n;
           throws(
             () => cpu.setState({ ...input, registers: invalidRegisters }),

@@ -1,3 +1,4 @@
+import { registerBank } from '../../support/fixture.js';
 import { equal, hex, physicalCpu, put, resetContext, type Scenario } from './fixture.js';
 export function rawActivationScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [
@@ -37,7 +38,7 @@ export function rawActivationScenarios(compiler: WebAssembly.Module): Scenario[]
         let restored: Awaited<ReturnType<typeof physicalCpu>> | undefined;
         let long: Awaited<ReturnType<typeof physicalCpu>> | undefined;
         try {
-          const registers = Array<bigint>(16).fill(0n);
+          const registers = registerBank();
           registers[0] = 0x80000033n;
           cpu.setState({ registers, flags: 2n, rip: 0x1000n });
           const activation = await cpu.run({ budget: 1n });

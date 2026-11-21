@@ -1,3 +1,4 @@
+import { registerBank } from '../support/fixture.js';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -25,7 +26,7 @@ test('the literal guest loop runs through generated wasm with exact state and re
     limits,
   });
   try {
-    const registers = Array.from({ length: 16 }, (_, i) => 0x1122334400000000n + BigInt(i));
+    const registers = registerBank((i) => 0x1122334400000000n + BigInt(i));
     registers[3] = 0x100004000n;
     cpu.setState({ registers, flags: 2n, rip: 0x1000n });
     const prefix = await cpu.run({ budget: 5n });

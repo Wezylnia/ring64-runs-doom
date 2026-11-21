@@ -1,3 +1,4 @@
+import { registerBank } from '../support/fixture.js';
 import { createCpu } from '../../sdk/src/index.js';
 import { runScenarios } from '../suite.js';
 
@@ -27,7 +28,7 @@ resultWindow.ring64Result = (async () => {
   });
   const creationWallMs = performance.now() - creationAt;
   try {
-    const initial = { registers: Array<bigint>(16).fill(0n), flags: 2n, rip: 0x1000n };
+    const initial = { registers: registerBank(), flags: 2n, rip: 0x1000n };
     initial.registers[3] = 0x8008n;
     cpu.setState(initial);
     const firstAt = performance.now();

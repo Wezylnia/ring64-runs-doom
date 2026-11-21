@@ -1,4 +1,4 @@
-import type { Cpu, RunResult, State } from '../../../../sdk/src/index.js';
+import type { Cpu, RunResult, State, Registers } from '../../../../sdk/src/index.js';
 import { CODE, changed, createFixture, equal, exit, memory } from '../../../support/fixture.js';
 import { input, RAM, setup, view, written } from '../data/fixture.js';
 
@@ -41,7 +41,7 @@ export function completed(
   mask = 0x8d7n,
   undefinedWord?: number,
 ) {
-  const registers = [...expected.registers];
+  const registers: Registers = [...expected.registers];
   if (undefinedWord !== undefined)
     registers[undefinedWord] = written(
       registers[undefinedWord]!,

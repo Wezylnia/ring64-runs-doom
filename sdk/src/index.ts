@@ -7,7 +7,12 @@ export async function loadCpuCompiler(): Promise<WebAssembly.Module> {
 }
 
 export type { Cpu, Limits, Options, RunResult } from './cpu/cpu.js';
-export type { State, StateSnapshot, Interruptibility } from './state/execution/registers.js';
+export type {
+  State,
+  StateSnapshot,
+  Registers,
+  Interruptibility,
+} from './state/execution/registers.js';
 export type { X87State, X87Exception } from './state/numeric/x87.js';
 export type {
   EventState,

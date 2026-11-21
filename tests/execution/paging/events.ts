@@ -1,4 +1,4 @@
-import { type Cpu, type EventState } from '../../../sdk/src/index.js';
+import { type Cpu, type EventState, type Registers } from '../../../sdk/src/index.js';
 import { longSnapshot } from '../../support/context.js';
 import { gate } from '../software-events/fixture.js';
 import { preserveNumeric } from '../far-control/fixture.js';
@@ -431,7 +431,7 @@ export function pagingEventScenarios(compiler: WebAssembly.Module): Scenario[] {
             ...cpu.readState(),
             registers: cpu
               .readState()
-              .registers.map((value, index) => (index === 4 ? 0x405010n : value)),
+              .registers.map((value, index) => (index === 4 ? 0x405010n : value)) as Registers,
           });
           const table = cpu.readPhysicalMemory(0x4000n, 0x30);
           const result = await cpu.run({ budget: 1n, eventDelivery: { budget: 1n } });

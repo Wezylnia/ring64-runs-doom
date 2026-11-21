@@ -1,3 +1,4 @@
+import type { Registers } from '../../../sdk/src/index.js';
 import {
   using,
   snapshot,
@@ -173,7 +174,9 @@ export function returnScenarios(compiler: WebAssembly.Module): Scenario[] {
               const finalSp = long ? 0x7020n : 0x112233440000700cn;
               const expected = {
                 ...before,
-                registers: before.registers.map((value, index) => (index === 4 ? finalSp : value)),
+                registers: before.registers.map((value, index) =>
+                  index === 4 ? finalSp : value,
+                ) as Registers,
                 rip: 0x3000n,
                 flags: 0x10002n,
               };

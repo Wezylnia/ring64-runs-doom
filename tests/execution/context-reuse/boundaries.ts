@@ -1,3 +1,4 @@
+import type { Registers } from '../../../sdk/src/index.js';
 import {
   changed,
   check,
@@ -33,7 +34,7 @@ export function boundaryScenarios(compiler: WebAssembly.Module, make: Factory): 
                     ...input,
                     registers: input.registers.map((value, index) =>
                       index === 11 ? 0x202n : value,
-                    ),
+                    ) as Registers,
                   }
                 : input,
             );

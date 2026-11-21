@@ -1,3 +1,4 @@
+import type { Registers } from '../../../../sdk/src/index.js';
 import {
   CODE,
   changed,
@@ -32,7 +33,7 @@ export function dataObservationScenarios(core: WebAssembly.Module): Scenario[] {
       run: async () => {
         let code = '';
         const before = input();
-        const registers = [...before.registers];
+        const registers: Registers = [...before.registers];
         for (let bank = 0; bank < 16; bank++) {
           code += prefix(8, 0, bank) + byte(0xb0 + (bank & 7)) + byte(0x80 + bank);
           registers[bank] = written(registers[bank]!, BigInt(0x80 + bank), 8);

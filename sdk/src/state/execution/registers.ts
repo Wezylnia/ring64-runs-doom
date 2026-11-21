@@ -7,9 +7,28 @@ import {
   type InterruptState,
 } from './events.js';
 
+export type Registers = [
+  rax: bigint,
+  rcx: bigint,
+  rdx: bigint,
+  rbx: bigint,
+  rsp: bigint,
+  rbp: bigint,
+  rsi: bigint,
+  rdi: bigint,
+  r8: bigint,
+  r9: bigint,
+  r10: bigint,
+  r11: bigint,
+  r12: bigint,
+  r13: bigint,
+  r14: bigint,
+  r15: bigint,
+];
+
 export interface State {
   debugContinuation?: DebugContinuation;
-  registers: bigint[];
+  registers: Registers;
   flags: bigint;
   rip: bigint;
   interruptibility?: Interruptibility;
@@ -65,7 +84,7 @@ export function captureState(state: State): StateSnapshot {
   const debugContinuation =
     'debugContinuation' in state ? captureDebugContinuation(state.debugContinuation!) : undefined;
   return {
-    registers,
+    registers: registers as Registers,
     flags,
     rip,
     interruptibility,

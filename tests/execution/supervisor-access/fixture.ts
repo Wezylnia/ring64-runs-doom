@@ -7,7 +7,7 @@ import type {
   State,
 } from '../../../sdk/src/index.js';
 import { longSnapshot, protectedSnapshot } from '../../support/context.js';
-import { LIMITS, hex } from '../../support/fixture.js';
+import { LIMITS, hex, registerBank } from '../../support/fixture.js';
 
 export { check, hex, type Scenario } from '../../support/fixture.js';
 export type { Cpu, PagingState } from '../../../sdk/src/index.js';
@@ -46,7 +46,7 @@ export function word(cpu: Cpu, at: number, width = 8): bigint {
 }
 
 export function state(flags = 2n, rip = PC): State {
-  const registers = Array.from({ length: 16 }, (_, i) => 0x1122334400000000n + BigInt(i));
+  const registers = registerBank((i) => 0x1122334400000000n + BigInt(i));
   registers[0] = 0x11223344cafebaben;
   registers[3] = DATA;
   registers[4] = 0x9ff0n;

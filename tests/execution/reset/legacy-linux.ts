@@ -4,7 +4,7 @@ import type {
   Options,
   PagingState,
 } from '../../../sdk/src/index.js';
-import { LIMITS, same } from '../../support/fixture.js';
+import { LIMITS, same, registerBank } from '../../support/fixture.js';
 import { createCpu, equal, hex, put, resetContext, type Scenario } from './fixture.js';
 
 // Linux v0.11, archive 7aadf253807264ad5561479e2a8b9de9602f966d.
@@ -99,7 +99,7 @@ export async function createLegacyLinuxHandoff(compiler: WebAssembly.Module) {
       ports.push(['write', port, width, value]);
     },
   });
-  const registers = Array<bigint>(16).fill(0n);
+  const registers = registerBank();
   registers[4] = 0xff00n;
   cpu.setState({ registers, flags: 2n, rip: 0n });
   return { cpu, ports };

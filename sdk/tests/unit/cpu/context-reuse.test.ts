@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { registerBank } from '../../../../tests/support/fixture.js';
 import { Core } from '../../../src/wasm/core.js';
 import type { GeneratedRun } from '../../../src/wasm/abi.js';
 import { createCpu } from '../../../src/cpu/cpu.js';
 import type { State } from '../../../src/state/execution/registers.js';
 
 const PC = 0x1000n;
-const state = (): State => ({ registers: Array<bigint>(16).fill(0n), flags: 2n, rip: PC });
+const state = (): State => ({ registers: registerBank(), flags: 2n, rip: PC });
 
 async function fixture(translations = 8) {
   let context = 0n,

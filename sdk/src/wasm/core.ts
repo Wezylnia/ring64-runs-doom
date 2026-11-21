@@ -4,6 +4,7 @@ import {
   captureMxcsr,
   captureState,
   captureXmmState,
+  type Registers,
   type State,
   type StateSnapshot,
 } from '../state/execution/registers.js';
@@ -757,9 +758,9 @@ export class Core {
     return {
       ...(debugContinuation ? { debugContinuation } : {}),
       ...(this.#taskRetry ? { taskSwitchIncomplete: true as const } : {}),
-      registers: Array.from({ length: 16 }, (_, i) =>
+      registers: Array.from({ length: 16 satisfies Registers['length'] }, (_, i) =>
         view.getBigUint64(this.#layout.registers + i * 8, true),
-      ),
+      ) as Registers,
       flags: view.getBigUint64(this.#layout.flags, true),
       rip: view.getBigUint64(this.#layout.rip, true),
       interruptibility: {

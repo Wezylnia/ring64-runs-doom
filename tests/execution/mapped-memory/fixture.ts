@@ -7,7 +7,7 @@ import {
   type MemoryPermissions,
   type State,
 } from '../../../sdk/src/index.js';
-import { LIMITS, hex } from '../../support/fixture.js';
+import { LIMITS, hex, registerBank } from '../../support/fixture.js';
 
 export const BASE = 0x1000n;
 export const RX: MemoryPermissions = { read: true, write: false, execute: true };
@@ -26,7 +26,7 @@ export function mapping(
 }
 
 export function input(registers: Record<number, bigint> = {}, rip = BASE, flags = 0x8d7n): State {
-  const banks = Array.from({ length: 16 }, (_, i) => 0x1122334400000000n + BigInt(i));
+  const banks = registerBank((i) => 0x1122334400000000n + BigInt(i));
   banks[0] = 0x1122334455667788n;
   for (const [index, value] of Object.entries(registers)) banks[Number(index)] = value;
   return { registers: banks, flags, rip };

@@ -114,7 +114,7 @@ export function storeScenarios(compiler: WebAssembly.Module): Scenario[] {
               cpu.setXmmState(vector);
               const result = await cpu.run({ budget: 2n });
               const after = changed(before, 0x1000n + BigInt(code.length / 2));
-              if (gp >= 0) after.registers[gp] = value;
+              if (gp !== -1) after.registers[gp] = value;
               if (vectorIndex >= 0) vector[vectorIndex] = 0n;
               outcome(result, 'budget', 2n, 2n, 2n, 0n, after);
               noFault(result);

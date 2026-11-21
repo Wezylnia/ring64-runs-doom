@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import { registerBank } from '../../../../tests/support/fixture.js';
 import { createCpu, type Options, type PagingState } from '../../../src/index.js';
 import { protectedSnapshot } from '../../../../tests/support/context.js';
 
@@ -122,7 +123,7 @@ test('real pending PF source survives live bank repair and rejects an incompatib
   const cpu = await createCpu(options());
   try {
     cpu.setState({
-      registers: Array<bigint>(16).fill(0n),
+      registers: registerBank(),
       flags: 0x202n,
       rip: 0x400000n,
       event: {

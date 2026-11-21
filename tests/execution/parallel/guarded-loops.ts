@@ -1,3 +1,4 @@
+import type { Registers } from '../../../sdk/src/index.js';
 import { context } from '../modes/fixture.js';
 import { changed, exit, fault, type Scenario } from '../../support/fixture.js';
 import {
@@ -167,7 +168,7 @@ export function parallelGuardedLoopScenarios(
             'TSC counts only the completed laps',
           );
 
-          const repaired = failed.state.registers.slice();
+          const repaired: Registers = [...failed.state.registers];
           repaired[7] = high | (top + 4n); // With ESI=8 the retry starts at 0xfffffffc.
           await cpu.setState({ ...failed.state, registers: repaired });
           const completed = await cpu.run({ budget: 5n, stop });

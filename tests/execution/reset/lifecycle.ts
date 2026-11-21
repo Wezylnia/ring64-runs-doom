@@ -1,3 +1,4 @@
+import { registerBank } from '../../support/fixture.js';
 import { equal, hex, physicalCpu, resetContext, RESET_BANK, type Scenario } from './fixture.js';
 import type { Cpu, MemoryMapping } from '../../../sdk/src/index.js';
 const encode = (value: unknown): string =>
@@ -64,7 +65,7 @@ export function lifecycleScenarios(compiler: WebAssembly.Module): Scenario[] {
         const cpu = await physicalCpu(compiler, ram, rom);
         try {
           cpu.setState({
-            registers: Array<bigint>(16).fill(0xdeadbeef00000000n),
+            registers: registerBank(0xdeadbeef00000000n),
             flags: 0x202n,
             rip: 0xfff0n,
             interruptibility: { sti: false, ss: true },
@@ -130,7 +131,7 @@ export function lifecycleScenarios(compiler: WebAssembly.Module): Scenario[] {
                 cpu.setState({
                   get registers() {
                     reset();
-                    return Array<bigint>(16).fill(9n);
+                    return registerBank(9n);
                   },
                   flags: 2n,
                   rip: 0n,
@@ -272,7 +273,7 @@ export function lifecycleScenarios(compiler: WebAssembly.Module): Scenario[] {
           cpu.setState({
             get registers() {
               cpu.setMxcsr(0x1f80);
-              return Array<bigint>(16).fill(0n);
+              return registerBank();
             },
             flags: 2n,
             rip: 0xfff0n,

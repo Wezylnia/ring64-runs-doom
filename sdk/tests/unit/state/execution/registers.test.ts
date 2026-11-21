@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { registerBank } from '../../../../../tests/support/fixture.js';
 import { captureState, type State } from '../../../../src/state/execution/registers.js';
 
 function input(): State {
-  return { registers: Array<bigint>(16).fill(7n), flags: 2n, rip: 0x1000n };
+  return { registers: registerBank(7n), flags: 2n, rip: 0x1000n };
 }
 
 test('scalar capture normalizes omitted boundaries and owns explicit interruptibility', () => {

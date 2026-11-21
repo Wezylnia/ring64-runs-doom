@@ -1,3 +1,4 @@
+import { registerBank } from '../../support/fixture.js';
 import { equal, hex, physicalCpu, resetContext, type Scenario } from './fixture.js';
 function real32() {
   const context = resetContext();
@@ -38,7 +39,7 @@ export function controlScenarios(compiler: WebAssembly.Module): Scenario[] {
             real32(),
           );
           try {
-            cpu.setState({ registers: Array<bigint>(16).fill(0n), flags: 0x10002n, rip: 0x1000n });
+            cpu.setState({ registers: registerBank(), flags: 0x10002n, rip: 0x1000n });
             const x87 = {
               ...cpu.readX87State(),
               controlWord: 0x37e,
@@ -86,7 +87,7 @@ export function controlScenarios(compiler: WebAssembly.Module): Scenario[] {
               );
               try {
                 cpu.setState({
-                  registers: Array<bigint>(16).fill(0xaaaa000000000000n),
+                  registers: registerBank(0xaaaa000000000000n),
                   flags: 0x10002n,
                   rip: 0x1000n,
                 });
@@ -130,7 +131,7 @@ export function controlScenarios(compiler: WebAssembly.Module): Scenario[] {
         );
         try {
           cpu.setState({
-            registers: [0x400n, ...Array<bigint>(15).fill(0n)],
+            registers: registerBank((index) => (index === 0 ? 0x400n : 0n)),
             flags: 2n,
             rip: 0x1000n,
           });
@@ -156,7 +157,7 @@ export function controlScenarios(compiler: WebAssembly.Module): Scenario[] {
           real32(),
         );
         try {
-          const regs = Array<bigint>(16).fill(0n);
+          const regs = registerBank();
           regs[0] = 0xaaaa000000001234n;
           regs[1] = 0x174n;
           regs[2] = 0x1111000000000000n;
