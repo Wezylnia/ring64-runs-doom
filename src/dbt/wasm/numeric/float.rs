@@ -177,10 +177,8 @@ impl Emitter {
         let rounding_prechecked = self.proved_reads.is_some();
         #[cfg(not(all(not(feature = "parallel"), target_arch = "wasm32")))]
         let rounding_prechecked = false;
-        self.load_float_mxcsr();
-        if rounding_prechecked {
-            self.op(Op::LocalSet(STORE_STATUS));
-        } else {
+        if !rounding_prechecked {
+            self.load_float_mxcsr();
             self.op(Op::LocalTee(STORE_STATUS));
             self.reject_non_nearest_fp32();
         }
@@ -234,12 +232,9 @@ impl Emitter {
         // Check before rounding so a tiny product that rounds to a normal f32 still falls back.
         self.reject_non_normal_f32(RESULT);
 
-        self.op(Op::LocalGet(STORE_STATUS))
-            .op(Op::I32Const(MASKED_STICKY_PRECISION))
-            .op(Op::I32And)
-            .op(Op::I32Const(MASKED_STICKY_PRECISION))
-            .op(Op::I32Ne)
-            .op(Op::If(BlockType::Empty));
+        if !rounding_prechecked {
+            self.if_precision_unsettled();
+        }
         // A normal f64 result is representable in f32 exactly when the
         // fractional bits below the f32 significand are all zero.
         self.op(Op::LocalGet(RESULT))
@@ -269,8 +264,15 @@ impl Emitter {
             }
             self.op(Op::I32Or);
         }
-        self.op(Op::If(BlockType::Empty))
-            .op(Op::LocalGet(STORE_STATUS))
+        self.op(Op::If(BlockType::Empty));
+        if rounding_prechecked {
+            // The proved body keeps nearest rounding. An exact result never
+            // consults the precision mask or needs to publish a sticky bit.
+            self.load_float_mxcsr();
+            self.op(Op::LocalSet(STORE_STATUS));
+            self.if_precision_unsettled();
+        }
+        self.op(Op::LocalGet(STORE_STATUS))
             .op(Op::I32Const(PRECISION_MASK))
             .op(Op::I32And)
             .op(Op::I32Eqz)
@@ -289,6 +291,15 @@ impl Emitter {
             self.float_f64(RESULT);
             self.op(Op::F32DemoteF64).op(Op::F32x4ReplaceLane(0));
         }
+    }
+
+    fn if_precision_unsettled(&mut self) {
+        self.op(Op::LocalGet(STORE_STATUS))
+            .op(Op::I32Const(MASKED_STICKY_PRECISION))
+            .op(Op::I32And)
+            .op(Op::I32Const(MASKED_STICKY_PRECISION))
+            .op(Op::I32Ne)
+            .op(Op::If(BlockType::Empty));
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
