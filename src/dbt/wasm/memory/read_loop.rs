@@ -49,6 +49,25 @@ impl ReadLoop {
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     pub(super) const BIAS_LOCALS: u32 = 2;
 
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn outline_registers(self) -> Option<(u16, u8, usize)> {
+        let ReadLimit::Register(end) = self.end else {
+            return None;
+        };
+        if self.byte_reads {
+            return None;
+        }
+        let mut inputs = (1 << self.index) | (1 << end);
+        let mut biases = 0;
+        for stream in self.streams.into_iter().flatten() {
+            if let AddressBase::Register(register) = stream.first.base {
+                inputs |= 1 << register;
+            }
+            biases += 1;
+        }
+        Some((inputs, self.index, biases))
+    }
+
     pub(super) fn recognize(
         context: &ExecutionContext,
         instructions: &[Instruction],
@@ -294,6 +313,19 @@ use wasm_encoder::{BlockType, Instruction as Op, MemArg, ValType};
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 impl Emitter {
+    pub(super) fn multiple_read_laps(&mut self, proof: ReadLoop) {
+        // The existing span proof establishes a positive aligned trip count.
+        // Reload both bounds because a checked retry can reuse the span biases.
+        let ReadLimit::Register(end) = proof.end else {
+            unreachable!("outlined Float loop register bound");
+        };
+        self.register(end, proof.count_width);
+        self.register(proof.index, proof.count_width);
+        self.op(Op::I64Sub)
+            .op(Op::I64Const(proof.step as i64))
+            .op(Op::I64Ne);
+    }
+
     pub(super) fn guard_read_loop(
         &mut self,
         proof: ReadLoop,

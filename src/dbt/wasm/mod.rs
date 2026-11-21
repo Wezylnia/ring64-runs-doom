@@ -25,6 +25,9 @@ mod far;
 mod fast_system;
 #[path = "numeric/float.rs"]
 mod float;
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[path = "execution/float_loop.rs"]
+mod float_loop;
 #[path = "integer/integer.rs"]
 mod integer;
 #[path = "integer/integer_memory.rs"]
@@ -131,6 +134,8 @@ struct Emitter {
     zero_upper_xmm: u16,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     normal_low_f32: u16,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    float_outline_params: u32,
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     parallel_atomic: Option<parallel::Atomic>,
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
@@ -206,6 +211,13 @@ struct Emitter {
 
 impl Emitter {
     fn op(&mut self, instruction: Op<'_>) -> &mut Self {
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        let instruction = match instruction {
+            Op::LocalGet(local) => Op::LocalGet(local + self.float_outline_params),
+            Op::LocalSet(local) => Op::LocalSet(local + self.float_outline_params),
+            Op::LocalTee(local) => Op::LocalTee(local + self.float_outline_params),
+            other => other,
+        };
         self.body.instruction(&instruction);
         self
     }
@@ -566,6 +578,16 @@ impl Emitter {
         #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
         let exit_depth = self.end_parallel_instruction(instruction, exit_depth);
         self.commit(instruction.next_pc);
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if self.float_outline_params != 0
+            && let Some((body, _)) = self.structured_loop
+            && self.current_index == body.tail
+        {
+            self.op(Op::I32Const((body.tail + 1) as i32))
+                .op(Op::LocalSet(ENTRY))
+                .op(Op::Br(1));
+            return;
+        }
         self.route(instruction.next_pc, loop_depth, exit_depth);
     }
 }
@@ -640,12 +662,19 @@ fn emit_placement(
     guard_reads: bool,
     max_artifact_bytes: usize,
 ) -> Vec<u8> {
+    let reads = if !guard_reads {
+        GuardedReads::Checked
+    } else if cfg!(all(not(feature = "parallel"), target_arch = "wasm32")) {
+        GuardedReads::Outlined
+    } else {
+        GuardedReads::Inline
+    };
     let (bytes, extra_spans) = emit_body(
         unit,
         observed,
         paged,
         loop_body,
-        guard_reads,
+        reads,
         true,
         max_artifact_bytes,
     );
@@ -664,7 +693,7 @@ fn emit_placement(
             observed,
             paged,
             loop_body,
-            guard_reads,
+            reads,
             false,
             max_artifact_bytes,
         )
@@ -673,12 +702,19 @@ fn emit_placement(
     bytes
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum GuardedReads {
+    Checked,
+    Inline,
+    Outlined,
+}
+
 fn emit_body(
     unit: &Unit,
     observed: bool,
     paged: bool,
     loop_body: Option<StructuredLoop>,
-    _guard_reads: bool,
+    _guard_reads: GuardedReads,
     _extra_spans: bool,
     max_artifact_bytes: usize,
 ) -> (Vec<u8>, bool) {
@@ -1568,7 +1604,9 @@ fn emit_body(
     let write_caches = write_segments.map(|used| write_span.filter(|_| used).map(&mut span_cache));
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let proved_stack = loop_body.and_then(|body| {
-        let proof = _guard_reads.then(|| body.stack_proof(unit)).flatten()?;
+        let proof = (_guard_reads != GuardedReads::Checked)
+            .then(|| body.stack_proof(unit))
+            .flatten()?;
         let read = read_span?.resolve;
         let write = if proof.writes {
             Some(write_span?)
@@ -1588,7 +1626,7 @@ fn emit_body(
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let proved_integer_reads = loop_body.and_then(|body| {
         let span = read_span?;
-        let proof = _guard_reads
+        let proof = (_guard_reads != GuardedReads::Checked)
             .then(|| body.integer_read_proof(unit))
             .flatten()?;
         let first_bias = next_local;
@@ -1599,7 +1637,9 @@ fn emit_body(
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let proved_reads = loop_body.and_then(|body| {
         let span = read_span?;
-        let proof = _guard_reads.then(|| body.read_proof(unit)).flatten()?;
+        let proof = (_guard_reads != GuardedReads::Checked)
+            .then(|| body.read_proof(unit))
+            .flatten()?;
         let first_bias = next_local;
         let guard_failed = first_bias + read_loop::ReadLoop::BIAS_LOCALS;
         let retry = guard_failed + 1;
@@ -1657,6 +1697,37 @@ fn emit_body(
         locals.push((vector_banks.used.count_ones() + 3, ValType::V128));
         [next_local, next_local + 1, next_local + 2]
     });
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let float_outline = if _guard_reads == GuardedReads::Outlined {
+        loop_body
+            .zip(proved_reads)
+            .and_then(|(body, (proof, _, first_bias, _, _))| {
+                float_loop::FloatOutline::new(
+                    unit,
+                    body,
+                    proof,
+                    first_bias,
+                    vector_registers,
+                    run_index + 1 + u32::from(dynamic_targets),
+                    &mut types,
+                )
+            })
+    } else {
+        None
+    };
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    if let Some(float_outline) = &float_outline {
+        functions.function(float_outline.signature);
+    }
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let outline_locals = float_outline.as_ref().map(|_| locals.clone());
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let outline_rejected = float_outline.as_ref().map(|_| {
+        locals.push((1, ValType::I32));
+        vector_temporaries.expect("outlined Float temporaries")[2] + 1
+    });
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let mut outlined_function = None;
     let mut emitter = Emitter {
         paged,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -1675,6 +1746,8 @@ fn emit_body(
         zero_upper_xmm: 0,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         normal_low_f32: 0,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        float_outline_params: 0,
         #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
         parallel_atomic,
         #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
@@ -1839,12 +1912,47 @@ fn emit_body(
                     emitter.exclude_loop_stop(&unit.instructions, loop_body);
                     emitter.op(Op::I32And);
                     emitter.proved_reads = Some((proof, first_bias));
-                    emitter.emit_prechecked_loop(
-                        &unit.instructions,
-                        loop_body,
-                        loop_depth,
-                        write_segment_base,
-                    );
+                    if let Some(outline) = &float_outline {
+                        let rejected = outline_rejected.expect("outline rejection local");
+                        outlined_function = Some(emitter.emit_float_outline(
+                            outline,
+                            outline_locals.as_deref().expect("outline locals"),
+                            &unit.instructions,
+                            loop_body,
+                        ));
+                        emitter.op(Op::If(BlockType::Empty));
+                        emitter.multiple_read_laps(proof);
+                        // Keep the proved inline placement for later visits after
+                        // the same generated activation needed numeric replay.
+                        emitter
+                            .op(Op::LocalGet(rejected))
+                            .op(Op::I32Eqz)
+                            .op(Op::I32And)
+                            .op(Op::If(BlockType::Empty));
+                        emitter.call_float_outline(
+                            outline,
+                            loop_body,
+                            unit.instructions[loop_body.tail as usize],
+                            loop_depth + 2,
+                            retry,
+                            rejected,
+                        );
+                        emitter.op(Op::Else);
+                        emitter.emit_prechecked_body(
+                            &unit.instructions,
+                            loop_body,
+                            loop_depth + 2,
+                            write_segment_base,
+                        );
+                        emitter.op(Op::End).op(Op::End);
+                    } else {
+                        emitter.emit_prechecked_loop(
+                            &unit.instructions,
+                            loop_body,
+                            loop_depth,
+                            write_segment_base,
+                        );
+                    }
                     emitter.proved_reads = None;
                 }
                 emitter.emit_structured_loop(
@@ -1876,6 +1984,10 @@ fn emit_body(
     if dynamic_targets {
         code.function(&entry_lookup::emit(&emitter.entries));
     }
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    if let Some((_, body, _)) = &outlined_function {
+        code.function(body);
+    }
     let mut module = Module::new();
     module
         .section(&types)
@@ -1884,9 +1996,23 @@ fn emit_body(
         .section(&exports);
     let mut bytes = module.finish();
     let hints_start = bytes.len();
-    if !emitter.branch_hints.is_empty() {
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let outline_has_hints = outlined_function
+        .as_ref()
+        .is_some_and(|(_, _, hints)| !hints.is_empty());
+    #[cfg(any(feature = "parallel", not(target_arch = "wasm32")))]
+    let outline_has_hints = false;
+    if !emitter.branch_hints.is_empty() || outline_has_hints {
         let mut hints = wasm_encoder::BranchHints::new();
-        hints.function_hints(run_index, emitter.branch_hints);
+        if !emitter.branch_hints.is_empty() {
+            hints.function_hints(run_index, emitter.branch_hints);
+        }
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if let Some((function, _, branches)) = outlined_function
+            && !branches.is_empty()
+        {
+            hints.function_hints(function, branches);
+        }
         hints.append_to(&mut bytes);
     }
     let code_start = bytes.len();
@@ -1894,6 +2020,18 @@ fn emit_body(
     if bytes.len() > max_artifact_bytes {
         // Optional annotations never displace executable code under the owner's limit.
         bytes.drain(hints_start..code_start);
+    }
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    if float_outline.is_some() && bytes.len() > max_artifact_bytes {
+        return emit_body(
+            unit,
+            observed,
+            paged,
+            loop_body,
+            GuardedReads::Inline,
+            _extra_spans,
+            max_artifact_bytes,
+        );
     }
     #[cfg(any(feature = "parallel", not(target_arch = "wasm32")))]
     let extra_spans = false;

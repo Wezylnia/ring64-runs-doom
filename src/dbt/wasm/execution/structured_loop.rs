@@ -457,7 +457,7 @@ impl Emitter {
         self.op(Op::End).op(Op::End);
     }
 
-    fn emit_prechecked_body(
+    pub(super) fn emit_prechecked_body(
         &mut self,
         instructions: &[Instruction],
         body: StructuredLoop,

@@ -108,7 +108,16 @@ impl Emitter {
             debug_assert!(self.loop_gates_prechecked);
             // The rejected op has published neither its result nor retirement.
             // A header retry skips the guarded copy and reaches the checked loop.
-            if self.current_index == body.head {
+            if self.float_outline_params != 0 {
+                let continuation = if self.current_index == body.head {
+                    super::float_loop::HEADER_REJECTION
+                } else {
+                    self.current_index as i32
+                };
+                self.op(Op::I32Const(continuation))
+                    .op(Op::LocalSet(super::ENTRY))
+                    .op(Op::Br(2));
+            } else if self.current_index == body.head {
                 self.op(Op::Br(2));
             } else {
                 let (_, retry) = self.proved_read_retry.expect("proved read retry local");

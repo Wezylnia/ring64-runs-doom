@@ -2,8 +2,9 @@ use super::{ADDRESS, Emitter, REASON, RHS, STORE_STATUS};
 use crate::dbt::unit::Unit;
 use crate::embedding::layout::RunState;
 use crate::x86::instruction::{
-    Address, Location, Operation, RegisterView, VectorBinary, VectorCount, VectorDuplicate,
-    VectorInstruction, VectorMask, VectorOperand, VectorShift, VectorShuffle, Width,
+    Address, Instruction, Location, Operation, RegisterView, VectorBinary, VectorCount,
+    VectorDuplicate, VectorInstruction, VectorMask, VectorOperand, VectorShift, VectorShuffle,
+    Width,
 };
 use std::mem::offset_of;
 use wasm_encoder::{BlockType, Instruction as Op, MemArg, ValType};
@@ -17,13 +18,17 @@ pub(super) struct Banks {
 
 impl Banks {
     pub fn for_unit(unit: &Unit) -> Self {
+        Self::for_instructions(&unit.instructions)
+    }
+
+    pub(super) fn for_instructions(instructions: &[Instruction]) -> Self {
         let mut banks = Self {
             used: 0,
             written: 0,
             loads: false,
             stores: false,
         };
-        for instruction in &unit.instructions {
+        for instruction in instructions {
             if let Operation::MaskedStore {
                 data,
                 mask,
