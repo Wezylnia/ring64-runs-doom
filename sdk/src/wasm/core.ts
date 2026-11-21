@@ -319,7 +319,9 @@ const PAGED_OBSERVED_HELPERS = {
   far_control: 'core_paged_far_control_observed',
   compound_stack: 'core_paged_compound_stack_observed',
   software_event: 'core_paged_software_event_observed',
-} as const;
+} as const satisfies {
+  [Helper in keyof typeof PAGED_HELPERS]?: `${(typeof PAGED_HELPERS)[Helper]}_observed`;
+};
 
 export class Core {
   #taskRetry: 'instruction' | 'delivery' | undefined;
