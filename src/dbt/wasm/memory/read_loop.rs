@@ -260,6 +260,26 @@ impl ReadLoop {
 
     pub(super) fn stream_for(self, operation: Operation) -> Option<u32> {
         let address = Self::read_operand(operation, self.byte_reads)??;
+        self.stream_for_address(address)
+    }
+
+    #[cfg(any(test, all(not(feature = "parallel"), target_arch = "wasm32")))]
+    pub(super) fn byte_slot(self, address: Address) -> Option<(u32, Address, u64)> {
+        if !self.byte_reads {
+            return None;
+        }
+        let slot = self.stream_for_address(address)?;
+        let stream = self.streams[slot as usize]?;
+        if address.displacement > stream.last_displacement {
+            return None;
+        }
+        let offset = address
+            .displacement
+            .checked_sub(stream.first.displacement)?;
+        Some((slot, stream.first, u64::try_from(offset).ok()?))
+    }
+
+    fn stream_for_address(self, address: Address) -> Option<u32> {
         self.streams
             .iter()
             .position(|stream| stream.is_some_and(|stream| stream.matches(address)))
@@ -525,6 +545,28 @@ mod tests {
         assert_eq!(proof.end, ReadLimit::Immediate(73));
         assert_eq!(proof.count_width, Width::W64);
         assert_eq!(proof.streams[0].unwrap().displacement_width(1), Some(9));
+        let address = ReadLoop::read_operand(instructions[0].operation, true)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            proof.byte_slot(address),
+            Some((
+                0,
+                Address {
+                    displacement: -4,
+                    ..address
+                },
+                8
+            ))
+        );
+        assert!(
+            proof
+                .byte_slot(Address {
+                    displacement: 5,
+                    ..address
+                })
+                .is_none()
+        );
         instructions[2].operation = Operation::Mov {
             dst: RegisterView::low(6),
             src: DataOperand::Immediate(0),

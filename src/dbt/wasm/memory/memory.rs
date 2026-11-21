@@ -185,23 +185,7 @@ impl Emitter {
         exit_depth: u32,
     ) {
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-        if !for_write
-            && width == Width::W8
-            && let Some((proof, first_bias)) = self.proved_reads
-            && let Some(stream) = proof.stream_for(self.current_operation)
-        {
-            self.address(address, next_pc);
-            self.op(Op::I32WrapI64)
-                .op(Op::LocalGet(first_bias + stream))
-                .op(Op::I32Add);
-            self.direct_scalar_load(
-                width,
-                MemArg {
-                    offset: 0,
-                    align: 0,
-                    memory_index: 0,
-                },
-            );
+        if !for_write && width == Width::W8 && self.load_proved_byte(address, next_pc) {
             return;
         }
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -224,6 +208,30 @@ impl Emitter {
         self.address(address, next_pc);
         self.op(Op::LocalSet(ADDRESS));
         self.load_address_value(width, for_write, exit_depth);
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn load_proved_byte(&mut self, address: Address, next_pc: u64) -> bool {
+        let Some((proof, first_bias)) = self.proved_reads else {
+            return false;
+        };
+        let Some((stream, first, offset)) = proof.byte_slot(address) else {
+            return false;
+        };
+        // The certified span bounds the host address and the literal offset.
+        self.address(first, next_pc);
+        self.op(Op::I32WrapI64)
+            .op(Op::LocalGet(first_bias + stream))
+            .op(Op::I32Add);
+        self.direct_scalar_load(
+            Width::W8,
+            MemArg {
+                offset,
+                align: 0,
+                memory_index: 0,
+            },
+        );
+        true
     }
 
     pub(super) fn load_address_value(&mut self, width: Width, for_write: bool, exit_depth: u32) {

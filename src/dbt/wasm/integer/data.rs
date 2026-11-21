@@ -24,6 +24,17 @@ impl Emitter {
         exit_depth: u32,
     ) {
         let (source_width, width) = widths;
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if !signed
+            && source_width == Width::W8
+            && let Location::Memory(address) = src
+            && self.load_proved_byte(address, next_pc)
+        {
+            // The proved load already zero-extended the source byte.
+            self.op(Op::LocalGet(VALUE));
+            self.write_register(dst, width);
+            return;
+        }
         self.source(src, source_width, next_pc, exit_depth);
         if signed && source_width != width {
             self.op(match source_width {
