@@ -499,6 +499,35 @@ impl Image {
     }
 
     #[cfg(target_arch = "wasm32")]
+    pub(crate) fn shared_byte_store_span(
+        &self,
+        address: u64,
+        segment_limit: Option<u32>,
+    ) -> Option<(u32, u32)> {
+        let layout = self.shared?;
+        let index = self
+            .preflight::<false>(address, 1, Access::Write, false, true)
+            .ok()?;
+        let mapping = &self.mappings[index];
+        let relative = (address - mapping.base) as u32;
+        let backing = self.backings[mapping.backing].shared?;
+        let absolute = backing.offset + mapping.offset + relative;
+        let in_word = (absolute - layout.base) & 31;
+        // Both the source-watch word and its containing stripe must stay clear.
+        if unsafe { load_control(layout.stripe(absolute)) } != 0
+            || layout.watched(absolute - in_word, 32)
+        {
+            return None;
+        }
+        let mut bytes = (mapping.length - relative).min(32 - in_word);
+        if let Some(limit) = segment_limit {
+            bytes = u64::from(bytes).min((u64::from(limit) + 1).checked_sub(address)?) as u32;
+        }
+        super::super::address::check_span(address, bytes, Access::Write).ok()?;
+        (bytes != 0).then_some((absolute, bytes))
+    }
+
+    #[cfg(target_arch = "wasm32")]
     pub(crate) fn begin_shared_guarded_rmw(&mut self, address: u64, width: u32) -> bool {
         let Some(layout) = self.shared else {
             return false;

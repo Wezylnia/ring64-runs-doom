@@ -160,6 +160,8 @@ struct Emitter {
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     parallel_base_byte_window: Option<parallel::DwordWindow>,
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+    parallel_byte_store_span: Option<parallel::ByteStoreSpan>,
+    #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     parallel_retry: Option<u32>,
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     parallel_address_memos: Vec<(u32, u32)>,
@@ -730,6 +732,14 @@ fn emit_placement(
                 SharedIndexedReads::Disabled
             },
             compact: false,
+            #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+            byte_stores: indexed
+                && (unit.context.is_long64()
+                    || unit
+                        .context
+                        .translate(0, 1, Segment::Ds, crate::memory::Access::Write, false)
+                        .ok()
+                        == Some(0)),
         }
     } else if !guard_reads {
         GuardedReads::Checked
@@ -792,6 +802,8 @@ enum GuardedReads {
     Shared {
         indexed: SharedIndexedReads,
         compact: bool,
+        #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+        byte_stores: bool,
     },
     Outlined {
         sticky: bool,
@@ -1603,7 +1615,8 @@ fn emit_body(
         _guard_reads,
         GuardedReads::Shared {
             indexed: SharedIndexedReads::IncludeBytes | SharedIndexedReads::IncludeBaseBytes,
-            compact: false
+            compact: false,
+            ..
         }
     );
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
@@ -1618,7 +1631,8 @@ fn emit_body(
         _guard_reads,
         GuardedReads::Shared {
             indexed: SharedIndexedReads::IncludeBaseBytes,
-            compact: false
+            compact: false,
+            ..
         }
     ) && unit
         .instructions
@@ -1630,6 +1644,28 @@ fn emit_body(
         imports.import(
             "env",
             "parallel_dword_window",
+            EntityType::Function(signature),
+        );
+        let index = run_index;
+        run_index += 1;
+        index
+    });
+    #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+    let store_span_resolve = (matches!(
+        _guard_reads,
+        GuardedReads::Shared {
+            byte_stores: true,
+            ..
+        }
+    ) && unit
+        .instructions
+        .iter()
+        .any(|i| parallel::ByteStoreSpan::eligible(i.operation, unit.context.is_long64())))
+    .then(|| {
+        let signature = add_function_type(&mut types, [ValType::I64], [ValType::I64]);
+        imports.import(
+            "env",
+            "parallel_byte_store_span",
             EntityType::Function(signature),
         );
         let index = run_index;
@@ -1894,6 +1930,13 @@ fn emit_body(
             .map(|resolve| allocate(resolve, true));
         (indexed, base)
     };
+    #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+    let parallel_byte_store_span = store_span_resolve.map(|resolve| {
+        let first = next_local;
+        locals.extend([(2, ValType::I64), (1, ValType::I32)]);
+        next_local += 3;
+        parallel::ByteStoreSpan::new(resolve, first)
+    });
     let boundary_locals = observed.then(|| {
         let result = [next_local, next_local + 1, next_local + 2, next_local + 3];
         locals.push((4, ValType::I32));
@@ -1998,6 +2041,8 @@ fn emit_body(
         parallel_dword_window,
         #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
         parallel_base_byte_window,
+        #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+        parallel_byte_store_span,
         #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
         parallel_retry: None,
         #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
@@ -2277,7 +2322,9 @@ fn emit_body(
     code.append_to(&mut bytes);
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     if bytes.len() > max_artifact_bytes
-        && let GuardedReads::Shared { indexed, compact } = _guard_reads
+        && let GuardedReads::Shared {
+            indexed, compact, ..
+        } = _guard_reads
     {
         let wide = unit.context.is_long64();
         let has_indexed_bytes = allow_indexed_bytes
@@ -2286,7 +2333,10 @@ fn emit_body(
                 parallel::DwordWindow::eligible(i.operation, true, wide)
                     && !parallel::DwordWindow::eligible(i.operation, false, wide)
             });
-        let retry = if parallel_base_byte_window.is_some() {
+        let retry = if parallel_byte_store_span.is_some() {
+            // Preserve the existing read placement before retrying smaller layouts.
+            Some((indexed, compact))
+        } else if parallel_base_byte_window.is_some() {
             // Retain the existing indexed read paths when only the second window exceeds the cap.
             Some((SharedIndexedReads::IncludeBytes, compact))
         } else if wide && parallel_dword_window.is_some() {
@@ -2311,7 +2361,11 @@ fn emit_body(
                 observed,
                 paged,
                 loop_body,
-                GuardedReads::Shared { indexed, compact },
+                GuardedReads::Shared {
+                    indexed,
+                    compact,
+                    byte_stores: false,
+                },
                 _extra_spans,
                 max_artifact_bytes,
             );

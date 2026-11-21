@@ -202,6 +202,31 @@ impl DwordWindow {
     }
 }
 
+#[derive(Clone, Copy)]
+pub(super) struct ByteStoreSpan {
+    resolve: u32,
+    base: u32,
+    limit: u32,
+    host: u32,
+}
+
+impl ByteStoreSpan {
+    pub(super) fn new(resolve: u32, first: u32) -> Self {
+        Self {
+            resolve,
+            base: first,
+            limit: first + 1,
+            host: first + 2,
+        }
+    }
+
+    pub(super) fn eligible(operation: Operation, wide: bool) -> bool {
+        let address_width = if wide { Width::W64 } else { Width::W32 };
+        matches!(operation, Operation::Store { address, width: Width::W8, .. }
+            if address.segment == Segment::Ds && address.size == address_width && address.index.is_some())
+    }
+}
+
 impl Emitter {
     pub(super) fn begin_parallel_instruction(
         &mut self,
@@ -724,7 +749,14 @@ impl Emitter {
         self.stores = true;
         let retry = self.parallel_retry;
         if retry.is_none() {
-            self.shared_address(scalar, width, 1);
+            if let Some(span) = self.parallel_byte_store_span
+                && ByteStoreSpan::eligible(self.current_operation, self.context.is_long64())
+            {
+                debug_assert_eq!(width, Width::W8);
+                self.byte_store_address(scalar, span);
+            } else {
+                self.shared_address(scalar, width, 1);
+            }
         }
         self.op(Op::LocalGet(scalar.address))
             .op(Op::If(BlockType::Empty))
@@ -756,6 +788,46 @@ impl Emitter {
         self.store_result_slow(width, exit_depth + 1);
         self.op(Op::End);
         true
+    }
+
+    fn byte_store_address(&mut self, scalar: Scalar, span: ByteStoreSpan) {
+        // Source watches and stripe promotion require a closed phase. If an
+        // earlier helper parked this invocation, the instruction's phase poll
+        // exits before the cache can be reused. Filling here never parks.
+        self.op(Op::Block(BlockType::Result(ValType::I32)))
+            .op(Op::LocalGet(ADDRESS))
+            .op(Op::LocalGet(span.base))
+            .op(Op::I64Sub)
+            .op(Op::LocalTee(scalar.old))
+            .op(Op::LocalGet(span.limit))
+            .op(Op::I64GeU)
+            .op(Op::If(BlockType::Empty))
+            .op(Op::LocalGet(ADDRESS))
+            .op(Op::Call(span.resolve))
+            .op(Op::LocalTee(scalar.payload))
+            .op(Op::I64Eqz)
+            .op(Op::If(BlockType::Empty))
+            .op(Op::I32Const(0))
+            .op(Op::Br(2))
+            .op(Op::End)
+            .op(Op::LocalGet(ADDRESS))
+            .op(Op::LocalSet(span.base))
+            .op(Op::LocalGet(scalar.payload))
+            .op(Op::I64Const(32))
+            .op(Op::I64ShrU)
+            .op(Op::LocalSet(span.limit))
+            .op(Op::LocalGet(scalar.payload))
+            .op(Op::I32WrapI64)
+            .op(Op::LocalSet(span.host))
+            .op(Op::I64Const(0))
+            .op(Op::LocalSet(scalar.old))
+            .op(Op::End)
+            .op(Op::LocalGet(span.host))
+            .op(Op::LocalGet(scalar.old))
+            .op(Op::I32WrapI64)
+            .op(Op::I32Add)
+            .op(Op::End)
+            .op(Op::LocalSet(scalar.address));
     }
 
     fn masked_store_retry(&mut self, scalar: Scalar, width: Width, exit_depth: u32) {

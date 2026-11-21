@@ -3,7 +3,7 @@ use crate::memory::{MemoryError, SharedDword};
 
 #[unsafe(no_mangle)]
 pub extern "C" fn core_parallel_abi() -> u32 {
-    5
+    6
 }
 
 fn complete(bridge: &mut Bridge, result: Result<(), MemoryError>) -> i32 {
@@ -196,6 +196,28 @@ pub extern "C" fn core_parallel_dword_window(offset: u64) -> i32 {
             slot.copy_from_slice(&field.to_le_bytes());
         }
         if segmented { 1 } else { limit as i32 }
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn core_parallel_byte_store_span(offset: u64) -> u64 {
+    BRIDGE.with_borrow(|bridge| {
+        let core = bridge.core.as_ref().expect("initialized parallel core");
+        let segment = Segment::Ds;
+        if core
+            .context
+            .translate(offset, 1, segment, Access::Write, false)
+            .ok()
+            != Some(offset)
+        {
+            return 0;
+        }
+        let limit = (!core.context.is_long64()).then(|| core.context.segment(segment).limit);
+        core.image
+            .shared_byte_store_span(offset, limit)
+            .map_or(0, |(absolute, bytes)| {
+                (u64::from(bytes) << 32) | u64::from(absolute)
+            })
     })
 }
 
