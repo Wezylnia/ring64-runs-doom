@@ -142,6 +142,7 @@ impl Emitter {
         // on the 1/256 grid within binary32's exact integer range.
         const MAX_COEFFICIENT: i32 = 1 << 24;
         const LAP_COEFFICIENT: i32 = 4 * 128 * 128;
+        let accumulator = self.xmm(reduction.accumulator);
         self.op(Op::Block(BlockType::Result(ValType::I32)))
             .op(Op::I32Const(0));
         self.proved_read_laps(proof);
@@ -150,7 +151,7 @@ impl Emitter {
             .op(Op::I64GtU)
             .unlikely(Op::BrIf(0))
             .op(Op::Drop);
-        self.op(Op::LocalGet(self.xmm(reduction.accumulator)))
+        self.op(Op::LocalGet(accumulator))
             .op(Op::F32x4ExtractLane(0))
             .op(Op::F32Abs)
             .op(Op::F32Const(256.0f32.into()))
@@ -174,7 +175,13 @@ impl Emitter {
             .op(Op::F32Le)
             .op(Op::I32And)
             .op(Op::End)
-            .op(Op::LocalSet(reduction.state()));
+            .op(Op::LocalSet(reduction.state()))
+            // Keep the live accumulator in the final lane of the pending
+            // prefixes. The original XMM bank still owns a first-lap rejection.
+            .op(Op::LocalGet(accumulator))
+            .op(Op::F32x4ExtractLane(0))
+            .op(Op::F32x4Splat)
+            .op(Op::LocalSet(reduction.pending()));
     }
 
     pub(super) fn try_dyadic_prefix(&mut self, reduction: DyadicReduction) {
@@ -239,13 +246,12 @@ impl Emitter {
                 .op(Op::F32x4Add)
                 .op(Op::LocalSet(prefixes));
         }
-        self.op(Op::LocalGet(self.xmm(reduction.accumulator)))
-            .op(Op::F32x4ExtractLane(0))
+        self.op(Op::LocalGet(reduction.pending()))
+            .op(Op::F32x4ExtractLane(3))
             .op(Op::F32x4Splat)
             .op(Op::LocalGet(prefixes))
             .op(Op::F32x4Add)
             .op(Op::LocalSet(reduction.pending()));
-        self.write_dyadic_lane(reduction.pending(), 3, reduction.accumulator);
         self.op(Op::I32Const(DYADIC_PENDING))
             .op(Op::LocalSet(reduction.state()))
             .op(Op::Br(2))
@@ -262,19 +268,14 @@ impl Emitter {
             .op(Op::I32Const(DYADIC_PENDING))
             .op(Op::I32Eq)
             .op(Op::If(BlockType::Empty));
-        for (lane, bank) in reduction.outputs[..3].iter().copied().enumerate() {
-            self.write_dyadic_lane(reduction.pending(), lane, bank);
+        for (lane, bank) in reduction.outputs.into_iter().enumerate() {
+            let destination = self.xmm(bank);
+            self.op(Op::V128Const(0))
+                .op(Op::LocalGet(reduction.pending()))
+                .op(Op::I32x4ExtractLane(lane as u8))
+                .op(Op::I32x4ReplaceLane(0))
+                .op(Op::LocalSet(destination));
         }
         self.op(Op::End);
-    }
-
-    fn write_dyadic_lane(&mut self, prefixes: u32, lane: usize, bank: u8) {
-        let destination = self.xmm(bank);
-        self.op(Op::LocalGet(prefixes))
-            .op(Op::V128Const(0))
-            .op(Op::I8x16Shuffle(std::array::from_fn(|byte| {
-                (if byte < 4 { lane * 4 + byte } else { 16 + byte }) as u8
-            })))
-            .op(Op::LocalSet(destination));
     }
 }
