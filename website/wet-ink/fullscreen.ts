@@ -1,13 +1,16 @@
-export function enableFullscreen(stage, play, button) {
-  if (!stage || !button) return;
-
+export function enableFullscreen(
+  stage: HTMLElement,
+  play: HTMLButtonElement,
+  button: HTMLButtonElement,
+) {
   const dialog = document.createElement('dialog');
   const supportsModal = typeof dialog.showModal === 'function';
-  const supportsFullscreen = () => document.fullscreenEnabled && stage.requestFullscreen;
+  const supportsFullscreen = () =>
+    document.fullscreenEnabled && typeof stage.requestFullscreen === 'function';
   if (!supportsFullscreen() && !supportsModal) return;
 
   dialog.className = 'wet-ink-fullscreen';
-  dialog.setAttribute('aria-label', 'Wet Ink fullscreen');
+  dialog.setAttribute('aria-label', 'wet ink fullscreen');
   const controls = document.createElement('div');
   controls.className = 'wet-ink-fullscreen-controls';
   const stagePosition = document.createComment('Wet Ink stage');
@@ -17,7 +20,6 @@ export function enableFullscreen(stage, play, button) {
     control.before(position);
     return { control, position };
   });
-  const label = button.querySelector('[data-fullscreen-label]') ?? button;
   let expanded = false;
   let changing = false;
 
@@ -32,8 +34,11 @@ export function enableFullscreen(stage, play, button) {
       for (const { control, position } of positions) position.after(control);
       controls.remove();
     }
-    label.textContent = open ? 'Exit fullscreen' : 'Fullscreen';
-    button.setAttribute('aria-label', label.textContent);
+    const label = open ? 'exit fullscreen' : 'fullscreen';
+    button.dataset.expanded = String(open);
+    button.textContent = open ? 'Exit fullscreen' : 'Fullscreen';
+    button.title = label;
+    button.setAttribute('aria-label', label);
     button.focus({ preventScroll: true });
   }
 
@@ -76,5 +81,6 @@ export function enableFullscreen(stage, play, button) {
       changing = false;
     }
   });
+  button.dataset.expanded = 'false';
   button.hidden = false;
 }

@@ -50,16 +50,26 @@ void main() {
   color = vec4(c, 1.0);
 }`;
 
-function shader(gl, stage, source) {
+function shader(gl: WebGL2RenderingContext, stage: number, source: string) {
   const result = gl.createShader(stage);
+  if (!result) throw new Error('Could not create the Wet Ink shader.');
   gl.shaderSource(result, source);
   gl.compileShader(result);
   if (!gl.getShaderParameter(result, gl.COMPILE_STATUS))
-    throw new Error(gl.getShaderInfoLog(result));
+    throw new Error(gl.getShaderInfoLog(result) ?? 'Could not compile the Wet Ink shader.');
   return result;
 }
 
-export function createPigmentPainter(canvas, width, height) {
+export interface PigmentPainter {
+  kind: 'canvas2d' | 'webgl2' | 'webgl2-software';
+  paint(pigments: Uint8Array): void;
+}
+
+export function createPigmentPainter(
+  canvas: HTMLCanvasElement,
+  width: number,
+  height: number,
+): PigmentPainter {
   const gl = canvas.getContext('webgl2', {
     alpha: false,
     antialias: false,
@@ -73,13 +83,24 @@ export function createPigmentPainter(canvas, width, height) {
     tile.width = width;
     tile.height = height;
     const tex = tile.getContext('2d');
+    if (!ctx || !tex) throw new Error('Could not create the Wet Ink canvas.');
     const image = tex.createImageData(width, height);
     const colors = new Uint32Array(image.data.buffer);
-    const tone = (edge0, edge1, value) => {
+    const tone = (edge0: number, edge1: number, value: number) => {
       const t = Math.min(1, Math.max(0, (value - edge0) / (edge1 - edge0)));
       return t * t * (3 - 2 * t);
     };
-    const channel = (paper, veil, brick, port, ink, underprint, a, dark, body) => {
+    const channel = (
+      paper: number,
+      veil: number,
+      brick: number,
+      port: number,
+      ink: number,
+      underprint: number,
+      a: number,
+      dark: number,
+      body: number,
+    ) => {
       const ground = paper + (veil - paper) * underprint;
       const fill = brick * (1 - dark) + dark * (port + (ink - port) * body);
       return Math.round(ground + (fill - ground) * a);
@@ -103,28 +124,34 @@ export function createPigmentPainter(canvas, width, height) {
       kind: 'canvas2d',
       paint(pigments) {
         const words = new Uint16Array(pigments.buffer, pigments.byteOffset, width * height);
-        for (let i = 0; i < colors.length; i++) colors[i] = palette[words[i]];
+        // The views have equal lengths and the palette covers every 16-bit word.
+        for (let i = 0; i < colors.length; i++) colors[i] = palette[words[i]!]!;
         tex.putImageData(image, 0, 0);
         ctx.drawImage(tile, 0, 0, canvas.width, canvas.height);
       },
     };
   }
   const debug = gl.getExtension('WEBGL_debug_renderer_info');
-  const renderer = debug ? gl.getParameter(debug.UNMASKED_RENDERER_WEBGL) : '';
-  const software = /SwiftShader|llvmpipe|software rasterizer/i.test(renderer);
+  const renderer: unknown = debug ? gl.getParameter(debug.UNMASKED_RENDERER_WEBGL) : '';
+  const software =
+    typeof renderer === 'string' && /SwiftShader|llvmpipe|software rasterizer/i.test(renderer);
   if (software) {
     canvas.width = 1920;
     canvas.height = 1080;
   }
   const program = gl.createProgram();
+  if (!program) throw new Error('Could not create the Wet Ink graphics program.');
   gl.attachShader(program, shader(gl, gl.VERTEX_SHADER, vertex));
   gl.attachShader(program, shader(gl, gl.FRAGMENT_SHADER, fragment));
   gl.linkProgram(program);
   if (!gl.getProgramParameter(program, gl.LINK_STATUS))
-    throw new Error(gl.getProgramInfoLog(program));
+    throw new Error(
+      gl.getProgramInfoLog(program) ?? 'Could not link the Wet Ink graphics program.',
+    );
   gl.useProgram(program);
   gl.uniform2f(gl.getUniformLocation(program, 'dimensions'), width, height);
   const texture = gl.createTexture();
+  if (!texture) throw new Error('Could not create the Wet Ink texture.');
   gl.bindTexture(gl.TEXTURE_2D, texture);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
