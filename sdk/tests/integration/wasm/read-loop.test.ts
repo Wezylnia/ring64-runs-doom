@@ -70,10 +70,16 @@ test('affine byte reads keep ADD flags at a denied span and resume after remappi
     memoryLimits: { maxBackings: 2, maxMappings: 2, maxBackingBytes: code.length + data.length },
   });
   try {
-    const input = initial(head, { 0: 0n, 1: 0n, 2: 0n, 3: row, 6: 1n, 7: 0n });
+    const upper = 0x1122334400000000n;
+    const input = initial(head, { 0: upper, 1: 0n, 2: upper, 3: row, 6: 1n, 7: 0n });
     const budget = 30n;
     const stop = head + BigInt(code.length);
-    const output = changed(input, stop, { 0: 7n, 1: 8n, 2: 8n, 6: 271n, 7: 20n }, 0x46n);
+    const output = changed(
+      input,
+      stop,
+      { 0: upper | 7n, 1: 8n, 2: upper | 8n, 6: 271n, 7: 20n },
+      0x46n,
+    );
     cpu.setState(input);
     exit(await cpu.run({ budget, stop }), 'stop', budget, 22n, output);
 
@@ -81,7 +87,8 @@ test('affine byte reads keep ADD flags at a denied span and resume after remappi
     cpu.setState(input);
     const denied = await cpu.run({ budget, stop });
     const next = head + 6n;
-    exit(denied, 'data-fault', budget, 2n, changed(input, next, { 0: 255n, 6: 256n }, 0x16n));
+    const afterAdd = changed(input, next, { 0: upper | 255n, 6: 256n }, 0x16n);
+    exit(denied, 'data-fault', budget, 2n, afterAdd);
     fault(denied, {
       instructionPc: next,
       address: row + 1n,
@@ -93,6 +100,22 @@ test('affine byte reads keep ADD flags at a denied span and resume after remappi
     });
     cpu.setMappings([codeMap, dataMap]);
     exit(await cpu.run({ budget, stop }), 'stop', budget, 20n, output);
+
+    const context = protectedSnapshot();
+    context.segments.ds.limit = Number(row);
+    cpu.setContext(context);
+    cpu.setState(input);
+    const segment = await cpu.run({ budget, stop });
+    exit(segment, 'segment-fault', budget, 2n, afterAdd);
+    assert.deepEqual(segment.segmentFault, {
+      instructionPc: next,
+      segment: 'ds',
+      offset: row + 1n,
+      width: 1,
+      access: 'read',
+      cause: 'limit',
+      failingOffset: row + 1n,
+    });
   } finally {
     cpu.dispose();
   }
