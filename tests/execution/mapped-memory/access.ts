@@ -56,6 +56,35 @@ export function accessScenarios(compiler: WebAssembly.Module): Scenario[] {
       },
     },
     {
+      name: 'unaligned vector move refreshes an instruction written through a RAM alias',
+      run: async () => {
+        // MOVDQU XMM0,[RBX]; MOVDQU [RDX],XMM0; MOV EAX,7; NOP padding.
+        const code = 'f30f6f03f30f7f02b807000000' + '90'.repeat(11);
+        const replacement = 'b82a000000' + '90'.repeat(11);
+        await using(
+          compiler,
+          [backing('code', code), backing('data', 'aa' + replacement)],
+          [
+            mapping(BASE, 'code', 24, RX),
+            mapping(0x4000n, 'data', 17, RW),
+            mapping(0x5000n, 'code', 24, RW),
+          ],
+          async (cpu) => {
+            const before = input({ 2: 0x5008n, 3: 0x4001n });
+            cpu.setState(before);
+            exit(
+              await cpu.run({ budget: 3n }),
+              'budget',
+              3n,
+              3n,
+              changed(before, BASE + 13n, { 0: 42n }),
+            );
+            memory(cpu, BASE + 8n, replacement);
+          },
+        );
+      },
+    },
+    {
       name: 'warm scalar reads enforce both ends of each mapped span',
       run: async () => {
         for (const [start, failing, cause] of [

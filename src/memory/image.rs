@@ -352,15 +352,44 @@ impl Image {
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     pub(crate) fn direct_write_span(&mut self, address: u64, width: u32) -> Option<DirectSpan> {
+        let (mapping, _) = self.direct_write_mapping(address, width)?;
+        let (base, length, offset, backing) = (
+            mapping.base,
+            mapping.length,
+            mapping.offset,
+            mapping.backing,
+        );
+        Some(DirectSpan {
+            base,
+            length,
+            host: self.backings[backing]
+                .bytes
+                .as_mut_ptr()
+                .wrapping_add(offset as usize) as u32,
+        })
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(crate) fn direct_write_vector(&mut self, address: u64, bytes: &[u8; 16]) -> bool {
+        let Some((mapping, relative)) = self.direct_write_mapping(address, 16) else {
+            return false;
+        };
+        let backing = mapping.backing;
+        let start = mapping.offset as usize + relative as usize;
+        self.backings[backing].bytes[start..start + 16].copy_from_slice(bytes);
+        true
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    fn direct_write_mapping(&self, address: u64, width: u32) -> Option<(&Mapping, u64)> {
         if self.physical {
             return None;
         }
         let mapping = &self.mappings[self.locate_index(address)?];
         let relative = address - mapping.base;
-        let backing = &mut self.backings[mapping.backing];
         if !mapping.permissions.write
             || u64::from(width) > u64::from(mapping.length) - relative
-            || backing.has_sources
+            || self.backings[mapping.backing].has_sources
             || self
                 .mappings
                 .iter()
@@ -369,14 +398,7 @@ impl Image {
             return None;
         }
         // Writable aliases of code must use the path that publishes invalidation.
-        Some(DirectSpan {
-            base: mapping.base,
-            length: mapping.length,
-            host: backing
-                .bytes
-                .as_mut_ptr()
-                .wrapping_add(mapping.offset as usize) as u32,
-        })
+        Some((mapping, relative))
     }
 
     #[inline(always)]

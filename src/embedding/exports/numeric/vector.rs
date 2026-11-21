@@ -112,6 +112,16 @@ fn core_vector_load_impl<const OBSERVED: bool, const PAGED: bool>(
         else {
             return 0;
         };
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if !OBSERVED
+            && !PAGED
+            && width == 16
+            && alignment == 1
+            && let Some(span) = core.image.direct_read_span(address, width)
+        {
+            // The generated instruction consumes all 16 bytes before any other helper.
+            return span.host + (address - span.base) as u32;
+        }
         match guest_access!(
             core,
             PAGED,
@@ -214,6 +224,15 @@ fn core_vector_store_impl<const OBSERVED: bool, const PAGED: bool>(
         else {
             return 0;
         };
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if !OBSERVED
+            && !PAGED
+            && width == 16
+            && alignment == 1
+            && core.image.direct_write_vector(address, &bytes)
+        {
+            return if core.image.active_changed() { 2 } else { 1 };
+        }
         match guest_access!(
             core,
             PAGED,
