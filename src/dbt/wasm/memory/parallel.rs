@@ -1,4 +1,4 @@
-use super::{ADDRESS, Emitter, LHS, RESULT, RHS, STORE_STATUS, VALUE};
+use super::{ADDRESS, Emitter, LHS, REMAINING, RESULT, RHS, STORE_STATUS, VALUE};
 use crate::embedding::layout::RunState;
 use crate::x86::{
     context::Segment,
@@ -12,6 +12,7 @@ use wasm_encoder::{BlockType, Instruction as Op, MemArg, ValType};
 
 const BOUNDARY: i32 = 29;
 const ATTEMPTS: i32 = crate::memory::SHARED_CAS_ATTEMPTS as i32;
+pub(super) const VECTOR_SPAN_TRIAL_LAPS: i64 = 3;
 const LANE: MemArg = MemArg {
     offset: 0,
     align: 3,
@@ -507,6 +508,7 @@ impl Emitter {
             });
         let (helper, exit_depth) = if let Some((helper, memo, budget_floor)) = span {
             let (body, _) = self.structured_loop.expect("shared vector span loop");
+            let lap = i64::from(body.max_lap_len);
             self.op(Op::LocalTee(scalar.payload))
                 .op(Op::LocalGet(memo.offset))
                 .op(Op::I64Sub)
@@ -519,7 +521,7 @@ impl Emitter {
                 .op(Op::I64Eqz)
                 .op(Op::I32And)
                 .op(Op::If(BlockType::Result(ValType::I64)))
-                .op(Op::I64Const(i64::from(body.max_lap_len)))
+                .op(Op::I64Const(lap))
                 .op(Op::LocalSet(budget_floor))
                 .op(Op::LocalGet(memo.canonical))
                 .op(Op::LocalGet(scalar.old))
@@ -527,7 +529,13 @@ impl Emitter {
                 .op(Op::I32Add)
                 .op(Op::LocalSet(scalar.address));
             self.read_shared_lane(scalar, Width::W32, false);
-            self.op(Op::Else).op(Op::LocalGet(scalar.payload));
+            self.op(Op::Else);
+            self.rearm_vector_span_trial(
+                lap,
+                i64::from(self.current_index - body.head),
+                budget_floor,
+            );
+            self.op(Op::LocalGet(scalar.payload));
             (helper, exit_depth + 1)
         } else {
             (helper, exit_depth)
@@ -570,6 +578,31 @@ impl Emitter {
             .op(Op::LocalGet(ADDRESS))
             .op(Op::I64x2ReplaceLane(0));
         true
+    }
+
+    fn rearm_vector_span_trial(&mut self, lap: i64, position: i64, budget_floor: u32) {
+        debug_assert!(position < lap);
+        debug_assert!(matches!(
+            self.instruction_retirement,
+            super::control::InstructionRetirement::One
+        ));
+        // A cleared trial can restart on a miss. Account for the already
+        // retired prefix so the same gate still admits exactly three laps.
+        let trial = VECTOR_SPAN_TRIAL_LAPS * lap;
+        self.op(Op::LocalGet(budget_floor))
+            .op(Op::I64Const(lap))
+            .op(Op::I64Eq)
+            .op(Op::If(BlockType::Empty))
+            .op(Op::LocalGet(REMAINING))
+            .op(Op::I64Const(trial + lap - position))
+            .op(Op::I64GeU)
+            .op(Op::If(BlockType::Empty))
+            .op(Op::LocalGet(REMAINING))
+            .op(Op::I64Const(trial - position - 1))
+            .op(Op::I64Sub)
+            .op(Op::LocalSet(budget_floor))
+            .op(Op::End)
+            .op(Op::End);
     }
 
     fn read_shared_lane(&mut self, scalar: Scalar, width: Width, locked: bool) {

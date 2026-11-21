@@ -464,7 +464,7 @@ impl Emitter {
         #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
         let trial = if let Some((_, _, budget_floor)) = self.parallel_vector_span {
             let lap = i64::from(body.max_lap_len);
-            let trial_cost = 3 * lap;
+            let trial_cost = super::parallel::VECTOR_SPAN_TRIAL_LAPS * lap;
             // Reuse the lap gate. If three laps find no hit, enter the
             // original loop at its head with the already committed state.
             self.op(Op::LocalGet(REMAINING))
