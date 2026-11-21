@@ -1384,6 +1384,8 @@ fn guarded_read_loop_publishes_preceding_add_flags_on_load_fault_and_budget() {
 
 #[test]
 fn guarded_conditional_move_uses_comparison_and_result_sign_after_overflow() {
+    use super::super::loop_cfg::{CompareAction, ConditionSource, compare_predicates, select};
+    use crate::embedding::layout::DATA;
     use crate::x86::instruction::{Location, Unary};
 
     let operations = [
@@ -1403,9 +1405,10 @@ fn guarded_conditional_move_uses_comparison_and_result_sign_after_overflow() {
             width: Width::W32,
             condition: Condition::Less,
         },
-        Operation::Mov {
+        Operation::Alu {
+            kind: Alu::Or,
             dst: RegisterView::low(2),
-            src: DataOperand::Immediate(0x80000000),
+            src: DataOperand::Immediate(0),
             width: Width::W32,
         },
         Operation::Unary {
@@ -1431,7 +1434,7 @@ fn guarded_conditional_move_uses_comparison_and_result_sign_after_overflow() {
         },
         Operation::Nop,
     ];
-    let unit = unit(
+    let mut unit = unit(
         operations
             .into_iter()
             .enumerate()
@@ -1448,6 +1451,21 @@ fn guarded_conditional_move_uses_comparison_and_result_sign_after_overflow() {
         1 + usize::from(!cfg!(feature = "parallel"))
     );
     let entries: Vec<_> = unit.instructions.iter().map(|i| i.pc).collect();
+    let predicates = |unit: &Unit| {
+        let (order, _) = select(&unit.instructions).unwrap();
+        compare_predicates(&unit.instructions, order, &unit.context)
+    };
+    let sources = predicates(&unit);
+    assert_eq!(sources[1], CompareAction::SkipStatus);
+    assert_eq!(
+        sources[2],
+        CompareAction::Condition(ConditionSource::Operands(Width::W32))
+    );
+    assert_eq!(sources[4], CompareAction::SkipStatus);
+    assert_eq!(
+        sources[5],
+        CompareAction::Condition(ConditionSource::ResultSign(Width::W32))
+    );
     let mut cases = Vec::new();
     for (budget, next, flags, remaining, stop, expected) in [
         (
@@ -1477,7 +1495,7 @@ fn guarded_conditional_move_uses_comparison_and_result_sign_after_overflow() {
         let mut packet = execution_case(
             &bytes,
             &entries,
-            &[(0, 0x80000000), (1, 2)],
+            &[(0, 0x80000000), (1, 2), (2, 0x80000000)],
             2,
             0x1000,
             budget,
@@ -1494,5 +1512,89 @@ fn guarded_conditional_move_uses_comparison_and_result_sign_after_overflow() {
         }
         cases.push(packet);
     }
+
+    let original_move = unit.instructions[2].operation;
+    unit.instructions[2].operation = Operation::Cmov {
+        dst: RegisterView::low(3),
+        src: Location::Memory(Address {
+            base: AddressBase::Register(7),
+            ..Address::default()
+        }),
+        width: Width::W32,
+        condition: Condition::Less,
+    };
+    assert_eq!(predicates(&unit)[1..=2], [CompareAction::Ordinary; 2]);
+    let mut fault = execution_case(
+        &emit(&unit),
+        &entries,
+        &[(0, 0x10), (1, 1), (7, 0x8000)],
+        2,
+        0x1000,
+        8,
+        (&[(0, 0xf)], 0x16, 0x1008, DATA as u32, 6),
+    );
+    // The signed condition is false, but the memory source still faults.
+    fault["accesses"] = json!([
+        {"kind":"load","args":["8000",4],"result":"0"},
+        {"kind":"access_failed","args":[],"result":DATA}
+    ]);
+    cases.push(fault);
+    unit.instructions[2].operation = original_move;
+
+    let original_branch = unit.instructions[0].operation;
+    unit.instructions[0].operation = Operation::Jcc {
+        condition: Condition::Equal,
+        target: 0x1008,
+    };
+    assert_eq!(predicates(&unit)[1..=2], [CompareAction::Ordinary; 2]);
+    let mut joined = execution_case(
+        &emit(&unit),
+        &entries,
+        &[(0, 0x1234), (1, 1), (2, 0x80000000)],
+        0xc2,
+        0x1000,
+        8,
+        (
+            &[(1, 0), (2, 0x80000000), (3, 0x1234), (6, 0x80000000)],
+            0x46,
+            0x1020,
+            STOP as u32,
+            1,
+        ),
+    );
+    joined["stop"] = json!("1020");
+    cases.push(joined);
+    unit.instructions[0].operation = original_branch;
+
+    unit.instructions[3].operation = Operation::Alu {
+        kind: Alu::Adc,
+        dst: RegisterView::low(2),
+        src: DataOperand::Immediate(0),
+        width: Width::W32,
+    };
+    assert_eq!(predicates(&unit)[1..=2], [CompareAction::Ordinary; 2]);
+    let mut carry = execution_case(
+        &emit(&unit),
+        &entries,
+        &[(0, 0), (1, 1), (2, 0x7fffffff)],
+        2,
+        0x1000,
+        9,
+        (
+            &[
+                (0, 0xffffffff),
+                (1, 0),
+                (2, 0x80000000),
+                (3, 0xffffffff),
+                (6, 0x80000000),
+            ],
+            0x46,
+            0x1020,
+            STOP as u32,
+            1,
+        ),
+    );
+    carry["stop"] = json!("1020");
+    cases.push(carry);
     run_cases(cases);
 }
