@@ -433,8 +433,10 @@ test('an outlined float retry loses its proof when the resumed lap exits', async
 test('sticky precision float loops replay the original failing instruction', async () => {
   const code = body();
   const fraction = 1 + 2 ** -23;
-  const signaling = floats(fraction, 2, 3, 4);
-  new DataView(signaling.buffer).setUint32(4, 0x7f800001, true);
+  const signaling = floats(fraction, 2, 3, 4, 5, 6);
+  const view = new DataView(signaling.buffer);
+  view.setUint32(4, 0x7f800001, true);
+  view.setUint32(20, 0x7f800001, true);
   const cpu = await createCpu({
     compiler,
     entry: head,
@@ -442,18 +444,18 @@ test('sticky precision float loops replay the original failing instruction', asy
     memory: {
       backings: [
         { id: 'code', bytes: code },
-        { id: 'row', bytes: floats(fraction, 2, 3, 4) },
+        { id: 'row', bytes: floats(fraction, 2, 3, 4, 5, 6) },
         { id: 'column', bytes: signaling },
       ],
       mappings: [
         { ...mapping(head, 'code', code.length), permissions: { ...readOnly, execute: true } },
-        mapping(row, 'row', 16),
-        mapping(column, 'column', 16),
+        mapping(row, 'row', 24),
+        mapping(column, 'column', 24),
       ],
     },
-    memoryLimits: { maxBackings: 3, maxMappings: 3, maxBackingBytes: code.length + 32 },
+    memoryLimits: { maxBackings: 3, maxMappings: 3, maxBackingBytes: code.length + 48 },
   });
-  const input = initial(head, { 0: row, 1: 0n, 2: 4n, 3: column });
+  const input = initial(head, { 0: row, 1: 0n, 2: 4n, 3: column }, 0xcd7n);
   const stop = head + BigInt(code.length);
   try {
     cpu.setState(input);
@@ -462,9 +464,21 @@ test('sticky precision float loops replay the original failing instruction', asy
     assert.equal(invalid.reason, 'simd-exception');
     assert.equal(invalid.state.rip, head + 16n);
     assert.equal(invalid.retired, 3n);
+    assert.equal(invalid.state.flags, input.flags);
     assert.deepEqual(cpu.readXmmState().slice(0, 2), [0x3f800002n, 0x40000000n]);
     assert.equal(invalid.simdException?.mxcsrBefore, 0x1f24);
     assert.equal(invalid.simdException?.mxcsrAfter, 0x1f25);
+
+    cpu.setState(changed(input, head, { 1: 2n, 2: 6n }));
+    cpu.setTimeState({ tsc: 0xffff_ffff_ffff_fff8n, tscAux: 7 });
+    cpu.setMxcsr(0x1f24);
+    const later = await cpu.run({ budget: 40n, stop });
+    assert.equal(later.reason, 'simd-exception');
+    assert.equal(later.state.rip, head + 16n);
+    assert.equal(later.state.registers[1], 4n);
+    assert.equal(later.state.flags, 0x493n); // CMP 4,6, with the original direction flag.
+    assert.equal(later.retired, 12n);
+    assert.deepEqual(cpu.readTimeState(), { tsc: 4n, tscAux: 7 });
 
     cpu.setState(input);
     cpu.setMxcsr(0x0fa4); // Sticky precision still traps when unmasked.
