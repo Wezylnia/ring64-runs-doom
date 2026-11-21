@@ -25,8 +25,8 @@ const mutants = [
     extra: [
       {
         file: semantic,
-        old: '    if !context.is_long64()\n',
-        replacement: '    if false && !context.is_long64()\n',
+        old: '            Syscall | Sysret { .. } | Swapgs | Sysexit { wide: true }',
+        replacement: '            Swapgs | Sysexit { wide: true }',
       },
     ],
     filter: 'own faults preserve source CPL',
@@ -139,15 +139,27 @@ const mutants = [
   {
     name: 'fs-gs-base-write-does-not-reach-context',
     file: semantic,
-    old: '    cache.base = base;',
-    replacement: '    let _ = base;',
+    old: '                        context.set_segment_base(Segment::Fs, value);',
+    replacement: '',
+    extra: [
+      {
+        file: semantic,
+        old: '                        context.set_segment_base(Segment::Gs, value);',
+        replacement: '',
+      },
+      {
+        file: semantic,
+        old: '            prepared\n                .context\n                .set_segment_base(Segment::Gs, bank.kernel_gs_base);',
+        replacement: '',
+      },
+    ],
     filter: 'straight-line WRMSR FS consumer',
   },
   {
     name: 'msr-base-change-keeps-old-context-owner',
     file: 'src/embedding/exports/memory/paging.rs',
-    old: '                    if core.context != context {\n                        core.image.retire_sources();\n                        core.observed_owners.clear();\n                        core.context_version = core.context_version.wrapping_add(1);\n                    }',
-    replacement: '',
+    old: '                        core.context = context;\n                        core.context_changed();',
+    replacement: '                        core.context = context;',
     filter: 'straight-line WRMSR FS consumer',
   },
   {
@@ -197,9 +209,9 @@ const mutants = [
   {
     name: 'pending-compile-base-change-keeps-old-owner',
     file: 'src/embedding/exports/system/context.rs',
-    old: '            core.image.retire_sources();\n            core.context = context;\n            core.context_version = core.context_version.saturating_add(1);',
+    old: '            core.context = context;\n            core.context_changed();',
     replacement: '            core.context = context;',
-    filter: 'pending compiler honors changed loaded bases',
+    filter: 'rejects pending context ABA',
   },
 ];
 
@@ -265,9 +277,12 @@ const originals = new Map(
   ),
 );
 const cases = `import { readFile } from 'node:fs/promises';
+import { createCpu } from './sdk/src/index.ts';
+import { lifecycleScenarios } from './tests/execution/context-reuse/lifecycle.ts';
 import { fastSystemScenarios } from './tests/execution/fast-system/index.ts';
 const compiler=await WebAssembly.compile(new Uint8Array(await readFile('build/ring64.wasm')));
-const all=fastSystemScenarios(compiler);
+const aba=lifecycleScenarios(compiler, createCpu).filter(s=>s.name.includes('rejects pending context ABA'));
+const all=[...fastSystemScenarios(compiler), ...aba];
 const selected=process.argv[2]?all.filter(s=>s.name.includes(process.argv[2])):all;
 if(!selected.length) throw Error('empty scenario selection');
 const passed=[];for(const s of selected){try{await s.run();passed.push(s.name);}catch(e){console.log(JSON.stringify({failed:s.name,error:e.message,stack:e.stack,semantic:!e.message.includes('cpu engine failed')&&e.stack.includes('/tests/support/fixture.ts')}));process.exitCode=1;break;}}
