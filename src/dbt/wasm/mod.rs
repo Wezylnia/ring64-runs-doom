@@ -636,9 +636,11 @@ pub(crate) fn emit_profile(
 ) -> Vec<u8> {
     let observed = observed || paged;
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
-    if !observed && let Some(body) = StructuredLoop::select_shared_float(&unit.instructions) {
-        // Only budget and stop are checked per lap. Each instruction still
-        // polls phase and ingress, including successors to shared slow reads.
+    if !observed
+        && let Some(body) = StructuredLoop::select_shared_float(&unit.instructions)
+            .or_else(|| StructuredLoop::select_shared_rotated_reads(unit))
+    {
+        // Every shared placement retains its exact per-instruction signal check.
         let bytes = emit_placement(unit, observed, paged, Some(body), false, max_artifact_bytes);
         if bytes.len() <= max_artifact_bytes {
             return bytes;
@@ -2102,7 +2104,7 @@ fn emit_body(
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     if bytes.len() > max_artifact_bytes
         && parallel_vector_dword.is_some()
-        && !loop_body.is_some_and(StructuredLoop::is_shared_float)
+        && !loop_body.is_some_and(StructuredLoop::is_optional_shared_loop)
     {
         // Retry ordinary placement before trading shared dword reads for a loop clone.
         return emit_body(

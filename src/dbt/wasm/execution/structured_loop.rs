@@ -120,7 +120,11 @@ impl StructuredLoop {
     }
 
     pub(super) fn precheck_gates_without_read_proof(self) -> bool {
-        self.kind != LoopKind::Float || cfg!(feature = "parallel")
+        if cfg!(feature = "parallel") {
+            matches!(self.kind, LoopKind::Float | LoopKind::Registers)
+        } else {
+            self.kind != LoopKind::Float
+        }
     }
 
     pub(super) fn active_labels(self, ordinal: u32) -> u32 {
@@ -150,8 +154,18 @@ impl StructuredLoop {
     }
 
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
-    pub(super) fn is_shared_float(self) -> bool {
-        self.kind == LoopKind::Float
+    pub(super) fn select_shared_rotated_reads(unit: &super::Unit) -> Option<Self> {
+        use crate::x86::context::Mode;
+
+        if unit.context.mode() != Mode::Protected || !unit.context.code32() {
+            return None;
+        }
+        super::loop_cfg::select_shared_rotated_reads(&unit.instructions).map(Self::forward)
+    }
+
+    #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+    pub(super) fn is_optional_shared_loop(self) -> bool {
+        self.kind != LoopKind::Registers
     }
 
     pub(super) fn select(instructions: &[Instruction]) -> Option<Self> {
@@ -160,16 +174,18 @@ impl StructuredLoop {
         }
         Self::select_body(instructions, LoopKind::Float)
             .or_else(|| Self::select_body(instructions, LoopKind::IntegerReads))
-            .or_else(|| {
-                super::loop_cfg::select(instructions).map(|(order, max_lap_len)| Self {
-                    earlier: order.earlier,
-                    head: order.head,
-                    tail: order.tail,
-                    max_lap_len,
-                    kind: LoopKind::ForwardEdges,
-                })
-            })
+            .or_else(|| super::loop_cfg::select(instructions).map(Self::forward))
             .or_else(|| Self::select_body(instructions, LoopKind::Registers))
+    }
+
+    fn forward((order, max_lap_len): (LoopOrder, u32)) -> Self {
+        Self {
+            earlier: order.earlier,
+            head: order.head,
+            tail: order.tail,
+            max_lap_len,
+            kind: LoopKind::ForwardEdges,
+        }
     }
 
     fn select_body(instructions: &[Instruction], kind: LoopKind) -> Option<Self> {

@@ -38,18 +38,38 @@ impl LoopOrder {
 }
 
 pub(super) fn select(instructions: &[Instruction]) -> Option<(LoopOrder, u32)> {
-    select_layout(instructions, false).or_else(|| select_layout(instructions, true))
+    let limit = instructions.len();
+    select_layout(instructions, false, limit).or_else(|| select_layout(instructions, true, limit))
 }
 
-fn select_layout(instructions: &[Instruction], rotate: bool) -> Option<(LoopOrder, u32)> {
+#[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+pub(super) fn select_shared_rotated_reads(
+    instructions: &[Instruction],
+) -> Option<(LoopOrder, u32)> {
+    // Shared compilation holds an exclusive grant. Bound the source window
+    // before scanning branches or proving any candidate's execution paths.
+    let (order, bound) = select_layout(instructions, true, 64)?;
+    instructions[order.earlier as usize..=order.tail as usize]
+        .iter()
+        .all(|instruction| !matches!(instruction.operation, Operation::Store { .. }))
+        .then_some((order, bound))
+}
+
+fn select_layout(
+    instructions: &[Instruction],
+    rotate: bool,
+    max_body_len: usize,
+) -> Option<(LoopOrder, u32)> {
     let mut best = None::<(LoopOrder, u32)>;
     for (tail, instruction) in instructions.iter().enumerate() {
         let Some(target) = branch_target(instruction.operation) else {
             continue;
         };
-        let Ok(head) = instructions[..tail].binary_search_by_key(&target, |i| i.pc) else {
+        let first = (tail + 1).saturating_sub(max_body_len);
+        let Ok(head) = instructions[first..tail].binary_search_by_key(&target, |i| i.pc) else {
             continue;
         };
+        let head = first + head;
         let mut consider = |earlier| {
             let order = LoopOrder {
                 earlier: earlier as u32,
@@ -67,9 +87,10 @@ fn select_layout(instructions: &[Instruction], rotate: bool) -> Option<(LoopOrde
                 .iter()
                 .filter_map(|i| branch_target(i.operation))
                 .filter_map(|target| {
-                    instructions[..head]
+                    instructions[first..head]
                         .binary_search_by_key(&target, |i| i.pc)
                         .ok()
+                        .map(|offset| first + offset)
                 });
             if let Some(first) = prefix_targets.next() {
                 // Try the widest and narrowest prefixes, with at most two
@@ -557,7 +578,7 @@ mod tests {
                 operation,
             })
             .collect();
-        let (order, max_lap) = select_layout(&body, true).unwrap();
+        let (order, max_lap) = select_layout(&body, true, body.len()).unwrap();
         assert_eq!((order.earlier, order.head, order.tail), (0, 32, 96));
         assert_eq!(max_lap, 65);
 
@@ -577,5 +598,39 @@ mod tests {
             )
             .is_none()
         );
+    }
+
+    #[test]
+    fn rotated_scan_limits_source_window_even_when_lap_is_short() {
+        let pc = |ordinal| 0x1000 + ordinal as u64 * 4;
+        for length in [64, 65, 66] {
+            let tail = length - 1;
+            let body: Vec<_> = (0..length)
+                .map(|ordinal| Instruction {
+                    pc: pc(ordinal),
+                    next_pc: pc(ordinal + 1),
+                    operation: match ordinal {
+                        1 => Operation::Load {
+                            dst: RegisterView::low(0),
+                            address: Address::default(),
+                            width: Width::W32,
+                        },
+                        2 => Operation::Jcc {
+                            condition: Condition::Equal,
+                            target: pc(0),
+                        },
+                        3 => Operation::Jump { target: pc(tail) },
+                        n if n == tail => Operation::Jump { target: pc(1) },
+                        _ => Operation::Nop,
+                    },
+                })
+                .collect();
+            let (order, bound) = select_layout(&body, true, body.len()).unwrap();
+            assert_eq!(
+                (order.earlier, order.head, order.tail, bound),
+                (0, 1, tail as u32, 4)
+            );
+            assert_eq!(select_layout(&body, true, 64).is_some(), length == 64);
+        }
     }
 }
