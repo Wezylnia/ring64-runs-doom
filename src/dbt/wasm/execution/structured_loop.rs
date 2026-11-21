@@ -104,6 +104,20 @@ impl StructuredLoop {
         )
     }
 
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn integer_read_proof(
+        self,
+        unit: &super::Unit,
+    ) -> Option<super::read_loop::ReadLoop> {
+        if self.kind != LoopKind::IntegerReads {
+            return None;
+        }
+        super::read_loop::ReadLoop::recognize_integer(
+            &unit.context,
+            &unit.instructions[self.head as usize..=self.tail as usize],
+        )
+    }
+
     pub(super) fn precheck_gates_without_read_proof(self) -> bool {
         self.kind != LoopKind::Float
     }
@@ -417,6 +431,27 @@ impl Emitter {
         self.proved_stack = Some((guard.slots, guard.host));
         self.emit_prechecked_body(instructions, body, loop_depth + 2, write_segment_base);
         self.proved_stack = None;
+        self.op(Op::Else);
+        self.emit_prechecked_body(instructions, body, loop_depth + 2, write_segment_base);
+        self.op(Op::End).op(Op::End);
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn emit_integer_read_loops(
+        &mut self,
+        instructions: &[Instruction],
+        body: StructuredLoop,
+        loop_depth: u32,
+        write_segment_base: Option<u32>,
+        guard: (super::read_loop::ReadLoop, super::memory::SpanCache, u32),
+    ) {
+        let (proof, span, first_bias) = guard;
+        self.op(Op::If(BlockType::Empty));
+        self.guard_integer_read_loop(proof, span, first_bias);
+        self.op(Op::If(BlockType::Empty));
+        self.proved_reads = Some((proof, first_bias));
+        self.emit_prechecked_body(instructions, body, loop_depth + 2, write_segment_base);
+        self.proved_reads = None;
         self.op(Op::Else);
         self.emit_prechecked_body(instructions, body, loop_depth + 2, write_segment_base);
         self.op(Op::End).op(Op::End);

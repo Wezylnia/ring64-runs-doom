@@ -21,21 +21,28 @@ impl Stream {
         } == address
     }
 
-    fn displacement_width(self) -> Option<u32> {
+    fn displacement_width(self, bytes: u32) -> Option<u32> {
         let distance = self
             .last_displacement
             .checked_sub(self.first.displacement)?;
-        u32::try_from(distance).ok()?.checked_add(4)
+        u32::try_from(distance).ok()?.checked_add(bytes)
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ReadLimit {
+    Register(u8),
+    Immediate(u64),
 }
 
 #[derive(Clone, Copy)]
 pub(super) struct ReadLoop {
     index: u8,
-    end: u8,
+    end: ReadLimit,
     count_width: Width,
     step: u64,
     streams: [Option<Stream>; 2],
+    byte_reads: bool,
 }
 
 impl ReadLoop {
@@ -45,6 +52,21 @@ impl ReadLoop {
     pub(super) fn recognize(
         context: &ExecutionContext,
         instructions: &[Instruction],
+    ) -> Option<Self> {
+        Self::recognize_body(context, instructions, false)
+    }
+
+    pub(super) fn recognize_integer(
+        context: &ExecutionContext,
+        instructions: &[Instruction],
+    ) -> Option<Self> {
+        Self::recognize_body(context, instructions, true)
+    }
+
+    fn recognize_body(
+        context: &ExecutionContext,
+        instructions: &[Instruction],
+        byte_reads: bool,
     ) -> Option<Self> {
         let [body @ .., add, compare, branch] = instructions else {
             return None;
@@ -78,38 +100,60 @@ impl ReadLoop {
         if index.high_byte || !step.is_power_of_two() || step > u64::from(u32::MAX) {
             return None;
         }
-        let Operation::Alu {
-            kind: Alu::Cmp,
-            dst: left,
-            src: DataOperand::Register(right),
-            width,
-        } = compare.operation
-        else {
-            return None;
+        let end = match compare.operation {
+            Operation::Alu {
+                kind: Alu::Cmp,
+                dst: left,
+                src: DataOperand::Register(right),
+                width,
+            } if width == count_width && !left.high_byte && !right.high_byte && left != right => {
+                if left == index {
+                    ReadLimit::Register(right.bank)
+                } else if right == index {
+                    ReadLimit::Register(left.bank)
+                } else {
+                    return None;
+                }
+            }
+            Operation::Alu {
+                kind: Alu::Cmp,
+                dst,
+                src: DataOperand::Immediate(end),
+                width,
+            } if byte_reads
+                && dst == index
+                && (width == count_width || (count_width == Width::W64 && width == Width::W32)) =>
+            {
+                // The guard compares the full-width start against this bound.
+                // A W32 compare on a W64 counter cannot reach a wrapped value.
+                ReadLimit::Immediate(end & width.mask())
+            }
+            _ => return None,
         };
-        if width != count_width || left.high_byte || right.high_byte {
-            return None;
-        }
-        let end = if left == index {
-            right
-        } else if right == index {
-            left
+        let written = if byte_reads {
+            body.iter().try_fold(0u16, |written, instruction| {
+                Some(written | Self::integer_writes(instruction.operation)?)
+            })?
         } else {
-            return None;
+            0
         };
-        if end == index {
+        if written & (1 << index.bank) != 0
+            || matches!(end, ReadLimit::Register(bank) if written & (1 << bank) != 0)
+        {
             return None;
         }
         let mut proof = Self {
             index: index.bank,
-            end: end.bank,
+            end,
             count_width,
             step,
             streams: [None; 2],
+            byte_reads,
         };
+        let bytes = if byte_reads { 1 } else { 4 };
         let mut reads = 0;
         for instruction in body {
-            let Some(address) = Self::read_operand(instruction.operation)? else {
+            let Some(address) = Self::read_operand(instruction.operation, byte_reads)? else {
                 continue;
             };
             let index = address.index?;
@@ -119,6 +163,7 @@ impl ReadLoop {
                 || address.size.bits() > count_width.bits()
                 || !matches!(address.size, Width::W32 | Width::W64)
                 || address.base == AddressBase::Register(proof.index)
+                || matches!(address.base, AddressBase::Register(bank) if written & (1 << bank) != 0)
                 || address.base == AddressBase::NextPc
                 || context.segment_base(address.segment) != 0
             {
@@ -132,7 +177,7 @@ impl ReadLoop {
             {
                 stream.first.displacement = stream.first.displacement.min(address.displacement);
                 stream.last_displacement = stream.last_displacement.max(address.displacement);
-                stream.displacement_width()?;
+                stream.displacement_width(bytes)?;
             } else {
                 let next = proof.streams.iter_mut().find(|stream| stream.is_none())?;
                 *next = Some(Stream {
@@ -147,7 +192,46 @@ impl ReadLoop {
         (reads >= 4).then_some(proof)
     }
 
-    fn read_operand(operation: Operation) -> Option<Option<Address>> {
+    fn integer_writes(operation: Operation) -> Option<u16> {
+        match operation {
+            Operation::Alu { kind, dst, .. } => Some(if kind.writes_result() {
+                1 << dst.bank
+            } else {
+                0
+            }),
+            Operation::Load {
+                dst,
+                width: Width::W8,
+                ..
+            }
+            | Operation::Extend {
+                dst,
+                source_width: Width::W8,
+                ..
+            }
+            | Operation::Mov { dst, .. }
+            | Operation::Lea { dst, .. } => Some(1 << dst.bank),
+            Operation::Nop => Some(0),
+            _ => None,
+        }
+    }
+
+    fn read_operand(operation: Operation, byte_reads: bool) -> Option<Option<Address>> {
+        if byte_reads {
+            return Some(match operation {
+                Operation::Load {
+                    address,
+                    width: Width::W8,
+                    ..
+                }
+                | Operation::Extend {
+                    src: Location::Memory(address),
+                    source_width: Width::W8,
+                    ..
+                } => Some(address),
+                _ => None,
+            });
+        }
         match operation {
             Operation::Nop => Some(None),
             Operation::Vector(VectorInstruction::Move {
@@ -175,7 +259,7 @@ impl ReadLoop {
     }
 
     pub(super) fn stream_for(self, operation: Operation) -> Option<u32> {
-        let address = Self::read_operand(operation)??;
+        let address = Self::read_operand(operation, self.byte_reads)??;
         self.streams
             .iter()
             .position(|stream| stream.is_some_and(|stream| stream.matches(address)))
@@ -198,8 +282,6 @@ impl Emitter {
         guard_failed: u32,
         retry: u32,
     ) {
-        use crate::memory::DirectSpan as Descriptor;
-
         self.op(Op::Block(BlockType::Result(ValType::I32)))
             // A checked retry reaches this header only through the same
             // induction step, with its proved stream bindings still live.
@@ -218,7 +300,39 @@ impl Emitter {
             .op(Op::Block(BlockType::Empty))
             .op(Op::LocalGet(guard_failed))
             .op(Op::BrIf(0));
-        self.register(proof.end, proof.count_width);
+        self.guard_read_span(proof, span, first_bias);
+        self.op(Op::I32Const(1))
+            .op(Op::Br(1))
+            .op(Op::End)
+            // Split or unsuitable mappings use the checked loop until the
+            // next activation, without reprobing on each checked backedge.
+            .op(Op::I32Const(1))
+            .op(Op::LocalSet(guard_failed))
+            .op(Op::I32Const(0))
+            .op(Op::End);
+    }
+
+    pub(super) fn guard_integer_read_loop(
+        &mut self,
+        proof: ReadLoop,
+        span: SpanCache,
+        first_bias: u32,
+    ) {
+        self.op(Op::Block(BlockType::Result(ValType::I32)))
+            .op(Op::I32Const(0));
+        self.guard_read_span(proof, span, first_bias);
+        self.op(Op::Drop).op(Op::I32Const(1)).op(Op::End);
+    }
+
+    fn guard_read_span(&mut self, proof: ReadLoop, span: SpanCache, first_bias: u32) {
+        use crate::memory::DirectSpan as Descriptor;
+
+        match proof.end {
+            ReadLimit::Register(end) => self.register(end, proof.count_width),
+            ReadLimit::Immediate(end) => {
+                self.op(Op::I64Const(end as i64));
+            }
+        }
         self.op(Op::LocalTee(RHS));
         self.register(proof.index, proof.count_width);
         self.op(Op::LocalTee(LHS))
@@ -236,7 +350,8 @@ impl Emitter {
 
         for (slot, stream) in proof.streams.iter().flatten().enumerate() {
             let scale = u64::from(stream.first.index.unwrap().scale);
-            let displacement_width = u64::from(stream.displacement_width().unwrap());
+            let bytes = if proof.byte_reads { 1 } else { 4 };
+            let displacement_width = u64::from(stream.displacement_width(bytes).unwrap());
             // Length = (end - start - step) * scale + displacement width.
             let max_count = (u64::from(u32::MAX) - displacement_width) / scale + proof.step;
             self.op(Op::LocalGet(LHS))
@@ -294,16 +409,6 @@ impl Emitter {
                 .op(Op::I32Sub)
                 .op(Op::LocalSet(first_bias + slot as u32));
         }
-
-        self.op(Op::I32Const(1))
-            .op(Op::Br(1))
-            .op(Op::End)
-            // Split or unsuitable mappings use the checked loop until the
-            // next activation, without reprobing on each checked backedge.
-            .op(Op::I32Const(1))
-            .op(Op::LocalSet(guard_failed))
-            .op(Op::I32Const(0))
-            .op(Op::End);
     }
 }
 
@@ -377,18 +482,55 @@ mod tests {
         let proof = ReadLoop::recognize(&ExecutionContext::default(), &instructions).unwrap();
         assert_eq!(
             (proof.index, proof.end, proof.count_width, proof.step),
-            (1, 3, Width::W64, 2)
+            (1, ReadLimit::Register(3), Width::W64, 2)
         );
         assert_eq!(
             proof
                 .streams
-                .map(|s| s.map(|s| (s.first.displacement, s.displacement_width().unwrap()))),
+                .map(|s| s.map(|s| (s.first.displacement, s.displacement_width(4).unwrap()))),
             [Some((-4, 12)), Some((8, 8))]
         );
         assert_eq!(
             instructions.map(|i| proof.stream_for(i.operation)),
             [Some(0), Some(1), None, Some(0), Some(1), None, None, None]
         );
+    }
+
+    #[test]
+    fn affine_byte_reads_use_the_decoded_bound_and_reject_mutated_bases() {
+        let mut instructions = fixture();
+        for instruction in &mut instructions[..5] {
+            if let Operation::Vector(VectorInstruction::Move {
+                operand: VectorOperand::Memory(address),
+                ..
+            }) = instruction.operation
+            {
+                instruction.operation = Operation::Extend {
+                    dst: RegisterView::low(2),
+                    src: Location::Memory(address),
+                    source_width: Width::W8,
+                    width: Width::W32,
+                    signed: false,
+                };
+            }
+        }
+        instructions[6].operation = Operation::Alu {
+            kind: Alu::Cmp,
+            dst: RegisterView::low(1),
+            src: DataOperand::Immediate(73),
+            width: Width::W32,
+        };
+        let context = ExecutionContext::default();
+        let proof = ReadLoop::recognize_integer(&context, &instructions).unwrap();
+        assert_eq!(proof.end, ReadLimit::Immediate(73));
+        assert_eq!(proof.count_width, Width::W64);
+        assert_eq!(proof.streams[0].unwrap().displacement_width(1), Some(9));
+        instructions[2].operation = Operation::Mov {
+            dst: RegisterView::low(6),
+            src: DataOperand::Immediate(0),
+            width: Width::W32,
+        };
+        assert!(ReadLoop::recognize_integer(&context, &instructions).is_none());
     }
 
     #[test]

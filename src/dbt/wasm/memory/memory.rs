@@ -186,6 +186,26 @@ impl Emitter {
     ) {
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         if !for_write
+            && width == Width::W8
+            && let Some((proof, first_bias)) = self.proved_reads
+            && let Some(stream) = proof.stream_for(self.current_operation)
+        {
+            self.address(address, next_pc);
+            self.op(Op::I32WrapI64)
+                .op(Op::LocalGet(first_bias + stream))
+                .op(Op::I32Add);
+            self.direct_scalar_load(
+                width,
+                MemArg {
+                    offset: 0,
+                    align: 0,
+                    memory_index: 0,
+                },
+            );
+            return;
+        }
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if !for_write
             && let Some((proof, host)) = self.proved_stack
             && let Some(offset) = proof.offset(address, width)
         {

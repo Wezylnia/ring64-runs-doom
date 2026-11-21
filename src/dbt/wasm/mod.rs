@@ -610,7 +610,10 @@ pub(crate) fn emit_profile(
             return bytes;
         }
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-        if loop_body.read_proof(unit).is_some() || loop_body.stack_proof(unit).is_some() {
+        if loop_body.read_proof(unit).is_some()
+            || loop_body.stack_proof(unit).is_some()
+            || loop_body.integer_read_proof(unit).is_some()
+        {
             // Keep the checked placement when only the extra guarded body
             // would exhaust the user's generated artifact limit.
             let bytes = emit_placement(
@@ -648,8 +651,12 @@ fn emit_placement(
     );
     if extra_spans && bytes.len() > max_artifact_bytes {
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-        if guard_reads && loop_body.is_some_and(|body| body.stack_proof(unit).is_some()) {
-            // Drop the extra stack loop before reconsidering the original span caches.
+        if guard_reads
+            && loop_body.is_some_and(|body| {
+                body.stack_proof(unit).is_some() || body.integer_read_proof(unit).is_some()
+            })
+        {
+            // Drop the extra loop before reconsidering the original span caches.
             return bytes;
         }
         return emit_body(
@@ -1579,6 +1586,17 @@ fn emit_body(
         })
     });
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let proved_integer_reads = loop_body.and_then(|body| {
+        let span = read_span?;
+        let proof = _guard_reads
+            .then(|| body.integer_read_proof(unit))
+            .flatten()?;
+        let first_bias = next_local;
+        locals.push((read_loop::ReadLoop::BIAS_LOCALS, ValType::I32));
+        next_local += read_loop::ReadLoop::BIAS_LOCALS;
+        Some((proof, span, first_bias))
+    });
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let proved_reads = loop_body.and_then(|body| {
         let span = read_span?;
         let proof = _guard_reads.then(|| body.read_proof(unit)).flatten()?;
@@ -1785,6 +1803,14 @@ fn emit_body(
                 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
                 if let Some(guard) = proved_stack {
                     emitter.emit_stack_loops(
+                        &unit.instructions,
+                        loop_body,
+                        loop_depth,
+                        write_segment_base,
+                        guard,
+                    );
+                } else if let Some(guard) = proved_integer_reads {
+                    emitter.emit_integer_read_loops(
                         &unit.instructions,
                         loop_body,
                         loop_depth,
