@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { createCpu, type MemoryMapping } from '../../../src/index.js';
+import { simdFault } from '../../../../tests/execution/floating/fixture.js';
 import { protectedSnapshot } from '../../../../tests/support/context.js';
 import { LIMITS, changed, exit, fault, hex, initial } from '../../../../tests/support/fixture.js';
 
@@ -488,6 +489,81 @@ test('sticky precision float loops replay the original failing instruction', asy
     assert.equal(precision.retired, 1n);
     assert.equal(cpu.readXmmState()[0], 0x3f800001n);
     assert.equal(precision.simdException?.mxcsrAfter, 0x0fa4);
+  } finally {
+    cpu.dispose();
+  }
+});
+
+test('FP32 reductions preserve every prefix on budget, stop, and later SIMD replay', async () => {
+  const code = hex(
+    'f30f100488f30f59048bf30f58c3' + // XMM0 = XMM3 + row[RCX] * column[RCX]
+      'f30f104c8804f30f594c8b04f30f58c8' + // XMM1 = XMM0 + row[RCX+1] * column[RCX+1]
+      'f30f10548808f30f59548b08f30f58d1' + // XMM2 = XMM1 + row[RCX+2] * column[RCX+2]
+      'f30f105c880cf30f595c8b0cf30f58da' + // XMM3 = XMM2 + row[RCX+3] * column[RCX+3]
+      '4883c1044839d175b9', // ADD RCX,4; CMP RCX,RDX; JNE head
+  );
+  // The second lap starts off the 1/16 grid and ends with an unmasked signaling NaN.
+  const terms = floats(-0, 0, 1.5, -0.5, 33 / 32, -0.5, 0.25, 2);
+  const factors = floats(1, 1, 1, 1, 1, 1, 1, 1);
+  new DataView(factors.buffer).setUint32(28, 0x7f800001, true);
+  const cpu = await createCpu({
+    compiler,
+    entry: head,
+    limits: LIMITS,
+    memory: {
+      backings: [
+        { id: 'code', bytes: code },
+        { id: 'row', bytes: terms },
+        { id: 'column', bytes: factors },
+      ],
+      mappings: [
+        { ...mapping(head, 'code', code.length), permissions: { ...readOnly, execute: true } },
+        mapping(row, 'row', terms.length),
+        mapping(column, 'column', factors.length),
+      ],
+    },
+    memoryLimits: { maxBackings: 3, maxMappings: 3, maxBackingBytes: code.length + 64 },
+  });
+  const input = initial(head, { 0: row, 1: 0n, 2: 8n, 3: column }, 0x402n);
+  const upper = 0x123456789012345678901234n << 32n;
+  const untouched = Array<bigint>(12).fill(upper);
+  const reset = () => {
+    cpu.setState(input);
+    cpu.setXmmState([upper, upper, upper, upper | 0x80000000n, ...untouched]);
+    cpu.setMxcsr(0x1f00);
+  };
+  try {
+    reset();
+    const first = await cpu.run({ budget: 15n });
+    exit(first, 'budget', 15n, 15n, changed(input, head, { 1: 4n }, 0x497n));
+    assert.deepEqual(cpu.readXmmState(), [0x80000000n, 0n, 0x3fc00000n, 0x3f800000n, ...untouched]);
+    assert.equal(cpu.readMxcsr(), 0x1f00);
+
+    reset();
+    const stop = head + 46n;
+    const stopped = await cpu.run({ budget: 30n, stop });
+    exit(stopped, 'stop', 30n, 9n, changed(input, stop));
+    assert.deepEqual(cpu.readXmmState(), [
+      0x80000000n,
+      0n,
+      0x3fc00000n,
+      upper | 0x80000000n,
+      ...untouched,
+    ]);
+
+    reset();
+    const replay = await cpu.run({ budget: 30n });
+    const failingMultiply = head + 52n;
+    exit(replay, 'simd-exception', 30n, 25n, changed(input, failingMultiply, { 1: 4n }, 0x497n));
+    simdFault(replay, 0x1f00, 0x1f01, 1, 1, 'pre-computation', failingMultiply);
+    assert.deepEqual(cpu.readXmmState(), [
+      0x40020000n,
+      0x3fc40000n,
+      0x3fe40000n,
+      0x40000000n,
+      ...untouched,
+    ]);
+    assert.equal(cpu.readMxcsr(), 0x1f01);
   } finally {
     cpu.dispose();
   }
