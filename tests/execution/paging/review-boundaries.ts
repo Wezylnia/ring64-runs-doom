@@ -1,6 +1,8 @@
 import { Core } from '../../../sdk/src/wasm/core.js';
+import { snapshot } from '../far-control/fixture.js';
 import { context } from '../modes/fixture.js';
 import {
+  BANK,
   check,
   equal,
   hex,
@@ -166,6 +168,77 @@ export function pagingBoundaryReviewScenarios(compiler: WebAssembly.Module): Sce
                 equal(result.pageFault?.address, badData, 'the operand supplies the PF address');
               else
                 equal(cpu.readPagingState().cr2, 0n, 'execute #DB precedes the operand page walk');
+            },
+          );
+        }
+      },
+    },
+    {
+      name: 'paged MOVZX keeps the exact byte loop prefix before a missed read',
+      async run() {
+        const head = 0x400000n;
+        const badLinear = head + 0x2000n;
+        for (const [fs, ac] of [
+          [false, false],
+          [false, true],
+          [true, true],
+        ] as const) {
+          const execution = snapshot();
+          execution.cpl = 3;
+          if (fs) execution.segments.fs.base = head;
+          const base = fs ? 0n : head;
+          const flags = ac ? 0x40002n : 2n;
+          await usingPaged(
+            compiler,
+            {
+              // Warm three bytes in [RDI+1]. The fourth lap read uses absent [RSI].
+              code: fs
+                ? '640fb607640fb607640fb64f01640fb6570283c001640fb61e83ed0175e6'
+                : '0fb6070fb6070fb64f010fb6570283c0010fb61e83ed0175ea',
+              context: execution,
+              bank: { ...BANK, cr0: BANK.cr0 | 0x40000n },
+              words: [
+                [0x1000n, 0x2027n],
+                [0x2000n, 0x3027n],
+                [0x3010n, 0x4027n],
+                [0x4000n, 0x9027n],
+                [0x4008n, 0xa027n],
+              ],
+              spans: [{ physical: 0xa000n, bytes: Uint8Array.of(0, 0xff, 0x34, 42) }],
+            },
+            async (cpu) => {
+              cpu.setState(
+                initial(
+                  head,
+                  {
+                    0: 0xffffffffffffffffn,
+                    3: 0x1234n,
+                    5: 2n,
+                    6: base + 0x2000n,
+                    7: base + 0x1001n,
+                  },
+                  flags,
+                ),
+              );
+              const result = await cpu.run({ budget: 20n });
+              equal(result.reason, 'page-fault', 'the fourth read misses with AC clear or set');
+              equal(
+                result.pageFault?.address,
+                badLinear,
+                'non-identity FS resolves the same operand',
+              );
+              equal(result.pageFault?.errorCode, 4, 'not-present user read');
+              equal(result.retired, 5n, 'preload and four completed lap instructions');
+              equal(result.state.rip, head + (fs ? 21n : 17n), 'failed MOVZX remains unretired');
+              equal(result.state.registers[0], 256n, 'read 0xff, zero-extend, then add one');
+              equal(result.state.registers[1], 0x34n, 'second byte committed');
+              equal(result.state.registers[2], 42n, 'third byte committed');
+              equal(result.state.registers[3], 0x1234n, 'miss publishes no destination');
+              equal(
+                result.state.flags & 0x408d7n,
+                (flags & 0x40000n) | 0x16n,
+                'ADD and AC survive',
+              );
             },
           );
         }

@@ -87,16 +87,22 @@ fn guarded_read_ages_data_then_code_only_on_success() {
         }
         let clock = cache.entries.borrow().clock;
         assert_eq!(
-            cache.read_then_fetch_dword(&state, missing, &ProtectionKeys::ZERO, |_| unreachable!()),
+            cache.read_then_fetch(
+                &state,
+                missing,
+                &ProtectionKeys::ZERO,
+                4,
+                |_| unreachable!()
+            ),
             None
         );
         assert_eq!(
-            cache.read_then_fetch_dword(&state, data, &ProtectionKeys::ZERO, |_| None),
+            cache.read_then_fetch(&state, data, &ProtectionKeys::ZERO, 4, |_| None),
             None
         );
         assert_eq!(cache.entries.borrow().clock, clock);
         assert_eq!(
-            cache.read_then_fetch_dword(&state, data, &ProtectionKeys::ZERO, |physical| {
+            cache.read_then_fetch(&state, data, &ProtectionKeys::ZERO, 4, |physical| {
                 assert_eq!(physical, 0xa234);
                 Some(u32::MAX)
             }),

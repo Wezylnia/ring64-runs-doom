@@ -1271,6 +1271,8 @@ export class Core {
         env.paged_loop_guard = this.#exports.core_paged_loop_guard;
       if (this.#exports.core_paged_loop_read_dword)
         env.paged_loop_read_dword = this.#exports.core_paged_loop_read_dword;
+      if (this.#exports.core_paged_loop_read_byte)
+        env.paged_loop_read_byte = this.#exports.core_paged_loop_read_byte;
       if (this.#exports.core_write_segment_base)
         env.write_segment_base = this.#exports.core_write_segment_base;
       for (const [name, key] of Object.entries({

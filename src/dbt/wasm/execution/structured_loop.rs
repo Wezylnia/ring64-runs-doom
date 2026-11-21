@@ -198,17 +198,13 @@ impl StructuredLoop {
         if !unit.context.is_long64() {
             return None;
         }
-        let dword = |op| {
-            matches!(op, Operation::Load { width: Width::W32, address, .. }
-                if address.segment == crate::x86::context::Segment::Ds)
-        };
         Self::select_straight_body(
             &unit.instructions,
             LoopKind::PagedReads,
-            |op| inside_register_body(op) || dword(op),
+            |op| inside_register_body(op) || paged_read_width(op).is_some(),
             |body| {
                 body.iter()
-                    .filter(|instruction| dword(instruction.operation))
+                    .filter_map(|instruction| paged_read_width(instruction.operation))
                     .take(4)
                     .count()
                     == 4
@@ -218,12 +214,19 @@ impl StructuredLoop {
         .within_paged_fetch(unit)
     }
 
-    pub(super) fn is_paged_read_loop(self) -> bool {
-        match self.kind {
-            #[cfg(not(feature = "parallel"))]
-            LoopKind::PagedReads => true,
-            _ => false,
+    #[cfg(not(feature = "parallel"))]
+    pub(super) fn paged_read_widths(self, unit: &super::Unit) -> [bool; 2] {
+        let mut widths = [false; 2];
+        if self.kind == LoopKind::PagedReads {
+            for instruction in &unit.instructions[self.head as usize..self.tail as usize] {
+                match paged_read_width(instruction.operation) {
+                    Some(Width::W8) => widths[0] = true,
+                    Some(Width::W32) => widths[1] = true,
+                    _ => {}
+                }
+            }
         }
+        widths
     }
 
     #[cfg(not(feature = "parallel"))]
@@ -434,6 +437,27 @@ fn inside_register_body(operation: Operation) -> bool {
                 ..
             }
     )
+}
+
+#[cfg(not(feature = "parallel"))]
+fn paged_read_width(operation: Operation) -> Option<Width> {
+    use crate::x86::context::Segment;
+
+    match operation {
+        Operation::Load {
+            width: Width::W32,
+            address,
+            ..
+        } if address.segment == Segment::Ds => Some(Width::W32),
+        Operation::Extend {
+            src: Location::Memory(address),
+            source_width: Width::W8,
+            width: Width::W32,
+            signed: false,
+            ..
+        } if address.segment == Segment::Ds => Some(Width::W8),
+        _ => None,
+    }
 }
 
 fn integer_read(operation: Operation) -> bool {
