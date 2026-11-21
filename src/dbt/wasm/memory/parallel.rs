@@ -154,7 +154,12 @@ impl DwordWindow {
         let address = match operation {
             Operation::Load {
                 address,
-                width: Width::W32,
+                width: Width::W8 | Width::W32,
+                ..
+            }
+            | Operation::Extend {
+                src: Location::Memory(address),
+                source_width: Width::W8,
                 ..
             }
             | Operation::MemoryAlu {
@@ -412,7 +417,7 @@ impl Emitter {
         true
     }
 
-    pub(super) fn parallel_load_dword_window(&mut self, exit_depth: u32) -> bool {
+    pub(super) fn parallel_load_dword_window(&mut self, width: Width, exit_depth: u32) -> bool {
         let (Some(window), Some(scalar)) = (self.parallel_dword_window, self.parallel_scalar)
         else {
             return false;
@@ -421,6 +426,8 @@ impl Emitter {
             return false;
         }
         debug_assert!(self.parallel_retry.is_none());
+        debug_assert!(matches!(width, Width::W8 | Width::W32));
+        // Byte reads reuse the dword-start bounds. The checked read handles the tail.
         self.op(Op::Block(BlockType::Result(ValType::I32)));
         self.dword_window_delta(window);
         self.op(Op::LocalGet(window.limit))
@@ -450,14 +457,18 @@ impl Emitter {
         self.op(Op::Drop).op(Op::End);
         self.op(Op::LocalGet(STORE_STATUS))
             .op(Op::LocalGet(window.host))
-            .op(Op::I32Add)
-            .op(Op::LocalTee(scalar.address))
-            .op(Op::I32Const(7))
-            .op(Op::I32And)
-            .op(Op::I32Const(4))
-            .op(Op::I32LeU)
-            .op(Op::If(BlockType::Result(ValType::I32)))
-            .op(Op::LocalGet(scalar.address))
+            .op(Op::I32Add);
+        if width == Width::W32 {
+            self.op(Op::LocalTee(scalar.address))
+                .op(Op::I32Const(7))
+                .op(Op::I32And)
+                .op(Op::I32Const(4))
+                .op(Op::I32LeU)
+                .op(Op::If(BlockType::Result(ValType::I32)));
+        } else {
+            self.op(Op::LocalSet(scalar.address));
+        }
+        self.op(Op::LocalGet(scalar.address))
             .op(Op::I32Const(6))
             .op(Op::I32ShrU)
             .op(Op::I32Const(2))
@@ -469,17 +480,16 @@ impl Emitter {
                 align: 2,
                 memory_index: 1,
             }))
-            .op(Op::I32Eqz)
-            .op(Op::Else)
-            .op(Op::I32Const(0))
-            .op(Op::End)
-            .op(Op::End);
-        self.op(Op::If(BlockType::Empty));
-        self.read_shared_lane(scalar, Width::W32, false);
-        self.narrow(Width::W32);
+            .op(Op::I32Eqz);
+        if width == Width::W32 {
+            self.op(Op::Else).op(Op::I32Const(0)).op(Op::End);
+        }
+        self.op(Op::End).op(Op::If(BlockType::Empty));
+        self.read_shared_lane(scalar, width, false);
+        self.narrow(width);
         self.op(Op::LocalSet(VALUE)).op(Op::Else);
         // A rejected window, lane, or stripe requires the checked read.
-        self.load_address_slow(Width::W32, false, exit_depth + 1);
+        self.load_address_slow(width, false, exit_depth + 1);
         self.op(Op::End);
         true
     }
