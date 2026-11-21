@@ -73,6 +73,16 @@ test(
       await readFile(join(project, 'node_modules/ring64/package.json'), 'utf8'),
     );
     assert.equal(installedManifest.license, 'MIT');
+    const quickstart = await readFile(resolve(root, 'website/docs/examples/add.ts'), 'utf8');
+    const readme = await readFile(resolve(root, 'README.md'), 'utf8');
+    assert.ok(readme.includes('```ts\n' + quickstart.trimEnd() + '\n```'));
+    await writeFile(join(project, 'add.mts'), quickstart);
+    const quickstartResult = await exec(
+      process.execPath,
+      ['--experimental-strip-types', 'add.mts'],
+      { cwd: project, timeout: 30_000 },
+    );
+    assert.equal(quickstartResult.stdout.trim(), '42n');
     for (const file of ['consumer.ts', 'contracts.ts'])
       await copyFile(new URL(file, import.meta.url), join(project, file));
     await exec(
