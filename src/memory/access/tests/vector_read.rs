@@ -1,4 +1,4 @@
-use super::*;
+use crate::memory::{Access, Cause, Fault, Image, MappingInput, MemoryLimits, Permissions};
 
 fn mapping(base: u64, offset: u32, length: u32, read: bool) -> MappingInput {
     MappingInput {

@@ -1,4 +1,4 @@
-use super::*;
+use crate::memory::{Access, Cause, Fault, Image, MappingInput, MemoryLimits, Permissions};
 
 #[test]
 fn read_admission_checks_only_the_requested_byte_without_warming_hints_or_owners() {

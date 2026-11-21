@@ -299,6 +299,8 @@ impl Image {
 mod tests {
     use super::*;
 
+    mod dependencies;
+
     #[test]
     fn repeated_runtime_fences_keep_the_active_exit_until_a_new_activation() {
         let mut image = Image::new(0x1000, vec![0x90; 8], 0x4000, vec![0; 8]).unwrap();

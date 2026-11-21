@@ -1,4 +1,4 @@
-use super::*;
+use crate::memory::{Access, Cause, Fault, Image, MappingInput, MemoryLimits, Permissions};
 
 const END: u64 = 1 << 52;
 const HOLE: u64 = 0x0000_8000_0000_0000;

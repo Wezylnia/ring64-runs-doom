@@ -1,4 +1,4 @@
-use super::*;
+use crate::memory::{Image, MappingInput, MemoryLimits, Permissions};
 
 const CODE: u64 = 0x0000_8000_0000_1000;
 

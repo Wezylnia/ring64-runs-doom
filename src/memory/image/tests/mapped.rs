@@ -1,4 +1,4 @@
-use super::*;
+use crate::memory::{Access, Cause, Image, MappingInput, MemoryLimits, Permissions};
 
 fn limits() -> MemoryLimits {
     MemoryLimits {

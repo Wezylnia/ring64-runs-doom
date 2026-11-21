@@ -428,6 +428,8 @@ impl Backing {
 mod tests {
     use super::*;
 
+    mod mapped;
+
     #[test]
     fn mapping_lookup_matches_widened_intervals_at_boundaries_gaps_and_the_final_byte() {
         let mappings = [

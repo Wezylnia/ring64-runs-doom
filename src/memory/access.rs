@@ -559,9 +559,13 @@ mod tests {
     use super::super::{Access, Cause};
     use super::*;
 
+    mod fields;
     mod narrow;
+    mod physical;
     mod preflight;
     mod read_for_write;
+    mod vector;
+    mod vector_read;
 
     #[test]
     fn loads_can_cross_readable_code_and_ram_but_ram_is_not_executable() {
