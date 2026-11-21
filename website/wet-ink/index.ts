@@ -23,7 +23,7 @@ function attachInk(
     ['ArrowUp', [0, -2800]],
     ['ArrowDown', [0, 2800]],
   ]);
-  let painter: PigmentPainter;
+  let painter: PigmentPainter | undefined;
   let worker: Worker;
   let playing = !motion.matches;
   let busy = false;
@@ -32,6 +32,8 @@ function attachInk(
   let nextStep: number | undefined;
   let failed = false;
   let pending: Frame | undefined;
+  let displayed: Frame | undefined;
+  let resized = true;
   let pointer = { x: 32768, y: 32768, active: false };
   let previous = pointer;
 
@@ -44,8 +46,8 @@ function attachInk(
   }
 
   function schedule() {
-    if (document.hidden || failed || request || (!pending && (busy || (!firstFrame && !playing))))
-      return;
+    if (document.hidden || failed || request) return;
+    if (!pending && !(resized && displayed) && (busy || (!firstFrame && !playing))) return;
     request = requestAnimationFrame(advance);
   }
 
@@ -61,6 +63,7 @@ function attachInk(
     if (failed) return;
     failed = true;
     worker?.terminate();
+    sizeObserver.disconnect();
     if (request) cancelAnimationFrame(request);
     playing = false;
     syncPlay();
@@ -70,7 +73,14 @@ function attachInk(
 
   function draw(data: Frame) {
     const start = performance.now();
-    painter.paint(data.pigments);
+    const renderer = preparePainter();
+    if (resized) {
+      renderer.resize();
+      resized = false;
+    }
+    renderer.paint(data.pigments);
+    if (data === displayed) return;
+    displayed = data;
     canvas.dataset.renderMs = data.ms.toFixed(3);
     canvas.dataset.paintMs = (performance.now() - start).toFixed(3);
     canvas.dataset.frame = String(data.tick + 1);
@@ -80,9 +90,10 @@ function attachInk(
 
   function advance(now: number) {
     request = 0;
-    if (pending) {
+    const frame = pending ?? (resized ? displayed : undefined);
+    if (frame) {
       try {
-        draw(pending);
+        draw(frame);
       } catch {
         fail('could not paint wet ink. reload to try again.');
         return;
@@ -94,6 +105,10 @@ function attachInk(
       schedule();
       return;
     }
+    step(now);
+  }
+
+  function step(now: number) {
     nextStep = Math.max(nextStep ?? now, now - frameInterval * 0.5) + frameInterval;
 
     const near = pointer;
@@ -134,14 +149,27 @@ function attachInk(
     pointer = { x: clamp(pointer.x + delta[0]), y: clamp(pointer.y + delta[1]), active: true };
   }
 
-  try {
+  function markResized() {
+    resized = true;
+    schedule();
+  }
+
+  const sizeObserver = new ResizeObserver(markResized);
+
+  function preparePainter() {
+    if (painter) return painter;
     painter = createPigmentPainter(canvas, pigmentWidth, pigmentHeight);
+    canvas.dataset.painter = painter.kind;
+    sizeObserver.observe(canvas);
+    return painter;
+  }
+
+  try {
     worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
   } catch {
     fail('could not start wet ink. reload to try again.');
     return;
   }
-  canvas.dataset.painter = painter.kind;
   worker.addEventListener('error', () => fail('could not start the ring64 worker.'));
   worker.addEventListener('messageerror', () => fail('could not read the wet ink frame.'));
   worker.addEventListener('message', ({ data }: MessageEvent<StepReply>) => {
@@ -157,7 +185,10 @@ function attachInk(
   canvas.addEventListener('webglcontextlost', () =>
     fail('graphics context lost. reload to restart.'),
   );
-  play.addEventListener('click', () => setPlaying(!playing));
+  play.addEventListener('click', () => {
+    setPlaying(!playing);
+    if (playing) canvas.focus({ preventScroll: true });
+  });
   motion.addEventListener('change', () => {
     if (motion.matches) setPlaying(false);
   });
@@ -177,7 +208,18 @@ function attachInk(
   canvas.addEventListener('blur', leave);
   enableFullscreen(stage, play, fullscreen);
   syncPlay();
-  schedule();
+  // Start loading the CPU and running the first frame before graphics setup.
+  if (!document.hidden) step(performance.now());
+  window.addEventListener('resize', markResized);
+  // A cold graphics context can block, so finish the document's startup first.
+  setTimeout(() => {
+    if (failed) return;
+    try {
+      preparePainter();
+    } catch {
+      fail('could not start wet ink. reload to try again.');
+    }
+  }, 0);
 }
 
 const canvas = document.getElementById('ink');

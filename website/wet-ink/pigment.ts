@@ -62,7 +62,19 @@ function shader(gl: WebGL2RenderingContext, stage: number, source: string) {
 
 export interface PigmentPainter {
   kind: 'canvas2d' | 'webgl2' | 'webgl2-software';
+  resize(): void;
   paint(pigments: Uint8Array): void;
+}
+
+function resizeCanvas(canvas: HTMLCanvasElement, limit: number) {
+  const box = canvas.getBoundingClientRect();
+  const width = Math.max(1, Math.round(box.width * devicePixelRatio));
+  const height = Math.max(1, Math.round(box.height * devicePixelRatio));
+  const scale = Math.min(1, limit / width, (limit * 9) / (height * 16));
+  const nextWidth = Math.max(1, Math.round(width * scale));
+  const nextHeight = Math.max(1, Math.round(height * scale));
+  if (canvas.width !== nextWidth) canvas.width = nextWidth;
+  if (canvas.height !== nextHeight) canvas.height = nextHeight;
 }
 
 export function createPigmentPainter(
@@ -70,14 +82,14 @@ export function createPigmentPainter(
   width: number,
   height: number,
 ): PigmentPainter {
+  canvas.width = width;
+  canvas.height = height;
   const gl = canvas.getContext('webgl2', {
     alpha: false,
     antialias: false,
     preserveDrawingBuffer: true,
   });
   if (!gl) {
-    canvas.width = 1920;
-    canvas.height = 1080;
     const ctx = canvas.getContext('2d', { alpha: false });
     const tile = document.createElement('canvas');
     tile.width = width;
@@ -119,9 +131,12 @@ export function createPigmentPainter(
       const b0 = channel(225, 192, 37, 53, 33, underprint, a, dark, body);
       palette[i] = 0xff000000 | (b0 << 16) | (g << 8) | r;
     }
-    ctx.imageSmoothingQuality = 'high';
     return {
       kind: 'canvas2d',
+      resize() {
+        resizeCanvas(canvas, 1920);
+        ctx.imageSmoothingQuality = 'high';
+      },
       paint(pigments) {
         const words = new Uint16Array(pigments.buffer, pigments.byteOffset, width * height);
         // The views have equal lengths and the palette covers every 16-bit word.
@@ -135,10 +150,6 @@ export function createPigmentPainter(
   const renderer: unknown = debug ? gl.getParameter(debug.UNMASKED_RENDERER_WEBGL) : '';
   const software =
     typeof renderer === 'string' && /SwiftShader|llvmpipe|software rasterizer/i.test(renderer);
-  if (software) {
-    canvas.width = 1920;
-    canvas.height = 1080;
-  }
   const program = gl.createProgram();
   if (!program) throw new Error('Could not create the Wet Ink graphics program.');
   gl.attachShader(program, shader(gl, gl.VERTEX_SHADER, vertex));
@@ -160,9 +171,13 @@ export function createPigmentPainter(
   gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
   gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RG8, width, height);
   gl.disable(gl.DITHER);
-  gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
   return {
     kind: software ? 'webgl2-software' : 'webgl2',
+    resize() {
+      // Software rasterizers run the four-tap shader on the CPU.
+      resizeCanvas(canvas, software ? 1280 : 3840);
+      gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
+    },
     paint(pigments) {
       gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, width, height, gl.RG, gl.UNSIGNED_BYTE, pigments);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
