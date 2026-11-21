@@ -52,11 +52,30 @@ fn flags<S: Semantics, W: Semantics>(
             u32::from(bounded.status.contains(Status::INEXACT)) << 5,
         );
     }
+    if exponent == 0 && bounded.status == Status::OK && value & !(1 << (S::BITS - 1)) != 0 {
+        // An exact nonzero subnormal is also exact in the wider format.
+        return tiny_flags::<S>(value, false, false, mxcsr);
+    }
     range_flags::<S, W>(value, bounded.status, wide(), mxcsr)
 }
 
+fn tiny_flags<S: Semantics>(
+    value: u64,
+    bounded_inexact: bool,
+    unbounded_inexact: bool,
+    mxcsr: u32,
+) -> (u64, u32) {
+    if mxcsr & (1 << 11) == 0 {
+        (value, 16 | (u32::from(unbounded_inexact) << 5))
+    } else if mxcsr & (1 << 15) != 0 {
+        (value & (1 << (S::BITS - 1)), 48)
+    } else {
+        (value, if bounded_inexact { 48 } else { 0 })
+    }
+}
+
 fn range_flags<S: Semantics, W: Semantics>(
-    mut value: u64,
+    value: u64,
     bounded_status: Status,
     wide: StatusAnd<IeeeFloat<W>>,
     mxcsr: u32,
@@ -75,17 +94,12 @@ fn range_flags<S: Semantics, W: Semantics>(
             raised |= 32;
         }
     } else if tiny {
-        if mxcsr & (1 << 11) == 0 {
-            raised |= 16;
-            if unbounded_inexact {
-                raised |= 32;
-            }
-        } else if mxcsr & (1 << 15) != 0 {
-            value &= 1 << (IeeeFloat::<S>::BITS - 1);
-            raised |= 48;
-        } else if bounded_status.contains(Status::INEXACT) {
-            raised |= 48;
-        }
+        return tiny_flags::<S>(
+            value,
+            bounded_status.contains(Status::INEXACT),
+            unbounded_inexact,
+            mxcsr,
+        );
     } else if bounded_status.contains(Status::INEXACT) {
         raised |= 32;
     }

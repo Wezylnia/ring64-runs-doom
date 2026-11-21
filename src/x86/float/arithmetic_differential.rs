@@ -126,6 +126,62 @@ fn interior_result_uses_only_the_bounded_precision_status() {
 }
 
 #[test]
+fn exact_subnormal_uses_only_bounded_value_and_mxcsr() {
+    let bounded = Status::OK.and(Single::from_bits(0x807fffff));
+    let result = flags(
+        bounded,
+        || -> StatusAnd<IeeeFloat<Wide32>> { panic!("exact subnormal evaluated the wide path") },
+        0x9f80,
+    );
+    assert_eq!(result, (0x80000000, 0x30));
+}
+
+#[test]
+fn signed_exact_tiny_results_preserve_flush_and_trap_priority() {
+    let high = 0xcafe_d00d_9876_5432u128 << 64;
+    for format in [Format::F32, Format::F64] {
+        let min = 1u64 << format.fraction();
+        let one = ((1u64 << (format.exponent_bits() - 1)) - 1) << format.fraction();
+        let half = one - min;
+        let op = Op {
+            kind: Kind::Mul,
+            format,
+            scalar: true,
+            integer64: false,
+            predicate: 0,
+        };
+        for sign in [0, format.sign()] {
+            let left = high | u128::from(sign | min);
+            for (rhs, fraction) in [(half, min / 2), (one - 2, min - 1)] {
+                for (controls, flush, raised, trapped) in [
+                    (0x1f80, false, 0, false),
+                    (0x9f80, true, 0x30, false),
+                    (0x1780, false, 0x10, true),
+                    (0x9780, false, 0x10, true),
+                    (0x8f80, false, 0x30, true),
+                ] {
+                    for sticky in [0, 0x20] {
+                        let mxcsr = controls | sticky;
+                        let expected = Outcome {
+                            value: if trapped {
+                                left
+                            } else {
+                                high | u128::from(sign | if flush { 0 } else { fraction })
+                            },
+                            mxcsr: mxcsr | raised,
+                            raised,
+                            stage: trapped.then_some(Stage::PostComputation),
+                        };
+                        assert_eq!(eval(op, left, u128::from(rhs), mxcsr), expected);
+                        assert_eq!(reference(op, left, u128::from(rhs), mxcsr), expected);
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn finite_arithmetic_matches_unconditional_widening() {
     let operations = [Kind::Add, Kind::Sub, Kind::Mul, Kind::Div];
     for format in [Format::F32, Format::F64] {
