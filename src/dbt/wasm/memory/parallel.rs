@@ -147,6 +147,9 @@ impl Emitter {
         if compare {
             self.restore_repeat_flags();
         }
+        if self.loop_gates_prechecked {
+            self.restore_loop_registers();
+        }
         self.exit(BOUNDARY, exit_depth + 1);
         self.op(Op::End);
     }

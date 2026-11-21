@@ -658,6 +658,20 @@ pub(crate) fn emit_profile(
         if bytes.len() <= max_artifact_bytes {
             return bytes;
         }
+        #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+        if loop_body.dword_writes(unit) != 0 {
+            let bytes = emit_placement(
+                unit,
+                observed,
+                paged,
+                Some(loop_body.without_dword_projection()),
+                true,
+                max_artifact_bytes,
+            );
+            if bytes.len() <= max_artifact_bytes {
+                return bytes;
+            }
+        }
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         if loop_body.read_proof(unit).is_some()
             || loop_body.stack_proof(unit).is_some()
@@ -2104,6 +2118,7 @@ fn emit_body(
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     if bytes.len() > max_artifact_bytes
         && parallel_vector_dword.is_some()
+        && dword_writes == 0
         && !loop_body.is_some_and(StructuredLoop::is_optional_shared_loop)
     {
         // Retry ordinary placement before trading shared dword reads for a loop clone.

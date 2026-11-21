@@ -6,6 +6,7 @@ use super::{
 use wasm_encoder::{BlockType, Instruction as Op};
 
 use crate::x86::{
+    context::Mode,
     float::{Format, Kind},
     instruction::{
         Address, Alu, Count, Instruction, Location, Operation, Shift, Unary, VectorInstruction,
@@ -28,13 +29,20 @@ pub(super) struct StructuredLoop {
     pub(super) tail: u32,
     max_lap_len: u32,
     kind: LoopKind,
+    project_dwords: bool,
 }
 
 impl StructuredLoop {
     pub(super) fn dword_writes(self, unit: &super::Unit) -> u16 {
+        if !self.project_dwords || self.kind != LoopKind::Registers || unit.context.is_long64() {
+            return 0;
+        }
         if cfg!(feature = "parallel")
-            || self.kind != LoopKind::Registers
-            || unit.context.is_long64()
+            && (!cfg!(target_arch = "wasm32")
+                || unit.context.mode() != Mode::Protected
+                || !unit.context.code32()
+                // The only taken edge in the register body returns to head.
+                || unit.instructions[self.head as usize].pc > unit.context.code_limit())
         {
             return 0;
         }
@@ -81,6 +89,12 @@ impl StructuredLoop {
             }
         }
         writes
+    }
+
+    #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+    pub(super) fn without_dword_projection(mut self) -> Self {
+        self.project_dwords = false;
+        self
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -155,8 +169,6 @@ impl StructuredLoop {
 
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     pub(super) fn select_shared_rotated_reads(unit: &super::Unit) -> Option<Self> {
-        use crate::x86::context::Mode;
-
         if unit.context.mode() != Mode::Protected || !unit.context.code32() {
             return None;
         }
@@ -185,6 +197,7 @@ impl StructuredLoop {
             tail: order.tail,
             max_lap_len,
             kind: LoopKind::ForwardEdges,
+            project_dwords: true,
         }
     }
 
@@ -230,6 +243,7 @@ impl StructuredLoop {
                         tail: index as u32,
                         max_lap_len: length as u32 + 1,
                         kind,
+                        project_dwords: true,
                     });
                 }
             }
