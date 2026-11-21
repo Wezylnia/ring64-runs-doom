@@ -2,7 +2,7 @@ use crate::x86::{
     context::ExecutionContext,
     float::{Format, Kind},
     instruction::{
-        Address, AddressBase, Alu, Condition, DataOperand, Instruction, Location, Operation,
+        Address, AddressBase, Alu, Condition, DataOperand, Instruction, Location, Operation, Unary,
         VectorInstruction, VectorOperand, Width,
     },
 };
@@ -169,7 +169,7 @@ impl ReadLoop {
         instructions: &[Instruction],
         byte_reads: bool,
     ) -> Option<Self> {
-        let [body @ .., add, compare, branch] = instructions else {
+        let [body @ .., update, compare, branch] = instructions else {
             return None;
         };
         if instructions
@@ -188,14 +188,19 @@ impl ReadLoop {
         if target != body.first()?.pc {
             return None;
         }
-        let Operation::Alu {
-            kind: Alu::Add,
-            dst: index,
-            src: DataOperand::Immediate(step),
-            width: count_width @ (Width::W32 | Width::W64),
-        } = add.operation
-        else {
-            return None;
+        let (index, step, count_width, minimum_reads) = match update.operation {
+            Operation::Alu {
+                kind: Alu::Add,
+                dst,
+                src: DataOperand::Immediate(step),
+                width: count_width @ (Width::W32 | Width::W64),
+            } => (dst, step, count_width, 4),
+            Operation::Unary {
+                kind: Unary::Inc,
+                dst: Location::Register(dst),
+                width: count_width @ (Width::W32 | Width::W64),
+            } if !byte_reads => (dst, 1, count_width, 2),
+            _ => return None,
         };
         // A power-of-two step lets the guard prove the end is reached by the backedge.
         if index.high_byte || !step.is_power_of_two() || step > u64::from(u32::MAX) {
@@ -290,7 +295,7 @@ impl ReadLoop {
         }
         // A guarded copy pays for two paths in the artifact. Require a body with
         // repeated reads that can actually share its guard.
-        (reads >= 4).then_some(proof)
+        (reads >= minimum_reads).then_some(proof)
     }
 
     fn integer_writes(operation: Operation) -> Option<u16> {
@@ -675,6 +680,36 @@ mod tests {
             instructions.map(|i| proof.stream_for(i.operation)),
             [Some(0), Some(1), None, Some(0), Some(1), None, None, None]
         );
+    }
+
+    #[test]
+    fn scalar_read_loops_prove_two_streams_with_a_full_width_inc() {
+        let context = ExecutionContext::default();
+        let fixture = fixture();
+        let mut instructions = [fixture[0], fixture[1], fixture[5], fixture[6], fixture[7]];
+        for (index, instruction) in instructions.iter_mut().enumerate() {
+            instruction.pc = fixture[0].pc + index as u64;
+            instruction.next_pc = instruction.pc + 1;
+        }
+        assert!(ReadLoop::recognize(&context, &instructions).is_none());
+
+        let inc = |width| Operation::Unary {
+            kind: Unary::Inc,
+            dst: Location::Register(RegisterView::low(1)),
+            width,
+        };
+        instructions[2].operation = inc(Width::W64);
+        let proof = ReadLoop::recognize(&context, &instructions).unwrap();
+        assert_eq!(
+            (proof.index, proof.step, proof.count_width),
+            (1, 1, Width::W64)
+        );
+
+        instructions[2].operation = inc(Width::W32);
+        assert!(ReadLoop::recognize(&context, &instructions).is_none());
+        instructions[2].operation = inc(Width::W64);
+        instructions[1].operation = Operation::Nop;
+        assert!(ReadLoop::recognize(&context, &instructions).is_none());
     }
 
     #[test]

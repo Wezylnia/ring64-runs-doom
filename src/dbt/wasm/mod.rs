@@ -661,7 +661,7 @@ pub(crate) fn emit_profile(
             return bytes;
         }
     }
-    if !observed && let Some(loop_body) = StructuredLoop::select(&unit.instructions) {
+    if !observed && let Some(loop_body) = StructuredLoop::select(unit) {
         let bytes = emit_placement(
             unit,
             observed,

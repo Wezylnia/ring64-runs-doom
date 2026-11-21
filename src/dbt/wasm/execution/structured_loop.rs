@@ -211,14 +211,50 @@ impl StructuredLoop {
         self.kind != LoopKind::Registers
     }
 
-    pub(super) fn select(instructions: &[Instruction]) -> Option<Self> {
+    pub(super) fn select(unit: &super::Unit) -> Option<Self> {
+        let instructions = &unit.instructions;
         if cfg!(feature = "parallel") {
             return Self::select_body(instructions, LoopKind::Registers);
         }
-        Self::select_body(instructions, LoopKind::Float)
+        let existing = Self::select_body(instructions, LoopKind::Float)
             .or_else(|| Self::select_body(instructions, LoopKind::IntegerReads))
             .or_else(|| super::loop_cfg::select(instructions).map(Self::forward))
-            .or_else(|| Self::select_body(instructions, LoopKind::Registers))
+            .or_else(|| Self::select_body(instructions, LoopKind::Registers));
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        let existing = existing.or_else(|| Self::select_increment_reads(unit));
+        existing
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    fn select_increment_reads(unit: &super::Unit) -> Option<Self> {
+        Self::select_straight_body(
+            &unit.instructions,
+            LoopKind::Float,
+            |operation| {
+                inside_float_body(operation)
+                    || matches!(
+                        operation,
+                        Operation::Unary {
+                            kind: Unary::Inc,
+                            dst: Location::Register(_),
+                            width: Width::W32 | Width::W64,
+                        }
+                    )
+            },
+            |body| {
+                let [reads @ .., increment, _, _] = body else {
+                    return false;
+                };
+                matches!(
+                    increment.operation,
+                    Operation::Unary {
+                        kind: Unary::Inc,
+                        ..
+                    }
+                ) && reads.iter().any(|i| scalar_f32(i.operation))
+                    && super::read_loop::ReadLoop::recognize(&unit.context, body).is_some()
+            },
+        )
     }
 
     fn forward((order, max_lap_len): (LoopOrder, u32)) -> Self {
@@ -239,6 +275,28 @@ impl StructuredLoop {
             LoopKind::IntegerReads => inside_integer_read_body,
             LoopKind::ForwardEdges => unreachable!("forward edges use graph admission"),
         };
+        Self::select_straight_body(instructions, kind, inside, |body| match kind {
+            LoopKind::Registers => true,
+            LoopKind::Float => body.iter().any(|i| scalar_f32(i.operation)),
+            LoopKind::IntegerReads => {
+                // Amortize the extra body and translation cost across several loads.
+                const MIN_READS: usize = 4;
+                body.iter()
+                    .filter(|i| integer_read(i.operation))
+                    .take(MIN_READS)
+                    .count()
+                    == MIN_READS
+            }
+            LoopKind::ForwardEdges => unreachable!("forward edges use graph admission"),
+        })
+    }
+
+    fn select_straight_body(
+        instructions: &[Instruction],
+        kind: LoopKind,
+        inside: impl Fn(Operation) -> bool,
+        accepts: impl Fn(&[Instruction]) -> bool,
+    ) -> Option<Self> {
         let mut first = 0;
         let mut best = None::<Self>;
         for (index, instruction) in instructions.iter().enumerate() {
@@ -250,23 +308,7 @@ impl StructuredLoop {
                 let head = first + offset;
                 let length = index - head;
                 if best.is_none_or(|previous| length > (previous.tail - previous.head) as usize)
-                    && match kind {
-                        LoopKind::Registers => true,
-                        LoopKind::Float => instructions[head..index]
-                            .iter()
-                            .any(|i| scalar_f32(i.operation)),
-                        LoopKind::IntegerReads => {
-                            // Amortize the extra body and translation cost across several loads.
-                            const MIN_READS: usize = 4;
-                            instructions[head..index]
-                                .iter()
-                                .filter(|i| integer_read(i.operation))
-                                .take(MIN_READS)
-                                .count()
-                                == MIN_READS
-                        }
-                        LoopKind::ForwardEdges => unreachable!("forward edges use graph admission"),
-                    }
+                    && accepts(&instructions[head..=index])
                 {
                     best = Some(Self {
                         earlier: head as u32,
