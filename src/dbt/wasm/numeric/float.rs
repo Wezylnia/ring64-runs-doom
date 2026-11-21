@@ -110,6 +110,11 @@ impl Emitter {
             // The rejected op has published neither its result nor retirement.
             // A header retry skips the guarded copy and reaches the checked loop.
             if self.float_outline_params != 0 {
+                if self.current_index != body.head {
+                    self.retire_instructions(self.current_index - body.head);
+                }
+                self.op(Op::I64Const(self.current_pc as i64))
+                    .op(Op::LocalSet(super::RIP));
                 let continuation = if self.current_index == body.head {
                     super::float_loop::HEADER_REJECTION
                 } else {

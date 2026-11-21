@@ -9,7 +9,7 @@ use wasm_encoder::{BlockType, Instruction as Op, MemArg};
 pub(super) enum InstructionRetirement {
     One,
     Deferred,
-    ReadAfterPrefix(u32),
+    AfterPrefix(u32),
 }
 
 impl Emitter {
@@ -264,6 +264,12 @@ impl Emitter {
     }
 
     pub(super) fn commit(&mut self, next: u64) {
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if self.float_outline_params != 0
+            && matches!(self.instruction_retirement, InstructionRetirement::Deferred)
+        {
+            return;
+        }
         if self.loop_gates_prechecked
             && let crate::x86::instruction::Operation::Jcc { target, .. } = self.current_operation
             && next != target
@@ -274,17 +280,17 @@ impl Emitter {
         match self.instruction_retirement {
             InstructionRetirement::One => self.retire_instructions(1),
             InstructionRetirement::Deferred => {}
-            InstructionRetirement::ReadAfterPrefix(count) => self.retire_instructions(count + 1),
+            InstructionRetirement::AfterPrefix(count) => self.retire_instructions(count + 1),
         }
     }
 
     pub(super) fn retire_before_read_fault(&mut self) {
-        if let InstructionRetirement::ReadAfterPrefix(count) = self.instruction_retirement {
+        if let InstructionRetirement::AfterPrefix(count) = self.instruction_retirement {
             self.retire_instructions(count);
         }
     }
 
-    fn retire_instructions(&mut self, count: u32) {
+    pub(super) fn retire_instructions(&mut self, count: u32) {
         self.op(Op::LocalGet(REMAINING))
             .op(Op::I64Const(i64::from(count)))
             .op(Op::I64Sub)

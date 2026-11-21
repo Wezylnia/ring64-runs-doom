@@ -603,10 +603,14 @@ impl Emitter {
             };
             self.omit_result_status |=
                 outlined_float && matches!(body.tail - self.current_index, 1 | 2);
-            self.instruction_retirement = if position < read_prefix_len {
+            self.instruction_retirement = if outlined_float && self.current_index == body.tail {
+                // The guard funded the complete lap. A numeric rejection
+                // publishes its own prefix before unwinding the child.
+                InstructionRetirement::AfterPrefix(position)
+            } else if outlined_float || position < read_prefix_len {
                 InstructionRetirement::Deferred
             } else if read_prefix_len != 0 && position == read_prefix_len {
-                InstructionRetirement::ReadAfterPrefix(read_prefix_len)
+                InstructionRetirement::AfterPrefix(read_prefix_len)
             } else {
                 InstructionRetirement::One
             };
