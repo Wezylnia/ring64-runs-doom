@@ -1,6 +1,6 @@
 use super::super::*;
-use rustc_apfloat::ieee::X87DoubleExtended;
-use rustc_apfloat::{Float, Round, Status};
+use rustc_apfloat::ieee::{Double, Single, X87DoubleExtended};
+use rustc_apfloat::{Float, FloatConvert, Round, Status};
 
 const SIGN: u128 = 1 << 79;
 
@@ -18,6 +18,102 @@ fn random(seed: &mut u64) -> u64 {
     *seed ^= *seed << 17;
     *seed
 }
+
+#[test]
+fn exact_memory_widening_matches_apfloat() {
+    let mut seed = 0x361b_31ae_eacf_3927;
+    let floats = [
+        0,
+        1,
+        0x7f_ffff,
+        0x80_0000,
+        0x8000_0000,
+        0x807f_ffff,
+        0x7f7f_ffff,
+    ];
+    for bits in floats
+        .into_iter()
+        .chain((0..2048).map(|_| u128::from(random(&mut seed) as u32)))
+    {
+        if bits & 0x7f80_0000 != 0x7f80_0000 {
+            let mut loses_info = false;
+            let expected: X87DoubleExtended =
+                Single::from_bits(bits).convert(&mut loses_info).value;
+            assert_eq!(number::widen(bits, Format::F32), expected.to_bits());
+            assert!(!loses_info);
+        }
+    }
+    let doubles = [
+        0,
+        1,
+        0x000f_ffff_ffff_ffff,
+        0x0010_0000_0000_0000,
+        0x8000_0000_0000_0000,
+        0x8000_0000_0000_0001,
+        0x7fef_ffff_ffff_ffff,
+    ];
+    for bits in doubles
+        .into_iter()
+        .chain((0..2048).map(|_| u128::from(random(&mut seed))))
+    {
+        if bits & 0x7ff0_0000_0000_0000 != 0x7ff0_0000_0000_0000 {
+            let mut loses_info = false;
+            let expected: X87DoubleExtended =
+                Double::from_bits(bits).convert(&mut loses_info).value;
+            assert_eq!(number::widen(bits, Format::F64), expected.to_bits());
+            assert!(!loses_info);
+        }
+    }
+    let integers = [
+        0,
+        1,
+        i64::MIN,
+        i64::MAX,
+        i32::MIN.into(),
+        i16::MIN.into(),
+        -1,
+    ];
+    for value in integers
+        .into_iter()
+        .chain((0..1024).map(|_| random(&mut seed) as i64))
+    {
+        for (format, signed) in [
+            (Format::I16, i128::from(value as i16)),
+            (Format::I32, i128::from(value as i32)),
+            (Format::I64, i128::from(value)),
+        ] {
+            let expected = X87DoubleExtended::from_i128(signed).value.to_bits();
+            assert_eq!(number::widen(value as u128, format), expected);
+        }
+    }
+}
+
+#[test]
+fn special_memory_widening_keeps_sign_and_nan_payload() {
+    for (format, bits, expected) in [
+        (Format::F32, 0x7f80_0000, 0x7fff_8000_0000_0000_0000),
+        (Format::F32, 0xff80_0001, 0xffff_8000_0100_0000_0000),
+        (Format::F32, 0x7fc0_0000, 0x7fff_c000_0000_0000_0000),
+        (
+            Format::F64,
+            0xfff0_0000_0000_0000,
+            0xffff_8000_0000_0000_0000,
+        ),
+        (
+            Format::F64,
+            0x7ff0_0000_0000_0001,
+            0x7fff_8000_0000_0000_0800,
+        ),
+        (
+            Format::F64,
+            0xfff8_0000_0000_0001,
+            0xffff_c000_0000_0000_0800,
+        ),
+    ] {
+        assert_eq!(number::widen(bits, format), expected);
+    }
+}
+
 fn raw(negative: bool, exponent: i32, significand: u64) -> u128 {
     (if negative { SIGN } else { 0 })
         | (((exponent + 16383) as u128) << 64)

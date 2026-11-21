@@ -525,6 +525,16 @@ pub(super) fn unary(kind: Kind, raw: u128, cw: u16) -> Result {
     r.pre = pre;
     r
 }
+
+fn exact_f80(sign: u128, significand: u64, scale: i32) -> u128 {
+    if significand == 0 {
+        return sign;
+    }
+    let shift = significand.leading_zeros();
+    let biased = 16383 + scale + (63 - shift) as i32;
+    sign | ((biased as u128) << 64) | u128::from(significand << shift)
+}
+
 pub(super) fn widen(value: u128, format: Format) -> u128 {
     match format {
         Format::F80 => value,
@@ -534,53 +544,28 @@ pub(super) fn widen(value: u128, format: Format) -> u128 {
             } else {
                 (52, 1023, 64)
             };
-            let negative = value & (1u128 << (bits - 1)) != 0;
-            let fraction = value & ((1u128 << p) - 1);
-            let e = ((value >> p) & ((1u128 << (bits - p - 1)) - 1)) as i32;
+            let value = value as u64;
+            let negative = value & (1u64 << (bits - 1)) != 0;
+            let fraction = value & ((1u64 << p) - 1);
+            let e = ((value >> p) & ((1u64 << (bits - p - 1)) - 1)) as i32;
             let sign = if negative { SIGN } else { 0 };
             if e == 2 * bias + 1 {
-                return sign | INFINITY | (fraction << (63 - p));
+                return sign | INFINITY | u128::from(fraction << (63 - p));
             }
-            if e == 0 && fraction == 0 {
-                return sign;
+            if e == 0 {
+                return exact_f80(sign, fraction, 1 - bias - p);
             }
-            let sig = if e == 0 {
-                fraction
-            } else {
-                fraction | (1u128 << p)
-            };
-            round_num(
-                Num {
-                    negative,
-                    sig,
-                    scale: (if e == 0 { 1 - bias } else { e - bias }) - p,
-                },
-                64,
-                Format::F80,
-                0x37f,
-            )
-            .value
+            let biased = (e - bias + 16383) as u128;
+            let significand = (fraction | (1u64 << p)) << (63 - p);
+            sign | (biased << 64) | u128::from(significand)
         }
         Format::I16 | Format::I32 | Format::I64 => {
-            let width = if format == Format::I16 {
-                16
-            } else if format == Format::I32 {
-                32
-            } else {
-                64
+            let value = match format {
+                Format::I16 => i64::from(value as i16),
+                Format::I32 => i64::from(value as i32),
+                _ => value as i64,
             };
-            let v = ((value as i128) << (128 - width)) >> (128 - width);
-            round_num(
-                Num {
-                    negative: v < 0,
-                    sig: v.unsigned_abs(),
-                    scale: 0,
-                },
-                64,
-                Format::F80,
-                0x37f,
-            )
-            .value
+            exact_f80(if value < 0 { SIGN } else { 0 }, value.unsigned_abs(), 0)
         }
         _ => value,
     }
