@@ -46,7 +46,8 @@ test(
       'ring64-parallel.wasm',
       'parallel/worker.js',
       'parallel/engine.generated.js',
-      'parallel/core.generated.js',
+      'parallel/core.js',
+      'parallel/core.d.ts',
     ])
       assert.ok(files.has(expected), `missing package member ${expected}`);
     for (const file of files) {

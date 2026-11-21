@@ -222,6 +222,22 @@ export type CoreExports = WebAssembly.Exports & {
   core_numeric_fault_info?(): void;
 };
 
+export type ParallelCoreExports = CoreExports & {
+  core_parallel_abi(): number;
+  core_parallel_add_backing(length: number, offset: number, incarnation: bigint): number;
+  core_parallel_admin_changed(): void;
+  core_parallel_byte_store_span?(offset: bigint): bigint;
+  core_parallel_dword_window?(offset: bigint): number;
+  core_parallel_finish_slice(): void;
+  core_parallel_guard(offset: bigint, width: number, segment: number): number;
+  core_parallel_invalidate(offset: number, length: number): void;
+  core_parallel_proof(owner: bigint): number;
+  core_parallel_resolve(address: bigint, width: number, access: number, segment: number): number;
+  core_parallel_unguard(): void;
+  core_parallel_vector_dword?(offset: bigint, segment: number): bigint;
+  core_parallel_vector_dword_span?(offset: bigint, segment: number): bigint;
+};
+
 export type GeneratedRun = (
   state: number,
   budget: bigint,
