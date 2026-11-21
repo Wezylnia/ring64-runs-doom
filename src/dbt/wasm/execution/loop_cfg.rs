@@ -96,7 +96,7 @@ fn branch_target(operation: Operation) -> Option<u64> {
 }
 
 // Indexed by emitted position. A predicate at position i also authorizes the
-// immediately preceding memory CMP to keep its operands without setting flags.
+// immediately preceding CMP to keep its operands without setting flags.
 pub(super) fn compare_predicates(
     instructions: &[Instruction],
     order: LoopOrder,
@@ -157,14 +157,21 @@ pub(super) fn compare_predicates(
             continue;
         }
         let producer = instructions[order.at(position as u32 - 1) as usize];
-        if producer.next_pc == instruction.pc
-            && let Operation::MemoryAlu {
+        if producer.next_pc != instruction.pc {
+            continue;
+        }
+        match producer.operation {
+            Operation::Alu {
                 kind: Alu::Cmp,
                 width: width @ (Width::W32 | Width::W64),
                 ..
-            } = producer.operation
-        {
-            predicates[position] = Some(width);
+            }
+            | Operation::MemoryAlu {
+                kind: Alu::Cmp,
+                width: width @ (Width::W32 | Width::W64),
+                ..
+            } => predicates[position] = Some(width),
+            _ => {}
         }
     }
     predicates

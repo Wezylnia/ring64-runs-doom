@@ -114,6 +114,9 @@ impl Emitter {
         self.op(Op::LocalSet(LHS));
         self.data_operand(src, width);
         self.op(Op::LocalSet(RHS));
+        if kind == Alu::Cmp && self.omit_result_status {
+            return;
+        }
         if matches!(kind, Alu::Adc | Alu::Sbb) {
             self.carry_result(kind, width);
             self.carry_flags(kind, width);
