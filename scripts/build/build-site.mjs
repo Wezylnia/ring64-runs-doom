@@ -47,7 +47,14 @@ try {
     readFile(join(wetInk, 'controls.html'), 'utf8'),
     readFile(join(source, 'docs/reference.html'), 'utf8'),
   ]);
-  const exampleNames = ['add.ts', 'add.c'];
+  const exampleNames = [
+    'add.ts',
+    'add.c',
+    'api/run-to.ts',
+    'api/copy-guest-bytes.ts',
+    'api/set-first-argument.ts',
+    'api/byte-register.ts',
+  ];
   const examples = await Promise.all(
     exampleNames.map(async (name) => {
       const code = await readFile(join(source, 'docs/examples', name), 'utf8');

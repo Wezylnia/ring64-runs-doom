@@ -1,6 +1,9 @@
 <section id="cpu" class="docs-topic" aria-labelledby="api">
   <h1 id="api" tabindex="-1">cpu</h1>
-  <p>import <code>ring64</code> to create a standalone cpu.</p>
+  <p>
+    import <code>ring64</code> to create a standalone cpu. the <a href="#quickstart">quickstart</a>
+    shows a complete setup.
+  </p>
   <dl class="docs-members">
     <div>
       <dt><code>loadCpuCompiler(): Promise&lt;WebAssembly.Module&gt;</code></dt>
@@ -73,6 +76,14 @@
 
 <section id="run-result" class="docs-topic" aria-labelledby="run-result-title">
   <h1 id="run-result-title" tabindex="-1">run options and results</h1>
+  <p>run toward a guest address and read <code>rax</code> if the cpu reaches it.</p>
+  <div class="docs-example">
+    <div class="docs-example-bar">
+      <a href="./examples/api/run-to.ts" download>run-to.ts</a>
+      <button type="button" data-copy-code="run-to" aria-label="copy run-to.ts" hidden>copy</button>
+    </div>
+    <pre><code id="run-to"><!-- example:api/run-to.ts --></code></pre>
+  </div>
   <dl class="docs-members">
     <div>
       <dt><code>budget: bigint</code></dt>
@@ -176,6 +187,21 @@
 
 <section id="memory" class="docs-topic" aria-labelledby="memory-title">
   <h1 id="memory-title" tabindex="-1">memory</h1>
+  <p>copy bytes from a readable linear address to a writable one.</p>
+  <div class="docs-example">
+    <div class="docs-example-bar">
+      <a href="./examples/api/copy-guest-bytes.ts" download>copy-guest-bytes.ts</a>
+      <button
+        type="button"
+        data-copy-code="copy-guest-bytes"
+        aria-label="copy copy-guest-bytes.ts"
+        hidden
+      >
+        copy
+      </button>
+    </div>
+    <pre><code id="copy-guest-bytes"><!-- example:api/copy-guest-bytes.ts --></code></pre>
+  </div>
   <dl class="docs-members">
     <div>
       <dt><code>linear</code></dt>
@@ -236,6 +262,21 @@
 
 <section id="state" class="docs-topic" aria-labelledby="state-title">
   <h1 id="state-title" tabindex="-1">state</h1>
+  <p>set the first integer argument in <code>rdi</code> for an x86-64 system v function.</p>
+  <div class="docs-example">
+    <div class="docs-example-bar">
+      <a href="./examples/api/set-first-argument.ts" download>set-first-argument.ts</a>
+      <button
+        type="button"
+        data-copy-code="set-first-argument"
+        aria-label="copy set-first-argument.ts"
+        hidden
+      >
+        copy
+      </button>
+    </div>
+    <pre><code id="set-first-argument"><!-- example:api/set-first-argument.ts --></code></pre>
+  </div>
   <dl class="docs-members">
     <div>
       <dt><code>readState(): StateSnapshot</code></dt>
@@ -379,11 +420,28 @@ Cross-Origin-Embedder-Policy: require-corp</code></pre>
 <section id="mmio" class="docs-topic" aria-labelledby="mmio-title">
   <h1 id="mmio-title" tabindex="-1">memory-mapped i/o</h1>
   <p>
-    pass <code>mmio?: MmioProvider</code> to <code>createCpu</code> on a standalone cpu.
-    <code>ranges</code> lists device regions as <code>{ base: bigint, length: number }</code>. use
-    linear addresses in <code>linear</code> mode and guest physical addresses otherwise. ranges
-    occupy slots in <code>maxMappings</code>
-    and must be disjoint from ram and each other.
+    pass <code>mmio: byteRegister(0xf000n)</code> to <code>createCpu</code> to attach a one-byte
+    device register.
+  </p>
+  <div class="docs-example">
+    <div class="docs-example-bar">
+      <a href="./examples/api/byte-register.ts" download>byte-register.ts</a>
+      <button
+        type="button"
+        data-copy-code="byte-register"
+        aria-label="copy byte-register.ts"
+        hidden
+      >
+        copy
+      </button>
+    </div>
+    <pre><code id="byte-register"><!-- example:api/byte-register.ts --></code></pre>
+  </div>
+  <p>
+    the <code>mmio</code> option is available on a standalone cpu. <code>ranges</code> lists device
+    regions as <code>{ base: bigint, length: number }</code>. use linear addresses in
+    <code>linear</code> mode and guest physical addresses otherwise. ranges occupy slots in
+    <code>maxMappings</code> and must be disjoint from ram and each other.
   </p>
   <dl class="docs-members">
     <div>
