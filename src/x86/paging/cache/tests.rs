@@ -100,6 +100,151 @@ fn current_fetch_requires_the_right_physical_span_and_live_execute_rights() {
 
 #[cfg(not(feature = "parallel"))]
 #[test]
+fn retained_fetch_token_keeps_recency_and_refuses_a_recycled_slot() {
+    let (mut image, state, code) = fixture();
+    let code = Request {
+        access: Access::Execute,
+        ..code
+    };
+    let data = Request {
+        linear: 0x2000,
+        access: Access::Read,
+        ..code
+    };
+    let third = Request {
+        linear: 0x3000,
+        ..data
+    };
+    for (address, word) in [(0x4010, 0xb067), (0x4018, 0xc067)] {
+        image.physical_write(address, 8, word).unwrap();
+    }
+    let cache = Cache::with_capacity(2);
+    let fill = |image: &mut Image, request| {
+        let translation = walk::walk(image, &state, request, &ProtectionKeys::ZERO).unwrap();
+        cache.fill(&state, request, translation)
+    };
+    let physical = fill(&mut image, code).physical;
+    assert!(cache.touch_current_fetch(&state, code, physical));
+    let token = cache.entries.borrow().admitted_fetch.unwrap();
+    let clock = cache.entries.borrow().clock;
+    let nearby = Request {
+        linear: code.linear + 7,
+        ..code
+    };
+    assert!(cache.touch_current_fetch(&state, nearby, physical + 7));
+    assert_eq!(cache.entries.borrow().clock, clock);
+
+    {
+        let mut entries = cache.entries.borrow_mut();
+        entries.clock = u64::MAX;
+        entries.slots[token.index].as_mut().unwrap().used = u64::MAX;
+    }
+    assert!(cache.touch_current_fetch(&state, code, physical));
+    assert_eq!(cache.entries.borrow().clock, 2);
+
+    fill(&mut image, data);
+    let clock = cache.entries.borrow().clock;
+    assert!(cache.touch_current_fetch(&state, code, physical));
+    assert_eq!(cache.entries.borrow().clock, clock + 1);
+    fill(&mut image, third);
+    assert!(
+        cache
+            .observe(&state, code, &ProtectionKeys::ZERO)
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        cache
+            .observe(&state, data, &ProtectionKeys::ZERO)
+            .unwrap()
+            .is_none()
+    );
+
+    cache.invalidate_page(state.pcid(), code.linear, false);
+    assert!(!cache.touch_current_fetch(&state, code, physical));
+    image.physical_write(0x4008, 8, 0xd067).unwrap();
+    let replacement = fill(&mut image, code);
+    assert_eq!(cache.entries.borrow().hint, Some(token.index));
+    assert_ne!(replacement.cache_id, Some(token.id));
+    assert!(!cache.touch_current_fetch(&state, code, physical));
+    assert!(cache.touch_current_fetch(&state, code, replacement.physical));
+}
+
+#[cfg(not(feature = "parallel"))]
+#[test]
+fn retained_fetch_token_follows_subpages_of_a_large_local_leaf() {
+    let (mut image, state, read) = fixture();
+    let code = Request {
+        access: Access::Execute,
+        ..read
+    };
+    let adjacent = Request {
+        linear: code.linear + 4096,
+        ..code
+    };
+    let cache = Cache::with_capacity(2);
+    let fill = |image: &mut Image, request| {
+        let translation = walk::walk(image, &state, request, &ProtectionKeys::ZERO).unwrap();
+        cache.fill(&state, request, translation)
+    };
+    image.physical_write(0x3000, 8, 0x2000e7).unwrap();
+    let large = fill(&mut image, code);
+    assert_eq!((large.span, large.physical), (2 * 1024 * 1024, 0x201234));
+    assert!(cache.touch_current_fetch(&state, code, large.physical));
+    let clock = cache.entries.borrow().clock;
+    assert!(cache.touch_current_fetch(
+        &state,
+        Request {
+            linear: code.linear + 8,
+            ..code
+        },
+        large.physical + 8
+    ));
+    assert!(!cache.touch_current_fetch(&state, adjacent, large.physical));
+    assert_eq!(cache.entries.borrow().clock, clock);
+    assert!(cache.touch_current_fetch(&state, adjacent, 0x202234));
+    let adjacent_token = cache.entries.borrow().admitted_fetch.unwrap();
+    assert_eq!(adjacent_token.linear_base, 0x2000);
+    assert_eq!(Some(adjacent_token.id), large.cache_id);
+
+    image.physical_write(0x3000, 8, 0x4007).unwrap();
+    let small = fill(&mut image, code);
+    assert_eq!((small.span, small.physical), (4096, 0xa234));
+    assert_eq!(cache.entries.borrow().hint, Some(adjacent_token.index));
+    assert_ne!(small.cache_id, large.cache_id);
+    assert!(!cache.touch_current_fetch(&state, adjacent, 0x202234));
+    assert!(!cache.touch_current_fetch(&state, code, large.physical));
+    assert!(cache.touch_current_fetch(&state, code, small.physical));
+}
+
+#[cfg(not(feature = "parallel"))]
+#[test]
+fn retained_fetch_token_excludes_global_translations_that_can_be_shadowed() {
+    let (mut image, mut state, code) = fixture();
+    state.cr4 |= 1 << 7; // PGE
+    let code = Request {
+        access: Access::Execute,
+        ..code
+    };
+    let cache = Cache::with_capacity(2);
+    let fill = |image: &mut Image| {
+        let translation = walk::walk(image, &state, code, &ProtectionKeys::ZERO).unwrap();
+        cache.fill(&state, code, translation)
+    };
+    image.physical_write(0x4008, 8, 0xa167).unwrap();
+    let global = fill(&mut image);
+    assert!(cache.touch_current_fetch(&state, code, global.physical));
+    assert!(cache.entries.borrow().admitted_fetch.is_none());
+
+    image.physical_write(0x4008, 8, 0xb067).unwrap();
+    let local = fill(&mut image);
+    assert!(!cache.touch_current_fetch(&state, code, global.physical));
+    assert!(cache.touch_current_fetch(&state, code, local.physical));
+    assert!(cache.entries.borrow().admitted_fetch.is_some());
+}
+
+#[cfg(not(feature = "parallel"))]
+#[test]
 fn retained_dword_read_checks_the_live_occupant_after_invalidation() {
     let (mut image, state, first) = fixture();
     let code = Request {

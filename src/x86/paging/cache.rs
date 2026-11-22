@@ -34,6 +34,37 @@ struct Entry {
     used: u64,
 }
 
+#[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct FetchAuthority {
+    pcid: u16,
+    family: u8,
+    user: bool,
+    smep: bool,
+}
+
+#[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+impl FetchAuthority {
+    fn current(state: &State, request: Request) -> Self {
+        Self {
+            pcid: state.pcid(),
+            family: family(state),
+            user: request.class.is_user(),
+            smep: state.cr4 & super::CR4_SMEP != 0,
+        }
+    }
+}
+
+#[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+#[derive(Clone, Copy)]
+struct AdmittedFetch {
+    index: usize,
+    id: u64,
+    linear_base: u64,
+    physical_base: u64,
+    authority: FetchAuthority,
+}
+
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 #[derive(Clone, Copy)]
 struct IndexedWriteSlot {
@@ -67,6 +98,8 @@ struct Entries {
     next_id: u64,
     exhausted: bool,
     hint: Option<usize>,
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    admitted_fetch: Option<AdmittedFetch>,
 }
 
 #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
@@ -306,6 +339,8 @@ impl Cache {
                 next_id: 1,
                 exhausted: false,
                 hint: None,
+                #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+                admitted_fetch: None,
             }),
             changed: Cell::new(false),
             #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
@@ -362,15 +397,51 @@ impl Cache {
         physical: u64,
     ) -> bool {
         debug_assert_eq!(request.access, Access::Execute);
+        const PAGE: u64 = 4096;
         let mut entries = self.entries.borrow_mut();
+        if let Some(fetch) = entries.admitted_fetch.as_ref()
+            && fetch.linear_base == (request.linear & !(PAGE - 1))
+            && (fetch.physical_base | (request.linear & (PAGE - 1))) == physical
+            && fetch.authority == FetchAuthority::current(state, request)
+            && let Some(entry) = entries.slots[fetch.index].as_ref()
+            && entry.translation.cache_id == Some(fetch.id)
+        {
+            // This local leaf is still the lookup winner. Fetching the newest
+            // leaf again cannot change eviction order.
+            let index = fetch.index;
+            if entries.hint != Some(index)
+                || entry.used != entries.clock
+                || entries.clock == u64::MAX
+            {
+                entries.touch(index);
+            }
+            return true;
+        }
         let Some(index) = entries.find(state, request) else {
             return false;
         };
-        let translation = &entries.slots[index].as_ref().unwrap().translation;
+        let entry = entries.slots[index].as_ref().unwrap();
+        let translation = &entry.translation;
         if translation.physical_base + (request.linear - translation.linear_base) != physical
             || !translation.rights.allows_execute(state, request.class)
         {
             return false;
+        }
+        // Cache the checked 4 KiB subpage under its original leaf identity.
+        // A local leaf can stay live only while it still wins lookup.
+        if !entry.global
+            && translation.span >= PAGE
+            && translation.linear_base & (PAGE - 1) == 0
+            && translation.physical_base & (PAGE - 1) == 0
+            && let Some(id) = translation.cache_id
+        {
+            entries.admitted_fetch = Some(AdmittedFetch {
+                index,
+                id,
+                linear_base: request.linear & !(PAGE - 1),
+                physical_base: physical & !(PAGE - 1),
+                authority: FetchAuthority::current(state, request),
+            });
         }
         entries.touch(index);
         true
