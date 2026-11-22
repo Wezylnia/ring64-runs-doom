@@ -59,6 +59,25 @@ impl Image {
             .then(|| self.byte_after_preflight(address, index))
     }
 
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    #[inline(always)]
+    pub(crate) fn physical_read_mapped_dword(&self, address: u64) -> Option<u32> {
+        if !self.physical || address > super::address::PHYSICAL_ADDRESS_END - 4 {
+            return None;
+        }
+        let mapping = &self.mappings[self.locate_index(address)?];
+        let relative = address - mapping.base;
+        if !mapping.permissions.read || u64::from(mapping.length) - relative < 4 {
+            return None;
+        }
+        // The validated physical mapping covers every byte of this read.
+        let offset = mapping.offset as usize + relative as usize;
+        let bytes = &self.backings[mapping.backing].bytes;
+        Some(u32::from_le_bytes(
+            bytes[offset..offset + 4].try_into().unwrap(),
+        ))
+    }
+
     pub fn physical_read_for_write(&self, address: u64, width: u32) -> Result<u64, Fault> {
         assert!(
             matches!(width, 1 | 2 | 4 | 8),

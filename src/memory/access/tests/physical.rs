@@ -86,6 +86,32 @@ fn physical_read_into_checks_the_whole_span_before_copying_split_backings() {
 
 #[cfg(not(feature = "parallel"))]
 #[test]
+fn mapped_dword_leaves_split_and_denied_operands_for_the_full_reader() {
+    let mut image = physical((0..16).collect(), vec![mapping(END - 8, 1, 8, all())]);
+    assert_eq!(image.physical_read_mapped_dword(END - 4), Some(0x0807_0605));
+    assert_eq!(image.physical_read_mapped_dword(END - 3), None);
+    assert_eq!(image.physical_read_mapped_dword(END), None);
+
+    let first = mapping(HOLE, 5, 2, all());
+    let mut second = mapping(HOLE + 2, 1, 3, all());
+    image
+        .set_mappings(vec![first.clone(), second.clone()])
+        .unwrap();
+    assert_eq!(image.physical_read_mapped_dword(HOLE), None);
+    assert_eq!(image.physical_read(HOLE, 4), Ok(0x0201_0605));
+
+    second.permissions.read = false;
+    image.set_mappings(vec![first, second]).unwrap();
+    assert_eq!(image.physical_read_mapped_dword(HOLE), None);
+    let fault = image.physical_read(HOLE, 4).unwrap_err();
+    assert_eq!(
+        (fault.cause, fault.failing),
+        (Cause::Permission, u128::from(HOLE + 2))
+    );
+}
+
+#[cfg(not(feature = "parallel"))]
+#[test]
 fn direct_physical_byte_store_requires_plain_writable_ram() {
     let rw = Permissions {
         execute: false,
