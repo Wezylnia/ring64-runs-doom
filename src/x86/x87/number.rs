@@ -109,31 +109,36 @@ fn quantize(sig: u128, shift: i32, negative: bool, round: u16) -> (u128, bool, b
     if shift <= 0 {
         return (sig << (-shift), false, false);
     }
-    let (q, r, half) = if shift < 128 {
-        let q = sig >> shift;
-        let r = sig & ((1u128 << shift) - 1);
-        (q, r, Some(1u128 << (shift - 1)))
-    } else {
-        (
-            0,
-            sig,
-            if shift == 128 {
-                Some(1u128 << 127)
-            } else {
-                None
-            },
-        )
-    };
-    let inexact = r != 0;
+    let shift = shift as u32;
+    // Keep the halfway bit next to the quotient and detect lower bits via ctz.
+    let with_round_bit = if shift <= 128 { sig >> (shift - 1) } else { 0 };
+    let q = with_round_bit >> 1;
+    let trailing = sig.trailing_zeros();
+    let inexact = sig != 0 && trailing < shift;
     let up = inexact
         && match round {
-            0 => half.is_some_and(|h| r > h || r == h && q & 1 != 0),
+            0 => with_round_bit & 1 != 0 && (trailing < shift - 1 || q & 1 != 0),
             1 => negative,
             2 => !negative,
             _ => false,
         };
     (q + u128::from(up), inexact, up)
 }
+
+#[cfg(test)]
+#[test]
+fn rounding_bits_at_and_beyond_the_full_significand_width() {
+    let half = 1u128 << 127;
+    assert_eq!(quantize(half, 128, false, 0), (0, true, false));
+    assert_eq!(quantize(half + 1, 128, false, 0), (1, true, true));
+    assert_eq!(quantize(half + 1, 129, false, 0), (0, true, false));
+    assert_eq!(quantize(half, 129, false, 2), (1, true, true));
+    assert_eq!(quantize(half, 129, true, 1), (1, true, true));
+    assert_eq!(quantize(0, 129, true, 1), (0, false, false));
+    assert_eq!(quantize(3u128 << 63, 64, false, 0), (2, true, true));
+    assert_eq!(quantize(5u128 << 63, 64, false, 0), (2, true, false));
+}
+
 fn pack(negative: bool, q: u128, e: i32, p: u32, target: Format, normal: bool) -> u128 {
     let sign = if negative {
         if target == Format::F32 {
