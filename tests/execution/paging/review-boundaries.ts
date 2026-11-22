@@ -24,6 +24,89 @@ const PAGED_BYTE_STORE_LOOP = '0fb6073c407602fec0880648ffc748ffc6ffc975eb';
 export function pagingBoundaryReviewScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [
     {
+      name: 'paged guarded prefixes preserve both conditional edges and precise pre-branch exits',
+      async run() {
+        const head = 0x400000n;
+        const branch = head + 4n;
+        const end = head + 11n;
+        const data = 0x401000n;
+        // INC ECX; CMP ECX,[RSI]; JB end; MOV ECX,3; end: HLT.
+        const code = 'ffc13b0e7205b903000000f4';
+        const guards: number[] = [];
+        const create = Core.create;
+        Core.create = async (...args) => {
+          const core = await create(...args);
+          const imports = Reflect.get(core, 'artifactImports') as (
+            observed: boolean,
+          ) => Record<string, WebAssembly.ImportValue>;
+          Reflect.set(core, 'artifactImports', (observed: boolean) => {
+            const env = imports.call(core, observed);
+            const guard = env.paged_loop_guard;
+            if (typeof guard === 'function') {
+              env.paged_loop_guard = (pc: bigint, bytes: number, flags: bigint, shadow: number) => {
+                const status = guard(pc, bytes, flags, shadow);
+                if (pc === head && bytes === 6) guards.push(status);
+                return status;
+              };
+            }
+            return env;
+          });
+          return core;
+        };
+        try {
+          await usingPaged(
+            compiler,
+            {
+              code,
+              words: [[0x4008n, 0xa007n]],
+              spans: [{ physical: 0xa000n, bytes: little([2n], 4) }],
+            },
+            async (cpu) => {
+              const prepare = (count: bigint, operand = data) => {
+                cpu.setState(initial(head, { 1: count, 6: operand }, 2n));
+                guards.length = 0;
+              };
+              prepare(0n);
+              equal(
+                (await cpu.run({ stop: end, budget: 12n })).reason,
+                'stop',
+                'cold compare fills translation',
+              );
+              prepare(0n);
+              const taken = await cpu.run({ stop: end, budget: 12n });
+              equal(taken.reason, 'stop', 'the taken edge reaches its stop');
+              equal(taken.retired, 3n, 'the taken edge skips fallthrough MOV');
+              equal(taken.state.registers[1], 1n, 'the taken edge carries the increment');
+              same(guards, [1], 'the branch retires in the clone');
+
+              prepare(1n);
+              const fallthrough = await cpu.run({ stop: end, budget: 12n });
+              equal(fallthrough.reason, 'stop', 'the untaken edge reaches its stop');
+              equal(fallthrough.retired, 4n, 'the fallthrough MOV also retires');
+              equal(fallthrough.state.registers[1], 3n, 'fallthrough uses its ordinary label');
+              same(guards, [1], 'the false edge leaves the same clone');
+
+              prepare(0n);
+              const stopped = await cpu.run({ stop: branch, budget: 12n });
+              equal(stopped.reason, 'stop', 'the branch remains unstarted at an interior stop');
+              equal(stopped.retired, 2n, 'only the compare and increment retire');
+              same(guards, [], 'the interior stop refuses the full clone');
+
+              prepare(0n, data + 0x1000n);
+              const fault = await cpu.run({ stop: end, budget: 12n });
+              equal(fault.reason, 'page-fault', 'the refused compare reports its fault');
+              equal(fault.state.rip, head + 2n, 'the compare goes back to its original label');
+              equal(fault.retired, 1n, 'the increment executes once');
+              equal(fault.state.registers[1], 1n, 'the committed count is preserved');
+              same(guards, [1], 'only the original compare replays');
+            },
+          );
+        } finally {
+          Core.create = create;
+        }
+      },
+    },
+    {
       name: 'paged mixed prefixes decline unadmitted scalar stores at the original write',
       async run() {
         const head = 0x400000n;

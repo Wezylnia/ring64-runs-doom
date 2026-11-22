@@ -49,12 +49,22 @@ fn paged_register_prefixes(unit: &Unit, loops: [Option<StructuredLoop>; 2]) -> V
                 }
             )
     };
+    let terminal_branch = |instruction: &Instruction| {
+        long64
+            && matches!(
+                instruction.operation,
+                Operation::Jcc { target, .. }
+                    if crate::memory::canonical48(target)
+                        && instructions.binary_search_by_key(&target, |i| i.pc).is_ok()
+            )
+    };
     let mut prefixes = vec![None; instructions.len()];
     let mut first = 0;
     while first < instructions.len() {
         let pc = instructions[first].pc;
         let mut end = first;
         let mut has_read = false;
+        let mut has_branch = false;
         while let Some(instruction) = instructions.get(end)
             && end - first < maximum
             && (end == first || !targets[end])
@@ -63,6 +73,7 @@ fn paged_register_prefixes(unit: &Unit, loops: [Option<StructuredLoop>; 2]) -> V
                 .flatten()
                 .any(|body| body.order().position(end as u32).is_some())
             && (is_register_only(instruction)
+                || (has_read && end - first >= 2 && terminal_branch(instruction))
                 || (long64
                     && if end == first {
                         super::instruction::paged_prefix_read(*instruction).is_some()
@@ -84,6 +95,10 @@ fn paged_register_prefixes(unit: &Unit, loops: [Option<StructuredLoop>; 2]) -> V
                 super::instruction::paged_prefix_dword_read(*instruction)
             };
             end += 1;
+            if terminal_branch(instruction) {
+                has_branch = true;
+                break;
+            }
         }
         // Each successful operand accounts for the next fetch. Leave a following
         // in-prefix instruction so a stop or exhausted budget cannot omit it.
@@ -93,7 +108,7 @@ fn paged_register_prefixes(unit: &Unit, loops: [Option<StructuredLoop>; 2]) -> V
         {
             end -= 1;
         }
-        if end - first >= 4 {
+        if end - first >= if has_branch { 3 } else { 4 } {
             prefixes[first] = Some(end);
         }
         first = end.max(first + 1);
