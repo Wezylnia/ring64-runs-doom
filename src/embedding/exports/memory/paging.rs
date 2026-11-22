@@ -34,7 +34,7 @@ impl Core {
     }
 
     #[cfg(not(feature = "parallel"))]
-    fn warm_guarded_code_page(&self, pc: u64) -> bool {
+    fn warm_guarded_code_page(&self, pc: u64, integer_only: bool) -> bool {
         if self.image.active_changed() || !self.context.is_long64() {
             return false;
         }
@@ -45,10 +45,10 @@ impl Core {
         else {
             return false;
         };
-        let Some(physical) = self
-            .active_owner
-            .and_then(|owner| self.translation_owners.guarded_code_start(owner, pc, state))
-        else {
+        let Some(physical) = self.active_owner.and_then(|owner| {
+            self.translation_owners
+                .guarded_code_start(owner, pc, state, integer_only)
+        }) else {
             return false;
         };
         self.translation_cache.touch_current_fetch(
@@ -487,7 +487,7 @@ fn paged_loop_guard<const FLAT_DATA32: bool, const SSE: bool, const FLAT_WRITE32
         }
         // A data TLB replacement can revoke the active owner's admission
         // while its executable translation and bytes remain current.
-        if (SSE || !core.warm_guarded_code_page(pc))
+        if (SSE || !core.warm_guarded_code_page(pc, false))
             && core.warm_paged_instruction(pc).is_none()
             && core.recover_paged_fetch(pc).is_none()
         {
@@ -1506,7 +1506,7 @@ pub extern "C" fn core_paged_debug_begin(pc: u64, flags: u64, shadow: u32) -> i3
             return debug;
         }
         #[cfg(not(feature = "parallel"))]
-        if near_transfer && core.warm_guarded_code_page(pc) {
+        if core.warm_guarded_code_page(pc, !near_transfer) {
             core.reconcile_translation_changes();
             return 0;
         }

@@ -37,6 +37,7 @@ struct GuardedCodePage {
     page: u64,
     physical_page: u64,
     starts: [u64; 64],
+    integer_starts: [u64; 64],
 }
 
 #[cfg(not(feature = "parallel"))]
@@ -49,22 +50,52 @@ impl GuardedCodePage {
         }
         let physical_page = proof.physical_span(first.pc, 1)? & !4095;
         let mut starts = [0; 64];
+        let mut integer_starts = [0; 64];
+        use crate::x86::instruction::Operation;
         for instruction in instructions {
             let offset = (instruction.pc & 4095) as usize;
             if offset + instruction.encoded_len() as usize <= 4096 {
                 starts[offset / 64] |= 1 << (offset % 64);
+                // These operations can still fault during execution, but need
+                // no numeric or system admission before the instruction.
+                if matches!(
+                    instruction.operation,
+                    Operation::Mov { .. }
+                        | Operation::Load { .. }
+                        | Operation::Store { .. }
+                        | Operation::Lea { .. }
+                        | Operation::Alu { .. }
+                        | Operation::MemoryAlu { .. }
+                        | Operation::Unary { .. }
+                        | Operation::Shift { .. }
+                        | Operation::Extend { .. }
+                        | Operation::Cmov { .. }
+                        | Operation::Setcc { .. }
+                        | Operation::Push { .. }
+                        | Operation::Pop { .. }
+                        | Operation::Jump { .. }
+                        | Operation::Jcc { .. }
+                ) {
+                    integer_starts[offset / 64] |= 1 << (offset % 64);
+                }
             }
         }
         Some(Box::new(Self {
             page,
             physical_page,
             starts,
+            integer_starts,
         }))
     }
 
-    fn physical_start(&self, pc: u64) -> Option<u64> {
+    fn physical_start(&self, pc: u64, integer_only: bool) -> Option<u64> {
         let offset = (pc & 4095) as usize;
-        (pc & !4095 == self.page && self.starts[offset / 64] & (1 << (offset % 64)) != 0)
+        let starts = if integer_only {
+            &self.integer_starts
+        } else {
+            &self.starts
+        };
+        (pc & !4095 == self.page && starts[offset / 64] & (1 << (offset % 64)) != 0)
             .then_some(self.physical_page + offset as u64)
     }
 }
@@ -206,7 +237,13 @@ impl Owners {
     }
 
     #[cfg(not(feature = "parallel"))]
-    pub fn guarded_code_start(&self, owner: u64, pc: u64, state: &paging::State) -> Option<u64> {
+    pub fn guarded_code_start(
+        &self,
+        owner: u64,
+        pc: u64,
+        state: &paging::State,
+        integer_only: bool,
+    ) -> Option<u64> {
         let (active, record) = self.active_fetch.as_ref()?;
         if *active != owner
             || record.admission != Admission::Current
@@ -214,7 +251,10 @@ impl Owners {
         {
             return None;
         }
-        record.guarded_page.as_ref()?.physical_start(pc)
+        record
+            .guarded_page
+            .as_ref()?
+            .physical_start(pc, integer_only)
     }
 
     pub fn record_paged(

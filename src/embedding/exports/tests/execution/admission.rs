@@ -165,6 +165,33 @@ fn enabled_admission_preserves_default_mf_and_live_control_repair_on_the_same_ow
     }
 }
 
+#[cfg(not(feature = "parallel"))]
+#[test]
+fn paged_integer_fetch_does_not_bypass_admission_at_a_numeric_neighbor() {
+    paged(&[0x89, 0xc0, 0xd9, 0xd0]); // MOV eax,eax; FNOP
+    assert_eq!(core_compile(PC, 2, 4, 65536), 0);
+    let owner = BRIDGE.with_borrow(|bridge| {
+        let info: serde_json::Value = serde_json::from_slice(&bridge.info).unwrap();
+        assert_eq!(info["instructionCount"], 2);
+        u64::from_str_radix(info["owner"].as_str().unwrap().trim_start_matches("0x"), 16).unwrap()
+    });
+    assert_eq!(translation::core_publish(owner), 1);
+    assert_eq!(translation::core_activate(owner), 1);
+    assert_eq!(boundary(true, PC), 0);
+
+    BRIDGE.with_borrow_mut(|bridge| {
+        let core = bridge.core.as_mut().unwrap();
+        // Keep the same active fetch and change only its live numeric controls.
+        core.paging.as_mut().unwrap().cr0 |= 8;
+        assert!(core.warm_paged_instruction(PC + 2).is_some());
+    });
+    assert_eq!(boundary(true, PC + 2), DEVICE_NOT_AVAILABLE);
+    BRIDGE.with_borrow(|bridge| {
+        let core = bridge.core.as_ref().unwrap();
+        assert_eq!(core.numeric_fault.unwrap().instruction_pc, PC + 2);
+    });
+}
+
 #[test]
 fn simd_numeric_ud_uses_reached_pc_then_default_repair_returns_to_xm_without_stale_source() {
     for reached in [false, true] {

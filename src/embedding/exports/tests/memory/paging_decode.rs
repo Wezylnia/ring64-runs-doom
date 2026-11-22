@@ -194,17 +194,17 @@ fn reached_long64_instruction_requires_a_live_tlb_hit() {
         let state = core.paging.unwrap();
         assert!(
             core.translation_owners
-                .guarded_code_start(owner, PC, &state)
+                .guarded_code_start(owner, PC, &state, true)
                 .is_some()
         );
         assert_eq!(
             core.translation_owners
-                .guarded_code_start(owner, PC + 1, &state),
+                .guarded_code_start(owner, PC + 1, &state, true),
             None
         );
         assert_eq!(
             core.translation_owners
-                .guarded_code_start(owner + 1, PC, &state),
+                .guarded_code_start(owner + 1, PC, &state, true),
             None
         );
         assert_eq!(
