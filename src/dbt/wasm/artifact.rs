@@ -19,7 +19,7 @@ use wasm_encoder::{
 // A clone can touch the executable leaf once when every admitted instruction
 // stays on that leaf and can neither access memory nor change the controls.
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-fn paged_register_prefixes(unit: &Unit) -> Vec<Option<usize>> {
+fn paged_register_prefixes(unit: &Unit, loop_body: Option<StructuredLoop>) -> Vec<Option<usize>> {
     let instructions = &unit.instructions;
     let is_register_only = |instruction: &Instruction| {
         super::structured_loop::inside_register_body(instruction.operation)
@@ -38,7 +38,11 @@ fn paged_register_prefixes(unit: &Unit) -> Vec<Option<usize>> {
         let mut end = first;
         while let Some(instruction) = instructions.get(end)
             && end - first < 8
-            && is_register_only(instruction)
+            && !loop_body.is_some_and(|body| body.order().position(end as u32).is_some())
+            && (is_register_only(instruction)
+                || (end == first
+                    && unit.context.is_long64()
+                    && super::instruction::paged_prefix_read(*instruction).is_some()))
             && instruction.next_pc > instruction.pc
             && instruction.next_pc.checked_sub(pc).is_some_and(|bytes| {
                 bytes <= 4096 && unit.context.single_page_code_span(pc, bytes as u32)
@@ -921,10 +925,12 @@ fn emit_body(
         .any(|i| matches!(i.operation, Operation::SegmentBase { write: true, .. }))
         .then(|| add_function_type(&mut types, [ValType::I32, ValType::I64], [ValType::I32]));
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    let register_prefixes =
-        (paged && !mmio && loop_body.is_none() && optional.paged_register_prefixes)
-            .then(|| paged_register_prefixes(unit))
-            .filter(|prefixes| prefixes.iter().any(Option::is_some));
+    let register_prefixes = (paged
+        && !mmio
+        && loop_body.is_none_or(StructuredLoop::paged_vector_copy)
+        && optional.paged_register_prefixes)
+        .then(|| paged_register_prefixes(unit, loop_body))
+        .filter(|prefixes| prefixes.iter().any(Option::is_some));
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let register_prefix_guard_type = register_prefixes.as_ref().map(|_| {
         add_function_type(
@@ -933,6 +939,21 @@ fn emit_body(
             [ValType::I32],
         )
     });
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let register_prefix_read_type = register_prefixes
+        .as_ref()
+        .filter(|prefixes| {
+            prefixes.iter().zip(&unit.instructions).any(|(end, first)| {
+                end.is_some() && super::instruction::paged_prefix_read(*first).is_some()
+            })
+        })
+        .map(|_| {
+            add_function_type(
+                &mut types,
+                [ValType::I64, ValType::I32, ValType::I32],
+                [ValType::I32],
+            )
+        });
     let paged_loop_guard_type = loop_body.and_then(|body| body.paged_fetch_bytes).map(|_| {
         add_function_type(
             &mut types,
@@ -1274,6 +1295,9 @@ fn emit_body(
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let register_prefix_guard =
         register_prefix_guard_type.map(|index| import_function("paged_loop_guard", index));
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let register_prefix_read =
+        register_prefix_read_type.map(|index| import_function("paged_loop_read_span", index));
     let paged_loop_guard = paged_loop_guard_type.map(|index| {
         #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
         if paged_dword_walk {
@@ -2244,7 +2268,12 @@ fn emit_body(
             .and_then(|p| p[index])
             .zip(register_prefix_guard)
         {
-            emitter.emit_guarded_register_prefix(&unit.instructions[index..end], loop_depth, guard);
+            emitter.emit_guarded_register_prefix(
+                &unit.instructions[index..end],
+                loop_depth,
+                guard,
+                register_prefix_read,
+            );
         }
 
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]

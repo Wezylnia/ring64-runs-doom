@@ -5,6 +5,31 @@ use crate::embedding::layout::DISPATCH;
 use crate::x86::instruction::{Alu, Instruction, Operation};
 use wasm_encoder::{BlockType, Instruction as Op};
 
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+pub(super) fn paged_prefix_read(
+    instruction: Instruction,
+) -> Option<(
+    crate::x86::instruction::RegisterView,
+    crate::x86::instruction::Address,
+    crate::x86::instruction::Width,
+    crate::x86::instruction::Width,
+)> {
+    use crate::x86::context::Segment;
+    use crate::x86::instruction::{Location, Width};
+
+    let Operation::Extend {
+        dst,
+        src: Location::Memory(address),
+        source_width: source_width @ (Width::W8 | Width::W16),
+        width,
+        signed: false,
+    } = instruction.operation
+    else {
+        return None;
+    };
+    (address.segment == Segment::Ds).then_some((dst, address, source_width, width))
+}
+
 impl Emitter {
     pub(super) fn instruction(
         &mut self,
@@ -434,6 +459,7 @@ impl Emitter {
         instructions: &[Instruction],
         loop_depth: u32,
         guard: u32,
+        read: Option<u32>,
     ) {
         use super::{REMAINING, SHADOW};
         let first = instructions.first().unwrap();
@@ -462,14 +488,61 @@ impl Emitter {
             .op(Op::I32Const(1))
             .op(Op::I32Eq)
             .op(Op::If(BlockType::Empty));
+        let read = paged_prefix_read(*first)
+            .map(|operation| (read.expect("leading read prefix import"), operation));
+        if let Some((read, (register, address, source_width, width))) = read {
+            use super::{ADDRESS, STORE_STATUS};
+            use crate::x86::instruction::Width;
+            use wasm_encoder::{MemArg, ValType};
+            let mem = |offset| MemArg {
+                offset,
+                align: 0,
+                memory_index: 0,
+            };
+
+            self.address(address, first.next_pc);
+            let check_alignment = source_width == Width::W16 && self.context.cpl() == 3;
+            if check_alignment {
+                // A checked CPL3 load owns any naturally-unaligned #AC decision.
+                self.op(Op::LocalTee(ADDRESS))
+                    .op(Op::I64Const(1))
+                    .op(Op::I64And)
+                    .op(Op::I64Eqz)
+                    .op(Op::If(BlockType::Result(ValType::I32)))
+                    .op(Op::LocalGet(ADDRESS));
+            }
+            self.op(Op::I32Const(i32::from(source_width.bytes())))
+                .op(Op::I32Const(address.segment as i32))
+                .op(Op::Call(read));
+            if check_alignment {
+                self.op(Op::Else).op(Op::I32Const(0)).op(Op::End);
+            }
+            self.op(Op::LocalTee(STORE_STATUS))
+                .op(Op::If(BlockType::Empty))
+                .op(Op::LocalGet(STORE_STATUS))
+                .op(Op::I32Load(mem(
+                    std::mem::offset_of!(crate::memory::DirectSpan, host) as u64,
+                )))
+                .op(if source_width == Width::W8 {
+                    Op::I64Load8U(mem(0))
+                } else {
+                    Op::I64Load16U(mem(0))
+                });
+            self.write_register(register, width);
+            self.commit(first.next_pc);
+        }
+        let loop_depth = loop_depth + 2 + u32::from(read.is_some());
         self.guarded_paged_lap = true;
         self.loop_gates_prechecked = true;
-        for instruction in instructions {
-            self.emit_instruction(*instruction, None, loop_depth + 2, None, None, false);
+        for instruction in &instructions[usize::from(read.is_some())..] {
+            self.emit_instruction(*instruction, None, loop_depth, None, None, false);
         }
         self.loop_gates_prechecked = false;
-        self.route(last.next_pc, loop_depth + 2, loop_depth + 3);
+        self.route(last.next_pc, loop_depth, loop_depth + 1);
         self.guarded_paged_lap = false;
+        if read.is_some() {
+            self.op(Op::End);
+        }
         self.op(Op::End).op(Op::End);
     }
 }
