@@ -6,6 +6,8 @@ const VACANT: u8 = u8::MAX;
 /// Indexes candidate slots. The entries still own translation and recency.
 pub(super) struct LookupIndex {
     buckets: [u64; CAPACITY + 1],
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    occupied: u64,
     bucket_by_slot: [u8; CAPACITY],
 }
 
@@ -13,6 +15,8 @@ impl Default for LookupIndex {
     fn default() -> Self {
         Self {
             buckets: [0; CAPACITY + 1],
+            #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+            occupied: 0,
             bucket_by_slot: [VACANT; CAPACITY],
         }
     }
@@ -28,6 +32,17 @@ impl LookupIndex {
         self.buckets[WIDE] == 0
     }
 
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    pub(super) fn occupancy(&self) -> u64 {
+        self.occupied
+    }
+
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    pub(super) fn first_vacancy(&self, capacity: usize) -> Option<usize> {
+        let slot = (!self.occupied).trailing_zeros() as usize;
+        (slot < capacity).then_some(slot)
+    }
+
     pub(super) fn insert(&mut self, index: usize, entry: &Entry) {
         self.remove(index);
         let translation = entry.translation;
@@ -37,6 +52,10 @@ impl LookupIndex {
             WIDE
         };
         self.buckets[bucket] |= 1u64 << index;
+        #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+        {
+            self.occupied |= 1u64 << index;
+        }
         self.bucket_by_slot[index] = bucket as u8;
     }
 
@@ -45,6 +64,10 @@ impl LookupIndex {
         if old != VACANT {
             self.buckets[usize::from(old)] &= !(1u64 << index);
             self.bucket_by_slot[index] = VACANT;
+            #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+            {
+                self.occupied &= !(1u64 << index);
+            }
         }
     }
 }

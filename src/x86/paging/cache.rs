@@ -13,6 +13,9 @@ const CAPACITY: usize = 64;
 
 mod lookup_index;
 
+#[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+mod recency;
+
 #[cfg(test)]
 mod review_tests;
 
@@ -159,6 +162,8 @@ pub struct Cache {
     entries: RefCell<Entries>,
     changed: Cell<bool>,
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    guarded_order: RefCell<Option<recency::GuardedOrder>>,
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
     last_dword_write: Cell<Option<NonZeroU8>>,
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
     last_byte_read: Cell<Option<NonZeroU8>>,
@@ -184,6 +189,8 @@ impl Cache {
                 hint: None,
             }),
             changed: Cell::new(false),
+            #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+            guarded_order: RefCell::new(None),
             #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
             last_dword_write: Cell::new(None),
             #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
@@ -512,8 +519,15 @@ impl Cache {
         }
         let value = image.physical_read(translation.physical, 4).ok()?;
         if data != fetch && entries.slots[data].as_ref().unwrap().used != entries.clock - 1 {
+            let mut order = self.guarded_order.borrow_mut();
+            if order.as_ref().is_some_and(|hint| !hint.matches(&entries)) {
+                *order = None;
+            }
             entries.touch(data);
             entries.touch(fetch);
+            if let Some(hint) = order.as_mut() {
+                hint.touch(&entries, data, fetch);
+            }
         }
         Some(value as u32)
     }
@@ -561,41 +575,32 @@ impl Cache {
         // A nonoverlapping fill with at least two slots cannot evict the
         // newest entry. Commit the same fill and next fetch as checked execution.
         if only_4k_leaves {
-            self.install_known_local_miss(state, translation);
+            self.install_known_local_miss(state, translation, fetch);
         } else {
             let installed = self.fill(state, request, translation);
             debug_assert!(installed.cache_id.is_some());
+            self.entries.borrow_mut().touch(fetch);
         }
-        let mut entries = self.entries.borrow_mut();
-        entries.touch(fetch);
         Some(value)
     }
 
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
-    fn install_known_local_miss(&self, state: &State, translation: Translation) {
+    fn install_known_local_miss(&self, state: &State, mut translation: Translation, fetch: usize) {
         // The indexed scan just proved the absence of any visible hit.
         // An aligned 4 KiB leaf in this cache can overlap only the same leaf.
         let mut entries = self.entries.borrow_mut();
-        let mut oldest = 0;
-        let mut age = u64::MAX;
-        let vacancy = entries.slots[..entries.capacity]
-            .iter()
-            .enumerate()
-            .find_map(|(index, slot)| match slot {
-                None => Some(index),
-                Some(entry) => {
-                    if entry.used < age {
-                        age = entry.used;
-                        oldest = index;
-                    }
-                    None
-                }
-            });
-        let index = vacancy.unwrap_or(oldest);
-        if vacancy.is_none() {
+        let vacant = entries.lookup_index.first_vacancy(entries.capacity);
+        let mut order = self.guarded_order.borrow_mut();
+        let index = if let Some(vacant) = vacant {
+            *order = None;
+            vacant
+        } else {
+            if order.as_ref().is_none_or(|hint| !hint.matches(&entries)) {
+                *order = Some(recency::GuardedOrder::from_entries(&entries));
+            }
             self.changed.set(true);
-        }
-        let mut translation = translation;
+            order.as_ref().unwrap().order.oldest().unwrap()
+        };
         translation.cache_id = Some(entries.next_id);
         entries.next_id += 1;
         entries.insert(
@@ -609,6 +614,10 @@ impl Cache {
             },
         );
         entries.touch(index);
+        entries.touch(fetch);
+        if let Some(hint) = order.as_mut() {
+            hint.touch(&entries, index, fetch);
+        }
     }
 
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
