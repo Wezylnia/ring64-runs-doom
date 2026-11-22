@@ -268,11 +268,25 @@ impl Entries {
         keys: &ProtectionKeys,
         width: u32,
     ) -> Option<(usize, Translation)> {
+        let index = self.find(state, request)?;
+        let translation =
+            self.retained_data_span_at::<WRITE>(state, request, keys, width, index)?;
+        Some((index, translation))
+    }
+
+    #[cfg(any(feature = "parallel", target_arch = "wasm32", test))]
+    fn retained_data_span_at<const WRITE: bool>(
+        &self,
+        state: &State,
+        request: Request,
+        keys: &ProtectionKeys,
+        width: u32,
+        index: usize,
+    ) -> Option<Translation> {
         debug_assert_eq!(
             request.access,
             if WRITE { Access::Write } else { Access::Read }
         );
-        let index = self.find(state, request)?;
         let translation = self.slots[index].unwrap().translation.at(request.linear);
         if WRITE && translation.dirty
             || translation.remaining < u64::from(width)
@@ -282,7 +296,7 @@ impl Entries {
         {
             return None;
         }
-        Some((index, translation))
+        Some(translation)
     }
 
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
@@ -398,6 +412,8 @@ pub struct Cache {
     last_byte_read: Cell<Option<NonZeroU8>>,
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
     last_dword_read: Cell<Option<DwordReadMemo>>,
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    last_copy_destination: Cell<usize>,
 }
 
 impl Default for Cache {
@@ -431,6 +447,8 @@ impl Cache {
             last_byte_read: Cell::new(None),
             #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
             last_dword_read: Cell::new(None),
+            #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+            last_copy_destination: Cell::new(usize::MAX),
         }
     }
 
@@ -847,11 +865,11 @@ impl Cache {
         })
     }
 
-    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
     pub(crate) fn copy_pair_then_fetch<T>(
         &self,
         state: &State,
-        operands: [Request; 2],
+        [read, write]: [Request; 2],
         keys: &ProtectionKeys,
         width: u32,
         admit: impl FnOnce(Translation, Translation) -> Option<T>,
@@ -860,10 +878,22 @@ impl Cache {
         let fetch = entries
             .hint()
             .filter(|&index| entries.slots[index].is_some())?;
-        let (source, read) =
-            entries.retained_data_span::<false>(state, operands[0], keys, width)?;
-        let (destination, write) =
-            entries.retained_data_span::<true>(state, operands[1], keys, width)?;
+        let (source, read) = entries.retained_data_span::<false>(state, read, keys, width)?;
+        let last = self.last_copy_destination.get();
+        // The preceding write often stays on one leaf while reads move between pages.
+        // A matching local entry is unique; globals still need the ordinary lookup.
+        let destination = if let Some(Some(entry)) = entries.slots.get(last)
+            && !entry.global
+            && entry.family == family(state)
+            && entry.pcid == state.pcid()
+            && entry.translation.contains(write.linear)
+        {
+            last
+        } else {
+            entries.find(state, write)?
+        };
+        let write =
+            entries.retained_data_span_at::<true>(state, write, keys, width, destination)?;
         if entries.slots[source].unwrap().global || entries.slots[destination].unwrap().global {
             return None;
         }
@@ -875,6 +905,7 @@ impl Cache {
                 entries.touch_data_and_fetch(data, fetch);
             }
         }
+        self.last_copy_destination.set(destination);
         Some(value)
     }
 

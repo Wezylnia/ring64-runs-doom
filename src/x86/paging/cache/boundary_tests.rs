@@ -874,6 +874,54 @@ fn paired_data_spans_commit_recency_only_after_both_succeed() {
 
 #[cfg(not(feature = "parallel"))]
 #[test]
+fn retained_copy_destination_checks_the_current_write_permission() {
+    let (mut image, state, read) = fixture();
+    image.physical_write(0x4010, 8, 0xb067).unwrap();
+    image.physical_write(0x4018, 8, 0xc067).unwrap();
+    let write = Request {
+        linear: 0x2234,
+        access: Access::Write,
+        ..read
+    };
+    let code = Request {
+        linear: 0x3234,
+        access: Access::Execute,
+        ..read
+    };
+    let cache = Cache::with_capacity(3);
+    let keys = &ProtectionKeys::ZERO;
+    for request in [read, write, code] {
+        insert(&cache, &mut image, &state, request);
+    }
+    let resolve = |write| {
+        cache.copy_pair_then_fetch(&state, [read, write], keys, 16, |source, destination| {
+            Some((source.physical, destination.physical))
+        })
+    };
+    assert_eq!(resolve(write), Some((0xa234, 0xb234)));
+    assert_eq!(
+        resolve(Request {
+            linear: 0x223c,
+            ..write
+        }),
+        Some((0xa234, 0xb23c))
+    );
+
+    cache.invalidate_page(state.pcid(), write.linear, true);
+    image.physical_write(0x4010, 8, 0xd065).unwrap();
+    let readonly = Request {
+        access: Access::Read,
+        ..write
+    };
+    insert(&cache, &mut image, &state, readonly);
+    assert!(cache.lookup(&state, code, keys).unwrap().is_some());
+    let before = cache.entries.borrow().recency().clock;
+    assert_eq!(resolve(write), None);
+    assert_eq!(cache.entries.borrow().recency().clock, before);
+}
+
+#[cfg(not(feature = "parallel"))]
+#[test]
 fn split_copy_preflights_rights_and_keeps_ordered_recency() {
     let (mut image, state, request) = fixture();
     for (pte, leaf) in [
