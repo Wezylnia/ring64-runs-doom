@@ -214,22 +214,12 @@ impl Emitter {
                 _ => None,
             }
         {
-            let entry = self.current_index as i32;
-            let (_, attempts) = self.paged_loop_guard.expect("paged loop guard");
             self.address(address, next_pc);
             self.op(Op::Call(read))
                 .op(Op::LocalTee(VALUE))
                 .op(Op::I64Const(-1))
-                .op(Op::I64Eq)
-                .op(Op::If(BlockType::Empty))
-                // The failed probe left this instruction unstarted. Enter its
-                // checked label with the already-retired prefix still local.
-                .op(Op::I32Const(2))
-                .op(Op::LocalSet(attempts))
-                .op(Op::I32Const(entry))
-                .op(Op::LocalSet(super::ENTRY))
-                .op(Op::Br(exit_depth))
-                .op(Op::End);
+                .op(Op::I64Eq);
+            self.retry_guarded_paged_operand(exit_depth);
             return;
         }
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -256,6 +246,20 @@ impl Emitter {
         self.address(address, next_pc);
         self.op(Op::LocalSet(ADDRESS));
         self.load_address_value(width, for_write, exit_depth);
+    }
+
+    fn retry_guarded_paged_operand(&mut self, exit_depth: u32) {
+        let entry = self.current_index as i32;
+        let (_, attempts) = self.paged_loop_guard.expect("paged loop guard");
+        // The probe left this instruction unstarted. Enter its checked label
+        // with the already-retired prefix still local.
+        self.op(Op::If(BlockType::Empty))
+            .op(Op::I32Const(2))
+            .op(Op::LocalSet(attempts))
+            .op(Op::I32Const(entry))
+            .op(Op::LocalSet(super::ENTRY))
+            .op(Op::Br(exit_depth))
+            .op(Op::End);
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -647,6 +651,18 @@ impl Emitter {
         next_pc: u64,
         exit_depth: u32,
     ) {
+        if self.guarded_paged_lap
+            && width == Width::W8
+            && address.segment == Segment::Ds
+            && let Some(write) = self.paged_loop_write_byte
+        {
+            self.address(address, next_pc);
+            self.data_operand(src, width);
+            // The helper admits only writes that leave the active source valid.
+            self.op(Op::I32WrapI64).op(Op::Call(write)).op(Op::I32Eqz);
+            self.retry_guarded_paged_operand(exit_depth);
+            return;
+        }
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         if let Some((proof, host)) = self.proved_stack
             && proof.writes

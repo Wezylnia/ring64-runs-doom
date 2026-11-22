@@ -87,7 +87,7 @@ fn guarded_read_ages_data_then_code_only_on_success() {
         }
         let clock = cache.entries.borrow().clock;
         assert_eq!(
-            cache.read_then_fetch(
+            cache.data_then_fetch::<false, u32>(
                 &state,
                 missing,
                 &ProtectionKeys::ZERO,
@@ -98,15 +98,29 @@ fn guarded_read_ages_data_then_code_only_on_success() {
             None
         );
         assert_eq!(
-            cache.read_then_fetch(&state, data, &ProtectionKeys::ZERO, 4, false, |_| None),
+            cache.data_then_fetch::<false, u32>(
+                &state,
+                data,
+                &ProtectionKeys::ZERO,
+                4,
+                false,
+                |_| None
+            ),
             None
         );
         assert_eq!(cache.entries.borrow().clock, clock);
         assert_eq!(
-            cache.read_then_fetch(&state, data, &ProtectionKeys::ZERO, 4, false, |physical| {
-                assert_eq!(physical, 0xa234);
-                Some(u32::MAX)
-            }),
+            cache.data_then_fetch::<false, u32>(
+                &state,
+                data,
+                &ProtectionKeys::ZERO,
+                4,
+                false,
+                |physical| {
+                    assert_eq!(physical, 0xa234);
+                    Some(u32::MAX)
+                }
+            ),
             Some(u32::MAX)
         );
         assert_eq!(
@@ -152,7 +166,7 @@ fn guarded_read_span_rejects_global_or_split_without_touching_retained_ages() {
     };
     for (request, local_only) in [(data, true), (split, false)] {
         assert_eq!(
-            cache.read_then_fetch(
+            cache.data_then_fetch::<false, u32>(
                 &state,
                 request,
                 &ProtectionKeys::ZERO,
@@ -220,6 +234,49 @@ fn current_pcid_non_global_precedes_global_and_targeted_eviction_keeps_global() 
             .unwrap()
             .is_none()
     );
+}
+
+#[cfg(not(feature = "parallel"))]
+#[test]
+fn guarded_store_requires_dirty_ready_writable_retention_before_aging() {
+    for (leaf, admit) in [(0xa027, false), (0xa065, false), (0xa067, true)] {
+        let (mut image, state, data) = fixture();
+        image.physical_write(0x4008, 8, leaf).unwrap();
+        image.physical_write(0x4010, 8, 0xb067).unwrap();
+        let code = Request {
+            linear: 0x2234,
+            access: Access::Execute,
+            ..data
+        };
+        let store = Request {
+            access: Access::Write,
+            ..data
+        };
+        let cache = Cache::with_capacity(2);
+        insert(&cache, &mut image, &state, data);
+        insert(&cache, &mut image, &state, code);
+        assert!(cache.touch_current_fetch(&state, code, 0xb234));
+        let clock = cache.entries.borrow().clock;
+        let result = cache.data_then_fetch::<true, _>(
+            &state,
+            store,
+            &ProtectionKeys::ZERO,
+            1,
+            false,
+            |pa| {
+                assert!(admit, "unproven stores leave their payload untouched");
+                assert_eq!(pa, 0xa234);
+                Some(())
+            },
+        );
+        assert_eq!(result, admit.then_some(()));
+        assert_eq!(
+            cache.entries.borrow().clock,
+            clock + if admit { 2 } else { 0 }
+        );
+        assert_eq!(image.physical_read(0x4008, 8), Ok(leaf));
+        assert!(!cache.take_changed());
+    }
 }
 
 #[test]

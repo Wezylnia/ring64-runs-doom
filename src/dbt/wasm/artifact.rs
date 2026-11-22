@@ -693,6 +693,12 @@ fn emit_body(
     let [paged_read_byte, paged_read_dword] = [false; 2];
     let paged_loop_read_type = (paged_read_byte || paged_read_dword)
         .then(|| add_function_type(&mut types, [ValType::I64], [ValType::I64]));
+    #[cfg(not(feature = "parallel"))]
+    let paged_loop_write_byte_type = loop_body
+        .is_some_and(|body| body.has_paged_byte_store(unit))
+        .then(|| add_function_type(&mut types, [ValType::I64, ValType::I32], [ValType::I32]));
+    #[cfg(feature = "parallel")]
+    let paged_loop_write_byte_type: Option<u32> = None;
     let debug_begin_type = observed.then(|| {
         add_function_type(
             &mut types,
@@ -908,6 +914,8 @@ fn emit_body(
     let paged_loop_read_dword = paged_loop_read_type
         .filter(|_| paged_read_dword)
         .map(|index| import_function("paged_loop_read_dword", index));
+    let paged_loop_write_byte =
+        paged_loop_write_byte_type.map(|index| import_function("paged_loop_write_byte", index));
     let debug_begin = debug_begin_type.map(|index| import_function("debug_begin", index));
     let debug_step = debug_type.map(|index| import_function("debug_finish", index));
     let external_step = external_step_type.map(|index| import_function("external_step", index));
@@ -1423,6 +1431,7 @@ fn emit_body(
         paged_read_span,
         paged_loop_read_byte,
         paged_loop_read_dword,
+        paged_loop_write_byte,
         register_upper_dwords,
         narrow_gprs,
         omit_result_status: false,

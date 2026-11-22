@@ -366,7 +366,10 @@ impl Image {
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     pub(crate) fn direct_write_span(&mut self, address: u64, width: u32) -> Option<DirectSpan> {
-        let (mapping, _) = self.direct_write_mapping(address, width)?;
+        if self.physical {
+            return None;
+        }
+        let (mapping, _) = self.writable_direct_mapping(address, width)?;
         let (base, length, offset, backing) = (
             mapping.base,
             mapping.length,
@@ -385,7 +388,10 @@ impl Image {
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     pub(crate) fn direct_write_vector(&mut self, address: u64, bytes: &[u8; 16]) -> bool {
-        let Some((mapping, relative)) = self.direct_write_mapping(address, 16) else {
+        if self.physical {
+            return false;
+        }
+        let Some((mapping, relative)) = self.writable_direct_mapping(address, 16) else {
             return false;
         };
         let backing = mapping.backing;
@@ -394,11 +400,20 @@ impl Image {
         true
     }
 
-    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    fn direct_write_mapping(&self, address: u64, width: u32) -> Option<(&Mapping, u64)> {
-        if self.physical {
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    pub(crate) fn physical_direct_write_byte(&mut self, address: u64, value: u8) -> Option<()> {
+        if !self.physical {
             return None;
         }
+        let (mapping, relative) = self.writable_direct_mapping(address, 1)?;
+        let backing = mapping.backing;
+        let index = mapping.offset as usize + relative as usize;
+        self.backings[backing].bytes[index] = value;
+        Some(())
+    }
+
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    fn writable_direct_mapping(&self, address: u64, width: u32) -> Option<(&Mapping, u64)> {
         let mapping = &self.mappings[self.locate_index(address)?];
         let relative = address - mapping.base;
         if !mapping.permissions.write

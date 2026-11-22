@@ -219,12 +219,35 @@ impl StructuredLoop {
                 }
                 super::loop_cfg::select_paged_read_graph(&unit.instructions, |body| {
                     body.iter().any(|i| read(i.operation))
+                        && body.iter().all(|i| inside_paged_read_graph(i.operation))
+                })
+                .map(Self::forward)
+            })
+            .or_else(|| {
+                if !long64
+                    || !unit
+                        .instructions
+                        .iter()
+                        .any(|i| paged_byte_store(i.operation))
+                {
+                    return None;
+                }
+                super::loop_cfg::select_paged_write_graph(&unit.instructions, |body| {
+                    body.iter().any(|i| read(i.operation))
+                        && body.iter().any(|i| paged_byte_store(i.operation))
                         && body.iter().all(|i| {
-                            inside_register_body(i.operation)
-                                || read(i.operation)
+                            inside_paged_read_graph(i.operation)
+                                || paged_byte_store(i.operation)
                                 || matches!(
                                     i.operation,
-                                    Operation::Jump { .. } | Operation::Jcc { .. }
+                                    Operation::Cmov {
+                                        src: Location::Register(_),
+                                        ..
+                                    } | Operation::Extend {
+                                        src: Location::Register(_),
+                                        signed: false,
+                                        ..
+                                    }
                                 )
                         })
                 })
@@ -247,6 +270,16 @@ impl StructuredLoop {
             }
         }
         widths
+    }
+
+    #[cfg(not(feature = "parallel"))]
+    pub(super) fn has_paged_byte_store(self, unit: &super::Unit) -> bool {
+        unit.context.is_long64()
+            && self.paged_fetch_bytes.is_some()
+            && self.natural_forward_loop()
+            && unit.instructions[self.head as usize..self.tail as usize]
+                .iter()
+                .any(|instruction| paged_byte_store(instruction.operation))
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -506,6 +539,28 @@ fn paged_read_width(operation: Operation, address_size: Option<Width>) -> Option
     };
     (address.segment == Segment::Ds && address_size.is_none_or(|size| size == address.size))
         .then_some(width)
+}
+
+#[cfg(not(feature = "parallel"))]
+fn inside_paged_read_graph(operation: Operation) -> bool {
+    inside_register_body(operation)
+        || paged_read_width(operation, None).is_some()
+        || matches!(operation, Operation::Jump { .. } | Operation::Jcc { .. })
+}
+
+#[cfg(not(feature = "parallel"))]
+fn paged_byte_store(operation: Operation) -> bool {
+    matches!(
+        operation,
+        Operation::Store {
+            width: Width::W8,
+            address: Address {
+                segment: crate::x86::context::Segment::Ds,
+                ..
+            },
+            ..
+        }
+    )
 }
 
 fn integer_read(operation: Operation) -> bool {

@@ -65,6 +65,14 @@ pub(super) fn select_paged_read_graph(
     })
 }
 
+#[cfg(not(feature = "parallel"))]
+pub(super) fn select_paged_write_graph(
+    instructions: &[Instruction],
+    admit: impl Fn(&[Instruction]) -> bool,
+) -> Option<(LoopOrder, u32)> {
+    select_layout_filtered(instructions, Layout::Natural, instructions.len(), admit)
+}
+
 pub(super) fn select_natural_read_shifts(instructions: &[Instruction]) -> Option<(LoopOrder, u32)> {
     instructions
         .iter()

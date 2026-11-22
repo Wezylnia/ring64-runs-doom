@@ -132,6 +132,7 @@ export type CoreExports = WebAssembly.Exports & {
   core_paged_loop_read_dword?(address: bigint): bigint;
   core_paged_loop_read_byte?(address: bigint): bigint;
   core_paged_loop_read_span?(address: bigint, bytes: number, segment: number): number;
+  core_paged_loop_write_byte?(address: bigint, value: number): number;
   core_debug_register(operation: number, input: bigint, pc: bigint, flags: bigint): number;
   core_import_debug(): number;
   core_import_xmm(): number;

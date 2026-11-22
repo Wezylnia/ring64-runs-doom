@@ -57,17 +57,21 @@ impl Entries {
             })
     }
 
-    fn readable_span(
+    fn retained_data_span<const WRITE: bool>(
         &self,
         state: &State,
         request: Request,
         keys: &ProtectionKeys,
         width: u32,
     ) -> Option<(usize, u64)> {
-        debug_assert_eq!(request.access, Access::Read);
+        debug_assert_eq!(
+            request.access,
+            if WRITE { Access::Write } else { Access::Read }
+        );
         let index = self.find(state, request)?;
         let translation = self.slots[index].unwrap().translation.at(request.linear);
-        if translation.remaining < u64::from(width)
+        if WRITE && translation.dirty
+            || translation.remaining < u64::from(width)
             || translation.rights.authorize(state, request, keys).is_err()
         {
             return None;
@@ -188,33 +192,33 @@ impl Cache {
         width: u32,
     ) -> Option<u64> {
         let mut entries = self.entries.borrow_mut();
-        let (index, physical) = entries.readable_span(state, request, keys, width)?;
+        let (index, physical) = entries.retained_data_span::<false>(state, request, keys, width)?;
         entries.touch(index);
         Some(physical)
     }
 
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
-    pub(crate) fn read_then_fetch(
+    pub(crate) fn data_then_fetch<const WRITE: bool, T>(
         &self,
         state: &State,
         request: Request,
         keys: &ProtectionKeys,
         width: u32,
         local_only: bool,
-        read: impl FnOnce(u64) -> Option<u32>,
-    ) -> Option<u32> {
+        access: impl FnOnce(u64) -> Option<T>,
+    ) -> Option<T> {
         let mut entries = self.entries.borrow_mut();
         // The admitted same-page loop makes the code entry most recent and
-        // always has a successor fetch after a successful load.
+        // always has a successor fetch after a successful data access.
         let fetch = entries
             .hint
             .filter(|&index| entries.slots[index].is_some())?;
-        let (data, physical) = entries.readable_span(state, request, keys, width)?;
+        let (data, physical) = entries.retained_data_span::<WRITE>(state, request, keys, width)?;
         // A local entry can shadow the interior of a retained global span.
         if local_only && entries.slots[data].unwrap().global {
             return None;
         }
-        let value = read(physical)?;
+        let value = access(physical)?;
         entries.touch(data);
         if fetch != data {
             entries.touch(fetch);

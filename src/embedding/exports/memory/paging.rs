@@ -366,7 +366,7 @@ fn paged_loop_read<const WIDTH: u32>(address: u64) -> u64 {
                 access: Access::Read,
                 class,
             };
-            core.translation_cache.read_then_fetch(
+            core.translation_cache.data_then_fetch::<false, _>(
                 paging,
                 request,
                 &state.protection_keys,
@@ -410,7 +410,7 @@ pub extern "C" fn core_paged_loop_read_span(address: u64, bytes: u32, segment: u
                 state.flags & crate::x86::flags::AC != 0,
             ),
         };
-        let Some(host) = core.translation_cache.read_then_fetch(
+        let Some(host) = core.translation_cache.data_then_fetch::<false, _>(
             paging,
             request,
             &state.protection_keys,
@@ -427,6 +427,36 @@ pub extern "C" fn core_paged_loop_read_span(address: u64, bytes: u32, segment: u
         };
         &raw const core.direct_span as u32
     })
+}
+
+#[cfg(not(feature = "parallel"))]
+#[unsafe(no_mangle)]
+pub extern "C" fn core_paged_loop_write_byte(address: u64, value: u32) -> i32 {
+    if !crate::memory::canonical48(address) {
+        return 0;
+    }
+    let written = BRIDGE.with_borrow_mut(|bridge| {
+        let core = bridge.core.as_mut().unwrap();
+        let paging = core.paging.as_ref()?;
+        let state = unsafe { &*core.state.get() };
+        let request = paging::walk::Request {
+            linear: address,
+            access: Access::Write,
+            class: paging::walk::AccessClass::operand(
+                core.context.cpl(),
+                state.flags & crate::x86::flags::AC != 0,
+            ),
+        };
+        core.translation_cache.data_then_fetch::<true, _>(
+            paging,
+            request,
+            &state.protection_keys,
+            1,
+            false,
+            |physical| core.image.physical_direct_write_byte(physical, value as u8),
+        )
+    });
+    i32::from(written.is_some())
 }
 
 #[unsafe(no_mangle)]

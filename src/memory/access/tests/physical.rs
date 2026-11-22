@@ -84,6 +84,33 @@ fn physical_read_into_checks_the_whole_span_before_copying_split_backings() {
     assert_eq!(output, [5, 6, 1, 2, 3]);
 }
 
+#[cfg(not(feature = "parallel"))]
+#[test]
+fn direct_physical_byte_store_requires_plain_writable_ram() {
+    let rw = Permissions {
+        execute: false,
+        ..all()
+    };
+    let data = mapping(HOLE, 1, 4, rw);
+    let alias = mapping(HOLE + 0x1000, 5, 1, all());
+    let mut image = physical((0..8).collect(), vec![data.clone(), alias]);
+    assert_eq!(image.physical_direct_write_byte(HOLE + 1, 0xaa), None);
+    assert_eq!(image.physical_read(HOLE + 1, 1), Ok(2));
+
+    image.set_mappings(vec![data.clone()]).unwrap();
+    assert_eq!(image.physical_direct_write_byte(HOLE + 1, 0xaa), Some(()));
+    assert_eq!(image.physical_read(HOLE + 1, 1), Ok(0xaa));
+    assert_eq!(image.physical_direct_write_byte(HOLE + 4, 0xbb), None);
+
+    let denied = MappingInput {
+        permissions: Permissions { write: false, ..rw },
+        ..data
+    };
+    image.set_mappings(vec![denied]).unwrap();
+    assert_eq!(image.physical_direct_write_byte(HOLE + 1, 0xbb), None);
+    assert_eq!(image.physical_read(HOLE + 1, 1), Ok(0xaa));
+}
+
 #[test]
 fn physical_mapping_replacement_rejects_domain_overflow_atomically() {
     let mut image = physical(vec![0x90; 8], vec![mapping(HOLE, 0, 8, all())]);

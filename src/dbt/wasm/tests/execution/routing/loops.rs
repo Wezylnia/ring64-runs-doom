@@ -388,6 +388,56 @@ fn paged_32_bit_reads_require_flat_ds_and_dword_addresses() {
     }
 }
 
+#[cfg(not(feature = "parallel"))]
+#[test]
+fn paged_natural_write_graph_imports_only_the_admitted_ds_byte_store() {
+    use crate::x86::{context::Segment, instruction::Operation};
+
+    let code = [
+        0x0f, 0xb6, 0x07, // movzx eax,[rdi]
+        0x39, 0xf0, // cmp eax,esi
+        0x72, 0x06, // jb store
+        0x0f, 0xb6, 0xc0, // movzx eax,al
+        0x0f, 0x4d, 0xc6, // cmovge eax,esi
+        0x88, 0x07, // store: mov [rdi],al
+        0x48, 0xff, 0xc7, // inc rdi
+        0xff, 0xc9, // dec ecx
+        0x75, 0xea, // jne head
+    ];
+    let ds = unit(compiled_fixture(0x1000, &code, 0x1000).instructions);
+    let split_page = unit(compiled_fixture(0x1ffc, &code, 0x1ffc).instructions);
+    let mut fs = unit(ds.instructions.clone());
+    for i in &mut fs.instructions {
+        if let Operation::Store { address, .. } = &mut i.operation {
+            address.segment = Segment::Fs;
+        }
+    }
+    let guarded = emit_profile(&ds, true, true, usize::MAX);
+    let capped = emit_profile(&ds, true, true, guarded.len() - 1);
+    let unpaged = emit_profile(&ds, true, false, usize::MAX);
+    let split_page = emit_profile(&split_page, true, true, usize::MAX);
+    let fs = emit_profile(&fs, true, true, usize::MAX);
+    for (bytes, guarded) in [
+        (guarded, true),
+        (capped, false),
+        (unpaged, false),
+        (split_page, false),
+        (fs, false),
+    ] {
+        wasmparser::Validator::new().validate_all(&bytes).unwrap();
+        let writes = wasmparser::Parser::new(0)
+            .parse_all(&bytes)
+            .filter_map(|payload| match payload.unwrap() {
+                wasmparser::Payload::ImportSection(reader) => Some(reader),
+                _ => None,
+            })
+            .flat_map(|reader| reader.into_imports())
+            .filter(|import| import.as_ref().unwrap().name == "paged_loop_write_byte")
+            .count();
+        assert_eq!(writes, usize::from(guarded));
+    }
+}
+
 #[test]
 fn register_loop_keeps_carry_live_through_zero_count_and_partial_writers() {
     let code = [

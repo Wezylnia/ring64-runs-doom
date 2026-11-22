@@ -1280,6 +1280,8 @@ export class Core {
         env.paged_loop_read_byte = this.#exports.core_paged_loop_read_byte;
       if (this.#exports.core_paged_loop_read_span)
         env.paged_loop_read_span = this.#exports.core_paged_loop_read_span;
+      if (this.#exports.core_paged_loop_write_byte)
+        env.paged_loop_write_byte = this.#exports.core_paged_loop_write_byte;
       if (this.#exports.core_write_segment_base)
         env.write_segment_base = this.#exports.core_write_segment_base;
       for (const [name, key] of Object.entries({

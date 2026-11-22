@@ -17,6 +17,77 @@ import {
 export function pagingBoundaryReviewScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [
     {
+      name: 'paged byte store loops commit ordinary bytes and replay a refused write precisely',
+      async run() {
+        const head = 0x400000n;
+        const input = 0x401000n;
+        const output = 0x402000n;
+        // MOVZX EAX,[RDI]; CMP AL,40h; JBE store; INC AL; MOV [RSI],AL;
+        // INC RDI; INC RSI; DEC ECX; JNZ head.
+        const code = '0fb6073c407602fec0880648ffc748ffc6ffc975eb';
+        const data = new Uint8Array(0x1000);
+        data.set([0x20, 0x44, 0x41, 0x17]);
+        await usingPaged(
+          compiler,
+          {
+            code,
+            bank: { ...BANK, cr0: BANK.cr0 | 0x10000n },
+            words: [
+              [0x4008n, 0xa067n],
+              [0x4010n, 0xb027n],
+              [0x4018n, 0xc025n],
+            ],
+            spans: [
+              { physical: 0xa000n, bytes: data },
+              { physical: 0xb000n, bytes: new Uint8Array(0x1000) },
+              { physical: 0xc000n, bytes: Uint8Array.of(0x99) },
+            ],
+          },
+          async (cpu) => {
+            const start = (source: bigint, dest: bigint, count = 4n) =>
+              initial(head, { 1: count, 6: dest, 7: source }, 2n);
+            for (let run = 0; run < 2; run++) {
+              cpu.setState(start(input, output));
+              const result = await cpu.run({ budget: 40n, stop: head + 21n });
+              equal(result.reason, 'stop', 'both conditional paths reach the successor');
+              equal(result.retired, 34n, 'the two selected increments retire');
+              equal(result.state.flags, 0x47n, 'the final comparison carry survives DEC');
+              same(
+                [...cpu.readPhysicalMemory(0xb000n, 4)],
+                [0x20, 0x45, 0x42, 0x17],
+                'one output byte per source byte',
+              );
+              equal(word(cpu, 0x4010n), 0xb067n, 'the first checked write set the dirty bit');
+            }
+
+            // Retain the read-only translation before trying the guarded store.
+            cpu.setState(start(0x403000n, output + 8n, 1n));
+            equal((await cpu.run({ budget: 12n, stop: head + 21n })).reason, 'stop', 'warm read');
+            cpu.setState(start(input, output + 0xffen));
+            const fault = await cpu.run({ budget: 40n });
+            equal(fault.reason, 'page-fault', 'the third write retains guest write protection');
+            equal(fault.retired, 21n, 'completed prefix excludes the refused store');
+            equal(fault.state.rip, head + 9n, 'the fault is attributed to the original store');
+            equal(
+              fault.state.registers[0],
+              0x42n,
+              'the increment preceding the failed store is live',
+            );
+            equal(fault.state.registers[1], 2n, 'only the completed laps decrement ECX');
+            equal(fault.state.flags, 6n, 'the original store sees the increment flags');
+            equal(
+              fault.pageFault?.address,
+              0x403000n,
+              'the checked store publishes its linear address',
+            );
+            same([...cpu.readPhysicalMemory(0xbffen, 2)], [0x20, 0x45], 'earlier stores survive');
+            equal(cpu.readPhysicalMemory(0xc000n, 1)[0], 0x99, 'the denied byte stays intact');
+            equal(word(cpu, 0x4018n), 0xc025n, 'the refused store does not set guest dirty state');
+          },
+        );
+      },
+    },
+    {
       name: 'paged register loop preserves checked reentry and observation boundaries',
       async run() {
         const head = 0x400000n;
