@@ -432,8 +432,8 @@ export function pagingBoundaryReviewScenarios(compiler: WebAssembly.Module): Sce
         const source = 0x401ff8n;
         const denied = 0x403000n;
         const output = 0x404000n;
-        // MOVUPS; CMPNLEPS; MOVMSKPS; TEST; LEA; JNZ head; store; load; JMP head.
-        const code = '0f100e0fc2c8060f50c185c0488d761075ee890f8b13ebe8';
+        // MOVUPS; CMPNLEPS; MOVMSKPS; TEST; LEA ESI,[ESI+16]; JNZ head; store; load; JMP head.
+        const code = '0f100e0fc2c8060f50c185c08d761075ef890f8b13ebe9';
         const input = new Uint8Array(0x2000);
         input.fill(0xff, 0x1ff8);
         let splitReady = false;
@@ -466,11 +466,12 @@ export function pagingBoundaryReviewScenarios(compiler: WebAssembly.Module): Sce
           });
           return core;
         };
-        try {
-          await usingPaged(
+        const replay = (mode: 'long64' | 'compatibility') =>
+          usingPaged(
             compiler,
             {
               code,
+              ...(mode === 'compatibility' ? { context: context(mode) } : {}),
               words: [
                 [0x4008n, 0xa007n],
                 [0x4010n, 0xb007n],
@@ -488,7 +489,7 @@ export function pagingBoundaryReviewScenarios(compiler: WebAssembly.Module): Sce
               const fault = await cpu.run({ budget: 2400n });
               check(
                 splitReady && retainedAfterSplit,
-                'the checked split permits retained re-entry',
+                mode + ' checked split permits retained re-entry',
               );
               same(refused, [denied - 8n], 'one later split returns to the checked operand');
               equal(fault.reason, 'page-fault', 'the second leaf is missing');
@@ -506,6 +507,12 @@ export function pagingBoundaryReviewScenarios(compiler: WebAssembly.Module): Sce
               );
             },
           );
+        try {
+          await replay('long64');
+          splitReady = false;
+          retainedAfterSplit = false;
+          refused.length = 0;
+          await replay('compatibility');
         } finally {
           Core.create = create;
         }
