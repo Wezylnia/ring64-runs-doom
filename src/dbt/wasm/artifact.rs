@@ -1900,11 +1900,18 @@ fn emit_body(
             );
         }
         let head = loop_body.filter(|body| body.head == index as u32);
-        if let Some((body, guard)) = head
-            .filter(|body| body.natural_forward_loop())
-            .zip(paged_loop_guard)
-        {
-            // The checked forward graph already follows the canonical entry labels.
+        let canonical_checked = |body: &StructuredLoop| {
+            let natural = body.natural_forward_loop();
+            #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+            let natural = natural
+                || (paged_dense_read_span.is_some()
+                    && !unit.context.is_long64()
+                    && body.straight_paged_reads());
+            natural
+        };
+        if let Some((body, guard)) = head.filter(canonical_checked).zip(paged_loop_guard) {
+            // The canonical entries cover the checked fallback. Dense straight
+            // reads reach the same head on a checked backedge through dispatch.
             emitter.emit_guarded_paged_loop(&unit.instructions, body, loop_depth, guard);
         } else if let Some(loop_body) = head {
             if !observed && loop_body.precheck_gates_without_read_proof() {

@@ -326,6 +326,11 @@ impl StructuredLoop {
         self.forward_edges() && self.earlier == self.head
     }
 
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn straight_paged_reads(self) -> bool {
+        self.kind == LoopKind::PagedReads && self.earlier == self.head
+    }
+
     pub(super) fn order(self) -> LoopOrder {
         LoopOrder {
             earlier: self.earlier,
