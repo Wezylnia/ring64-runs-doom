@@ -1095,13 +1095,16 @@ impl Emitter {
             && let Some(window) = self.paged_vector_window
             && let Some(last_early_page) = window.last_early_page
         {
-            // Ready approved the checked read. The adjacent page head may
-            // retry once; the old window coordinates confer no authority.
+            // A checked vector may reach the next page by starting there or
+            // straddling its boundary. Recheck the guard once per such page.
             self.op(Op::LocalGet(ADDRESS))
                 .op(Op::I32WrapI64)
                 .op(Op::I32Const(4095))
                 .op(Op::I32And)
-                .op(Op::I32Eqz)
+                .op(Op::I32Const(1))
+                .op(Op::I32Sub)
+                .op(Op::I32Const(4096 - 17))
+                .op(Op::I32GtU)
                 .op(Op::If(BlockType::Empty))
                 .op(Op::LocalGet(attempts))
                 .op(Op::I32Const(PAGED_READ_COOLDOWN))
@@ -1111,6 +1114,11 @@ impl Emitter {
                 .op(Op::I32Ne)
                 .op(Op::I32And)
                 .op(Op::LocalGet(ADDRESS))
+                .op(Op::I64Const(15))
+                .op(Op::I64Add)
+                .op(Op::I64Const(-4096))
+                .op(Op::I64And)
+                .op(Op::LocalTee(VALUE))
                 .op(Op::LocalGet(window.base))
                 .op(Op::I64Const(-4096))
                 .op(Op::I64And)
@@ -1118,12 +1126,12 @@ impl Emitter {
                 .op(Op::I64Const(4096))
                 .op(Op::I64Eq)
                 .op(Op::I32And)
-                .op(Op::LocalGet(ADDRESS))
+                .op(Op::LocalGet(VALUE))
                 .op(Op::LocalGet(last_early_page))
                 .op(Op::I64GtU)
                 .op(Op::I32And)
                 .op(Op::If(BlockType::Empty))
-                .op(Op::LocalGet(ADDRESS))
+                .op(Op::LocalGet(VALUE))
                 .op(Op::LocalSet(last_early_page))
                 .op(Op::I32Const(0))
                 .op(Op::LocalSet(attempts))
