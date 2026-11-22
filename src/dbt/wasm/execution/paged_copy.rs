@@ -3,7 +3,8 @@ use super::{
 };
 use crate::x86::context::Segment;
 use crate::x86::instruction::{
-    Address, AddressBase, Instruction, Operation, VectorInstruction, VectorOperand, Width,
+    Address, AddressBase, Alu, DataOperand, Instruction, Operation, RegisterView,
+    VectorInstruction, VectorOperand, Width,
 };
 use wasm_encoder::{BlockType, Instruction as Op, MemArg};
 
@@ -12,8 +13,16 @@ pub(super) struct CopyGroup {
     source: Address,
     destination: Address,
     register: u8,
-    pub(super) width: u32,
+    width: u32,
     end: u64,
+    adjustment: Option<DestinationAdjustment>,
+}
+
+#[derive(Clone, Copy)]
+struct DestinationAdjustment {
+    register: RegisterView,
+    address: Address,
+    advance: u64,
 }
 
 impl CopyGroup {
@@ -66,10 +75,26 @@ impl CopyGroup {
         }
 
         let (source, register) = vector_move(*lap.first()?, false)?;
-        let (destination, target) = vector_move(*lap.get(1)?, true)?;
+        let (first_store, adjustment) = if vector_move(*lap.get(1)?, true).is_some() {
+            (1, None)
+        } else {
+            (
+                3,
+                Some(DestinationAdjustment::recognize(
+                    source,
+                    lap.get(1)?,
+                    lap.get(2)?,
+                )?),
+            )
+        };
+        let (destination_register, target) = vector_move(*lap.get(first_store)?, true)?;
         if target != register {
             return None;
         }
+        let destination = match adjustment {
+            Some(adjustment) => adjustment.resolve(destination_register)?,
+            None => destination_register,
+        };
         let consecutive = |base: Address, address: Address, offset: i64| {
             base.displacement
                 .checked_add(offset)
@@ -82,18 +107,18 @@ impl CopyGroup {
                 })
         };
         let mut pairs = 1;
-        for pair in lap[2..].chunks_exact(2).take(3) {
+        for pair in lap[first_store + 1..].chunks_exact(2).take(3) {
             let offset = i64::from(pairs) * 16;
             if !vector_move(pair[0], false).is_some_and(|(address, bank)| {
                 bank == register && consecutive(source, address, offset)
             }) || !vector_move(pair[1], true).is_some_and(|(address, bank)| {
-                bank == register && consecutive(destination, address, offset)
+                bank == register && consecutive(destination_register, address, offset)
             }) {
                 break;
             }
             pairs += 1;
         }
-        let instructions = (pairs * 2) as usize;
+        let instructions = (pairs * 2) as usize + first_store - 1;
         if pairs < 2
             || lap[instructions..]
                 .iter()
@@ -107,6 +132,63 @@ impl CopyGroup {
             register,
             width: pairs * 16,
             end: lap[instructions - 1].next_pc,
+            adjustment,
+        })
+    }
+
+    pub(super) fn instruction_count(self) -> u32 {
+        self.width / 8 + if self.adjustment.is_some() { 2 } else { 0 }
+    }
+}
+
+impl DestinationAdjustment {
+    fn recognize(source: Address, lea: &Instruction, advance: &Instruction) -> Option<Self> {
+        let Operation::Lea {
+            dst: register,
+            address,
+            width: Width::W64,
+        } = lea.operation
+        else {
+            return None;
+        };
+        let Operation::Alu {
+            kind: Alu::Add,
+            dst,
+            src: DataOperand::Immediate(advance),
+            width: Width::W64,
+        } = advance.operation
+        else {
+            return None;
+        };
+        // Subsequent loads still use the preflighted source expression.
+        (register == dst
+            && address.size == Width::W64
+            && address.base != AddressBase::NextPc
+            && source.base != AddressBase::Register(register.bank)
+            && source
+                .index
+                .is_none_or(|index| index.register != register.bank))
+        .then_some(Self {
+            register,
+            address,
+            advance,
+        })
+    }
+
+    fn resolve(self, destination: Address) -> Option<Address> {
+        if destination.base != AddressBase::Register(self.register.bank)
+            || destination.index.is_some()
+        {
+            return None;
+        }
+        Some(Address {
+            displacement: self
+                .address
+                .displacement
+                .checked_add(self.advance as i64)?
+                .checked_add(destination.displacement)?,
+            segment: Segment::Ds,
+            ..self.address
         })
     }
 }
@@ -218,21 +300,42 @@ impl Emitter {
     }
 
     fn emit_ordered_copy(&mut self, group: CopyGroup) {
+        let xmm = self.xmm(group.register);
         for offset in (0..group.width).step_by(16) {
+            if offset == 0
+                && let Some(adjustment) = group.adjustment
+            {
+                self.op(Op::LocalGet(STORE_STATUS))
+                    .op(Op::V128Load(memory(0)))
+                    .op(Op::LocalSet(xmm));
+                self.lea(adjustment.register, adjustment.address, Width::W64, 0);
+                self.integer(
+                    Alu::Add,
+                    adjustment.register,
+                    DataOperand::Immediate(adjustment.advance),
+                    Width::W64,
+                    None,
+                );
+                self.op(Op::LocalGet(ADDRESS))
+                    .op(Op::I32WrapI64)
+                    .op(Op::LocalGet(xmm))
+                    .op(Op::V128Store(memory(0)));
+                continue;
+            }
             // A dependent later load sees the preceding store even on aliased physical backing.
             self.op(Op::LocalGet(ADDRESS))
                 .op(Op::I32WrapI64)
                 .op(Op::LocalGet(STORE_STATUS))
                 .op(Op::V128Load(memory(u64::from(offset))));
             if offset + 16 == group.width {
-                self.op(Op::LocalTee(self.xmm(group.register)));
+                self.op(Op::LocalTee(xmm));
             }
             self.op(Op::V128Store(memory(u64::from(offset))));
         }
         self.op(Op::I64Const(group.end as i64))
             .op(Op::LocalSet(RIP))
             .op(Op::LocalGet(REMAINING))
-            .op(Op::I64Const(i64::from(group.width / 8)))
+            .op(Op::I64Const(i64::from(group.instruction_count())))
             .op(Op::I64Sub)
             .op(Op::LocalSet(REMAINING));
     }

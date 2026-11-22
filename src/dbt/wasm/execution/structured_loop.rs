@@ -2237,7 +2237,7 @@ impl Emitter {
             #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
             if self.guarded_paged_lap
                 && let Some(window) = self.paged_copy_window
-                && position < window.group.width / 8
+                && position < window.group.instruction_count()
             {
                 if position == 0 {
                     self.emit_paged_copy_group(window, depth + 1);
