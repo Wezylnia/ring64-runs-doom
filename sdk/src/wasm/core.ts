@@ -1373,6 +1373,8 @@ export class Core {
         env.paged_loop_write_byte_after_read = this.#exports.core_paged_loop_write_byte_after_read;
       if (this.#exports.core_paged_loop_write_dword)
         env.paged_loop_write_dword = this.#exports.core_paged_loop_write_dword;
+      if (this.#exports.core_paged_loop_indexed_dword_write)
+        env.paged_loop_indexed_dword_write = this.#exports.core_paged_loop_indexed_dword_write;
       if (this.#exports.core_write_segment_base)
         env.write_segment_base = this.#exports.core_write_segment_base;
       for (const [name, key] of Object.entries({

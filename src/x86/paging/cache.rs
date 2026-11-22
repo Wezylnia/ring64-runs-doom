@@ -31,6 +31,22 @@ struct Entry {
     used: u64,
 }
 
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[derive(Clone, Copy)]
+struct IndexedWriteSlot {
+    index: usize,
+    id: u64,
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[derive(Default)]
+pub(crate) struct IndexedWriteMemo {
+    index: [Option<IndexedWriteSlot>; 4],
+    table: Option<IndexedWriteSlot>,
+    target: Option<IndexedWriteSlot>,
+    destination: Option<crate::memory::DirectSpan>,
+}
+
 struct Entries {
     slots: [Option<Entry>; CAPACITY],
     lookup_index: lookup_index::LookupIndex,
@@ -154,6 +170,35 @@ impl Entries {
         self.clock += 1;
         self.slots[index].as_mut().unwrap().used = self.clock;
         self.hint = Some(index);
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    #[inline]
+    fn indexed_write_span<const WRITE: bool>(
+        &self,
+        slot: &mut Option<IndexedWriteSlot>,
+        state: &State,
+        request: Request,
+        keys: &ProtectionKeys,
+        width: u32,
+    ) -> Option<(usize, u64)> {
+        if let Some(retained) = *slot
+            && let Some(entry) = self.slots[retained.index]
+            && entry.translation.cache_id == Some(retained.id)
+        {
+            let t = entry.translation;
+            let delta = request.linear.wrapping_sub(t.linear_base);
+            if delta <= t.span - u64::from(width) && !(WRITE && t.dirty) {
+                return Some((retained.index, t.physical_base + delta));
+            }
+        }
+        let (index, t) = self.retained_data_span::<WRITE>(state, request, keys, width)?;
+        *slot = if t.global || t.span != 4096 {
+            None
+        } else {
+            t.cache_id.map(|id| IndexedWriteSlot { index, id })
+        };
+        Some((index, t.physical))
     }
 
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
@@ -386,6 +431,73 @@ impl Cache {
             entries.touch(fetch);
         }
         Some(())
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(crate) fn indexed_dword_write_then_fetch(
+        &self,
+        image: &mut crate::memory::Image,
+        state: &State,
+        keys: &ProtectionKeys,
+        index: Request,
+        (table, store): (u64, Request),
+        memo: &mut IndexedWriteMemo,
+    ) -> Option<crate::memory::IndexedDwordWrite> {
+        let mut entries = self.entries.borrow_mut();
+        let fetch = entries.hint.filter(|&slot| entries.slots[slot].is_some())?;
+        // The guarded clone cannot change paging, permissions or access class.
+        // Local slot generations still distinguish a replacement or eviction.
+        let index_memo = (index.linear >> 12) as usize % memo.index.len();
+        let (index_slot, first) = entries.indexed_write_span::<false>(
+            &mut memo.index[index_memo],
+            state,
+            index,
+            keys,
+            1,
+        )?;
+        let index_value = image.physical_read_mapped_byte(first)?;
+        if index_value == 0 {
+            if index_slot != fetch && entries.slots[index_slot].unwrap().used != entries.clock - 1 {
+                entries.touch_data_and_fetch(index_slot, fetch);
+            }
+            return Some(crate::memory::IndexedDwordWrite::default());
+        }
+        let table = Request {
+            linear: table.wrapping_add(u64::from(index_value) * 4),
+            ..index
+        };
+        if table.linear & 3 != 0
+            || !crate::memory::canonical48(table.linear)
+            || store.linear & 3 != 0
+            || !crate::memory::canonical48(store.linear)
+        {
+            return None;
+        }
+        let (table_slot, lookup) =
+            entries.indexed_write_span::<false>(&mut memo.table, state, table, keys, 4)?;
+        let (store_slot, target) =
+            entries.indexed_write_span::<true>(&mut memo.target, state, store, keys, 4)?;
+        let value = image.physical_read_mapped_dword(lookup)?;
+        let span = match memo.destination.as_ref() {
+            Some(span) if target.wrapping_sub(span.base) <= u64::from(span.length - 4) => span,
+            _ => memo
+                .destination
+                .insert(image.physical_direct_write_span(target, 4)?),
+        };
+        let host = span.host + (target - span.base) as u32;
+
+        // No retained age changes before all operations are admitted. After
+        // the straight group, the last uses are these operands and code.
+        for slot in [index_slot, table_slot, store_slot, fetch] {
+            if entries.hint != Some(slot) {
+                entries.touch(slot);
+            }
+        }
+        Some(crate::memory::IndexedDwordWrite {
+            index: u32::from(index_value),
+            value,
+            host,
+        })
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]

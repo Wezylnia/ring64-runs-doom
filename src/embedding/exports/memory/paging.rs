@@ -1344,6 +1344,50 @@ pub extern "C" fn core_paged_loop_write_dword(address: u64, value: u32) -> i32 {
     paged_loop_write(address, value.to_le_bytes())
 }
 
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[unsafe(no_mangle)]
+pub extern "C" fn core_paged_loop_indexed_dword_write(
+    index: u64,
+    table: u64,
+    store: u64,
+    continuing: u32,
+) -> u32 {
+    BRIDGE.with_borrow_mut(|bridge| {
+        let core = bridge.core.as_mut().unwrap();
+        if continuing == 0 {
+            core.indexed_write_memo = Default::default();
+        }
+        if !crate::memory::canonical48(index) {
+            return 0;
+        }
+        let Some(paging) = core.paging.as_ref() else {
+            return 0;
+        };
+        let state = unsafe { &*core.state.get() };
+        let class = paging::walk::AccessClass::operand(
+            core.context.cpl(),
+            state.flags & crate::x86::flags::AC != 0,
+        );
+        let request = |linear, access| paging::walk::Request {
+            linear,
+            access,
+            class,
+        };
+        let Some(proof) = core.translation_cache.indexed_dword_write_then_fetch(
+            &mut core.image,
+            paging,
+            &state.protection_keys,
+            request(index, Access::Read),
+            (table, request(store, Access::Write)),
+            &mut core.indexed_write_memo,
+        ) else {
+            return 0;
+        };
+        core.indexed_dword_write = proof;
+        &raw const core.indexed_dword_write as u32
+    })
+}
+
 #[cfg(not(feature = "parallel"))]
 fn paged_loop_write<const WIDTH: usize>(address: u64, value: [u8; WIDTH]) -> i32 {
     if address & (WIDTH as u64 - 1) != 0 || !crate::memory::canonical48(address) {

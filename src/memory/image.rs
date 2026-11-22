@@ -67,6 +67,15 @@ pub(crate) struct DirectSpan {
     pub(crate) host: u32,
 }
 
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[derive(Default)]
+#[repr(C)]
+pub(crate) struct IndexedDwordWrite {
+    pub(crate) index: u32,
+    pub(crate) value: u32,
+    pub(crate) host: u32,
+}
+
 #[derive(Debug)]
 pub(super) struct Backing {
     pub(super) id: String,

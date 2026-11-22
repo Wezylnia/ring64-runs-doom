@@ -1810,6 +1810,13 @@ impl Emitter {
             .op(Op::LocalSet(REASON));
         self.guarded_paged_lap = true;
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if let Some(group) = self
+            .paged_indexed_write
+            .filter(|_| body.paged_scalar_writes())
+        {
+            self.op(Op::I32Const(0)).op(Op::LocalSet(group.continuing));
+        }
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         if let Some(window) = self.paged_copy_window {
             self.op(Op::I64Const(0)).op(Op::LocalSet(window.limit));
         }

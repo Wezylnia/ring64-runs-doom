@@ -63,6 +63,9 @@ mod numeric_state;
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 #[path = "execution/paged_copy.rs"]
 mod paged_copy;
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[path = "execution/paged_indexed_write.rs"]
+mod paged_indexed_write;
 #[path = "system/paging.rs"]
 mod paging;
 #[path = "system/processor.rs"]
@@ -223,6 +226,8 @@ struct Emitter {
     paged_dword_window_touch: Option<u32>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_dword_read_pair: Option<memory::PagedDwordReadPair>,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    paged_indexed_write: Option<paged_indexed_write::GuardedIndexedWrite>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_vector_window: Option<memory::PagedReadWindow>,
     paged_loop_read_byte: Option<u32>,

@@ -380,6 +380,13 @@ impl Emitter {
             return false;
         };
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if let Some(group) = self.indexed_write()
+            && (self.current_index == group.shape.index || self.current_index == group.shape.lookup)
+        {
+            self.load_indexed_write(group, address, width, next_pc, exit_depth);
+            return true;
+        }
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         if let Some(pair) = self.paged_dword_read_pair
             && (self.current_index == pair.first || self.current_index == pair.second)
         {
@@ -1292,7 +1299,11 @@ impl Emitter {
             .paged_byte_write_pair
             .filter(|pair| pair.store == self.current_index);
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-        let host = pair.and_then(|pair| pair.host);
+        let host = pair.and_then(|pair| pair.host).or_else(|| {
+            self.indexed_write()
+                .filter(|group| group.shape.store == self.current_index)
+                .map(|group| group.host)
+        });
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         let paged_write = pair.map(|pair| pair.write).or(paged_write);
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]

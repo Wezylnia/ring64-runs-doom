@@ -474,6 +474,8 @@ fn emit_placement_with_copy(
         paged_byte_write_pair: true,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_dword_read_pair: true,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        paged_indexed_write: true,
         // Smaller caller budgets immediately use the original paired lowering.
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_byte_write_pointer: max_artifact_bytes >= 256 * 1024,
@@ -597,6 +599,8 @@ struct OptionalLowering {
     paged_byte_write_pair: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_dword_read_pair: bool,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    paged_indexed_write: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_byte_write_pointer: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -1128,6 +1132,18 @@ fn emit_body(
             [ValType::I32],
         )
     });
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let paged_indexed_write = loop_body
+        .filter(|_| optional.paged_indexed_write && paged_scalar_writes && !mmio)
+        .and_then(|body| super::paged_indexed_write::IndexedWrite::recognize(body, unit))
+        .map(|shape| {
+            let signature = add_function_type(
+                &mut types,
+                [ValType::I64, ValType::I64, ValType::I64, ValType::I32],
+                [ValType::I32],
+            );
+            (shape, signature)
+        });
     #[cfg(not(feature = "parallel"))]
     let paged_write_byte = loop_body.is_some_and(|body| body.has_paged_byte_store(unit));
     #[cfg(feature = "parallel")]
@@ -1516,6 +1532,13 @@ fn emit_body(
     let paged_dword_window_touch = paged_dword_window_type
         .filter(|_| loop_body.is_some_and(StructuredLoop::paged_scalar_writes))
         .map(|index| import_function("paged_loop_retouch_block_window", index));
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let paged_indexed_write = paged_indexed_write.map(|(shape, signature)| {
+        (
+            shape,
+            import_function("paged_loop_indexed_dword_write", signature),
+        )
+    });
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let paged_dword_read_pair =
         paged_dword_read_pair
@@ -2142,6 +2165,19 @@ fn emit_body(
         }
     });
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let paged_indexed_write = paged_indexed_write.map(|(shape, resolve)| {
+        let record = next_local;
+        locals.push((3, ValType::I32));
+        next_local += 3;
+        super::paged_indexed_write::GuardedIndexedWrite {
+            shape,
+            resolve,
+            record,
+            host: record + 1,
+            continuing: record + 2,
+        }
+    });
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let paged_byte_write_pair = paged_byte_write_pair.map(|(load, store, read, write)| {
         let slot = next_local;
         let host = optional.paged_byte_write_pointer.then_some(slot + 1);
@@ -2329,6 +2365,8 @@ fn emit_body(
         paged_dword_window_touch,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_dword_read_pair,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        paged_indexed_write,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_vector_window,
         paged_loop_read_byte,
@@ -2722,6 +2760,21 @@ fn emit_body(
     }
     let code_start = bytes.len();
     code.append_to(&mut bytes);
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    if bytes.len() > max_artifact_bytes && paged_indexed_write.is_some() {
+        return emit_body(
+            unit,
+            observed,
+            (paged, mmio),
+            loop_body,
+            _guard_reads,
+            OptionalLowering {
+                paged_indexed_write: false,
+                ..optional
+            },
+            max_artifact_bytes,
+        );
+    }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if bytes.len() > max_artifact_bytes
         && (scalar_copy_prefix.is_some() || linear_scalar_copy_prefix.is_some())
