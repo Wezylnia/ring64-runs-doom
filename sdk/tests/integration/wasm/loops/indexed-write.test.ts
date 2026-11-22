@@ -198,3 +198,64 @@ test('the paired read window sees intervening writes and respects a clipped back
     prototype.artifactImports = imports;
   }
 });
+
+test('a tail read carries live paired operands only across its own loop edge', async () => {
+  // DEC ECX; ADD EAX,[RBX]; ADD R12D,[RBX+4]; TEST ECX,ECX; JZ end;
+  // TEST EDX,EDX; JZ head; MOV [RSI],EAX; MOV EDI,[RBX-4]; JMP head.
+  const code = 'ffc903034403630485c9740b85d274f089068b7bfcebe9';
+  const data = PC + 0x1000n;
+  const ram = new Uint8Array(4096);
+  const words = new DataView(ram.buffer);
+  words.setUint32(4, 23, true);
+  words.setUint32(8, 1, true);
+  words.setUint32(12, 7, true);
+  const prototype = Core.prototype as unknown as {
+    artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
+  };
+  const imports = prototype.artifactImports;
+  let pairs = 0;
+  prototype.artifactImports = function (observed) {
+    const env = imports.call(this, observed);
+    const span = env.paged_loop_read_span;
+    if (typeof span === 'function') {
+      env.paged_loop_read_span = (address: bigint, bytes: number, segment: number) => {
+        if (bytes === 8 && (segment === 6 || segment === 7)) pairs++;
+        return span(address, bytes, segment);
+      };
+    }
+    return env;
+  };
+  try {
+    await usingPaged(
+      compiler,
+      {
+        code,
+        words: [[0x4008n, 0xa067n]],
+        spans: [{ physical: 0xa000n, bytes: ram }],
+      },
+      async (cpu) => {
+        const stop = PC + BigInt(code.length / 2);
+        for (const draws of [1n, 0n, 1n]) {
+          cpu.writePhysicalMemory(0xa000n, ram);
+          cpu.setState(
+            initial(PC, { 0: 1n, 1: 17n, 2: draws, 3: data + 8n, 6: data + 8n, 7: 0n, 12: 0n }),
+          );
+          const before = pairs;
+          const result = await cpu.run({ stop, budget: 200n });
+          assert.equal(result.reason, 'stop');
+          assert.equal(result.retired, draws ? 165n : 117n);
+          assert.equal(result.state.registers[0], draws ? 131072n : 18n);
+          assert.equal(result.state.registers[12], 119n);
+          assert.equal(result.state.registers[7], draws ? 23n : 0n);
+          const resolved = pairs - before;
+          assert.ok(
+            draws ? resolved > 0 && resolved <= 2 : resolved >= 15,
+            `paired lookups with draws=${draws}: ${resolved}`,
+          );
+        }
+      },
+    );
+  } finally {
+    prototype.artifactImports = imports;
+  }
+});

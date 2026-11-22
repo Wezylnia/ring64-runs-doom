@@ -826,7 +826,10 @@ impl StructuredLoop {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) fn paged_dword_read_pair(self, unit: &super::Unit) -> Option<(u32, u32, u8)> {
+    pub(super) fn paged_dword_read_pair(
+        self,
+        unit: &super::Unit,
+    ) -> Option<(u32, u32, u8, Option<u32>)> {
         use crate::x86::{
             context::Segment,
             instruction::{AddressBase, MemoryAluOperands},
@@ -867,8 +870,50 @@ impl StructuredLoop {
             {
                 return None;
             }
-            Some((first, second, base))
+            let handoff = self.paged_dword_pair_handoff(instructions, first, base);
+            Some((first, second, base, handoff))
         })
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    fn paged_dword_pair_handoff(
+        self,
+        instructions: &[Instruction],
+        first: u32,
+        base: u8,
+    ) -> Option<u32> {
+        use crate::x86::{context::Segment, instruction::AddressBase};
+
+        let tail_read = self.tail.checked_sub(1)?;
+        let bound = &instructions[tail_read as usize];
+        let tail = &instructions[self.tail as usize];
+        if self.earlier != self.head
+            || first < self.head
+            || tail_read <= first
+            || !instructions[self.head as usize..first as usize]
+                .iter()
+                .all(|instruction| inside_register_body(instruction.operation))
+            || bound.next_pc != tail.pc
+            || !matches!(tail.operation, Operation::Jump { target }
+                if target == instructions[self.head as usize].pc)
+        {
+            return None;
+        }
+        matches!(
+            bound.operation,
+            Operation::Load {
+                width: Width::W32,
+                address: Address {
+                    base: AddressBase::Register(read_base),
+                    index: None,
+                    size: Width::W64,
+                    segment: Segment::Ds,
+                    ..
+                },
+                ..
+            } if read_base == base
+        )
+        .then_some(tail_read)
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -1826,6 +1871,9 @@ impl Emitter {
             ))
             .op(Op::LocalSet(pair.resolver_mode));
             self.op(Op::I32Const(0)).op(Op::LocalSet(pair.host));
+            if let Some(handoff) = pair.handoff {
+                self.op(Op::I32Const(0)).op(Op::LocalSet(handoff.ready));
+            }
         }
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         if let Some(window) = self.paged_copy_window {

@@ -50,6 +50,15 @@ pub(super) struct PagedDwordReadPair {
     pub(super) resolve: u32,
     pub(super) host: u32,
     pub(super) resolver_mode: u32,
+    pub(super) handoff: Option<DwordPairHandoff>,
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[derive(Clone, Copy)]
+pub(super) struct DwordPairHandoff {
+    pub(super) read: u32,
+    pub(super) address: u32,
+    pub(super) ready: u32,
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -469,8 +478,17 @@ impl Emitter {
             .op(Op::End)
             .op(Op::I64ExtendI32U)
             .op(Op::LocalTee(VALUE))
-            .op(Op::I32WrapI64)
-            .op(Op::If(BlockType::Result(ValType::I64)))
+            .op(Op::I32WrapI64);
+        if let Some(handoff) = pair
+            .handoff
+            .filter(|handoff| handoff.read == self.current_index)
+        {
+            // This successful tail read leaves the pair's data and execute entries newest.
+            self.op(Op::I32Const(0))
+                .op(Op::I32Ne)
+                .op(Op::LocalTee(handoff.ready));
+        }
+        self.op(Op::If(BlockType::Result(ValType::I64)))
             .op(Op::LocalGet(VALUE))
             .op(Op::I32WrapI64)
             .op(Op::I64Load32U(MemArg {
@@ -503,12 +521,24 @@ impl Emitter {
         use wasm_encoder::ValType;
 
         let first = self.current_index == pair.first;
+        let handoff = pair.handoff.filter(|_| first);
         if first {
             // The helper admits one local translation and one backing for both
             // aligned dwords. Always overwrite the local, including on a miss.
             self.address(address, next_pc);
-            self.op(Op::LocalTee(ADDRESS))
-                .op(Op::I32WrapI64)
+            self.op(Op::LocalTee(ADDRESS));
+            if let Some(handoff) = handoff {
+                self.op(Op::LocalGet(handoff.address))
+                    .op(Op::I64Eq)
+                    .op(Op::LocalGet(handoff.ready))
+                    .op(Op::I32And)
+                    .op(Op::LocalTee(handoff.ready))
+                    .op(Op::If(BlockType::Result(ValType::I32)))
+                    .op(Op::LocalGet(pair.host))
+                    .op(Op::Else)
+                    .op(Op::LocalGet(ADDRESS));
+            }
+            self.op(Op::I32WrapI64)
                 .op(Op::I32Const(3))
                 .op(Op::I32And)
                 .op(Op::I32Eqz)
@@ -523,12 +553,23 @@ impl Emitter {
                 .op(Op::LocalSet(pair.resolver_mode))
                 .op(Op::Else)
                 .op(Op::I32Const(0))
-                .op(Op::End)
-                .op(Op::LocalSet(pair.host));
+                .op(Op::End);
+            if let Some(handoff) = handoff {
+                self.op(Op::End)
+                    .op(Op::LocalGet(ADDRESS))
+                    .op(Op::LocalSet(handoff.address));
+            }
+            self.op(Op::LocalSet(pair.host));
         }
         self.op(Op::LocalGet(pair.host))
-            .op(Op::If(BlockType::Result(ValType::I64)))
-            .op(Op::LocalGet(pair.host));
+            .op(Op::If(BlockType::Result(ValType::I64)));
+        if let Some(handoff) = handoff {
+            self.op(Op::LocalGet(handoff.ready))
+                .op(Op::If(BlockType::Result(ValType::I32)))
+                .op(Op::LocalGet(pair.host))
+                .op(Op::Else);
+        }
+        self.op(Op::LocalGet(pair.host));
         if first {
             self.op(Op::I32Load(MemArg {
                 offset: std::mem::offset_of!(DirectSpan, host) as u64,
@@ -536,6 +577,9 @@ impl Emitter {
                 memory_index: 0,
             }))
             .op(Op::LocalTee(pair.host));
+        }
+        if handoff.is_some() {
+            self.op(Op::End);
         }
         // The intervening ADD updates only its destination and flags. The
         // second load still executes at the second instruction's own position.
@@ -558,6 +602,9 @@ impl Emitter {
         self.op(Op::LocalGet(VALUE))
             .op(Op::End)
             .op(Op::LocalSet(VALUE));
+        if let Some(handoff) = handoff {
+            self.op(Op::I32Const(0)).op(Op::LocalSet(handoff.ready));
+        }
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]

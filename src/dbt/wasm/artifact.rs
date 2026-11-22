@@ -1623,11 +1623,12 @@ fn emit_body(
     });
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let paged_dword_read_pair = paged_dword_read_pair.zip(paged_dword_read_pair_type).map(
-        |((first, second, base), index)| {
+        |((first, second, base, handoff), index)| {
             (
                 first,
                 second,
                 base,
+                handoff,
                 import_function("paged_loop_read_span", index),
             )
         },
@@ -2268,19 +2269,31 @@ fn emit_body(
             (body, window, (guard, attempts), rearm)
         });
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    let paged_dword_read_pair = paged_dword_read_pair.map(|(first, second, base, resolve)| {
-        let host = next_local;
-        locals.push((2, ValType::I32));
-        next_local += 2;
-        memory::PagedDwordReadPair {
-            first,
-            second,
-            base,
-            resolve,
-            host,
-            resolver_mode: host + 1,
-        }
-    });
+    let paged_dword_read_pair =
+        paged_dword_read_pair.map(|(first, second, base, handoff, resolve)| {
+            let host = next_local;
+            locals.push((2, ValType::I32));
+            next_local += 2;
+            let handoff = handoff.map(|read| {
+                let address = next_local;
+                locals.extend([(1, ValType::I64), (1, ValType::I32)]);
+                next_local += 2;
+                memory::DwordPairHandoff {
+                    read,
+                    address,
+                    ready: address + 1,
+                }
+            });
+            memory::PagedDwordReadPair {
+                first,
+                second,
+                base,
+                resolve,
+                host,
+                resolver_mode: host + 1,
+                handoff,
+            }
+        });
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let paged_indexed_write = paged_indexed_write.map(|(shape, resolve)| {
         let record = next_local;
