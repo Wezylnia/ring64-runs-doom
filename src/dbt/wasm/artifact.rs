@@ -279,6 +279,7 @@ fn emit_placement(
         inline_f32_compares: true,
         inline_f32_sub: true,
         inline_f32_packed: true,
+        inline_cmpnleps: true,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         direct_vector_loads: true,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -362,6 +363,7 @@ struct OptionalLowering {
     inline_f32_compares: bool,
     inline_f32_sub: bool,
     inline_f32_packed: bool,
+    inline_cmpnleps: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     direct_vector_loads: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -1643,6 +1645,7 @@ fn emit_body(
         inline_f32_compares: optional.inline_f32_compares,
         inline_f32_sub: optional.inline_f32_sub,
         inline_f32_packed: optional.inline_f32_packed,
+        inline_cmpnleps: optional.inline_cmpnleps,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         direct_vector_loads: optional.direct_vector_loads && !observed && !paged && !mmio,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -1898,6 +1901,25 @@ fn emit_body(
     }
     let code_start = bytes.len();
     code.append_to(&mut bytes);
+    if bytes.len() > max_artifact_bytes
+        && optional.inline_cmpnleps
+        && unit.instructions.iter().any(|instruction| {
+            matches!(instruction.operation, Operation::Float(float) if super::float::is_cmpnleps(float))
+        })
+    {
+        return emit_body(
+            unit,
+            observed,
+            (paged, mmio),
+            loop_body,
+            _guard_reads,
+            OptionalLowering {
+                inline_cmpnleps: false,
+                ..optional
+            },
+            max_artifact_bytes,
+        );
+    }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if bytes.len() > max_artifact_bytes && paged && read_loop_diamond.is_some() {
         return emit_body(

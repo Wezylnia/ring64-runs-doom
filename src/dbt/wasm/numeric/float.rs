@@ -26,6 +26,11 @@ pub(super) fn is_packed_f32_arithmetic(instruction: FloatInstruction) -> bool {
         && matches!(instruction.op.kind, Kind::Add | Kind::Sub | Kind::Mul)
 }
 
+pub(super) fn is_cmpnleps(instruction: FloatInstruction) -> bool {
+    let op = instruction.op;
+    !op.scalar && op.format == Format::F32 && op.kind == Kind::Cmp && op.predicate & 7 == 6
+}
+
 impl Emitter {
     pub(super) fn float(&mut self, instruction: FloatInstruction, next_pc: u64, exit_depth: u32) {
         let [left, right, result] = self.vector_temps();
@@ -90,6 +95,13 @@ impl Emitter {
             self.op(Op::Br(1)).op(Op::End);
             self.float_f32_fallback(instruction, left, right, exit_depth);
             self.op(Op::End);
+        } else if self.inline_cmpnleps && is_cmpnleps(instruction) {
+            self.op(Op::Block(BlockType::Result(ValType::V128)))
+                .op(Op::Block(BlockType::Empty));
+            self.float_cmpnleps(left, right, result);
+            self.op(Op::Br(1)).op(Op::End);
+            self.float_helper(instruction, left, right, exit_depth + 1);
+            self.op(Op::End);
         } else if self.inline_f32_packed && is_packed_f32_arithmetic(instruction) {
             self.op(Op::Block(BlockType::Result(ValType::V128)))
                 .op(Op::Block(BlockType::Empty));
@@ -122,6 +134,35 @@ impl Emitter {
             let destination = self.xmm(instruction.dst);
             self.op(Op::LocalGet(result)).op(Op::LocalSet(destination));
         }
+    }
+
+    fn float_cmpnleps(&mut self, left: u32, right: u32, magnitude: u32) {
+        for operand in [left, right] {
+            // Allow signed zero and magnitudes from the smallest normal
+            // through infinity. NaNs and denormals need the MXCSR helper.
+            self.op(Op::LocalGet(operand))
+                .op(Op::I32Const(0x7fff_ffff))
+                .op(Op::I32x4Splat)
+                .op(Op::V128And)
+                .op(Op::LocalTee(magnitude))
+                .op(Op::I32Const(0x0080_0000))
+                .op(Op::I32x4Splat)
+                .op(Op::I32x4Sub)
+                .op(Op::I32Const(0x7f00_0000))
+                .op(Op::I32x4Splat)
+                .op(Op::I32x4GtU)
+                .op(Op::LocalGet(magnitude))
+                .op(Op::I32Const(0))
+                .op(Op::I32x4Splat)
+                .op(Op::I32x4Ne)
+                .op(Op::V128And);
+        }
+        self.op(Op::V128Or)
+            .op(Op::V128AnyTrue)
+            .unlikely(Op::BrIf(0))
+            .op(Op::LocalGet(left))
+            .op(Op::LocalGet(right))
+            .op(Op::F32x4Gt);
     }
 
     fn float_compare_f32_flags(

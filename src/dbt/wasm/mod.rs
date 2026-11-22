@@ -227,6 +227,7 @@ struct Emitter {
     inline_f32_compares: bool,
     inline_f32_sub: bool,
     inline_f32_packed: bool,
+    inline_cmpnleps: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     direct_vector_loads: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]

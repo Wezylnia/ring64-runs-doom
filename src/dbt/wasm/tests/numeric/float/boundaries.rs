@@ -11,6 +11,179 @@ fn packed_f32(values: [f32; 4]) -> u128 {
 }
 
 #[test]
+fn cmpnleps_accepts_ordered_lanes_with_live_mxcsr_and_keeps_memory_priority() {
+    let left = packed_f32([-0.0, f32::INFINITY, f32::MIN_POSITIVE, f32::NEG_INFINITY]);
+    let right = packed_f32([0.0, f32::MAX, 0.0, f32::NEG_INFINITY]);
+    let ordered_mask = u128::from(u64::MAX) << 32;
+    let address = Address {
+        base: AddressBase::Register(0),
+        ..Address::default()
+    };
+    let mut cases = Vec::new();
+    for predicate in [6, 0xfe] {
+        let op = Numeric {
+            predicate,
+            scalar: false,
+            ..numeric(Kind::Cmp)
+        };
+        for mxcsr in [0x1f80, 0xffe5, 0x4000] {
+            for src in [
+                Location::Register(RegisterView::low(1)),
+                Location::Memory(address),
+            ] {
+                let mut p = packet(
+                    vec![Operation::Float(FloatInstruction { op, dst: 0, src })],
+                    &[(0, left), (1, right)],
+                    &[(0, ordered_mask)],
+                    1,
+                    1,
+                );
+                p["mxcsr"] = json!(mxcsr);
+                p["expected"]["mxcsr"] = json!(mxcsr);
+                if src == Location::Memory(address) {
+                    p["accesses"] = json!([{
+                        "kind": "vector_load",
+                        "args": ["1122334400000000", 16, Segment::Ds as u32, 16],
+                        "result": format!("{right:x}")
+                    }]);
+                }
+                cases.push(p);
+            }
+        }
+    }
+    let op = Numeric {
+        predicate: 6,
+        scalar: false,
+        ..numeric(Kind::Cmp)
+    };
+    let mut p = packet(
+        vec![Operation::Float(FloatInstruction {
+            op,
+            dst: 0,
+            src: Location::Memory(address),
+        })],
+        &[(0, packed_f32([f32::NAN; 4]))],
+        &[],
+        crate::embedding::layout::DATA as u32,
+        0,
+    );
+    p["mxcsr"] = json!(0x1f00);
+    p["expected"]["mxcsr"] = json!(0x1f00);
+    p["accesses"] = json!([
+        {"kind":"vector_load","args":["1122334400000000",16,Segment::Ds as u32,16],"result":null},
+        {"kind":"access_reason","args":[],"result":crate::embedding::layout::DATA}
+    ]);
+    cases.push(p);
+    run_cases(cases);
+}
+
+#[test]
+fn cmpnleps_defers_nan_and_denormal_lanes_on_either_side() {
+    let op = Numeric {
+        predicate: 6,
+        scalar: false,
+        ..numeric(Kind::Cmp)
+    };
+    let operation = Operation::Float(FloatInstruction {
+        op,
+        dst: 0,
+        src: Location::Register(RegisterView::low(1)),
+    });
+    let base_left = packed_f32([-0.0, f32::INFINITY, f32::MIN_POSITIVE, 0.0]);
+    let base_right = packed_f32([0.0, f32::MAX, 0.0, 0.0]);
+    let ordered_mask = u128::from(u64::MAX) << 32;
+    let mut cases = Vec::new();
+    for (bits, nan) in [
+        (0x7fc0_0011u32, true),
+        (0x7f80_0022u32, true),
+        (0x0000_0001u32, false),
+        (0x8000_0001u32, false),
+    ] {
+        let last_lane = u128::from(bits) << 96;
+        for left_special in [true, false] {
+            let (left, right) = if left_special {
+                (base_left | last_lane, base_right)
+            } else {
+                (base_left, base_right | last_lane)
+            };
+            let masked = 0xdfa0;
+            let exception = if nan { 1 } else { 2 };
+            for mxcsr in [masked, masked & !(exception << 7), masked | 0x40] {
+                let daz = mxcsr & 0x40 != 0;
+                let raised = if nan || !daz { exception } else { 0 };
+                let trap = mxcsr & (raised << 7) != raised << 7;
+                let last_true = nan || !daz && ((bits >> 31 != 0) != left_special);
+                let expected = if trap {
+                    left
+                } else if last_true {
+                    ordered_mask | (u128::from(u32::MAX) << 96)
+                } else {
+                    ordered_mask
+                };
+                let outcome = crate::x86::float::eval(op, left, right, mxcsr);
+                assert_eq!(outcome.value, expected);
+                assert_eq!(outcome.raised, raised);
+                assert_eq!(outcome.mxcsr, mxcsr | raised);
+                assert_eq!(
+                    outcome.stage,
+                    trap.then_some(crate::x86::float::Stage::PreComputation)
+                );
+                let helper_reason = if trap { 13 } else { 0 };
+                let mut p = packet(
+                    vec![operation],
+                    &[(0, left), (1, right)],
+                    &[(0, expected)],
+                    if trap { 13 } else { 1 },
+                    u64::from(!trap),
+                );
+                p["mxcsr"] = json!(mxcsr);
+                p["expected"]["mxcsr"] = json!(mxcsr | raised);
+                p["accesses"] = json!([access(
+                    op,
+                    left,
+                    right,
+                    expected,
+                    helper_reason,
+                    mxcsr | raised
+                )]);
+                cases.push(p);
+            }
+        }
+    }
+    run_cases(cases);
+}
+
+#[test]
+fn cmpnleps_keeps_the_numeric_helper_at_a_tight_artifact_cap() {
+    let op = Numeric {
+        predicate: 6,
+        scalar: false,
+        ..numeric(Kind::Cmp)
+    };
+    let operation = Operation::Float(FloatInstruction {
+        op,
+        dst: 0,
+        src: Location::Register(RegisterView::low(1)),
+    });
+    let unit = unit(vec![instruction(0, operation)]);
+    let direct = emit(&unit);
+    let capped = emit_profile(&unit, false, false, direct.len() - 1);
+    assert!(capped.len() < direct.len());
+    let left = packed_f32([1.0; 4]);
+    let right = packed_f32([0.0; 4]);
+    let mut p = packet(
+        vec![operation],
+        &[(0, left), (1, right)],
+        &[(0, u128::MAX)],
+        1,
+        1,
+    );
+    p["bytes"] = json!(capped);
+    p["accesses"] = json!([access(op, left, right, u128::MAX, 0, 0x1f80)]);
+    run_cases(vec![p]);
+}
+
+#[test]
 fn packed_f32_sticky_precision_accepts_interior_lanes_and_provable_signed_zero() {
     let address = Address {
         base: AddressBase::Register(0),
