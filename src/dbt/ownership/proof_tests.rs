@@ -141,3 +141,43 @@ fn context_proof_is_cleared_for_published_owners_and_pending_aba_is_cancelled() 
         assert!(!owners.admit(1, &context, false, |_| true));
     }
 }
+
+#[cfg(not(feature = "parallel"))]
+#[test]
+fn active_paged_owner_switch_requires_admission_and_rechecks_revoked_fetches() {
+    let context = ExecutionContext::default();
+    let paging = paging::State::default();
+    let mut owners = Owners::default();
+    for owner in [1, 2, 3] {
+        assert!(owners.register(owner, &context, true, 0));
+        owners.record_paged(owner, &paging, FetchProof::default(), Vec::new());
+        if owner != 3 {
+            assert!(owners.publish(owner, &context, true, 0, Some(&paging)));
+        }
+    }
+
+    assert!(owners.admit(1, &context, true, |_| true));
+    assert_eq!(owners.active_fetch.as_ref().unwrap().0, 1);
+    assert!(!owners.admit(2, &context, true, |_| false));
+    assert_eq!(owners.active_fetch.as_ref().unwrap().0, 1);
+    assert!(!owners.admit(3, &context, true, |_| panic!("unpublished owner")));
+
+    assert!(owners.admit(2, &context, true, |_| true));
+    assert_eq!(owners.active_fetch.as_ref().unwrap().0, 2);
+    assert!(owners.contains(1));
+    let mut released = Vec::new();
+    owners.cancel_pending(true, |id| released.push(id));
+    assert_eq!(released, [3]);
+    assert!(!owners.admit(2, &context, true, |fetch| {
+        assert!(fetch.is_some());
+        false
+    }));
+    assert!(owners.admit(1, &context, true, |fetch| fetch.is_some()));
+    assert_eq!(owners.active_fetch.as_ref().unwrap().0, 1);
+    owners.release(1);
+    assert!(!owners.contains(1));
+    assert!(owners.admit(2, &context, true, |fetch| fetch.is_some()));
+    owners.clear();
+    assert!(!owners.contains(2));
+    assert!(owners.active_fetch.is_none());
+}

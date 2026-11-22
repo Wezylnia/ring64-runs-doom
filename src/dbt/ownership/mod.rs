@@ -55,9 +55,31 @@ enum Admission {
 #[derive(Debug, Default)]
 pub(crate) struct Owners {
     records: HashMap<u64, Assumptions>,
+    #[cfg(not(feature = "parallel"))]
+    active_fetch: Option<(u64, Assumptions)>,
 }
 
 impl Owners {
+    fn record(&self, owner: u64) -> Option<&Assumptions> {
+        #[cfg(not(feature = "parallel"))]
+        if let Some((active, record)) = &self.active_fetch
+            && *active == owner
+        {
+            return Some(record);
+        }
+        self.records.get(&owner)
+    }
+
+    fn record_mut(&mut self, owner: u64) -> Option<&mut Assumptions> {
+        #[cfg(not(feature = "parallel"))]
+        if let Some((active, record)) = &mut self.active_fetch
+            && *active == owner
+        {
+            return Some(record);
+        }
+        self.records.get_mut(&owner)
+    }
+
     pub fn register(
         &mut self,
         owner: u64,
@@ -86,11 +108,11 @@ impl Owners {
     }
 
     pub fn contains(&self, owner: u64) -> bool {
-        self.records.contains_key(&owner)
+        self.record(owner).is_some()
     }
 
     pub fn instruction_matches(&self, owner: u64, instruction: Instruction) -> bool {
-        self.records.get(&owner).is_some_and(|record| {
+        self.record(owner).is_some_and(|record| {
             record
                 .instructions
                 .binary_search_by_key(&instruction.pc, |i| i.pc)
@@ -106,7 +128,10 @@ impl Owners {
         state: &paging::State,
         linear_start: impl FnOnce(Instruction) -> Option<u64>,
     ) -> Option<(Instruction, u64, u64)> {
-        let record = self.records.get(&owner)?;
+        let (active, record) = self.active_fetch.as_ref()?;
+        if *active != owner {
+            return None;
+        }
         let fetch = record.fetch.as_ref()?;
         if record.admission != Admission::Current || !fetch.same_root(state) {
             return None;
@@ -165,8 +190,7 @@ impl Owners {
 
     #[cfg(test)]
     pub fn eligible(&self, owner: u64, context: &ExecutionContext, observed: bool) -> bool {
-        self.records
-            .get(&owner)
+        self.record(owner)
             .is_some_and(|record| Self::matches(record, context, observed))
     }
 
@@ -177,7 +201,7 @@ impl Owners {
         observed: bool,
         activate: impl FnOnce(Option<&FetchBinding>) -> bool,
     ) -> bool {
-        let Some(record) = self.records.get_mut(&owner) else {
+        let Some(record) = self.record_mut(owner) else {
             return false;
         };
         if !record.published || record.observed != observed {
@@ -196,6 +220,19 @@ impl Owners {
             return false;
         }
         record.admission = Admission::Current;
+        #[cfg(not(feature = "parallel"))]
+        if record.fetch.is_some()
+            && self
+                .active_fetch
+                .as_ref()
+                .is_none_or(|(active, _)| *active != owner)
+        {
+            // Remove the incoming record first so switching never grows the map.
+            let incoming = self.records.remove(&owner).expect("admitted paged owner");
+            if let Some((previous, record)) = self.active_fetch.replace((owner, incoming)) {
+                self.records.insert(previous, record);
+            }
+        }
         true
     }
 
@@ -207,7 +244,7 @@ impl Owners {
         epoch: u64,
         paging: Option<&paging::State>,
     ) -> bool {
-        let Some(record) = self.records.get_mut(&owner) else {
+        let Some(record) = self.record_mut(owner) else {
             return false;
         };
         if record.context != *context
@@ -225,13 +262,20 @@ impl Owners {
     }
 
     pub fn cancel_pending(&mut self, fetch_changed: bool, mut release: impl FnMut(u64)) {
+        let invalidate = |record: &mut Assumptions| {
+            if fetch_changed {
+                record.admission = Admission::CheckFetch;
+            } else if record.admission == Admission::Current {
+                record.admission = Admission::CheckContext;
+            }
+        };
+        #[cfg(not(feature = "parallel"))]
+        if let Some((_, record)) = &mut self.active_fetch {
+            invalidate(record);
+        }
         self.records.retain(|&owner, record| {
             if record.published {
-                if fetch_changed {
-                    record.admission = Admission::CheckFetch;
-                } else if record.admission == Admission::Current {
-                    record.admission = Admission::CheckContext;
-                }
+                invalidate(record);
                 true
             } else {
                 release(owner);
@@ -241,10 +285,23 @@ impl Owners {
     }
 
     pub fn release(&mut self, owner: u64) {
+        #[cfg(not(feature = "parallel"))]
+        if self
+            .active_fetch
+            .as_ref()
+            .is_some_and(|(active, _)| *active == owner)
+        {
+            self.active_fetch = None;
+            return;
+        }
         self.records.remove(&owner);
     }
 
     pub fn clear(&mut self) {
+        #[cfg(not(feature = "parallel"))]
+        {
+            self.active_fetch = None;
+        }
         self.records.clear();
     }
 }
