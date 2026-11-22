@@ -1,5 +1,7 @@
 use super::{DIRECTION, Emitter, REASON, REPEAT_REMAINING, RIP, SHADOW, SYSTEM};
 use crate::embedding::layout::{DISPATCH, HALTED, RunState};
+#[cfg(not(feature = "parallel"))]
+use crate::x86::instruction::Width;
 use crate::x86::instruction::{Operation, ProtectionKind, Repeat, SystemFlagsKind};
 use std::mem::offset_of;
 use wasm_encoder::{BlockType, Instruction as Op, MemArg};
@@ -126,8 +128,27 @@ impl Emitter {
         self.op(Op::I64Const(self.current_pc as i64));
         self.full_flags();
         let debug_begin = self.debug_begin.expect("debug begin import");
-        self.op(Op::LocalGet(SHADOW))
-            .op(Op::Call(debug_begin))
+        self.op(Op::LocalGet(SHADOW));
+        #[cfg(not(feature = "parallel"))]
+        if self.paged
+            && self.context.is_long64()
+            && matches!(
+                operation,
+                Operation::Call {
+                    width: Width::W64,
+                    ..
+                } | Operation::Return {
+                    width: Width::W64,
+                    ..
+                }
+            )
+        {
+            self.op(Op::I32Const(
+                crate::embedding::layout::debug::PAGED_NEAR_TRANSFER as i32,
+            ))
+            .op(Op::I32Or);
+        }
+        self.op(Op::Call(debug_begin))
             .op(Op::LocalTee(REASON))
             .op(Op::BrIf(exit_depth));
         let sampled_tf = self.sampled_tf.unwrap();

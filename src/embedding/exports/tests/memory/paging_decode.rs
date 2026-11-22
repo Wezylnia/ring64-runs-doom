@@ -233,6 +233,39 @@ fn reached_long64_instruction_requires_a_live_tlb_hit() {
 
 #[cfg(not(feature = "parallel"))]
 #[test]
+fn reached_near_transfer_preserves_debug_and_live_fetch_checks() {
+    use crate::embedding::layout::{DEBUG_EXCEPTION, debug::PAGED_NEAR_TRANSFER};
+
+    fixture("long64", true, true);
+    BRIDGE.with_borrow_mut(|bridge| {
+        let core = bridge.core.as_mut().unwrap();
+        core.image.physical_write(0x9000, 1, 0xc3).unwrap();
+        let debug = unsafe { &mut (*core.state.get()).debug.registers };
+        debug.addresses[0] = PC;
+        debug.dr7 |= 1;
+    });
+    let owner = activate_single_instruction();
+    let reached =
+        |flags, shadow| paging::core_paged_debug_begin(PC, flags, PAGED_NEAR_TRANSFER | shadow);
+
+    assert_eq!(reached(2, 0), DEBUG_EXCEPTION);
+    physical_counts::take();
+    assert_eq!(reached(2, 2), 0);
+    assert_eq!(physical_counts::take(), [4, 32, 0, 0, 0, 0]);
+    assert_eq!(reached(RF, 0), 0);
+    assert_eq!(physical_counts::take(), [0; 6]);
+
+    BRIDGE.with_borrow_mut(|bridge| {
+        let core = bridge.core.as_mut().unwrap();
+        core.image.physical_write(0x9000, 1, 0x90).unwrap();
+        assert!(core.image.active_changed());
+    });
+    assert_eq!(translation::core_validity(owner), 0);
+    assert_eq!(reached(RF, 0), 26);
+}
+
+#[cfg(not(feature = "parallel"))]
+#[test]
 fn guarded_dword_walk_requires_the_active_source_and_keeps_flags_on_refusal() {
     fixture("long64", true, true);
     BRIDGE.with_borrow_mut(|bridge| {

@@ -1496,9 +1496,19 @@ pub extern "C" fn core_paged_debug_begin(pc: u64, flags: u64, shadow: u32) -> i3
     BRIDGE.with_borrow_mut(|bridge| {
         let core = bridge.core.as_mut().unwrap();
         core.clear_paged_instruction();
+        #[cfg(not(feature = "parallel"))]
+        let (near_transfer, shadow) = {
+            let bit = crate::embedding::layout::debug::PAGED_NEAR_TRANSFER;
+            (shadow & bit != 0, shadow & !bit)
+        };
         let debug = core.debug_execute(pc, flags, shadow);
         if debug != 0 {
             return debug;
+        }
+        #[cfg(not(feature = "parallel"))]
+        if near_transfer && core.warm_guarded_code_page(pc) {
+            core.reconcile_translation_changes();
+            return 0;
         }
         #[cfg(not(feature = "parallel"))]
         if let Some(instruction) = core

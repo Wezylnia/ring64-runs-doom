@@ -1,5 +1,8 @@
 // Private debug-finish control result, never a public run exit.
 pub const CONTINUE_ACTIVE: i32 = -1;
+// Private paged-begin argument bit. Near transfers have no extra admission checks.
+#[cfg(not(feature = "parallel"))]
+pub(crate) const PAGED_NEAR_TRANSFER: u32 = 1 << 31;
 
 use crate::x86::debug::{Source, State};
 use std::mem::{offset_of, size_of};
