@@ -709,6 +709,85 @@ export function pagingBoundaryReviewScenarios(compiler: WebAssembly.Module): Sce
       },
     },
     {
+      name: 'paged Long64 adjacent dword additions preserve the first ADD on a second-page fault',
+      async run() {
+        const head = 0x400000n;
+        const data = 0x401000n;
+        // MOVZX EAX,[RDI]; ADD R8D,[RSI]; ADD R9D,[RSI+4]; LEA RDI,[RDI+1]; DEC ECX;
+        // JZ done; TEST EAX,EAX; JZ head; MOV [RDX],R8D; LEA RDX,[RDX+4]; JMP head; done: NOP.
+        const code = '0fb60744030644034e04488d7f01ffc9740d85c074ea448902488d5204ebe190';
+        const bytes = new Uint8Array(4096);
+        bytes.set(little([7n, 13n], 4), 0x100);
+        bytes.set(little([7n], 4), 0xffc);
+        const spans: boolean[] = [];
+        const create = Core.create;
+        Core.create = async (...args) => {
+          const core = await create(...args);
+          const imports = Reflect.get(core, 'artifactImports') as (
+            observed: boolean,
+          ) => Record<string, WebAssembly.ImportValue>;
+          Reflect.set(core, 'artifactImports', (observed: boolean) => {
+            const env = imports.call(core, observed);
+            const span = env.paged_loop_read_span;
+            if (typeof span === 'function') {
+              env.paged_loop_read_span = (address: bigint, width: number, segment: number) => {
+                const pointer = span(address, width, segment);
+                if (width === 8) spans.push(pointer !== 0);
+                return pointer;
+              };
+            }
+            return env;
+          });
+          return core;
+        };
+        try {
+          for (const split of [false, true]) {
+            await usingPaged(
+              compiler,
+              {
+                code,
+                words: [[0x4008n, 0xa007n]],
+                spans: [{ physical: 0xa000n, bytes }],
+              },
+              async (cpu) => {
+                const address = data + (split ? 0xffcn : 0x100n);
+                const start = initial(
+                  head,
+                  { 1: 1n, 2: data, 6: address, 7: data, 8: 0xffff_ffffn, 9: 0xffff_fffen },
+                  2n,
+                );
+                cpu.setState(start);
+                const prime = await cpu.run({ budget: 2n });
+                equal(prime.retired, 2n, 'warm the first load through the checked path');
+                cpu.setState(start);
+                const result = await cpu.run({ stop: head + 0x1fn, budget: 21n });
+                equal(result.state.registers[8], 6n, 'the first ADD commits in both cases');
+                if (split) {
+                  equal(result.reason, 'page-fault', 'the unmapped next page faults');
+                  equal(result.state.rip, head + 6n, 'RIP points to the faulting ADD');
+                  equal(result.retired, 2n, 'only the prefix retires');
+                  equal(
+                    result.state.registers[9],
+                    0xffff_fffen,
+                    'the second destination is intact',
+                  );
+                  equal(result.state.flags & 0x841n, 1n, 'the first ADD leaves carry set');
+                  equal(cpu.readPagingState().cr2, address + 4n, 'CR2 names the second operand');
+                } else {
+                  equal(result.reason, 'stop', 'the same-leaf pair completes');
+                  equal(result.retired, 6n, 'both ADDs retire independently');
+                  equal(result.state.registers[9], 11n, 'the second ADD reads the next dword');
+                }
+              },
+            );
+          }
+          same(spans, [true, false], 'the guard admits one leaf and refuses the crossing pair');
+        } finally {
+          Core.create = create;
+        }
+      },
+    },
+    {
       name: 'paged packed SSE re-enters after a checked split and preserves a later split fault',
       async run() {
         const head = 0x400000n;

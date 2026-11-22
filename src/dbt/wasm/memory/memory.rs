@@ -33,6 +33,15 @@ pub(super) struct PagedReadWindow {
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 #[derive(Clone, Copy)]
+pub(super) struct PagedDwordReadPair {
+    pub(super) first: u32,
+    pub(super) second: u32,
+    pub(super) resolve: u32,
+    pub(super) host: u32,
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[derive(Clone, Copy)]
 pub(super) struct PagedByteWritePair {
     pub(super) load: u32,
     pub(super) store: u32,
@@ -313,6 +322,13 @@ impl Emitter {
         let Some(read) = read else {
             return false;
         };
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if let Some(pair) = self.paged_dword_read_pair
+            && (self.current_index == pair.first || self.current_index == pair.second)
+        {
+            self.load_paired_paged_dword(pair, address, next_pc, read, exit_depth);
+            return true;
+        }
         self.address(address, next_pc);
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         if width == Width::W32
@@ -347,6 +363,72 @@ impl Emitter {
                 .op(Op::LocalSet(VALUE));
         }
         true
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    fn load_paired_paged_dword(
+        &mut self,
+        pair: PagedDwordReadPair,
+        address: Address,
+        next_pc: u64,
+        read: u32,
+        exit_depth: u32,
+    ) {
+        use crate::memory::DirectSpan;
+        use wasm_encoder::ValType;
+
+        let first = self.current_index == pair.first;
+        if first {
+            // The helper admits one local translation and one backing for both
+            // aligned dwords. Always overwrite the local, including on a miss.
+            self.address(address, next_pc);
+            self.op(Op::LocalTee(ADDRESS))
+                .op(Op::I32WrapI64)
+                .op(Op::I32Const(3))
+                .op(Op::I32And)
+                .op(Op::I32Eqz)
+                .op(Op::If(BlockType::Result(ValType::I32)))
+                .op(Op::LocalGet(ADDRESS))
+                .op(Op::I32Const(8))
+                .op(Op::I32Const(Segment::Ds as i32))
+                .op(Op::Call(pair.resolve))
+                .op(Op::Else)
+                .op(Op::I32Const(0))
+                .op(Op::End)
+                .op(Op::LocalSet(pair.host));
+        }
+        self.op(Op::LocalGet(pair.host))
+            .op(Op::If(BlockType::Result(ValType::I64)))
+            .op(Op::LocalGet(pair.host));
+        if first {
+            self.op(Op::I32Load(MemArg {
+                offset: std::mem::offset_of!(DirectSpan, host) as u64,
+                align: 2,
+                memory_index: 0,
+            }))
+            .op(Op::LocalTee(pair.host));
+        }
+        // The intervening ADD updates only its destination and flags. The
+        // second load still executes at the second instruction's own position.
+        self.op(Op::I64Load32U(MemArg {
+            offset: if first { 0 } else { 4 },
+            align: 0,
+            memory_index: 0,
+        }))
+        .op(Op::Else);
+        if first {
+            self.op(Op::LocalGet(ADDRESS));
+        } else {
+            self.address(address, next_pc);
+        }
+        self.op(Op::Call(read))
+            .op(Op::LocalTee(VALUE))
+            .op(Op::I64Const(-1))
+            .op(Op::I64Eq);
+        self.retry_guarded_paged_operand(exit_depth + 1, true);
+        self.op(Op::LocalGet(VALUE))
+            .op(Op::End)
+            .op(Op::LocalSet(VALUE));
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]

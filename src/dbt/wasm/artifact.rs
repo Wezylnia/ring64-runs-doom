@@ -338,6 +338,8 @@ fn emit_placement(
         paged_read_rearm: true,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_byte_write_pair: true,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        paged_dword_read_pair: true,
         // Smaller caller budgets immediately use the original paired lowering.
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_byte_write_pointer: max_artifact_bytes >= 256 * 1024,
@@ -445,6 +447,8 @@ struct OptionalLowering {
     paged_read_rearm: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_byte_write_pair: bool,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    paged_dword_read_pair: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_byte_write_pointer: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -886,6 +890,18 @@ fn emit_body(
     let paged_dword_window_type = loop_body
         .is_some_and(|body| body.paged_dword_window)
         .then(|| add_function_type(&mut types, [ValType::I64], [ValType::I32]));
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let paged_dword_read_pair = loop_body
+        .filter(|_| optional.paged_dword_read_pair && paged_scalar_writes && !mmio)
+        .and_then(|body| body.paged_dword_read_pair(unit));
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let paged_dword_read_pair_type = paged_dword_read_pair.map(|_| {
+        add_function_type(
+            &mut types,
+            [ValType::I64, ValType::I32, ValType::I32],
+            [ValType::I32],
+        )
+    });
     #[cfg(not(feature = "parallel"))]
     let paged_write_byte = loop_body.is_some_and(|body| body.has_paged_byte_store(unit));
     #[cfg(feature = "parallel")]
@@ -1221,6 +1237,17 @@ fn emit_body(
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let paged_dword_window =
         paged_dword_window_type.map(|index| import_function("paged_loop_read_dword_window", index));
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let paged_dword_read_pair =
+        paged_dword_read_pair
+            .zip(paged_dword_read_pair_type)
+            .map(|((first, second), index)| {
+                (
+                    first,
+                    second,
+                    import_function("paged_loop_read_span", index),
+                )
+            });
     let paged_loop_write_byte = paged_loop_write_type
         .filter(|_| paged_write_byte)
         .map(|index| import_function("paged_loop_write_byte", index));
@@ -1743,6 +1770,18 @@ fn emit_body(
         paged_vector_window.map(|resolve| read_window(resolve, paged_vector_rearm)),
     );
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let paged_dword_read_pair = paged_dword_read_pair.map(|(first, second, resolve)| {
+        let host = next_local;
+        locals.push((1, ValType::I32));
+        next_local += 1;
+        memory::PagedDwordReadPair {
+            first,
+            second,
+            resolve,
+            host,
+        }
+    });
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let paged_byte_write_pair = paged_byte_write_pair.map(|(load, store, read, write)| {
         let slot = next_local;
         let host = optional.paged_byte_write_pointer.then_some(slot + 1);
@@ -1913,6 +1952,8 @@ fn emit_body(
         paged_dense_read_span,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_dword_window,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        paged_dword_read_pair,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_vector_window,
         paged_loop_read_byte,
@@ -2289,6 +2330,21 @@ fn emit_body(
             _guard_reads,
             OptionalLowering {
                 x87_register_pairs: false,
+                ..optional
+            },
+            max_artifact_bytes,
+        );
+    }
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    if bytes.len() > max_artifact_bytes && paged_dword_read_pair.is_some() {
+        return emit_body(
+            unit,
+            observed,
+            (paged, mmio),
+            loop_body,
+            _guard_reads,
+            OptionalLowering {
+                paged_dword_read_pair: false,
                 ..optional
             },
             max_artifact_bytes,

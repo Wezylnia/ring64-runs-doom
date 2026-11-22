@@ -712,6 +712,52 @@ impl StructuredLoop {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn paged_dword_read_pair(self, unit: &super::Unit) -> Option<(u32, u32)> {
+        use crate::x86::{
+            context::Segment,
+            instruction::{AddressBase, MemoryAluOperands},
+        };
+
+        let read = |instruction: &Instruction| match instruction.operation {
+            Operation::MemoryAlu {
+                kind: Alu::Add,
+                width: Width::W32,
+                operands: MemoryAluOperands::RegisterFirst(register),
+                address:
+                    Address {
+                        base: AddressBase::Register(base),
+                        index: None,
+                        displacement,
+                        size: Width::W64,
+                        segment: Segment::Ds,
+                    },
+            } => Some((register.bank, base, displacement)),
+            _ => None,
+        };
+        let order = self.order();
+        let instructions = &unit.instructions;
+        (1..order.len()).find_map(|position| {
+            let (first, second) = (order.at(position - 1), order.at(position));
+            let (a, b) = (&instructions[first as usize], &instructions[second as usize]);
+            let (dst, base, displacement) = read(a)?;
+            let (_, next_base, next_displacement) = read(b)?;
+            if a.next_pc != b.pc
+                || dst == base
+                || base != next_base
+                || displacement.checked_add(4)? != next_displacement
+                || instructions[self.earlier as usize..=self.tail as usize]
+                    .iter()
+                    .any(|i| {
+                        matches!(i.operation, Operation::Jump { target } | Operation::Jcc { target, .. } if target == b.pc)
+                    })
+            {
+                return None;
+            }
+            Some((first, second))
+        })
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     pub(super) fn has_single_paged_vector_load(self, unit: &super::Unit) -> bool {
         use crate::x86::instruction::VectorOperand;
 
