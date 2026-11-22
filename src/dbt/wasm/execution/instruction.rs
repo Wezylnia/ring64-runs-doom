@@ -233,7 +233,13 @@ impl Emitter {
         }
         #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
         self.parallel_boundary(exit_depth);
-        self.begin(instruction.operation, instruction.next_pc, exit_depth);
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        let guarded_return = self.try_guarded_return_read(instruction, exit_depth);
+        #[cfg(any(feature = "parallel", not(target_arch = "wasm32")))]
+        let guarded_return = false;
+        if !guarded_return {
+            self.begin(instruction.operation, instruction.next_pc, exit_depth);
+        }
         #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
         let exit_depth = self.begin_parallel_instruction(instruction, exit_depth);
         match instruction.operation {
@@ -566,7 +572,7 @@ impl Emitter {
                 return;
             }
             Operation::Return { cleanup, width } => {
-                self.return_stack(cleanup, width, exit_depth);
+                self.return_stack(cleanup, width, exit_depth, guarded_return);
                 return;
             }
             Operation::Jump { target } => {
@@ -1016,7 +1022,7 @@ impl Emitter {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    fn newest_prefix_fetch(&mut self, pc: u64, indexed_read: bool) {
+    pub(super) fn newest_prefix_fetch(&mut self, pc: u64, indexed_read: bool) {
         use super::{SHADOW, STORE_STATUS};
         use crate::embedding::layout::debug::{Continuation, DebugState};
         use crate::embedding::layout::paging::{NEWEST_FETCH_INDEXED, NewestFetch};

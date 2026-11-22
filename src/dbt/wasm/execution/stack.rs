@@ -120,8 +120,76 @@ impl Emitter {
         }
     }
 
-    pub(super) fn return_stack(&mut self, cleanup: u16, width: Width, exit_depth: u32) {
-        self.stack_word(width, exit_depth);
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn try_guarded_return_read(
+        &mut self,
+        instruction: crate::x86::instruction::Instruction,
+        exit_depth: u32,
+    ) -> bool {
+        use super::{STORE_STATUS, instruction::IndexedOperand};
+        use crate::embedding::layout::QUIET_RETURN_READ;
+        use wasm_encoder::{BlockType, MemArg, ValType};
+
+        if !self.retouch_prefix_fetch
+            || !self.paged_return_uses_read_result()
+            || !self.uses_indexed_scalar_read(instruction.operation)
+            || instruction.next_pc <= instruction.pc
+            || (instruction.next_pc - 1) >> 12 != instruction.pc >> 12
+        {
+            return false;
+        }
+
+        self.newest_prefix_fetch(instruction.pc, true);
+        self.op(Op::If(BlockType::Result(ValType::I32)))
+            .op(Op::LocalGet(RSP))
+            .op(Op::LocalSet(ADDRESS));
+        self.indexed_read_host(
+            self.indexed_paged_read.unwrap(),
+            Width::W64.bytes(),
+            false,
+            IndexedOperand::Read,
+        );
+        self.op(Op::Else)
+            .op(Op::I32Const(0))
+            .op(Op::End)
+            .op(Op::LocalTee(STORE_STATUS))
+            .op(Op::If(BlockType::Empty))
+            .op(Op::LocalGet(STORE_STATUS));
+        self.direct_scalar_load(
+            Width::W64,
+            MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            },
+        );
+        let sampled_tf = self.sampled_tf.unwrap();
+        let incoming_shadow = self.incoming_shadow.unwrap();
+        // The retained fetch proves a quiet boundary. Leave a missed stack
+        // operand and all observable boundaries to the usual begin and read.
+        self.op(Op::I32Const(QUIET_RETURN_READ as i32))
+            .op(Op::LocalSet(STORE_STATUS))
+            .op(Op::I32Const(0))
+            .op(Op::LocalSet(sampled_tf))
+            .op(Op::I32Const(0))
+            .op(Op::LocalSet(incoming_shadow))
+            .op(Op::Else);
+        self.begin(instruction.operation, instruction.next_pc, exit_depth + 1);
+        self.stack_word(Width::W64, exit_depth + 1);
+        self.op(Op::End);
+        true
+    }
+
+    pub(super) fn return_stack(
+        &mut self,
+        cleanup: u16,
+        width: Width,
+        exit_depth: u32,
+        already_read: bool,
+    ) {
+        if !already_read {
+            self.stack_word(width, exit_depth);
+        }
         self.op(Op::LocalGet(VALUE)).op(Op::LocalSet(RHS));
         self.check_runtime_target(exit_depth);
         self.update_stack_pointer(u64::from(width.bytes()) + u64::from(cleanup));
