@@ -1,4 +1,5 @@
 import { createCpu, type RunResult, type SegmentFault } from '../../../sdk/src/index.js';
+import { Core } from '../../../sdk/src/wasm/core.js';
 import { LIMITS, check, equal, exit, fault, hex, memory, state } from '../../support/fixture.js';
 import { changed, context, input, using, type Scenario } from './fixture.js';
 
@@ -19,6 +20,89 @@ function segmentFault(result: RunResult, expected: SegmentFault): void {
 
 export function boundaryScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [
+    {
+      name: 'flat stack RMW requires both cached permissions and the full segment span',
+      async run() {
+        // MOV EAX,[ESP]; MOV [ESP+4],EAX; INC DWORD [ESP+8]; DEC ECX; JNZ head; NOP.
+        const code = '8b042489442404ff4424084975f290';
+        const start = input(0x1000n, { 1: 3n, 4: 0x2000n }, 3n);
+        let checks = 0;
+        const create = Core.create;
+        Core.create = async (...args) => {
+          const core = await create(...args);
+          const imports = Reflect.get(core, 'artifactImports') as (
+            observed: boolean,
+          ) => Record<string, WebAssembly.ImportValue>;
+          Reflect.set(core, 'artifactImports', (observed: boolean) => {
+            const env = imports.call(core, observed);
+            const rmw = env.segmented_load_for_write;
+            if (typeof rmw === 'function') {
+              env.segmented_load_for_write = (...args: (number | bigint)[]) => {
+                checks++;
+                return rmw(...args);
+              };
+            }
+            return env;
+          });
+          return core;
+        };
+        try {
+          for (const scenario of ['allowed', 'executable', 'readonly', 'limit']) {
+            checks = 0;
+            const ctx = context();
+            if (scenario === 'limit') ctx.segments.ss.limit = 0x200a;
+            const data =
+              scenario === 'readonly'
+                ? [
+                    { base: 0x2000n, bytes: '0300000000000000' },
+                    { base: 0x2008n, bytes: '02000000', write: false },
+                  ]
+                : [
+                    {
+                      base: 0x2000n,
+                      bytes: '030000000000000002000000',
+                      execute: scenario === 'executable',
+                    },
+                  ];
+            await using(
+              compiler,
+              code,
+              ctx,
+              async (cpu) => {
+                cpu.setState(start);
+                const result = await cpu.run({ stop: 0x100en, budget: 100n });
+                if (scenario === 'allowed' || scenario === 'executable') {
+                  equal(result.reason, 'stop', 'all three laps complete');
+                  equal(result.retired, 15n, 'each RMW retires once');
+                  equal(result.state.flags & 1n, 1n, 'INC and DEC preserve carry');
+                  equal(
+                    checks,
+                    scenario === 'allowed' ? 0 : 3,
+                    'only non-executable RAM gets both proofs',
+                  );
+                  memory(cpu, 0x2000n, '030000000300000005000000');
+                } else {
+                  equal(
+                    result.reason,
+                    scenario === 'limit' ? 'segment-fault' : 'data-fault',
+                    scenario,
+                  );
+                  equal(result.retired, 2n, 'only the prefix retires on a refusal');
+                  equal(result.state.rip, 0x1007n, 'RIP points to the faulting INC');
+                  equal(result.state.flags, 3n, 'the fault does not update arithmetic flags');
+                  equal(checks, 1, 'the checked RMW reports the fault');
+                  memory(cpu, 0x2000n, '0300000003000000');
+                  memory(cpu, 0x2008n, '02000000');
+                }
+              },
+              { data },
+            );
+          }
+        } finally {
+          Core.create = create;
+        }
+      },
+    },
     {
       name: 'flat segment limits still apply after a scalar load warmed the mapping',
       async run() {

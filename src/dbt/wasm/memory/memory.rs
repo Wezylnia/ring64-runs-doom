@@ -918,6 +918,107 @@ impl Emitter {
         });
     }
 
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn load_cached_stack_rmw(
+        &mut self,
+        address: Address,
+        width: Width,
+        next_pc: u64,
+        exit_depth: u32,
+    ) -> bool {
+        use crate::memory::Access;
+
+        let Some((read, write)) = self.stack_read_span.zip(self.write_spans[1]) else {
+            return false;
+        };
+        if self.observed
+            || self.context.is_long64()
+            || address.segment != Segment::Ss
+            || address.size != Width::W32
+            || width != Width::W32
+            || self
+                .context
+                .translate(0, 4, Segment::Ss, Access::Write, true)
+                .ok()
+                != Some(0)
+        {
+            return false;
+        }
+        let last = i64::from(self.context.segment(Segment::Ss).limit) - 3;
+        self.address(address, next_pc);
+        self.op(Op::LocalTee(ADDRESS))
+            .op(Op::I64Const(last))
+            .op(Op::I64LeU);
+        // Both caches describe a whole mapping. Require the same mapping to
+        // cover the operand with both permissions. Unfilled caches have
+        // length zero, and the write proof already excludes code aliases.
+        self.op(Op::LocalGet(read.base))
+            .op(Op::LocalGet(write.base))
+            .op(Op::I64Eq)
+            .op(Op::I32And)
+            .op(Op::LocalGet(read.length))
+            .op(Op::LocalGet(write.length))
+            .op(Op::I64Eq)
+            .op(Op::I32And)
+            .op(Op::LocalGet(ADDRESS))
+            .op(Op::LocalGet(write.base))
+            .op(Op::I64Sub)
+            .op(Op::LocalTee(VALUE))
+            .op(Op::LocalGet(write.length))
+            .op(Op::I64LtU)
+            .op(Op::I32And)
+            .op(Op::LocalGet(VALUE))
+            .op(Op::I64Const(3))
+            .op(Op::I64Add)
+            .op(Op::LocalGet(write.length))
+            .op(Op::I64LtU)
+            .op(Op::I32And);
+        self.op(Op::If(BlockType::Empty))
+            .op(Op::LocalGet(write.host))
+            .op(Op::LocalGet(VALUE))
+            .op(Op::I32WrapI64)
+            .op(Op::I32Add)
+            .op(Op::LocalTee(STORE_STATUS));
+        self.direct_scalar_load(
+            width,
+            MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            },
+        );
+        self.op(Op::Else)
+            .op(Op::I32Const(0))
+            .op(Op::LocalSet(STORE_STATUS));
+        self.load_address_slow(width, true, exit_depth + 1);
+        self.op(Op::End);
+        true
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn store_cached_stack_rmw(&mut self, width: Width, exit_depth: u32) {
+        // No other guest access or callback runs between the proved load and
+        // this unary store. On the checked path, keep the original status.
+        self.stores = true;
+        self.op(Op::LocalGet(STORE_STATUS))
+            .op(Op::If(BlockType::Empty))
+            .op(Op::LocalGet(STORE_STATUS))
+            .op(Op::LocalGet(RESULT));
+        self.direct_scalar_store(
+            width,
+            MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            },
+        );
+        self.op(Op::I32Const(1))
+            .op(Op::LocalSet(STORE_STATUS))
+            .op(Op::Else);
+        self.store_result_slow(width, exit_depth + 1);
+        self.op(Op::End);
+    }
+
     pub(super) fn load_address_slow(&mut self, width: Width, for_write: bool, exit_depth: u32) {
         self.linear_address();
         self.op(Op::I32Const(i32::from(width.bytes())));

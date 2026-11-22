@@ -40,7 +40,16 @@ impl Emitter {
         next_pc: u64,
         exit_depth: u32,
     ) {
-        self.read_location(dst, width, next_pc, true, exit_depth);
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        let cached = matches!(dst, Location::Memory(address)
+            if self.load_cached_stack_rmw(address, width, next_pc, exit_depth));
+        #[cfg(any(feature = "parallel", not(target_arch = "wasm32")))]
+        let cached = false;
+        if cached {
+            self.op(Op::LocalGet(VALUE)).op(Op::LocalSet(LHS));
+        } else {
+            self.read_location(dst, width, next_pc, true, exit_depth);
+        }
         match kind {
             Unary::Not => {
                 self.op(Op::LocalGet(LHS))
@@ -67,6 +76,13 @@ impl Emitter {
                 self.arithmetic_result(Alu::Sub, width);
             }
         }
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if cached {
+            self.store_cached_stack_rmw(width, exit_depth);
+        } else {
+            self.write_location(dst, width, exit_depth);
+        }
+        #[cfg(any(feature = "parallel", not(target_arch = "wasm32")))]
         self.write_location(dst, width, exit_depth);
         match kind {
             Unary::Not => {}
