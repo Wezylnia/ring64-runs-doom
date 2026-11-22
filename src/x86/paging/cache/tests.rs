@@ -85,6 +85,50 @@ fn retained_mapping_and_live_rights_are_distinct_from_current_pte_bytes() {
 
 #[cfg(not(feature = "parallel"))]
 #[test]
+fn paired_touch_matches_sequential_ages_at_clock_rollover() {
+    let (mut image, state, data) = fixture();
+    image.physical_write(0x4010, 8, 0xb027).unwrap();
+    let fetch = Request {
+        linear: data.linear + 4096,
+        access: Access::Execute,
+        ..data
+    };
+    let keys = &ProtectionKeys::ZERO;
+    let walked = [data, fetch].map(|request| {
+        let translation = walk::walk(&mut image, &state, request, keys).unwrap();
+        (request, translation)
+    });
+    let make_cache = |clock| {
+        let cache = Cache::with_capacity(2);
+        for (request, translation) in walked {
+            cache.fill(&state, request, translation);
+        }
+        {
+            let mut entries = cache.entries.borrow_mut();
+            entries.clock = clock;
+            entries.slots[0].as_mut().unwrap().used = clock - 1;
+            entries.slots[1].as_mut().unwrap().used = clock;
+        }
+        cache
+    };
+    for clock in [u64::MAX - 2, u64::MAX - 1, u64::MAX] {
+        let exact = make_cache(clock);
+        let paired = make_cache(clock);
+        let mut exact = exact.entries.borrow_mut();
+        exact.touch(0);
+        exact.touch(1);
+        let mut paired = paired.entries.borrow_mut();
+        paired.touch_data_and_fetch(0, 1);
+        assert_eq!((paired.clock, paired.hint), (exact.clock, exact.hint));
+        assert_eq!(
+            paired.slots.map(|entry| entry.map(|entry| entry.used)),
+            exact.slots.map(|entry| entry.map(|entry| entry.used)),
+        );
+    }
+}
+
+#[cfg(not(feature = "parallel"))]
+#[test]
 fn guarded_dword_miss_matches_checked_fill_and_successor_fetch() {
     let (mut image, state, request) = fixture();
     let code = Request {

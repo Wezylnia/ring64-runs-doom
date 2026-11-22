@@ -155,6 +155,20 @@ impl Entries {
         self.slots[index].as_mut().unwrap().used = self.clock;
         self.hint = Some(index);
     }
+
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    fn touch_data_and_fetch(&mut self, data: usize, fetch: usize) {
+        debug_assert_eq!(self.hint, Some(fetch));
+        debug_assert_ne!(data, fetch);
+        if self.clock > u64::MAX - 2 {
+            self.touch(data);
+            self.touch(fetch);
+            return;
+        }
+        self.slots[data].as_mut().unwrap().used = self.clock + 1;
+        self.clock += 2;
+        self.slots[fetch].as_mut().unwrap().used = self.clock;
+    }
 }
 
 /// One CPU's bounded retained translation authority; backing admission stays separate.
@@ -346,8 +360,7 @@ impl Cache {
         // A live hint is the entry last touched. The same entry or the two
         // already newest entries would keep their relative order.
         if data != fetch && entries.slots[data].as_ref().unwrap().used != entries.clock - 1 {
-            entries.touch(data);
-            entries.touch(fetch);
+            entries.touch_data_and_fetch(data, fetch);
         }
         Some(value)
     }
@@ -400,8 +413,7 @@ impl Cache {
         // Further accesses in the same pair of leaves preserve that order.
         for data in [source, destination] {
             if data != fetch && entries.slots[data].as_ref().unwrap().used != entries.clock - 1 {
-                entries.touch(data);
-                entries.touch(fetch);
+                entries.touch_data_and_fetch(data, fetch);
             }
         }
         Some(value)
@@ -505,8 +517,7 @@ impl Cache {
         let value = access(data, translation)?;
         // Preserve the normal guarded data-then-fetch recency order.
         if data != fetch && entries.slots[data].as_ref().unwrap().used != entries.clock - 1 {
-            entries.touch(data);
-            entries.touch(fetch);
+            entries.touch_data_and_fetch(data, fetch);
         }
         if let Some(remember) = remember.filter(|_| !entries.slots[data].unwrap().global) {
             const { assert!(CAPACITY < u8::MAX as usize) };
@@ -553,8 +564,7 @@ impl Cache {
             if order.as_ref().is_some_and(|hint| !hint.matches(&entries)) {
                 *order = None;
             }
-            entries.touch(data);
-            entries.touch(fetch);
+            entries.touch_data_and_fetch(data, fetch);
             if let Some(hint) = order.as_mut() {
                 hint.touch(&entries, data, fetch);
             }
@@ -643,8 +653,7 @@ impl Cache {
                 used: 0,
             },
         );
-        entries.touch(index);
-        entries.touch(fetch);
+        entries.touch_data_and_fetch(index, fetch);
         if let Some(hint) = order.as_mut() {
             hint.touch(&entries, index, fetch);
         }

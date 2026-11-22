@@ -49,6 +49,26 @@ impl Recency {
         self.newest = slot;
     }
 
+    fn touch_before_newest(&mut self, index: usize, newest: usize) {
+        debug_assert_eq!(self.newest, newest as u8);
+        debug_assert_ne!(index, newest);
+        if self.neighbors[newest].older == index as u8 {
+            return;
+        }
+        self.remove(index);
+        let older = self.neighbors[newest].older;
+        if older == NONE {
+            self.oldest = index as u8;
+        } else {
+            self.neighbors[usize::from(older)].newer = index as u8;
+        }
+        self.neighbors[index] = Neighbors {
+            older,
+            newer: newest as u8,
+        };
+        self.neighbors[newest].older = index as u8;
+    }
+
     pub(super) fn remove(&mut self, index: usize) {
         let Neighbors { older, newer } = self.neighbors[index];
         if older == NONE {
@@ -117,8 +137,7 @@ impl GuardedOrder {
     }
 
     pub(super) fn touch(&mut self, entries: &Entries, operand: usize, code: usize) {
-        self.order.touch(operand);
-        self.order.touch(code);
+        self.order.touch_before_newest(operand, code);
         self.record(entries);
     }
 }
