@@ -1315,11 +1315,17 @@ impl Emitter {
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     pub(super) fn rearm_paged_access(&mut self, bytes: u8, ready: u32) {
         let (_, attempts) = self.paged_loop_guard.expect("paged loop guard");
+        let cooldown = if bytes == 16 && self.paged_copy_window.is_some() {
+            // A checked copy lap can establish a new window past a page boundary.
+            PAGED_READ_REPLAY - 1
+        } else {
+            PAGED_READ_COOLDOWN
+        };
         self.op(Op::LocalGet(attempts))
             .op(Op::I32Const(PAGED_READ_REPLAY))
             .op(Op::I32Eq)
             .op(Op::If(BlockType::Empty))
-            .op(Op::I32Const(PAGED_READ_COOLDOWN))
+            .op(Op::I32Const(cooldown))
             .op(Op::I32Const(2));
         self.linear_address();
         self.op(Op::I32Const(i32::from(bytes)))
