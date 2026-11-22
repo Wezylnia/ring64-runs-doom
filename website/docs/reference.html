@@ -108,21 +108,21 @@
 <section id="limits" class="docs-topic" aria-labelledby="limits-title">
   <h1 id="limits-title" tabindex="-1">limits</h1>
   <p>
-    pass all six <code>Limits</code> fields as positive unsigned 32-bit integers. limits apply per
-    vcpu. the <a href="#quickstart">quickstart</a> has a complete example.
+    set all six <code>Limits</code> fields as positive unsigned 32-bit integers. limits apply per
+    vcpu. the <a href="#quickstart">quickstart</a> shows a complete set.
   </p>
   <dl class="docs-members">
     <div>
       <dt><code>maxInstructions</code>, <code>maxSourceBytes</code></dt>
-      <dd>instruction and source byte limits per translation.</dd>
+      <dd>cap the guest instructions and source bytes in one translation.</dd>
     </div>
     <div>
       <dt><code>maxArtifactBytes</code></dt>
-      <dd>byte limit per generated wasm module.</dd>
+      <dd>caps the bytes in one generated wasm module.</dd>
     </div>
     <div>
       <dt><code>maxCachedArtifacts</code>, <code>maxCachedBytes</code></dt>
-      <dd>module count and byte limits for the translation cache.</dd>
+      <dd>cap the module count and total bytes in the translation cache.</dd>
     </div>
     <div>
       <dt><code>maxTranslationsPerRun</code></dt>
@@ -133,7 +133,10 @@
 
 <section id="run-result" class="docs-topic" aria-labelledby="run-result-title">
   <h1 id="run-result-title" tabindex="-1">run options and results</h1>
-  <p>run toward a guest address and read <code>rax</code> if the cpu reaches it.</p>
+  <p>
+    give <a href="#cpu.run"><code>cpu.run</code></a> an instruction budget and an optional stop
+    address. this example reads <code>rax</code> when execution reaches the stop address.
+  </p>
   <div class="docs-example">
     <div class="docs-example-bar">
       <a href="./examples/api/run-to.ts" download>run-to.ts</a>
@@ -141,110 +144,138 @@
     </div>
     <pre><code id="run-to"><!-- example:api/run-to.ts --></code></pre>
   </div>
-  <dl class="docs-members">
-    <div>
-      <dt><code>budget: bigint</code></dt>
-      <dd>maximum guest instructions to retire.</dd>
-    </div>
-    <div>
-      <dt><code>stop?: bigint</code></dt>
-      <dd>stop before executing the instruction at this address.</dd>
-    </div>
-    <div>
-      <dt><code>repeatBudget?: bigint</code></dt>
-      <dd>maximum <code>rep</code> iterations. defaults to <code>budget</code>.</dd>
-    </div>
-    <div>
-      <dt><code>eventDelivery?: { budget: bigint }</code></dt>
-      <dt><code>exceptionDelivery?: { budget: bigint }</code></dt>
-      <dd>enables automatic guest event delivery with a separate budget. pass either spelling.</dd>
-    </div>
-  </dl>
-  <p>
-    <code>RunResult</code> includes <code>state</code>, <code>retired</code> and
-    <code>remaining</code>, and <code>repeatIterations</code> and
-    <code>remainingRepeatBudget</code>. automatic delivery also returns
-    <code>deliveryAttempts</code> and <code>remainingDeliveryBudget</code>.
-    <code>resources</code> counts translation and cache work. <code>timings</code> reports
-    milliseconds.
-  </p>
-  <p>
-    check <code>reason</code> to read a fault's diagnostic. guest faults return results. invalid
-    options and host failures, such as a throwing provider, can reject the run.
-  </p>
-  <dl class="docs-members">
-    <div>
-      <dt><code>stop</code>, <code>budget</code>, <code>repeat-budget</code></dt>
-      <dd>reached the stop address or used up an execution budget.</dd>
-    </div>
-    <div>
-      <dt>
-        <code>event-budget</code>, <code>pending-exception</code>, <code>pending-interrupt</code>
-      </dt>
-      <dd>delivery reached its budget or an event is waiting in <code>state.event</code>.</dd>
-    </div>
-    <div>
-      <dt><code>halted</code>, <code>shutdown</code>, <code>paused</code></dt>
-      <dd>guest halt, guest shutdown or a parallel pause.</dd>
-    </div>
-    <div>
-      <dt><code>unsupported</code>, <code>resource-limit</code></dt>
-      <dd>unsupported operation or a translation limit.</dd>
-    </div>
-    <div>
-      <dt><code>fetch-fault</code>, <code>target-fault</code>, <code>data-fault</code></dt>
-      <dd><code>fault</code> describes the address, access, width and cause.</dd>
-    </div>
-    <div>
-      <dt><code>page-fault</code></dt>
-      <dd><code>pageFault</code> includes the linear address and guest paging error code.</dd>
-    </div>
-    <div>
-      <dt><code>physical-memory-fault</code></dt>
-      <dd><code>physicalMemoryFault</code> describes the guest physical access.</dd>
-    </div>
-    <div>
-      <dt>
-        <code>segment-fault</code>, <code>protection-fault</code>,
-        <code>system-memory-fault</code>
-      </dt>
-      <dd>
-        <code>segmentFault</code>, <code>protectionFault</code> or <code>systemMemoryFault</code>.
-      </dd>
-    </div>
-    <div>
-      <dt>
-        <code>alignment-fault</code>, <code>alignment-check</code>, <code>debug-exception</code>
-      </dt>
-      <dd>
-        <code>alignmentFault</code>, <code>alignmentCheck</code> or <code>debugException</code>.
-      </dd>
-    </div>
-    <div>
-      <dt>
-        <code>simd-exception</code>, <code>x87-exception</code>, <code>general-protection</code>
-      </dt>
-      <dd>
-        <code>simdException</code>, <code>x87Exception</code> or
-        <code>generalProtectionFault</code>.
-      </dd>
-    </div>
-    <div>
-      <dt>
-        <code>invalid-encoding</code>, <code>device-not-available</code>,
-        <code>divide-error</code>
-      </dt>
-      <dd>
-        <code>invalid-encoding</code> can include <code>numericControlFault</code>.
-        <code>device-not-available</code> can include <code>deviceNotAvailable</code>.
-      </dd>
-    </div>
-  </dl>
+  <section class="docs-api-group" aria-labelledby="run-options-title">
+    <h2 id="run-options-title" tabindex="-1">options</h2>
+    <dl class="docs-members">
+      <div>
+        <dt id="run.budget" tabindex="-1">
+          <a href="#run.budget"><code>budget: bigint</code></a>
+        </dt>
+        <dd>maximum guest instructions to retire.</dd>
+      </div>
+      <div>
+        <dt id="run.stop" tabindex="-1">
+          <a href="#run.stop"><code>stop?: bigint</code></a>
+        </dt>
+        <dd>stop before executing the instruction at this address.</dd>
+      </div>
+      <div>
+        <dt id="run.repeatBudget" tabindex="-1">
+          <a href="#run.repeatBudget"><code>repeatBudget?: bigint</code></a>
+        </dt>
+        <dd>maximum <code>rep</code> iterations. defaults to <code>budget</code>.</dd>
+      </div>
+      <div>
+        <dt id="run.eventDelivery" tabindex="-1">
+          <a href="#run.eventDelivery"><code>eventDelivery?: { budget: bigint }</code></a>
+        </dt>
+        <dt id="run.exceptionDelivery" tabindex="-1">
+          <a href="#run.exceptionDelivery"><code>exceptionDelivery?: { budget: bigint }</code></a>
+        </dt>
+        <dd>
+          enables automatic guest event delivery with a separate budget. pass either spelling.
+        </dd>
+      </div>
+    </dl>
+  </section>
+  <section class="docs-api-group" aria-labelledby="run-fields-title">
+    <h2 id="run-fields-title" tabindex="-1">result fields</h2>
+    <p>
+      <code>RunResult</code> returns a <code>state</code> snapshot. <code>retired</code> and
+      <code>remaining</code> track the instruction budget. <code>repeatIterations</code> and
+      <code>remainingRepeatBudget</code> track the <code>rep</code> budget.
+    </p>
+    <p>
+      automatic delivery adds <code>deliveryAttempts</code> and
+      <code>remainingDeliveryBudget</code>. <code>resources</code> counts translation and cache
+      work. <code>timings</code> reports milliseconds.
+    </p>
+  </section>
+  <section class="docs-api-group" aria-labelledby="run-reasons-title">
+    <h2 id="run-reasons-title" tabindex="-1">stop reasons</h2>
+    <dl class="docs-members">
+      <div>
+        <dt><code>stop</code>, <code>budget</code>, <code>repeat-budget</code></dt>
+        <dd>reached the stop address or used up an execution budget.</dd>
+      </div>
+      <div>
+        <dt>
+          <code>event-budget</code>, <code>pending-exception</code>, <code>pending-interrupt</code>
+        </dt>
+        <dd>delivery reached its budget or an event is waiting in <code>state.event</code>.</dd>
+      </div>
+      <div>
+        <dt><code>halted</code>, <code>shutdown</code>, <code>paused</code></dt>
+        <dd>guest halt, guest shutdown or a parallel pause.</dd>
+      </div>
+      <div>
+        <dt><code>unsupported</code>, <code>resource-limit</code></dt>
+        <dd>unsupported operation or a translation limit.</dd>
+      </div>
+    </dl>
+  </section>
+  <section class="docs-api-group" aria-labelledby="run-faults-title">
+    <h2 id="run-faults-title" tabindex="-1">fault details</h2>
+    <p>
+      guest faults return results. check <code>reason</code> to find the diagnostic. invalid options
+      and host failures, such as a throwing provider, can reject the run.
+    </p>
+    <dl class="docs-members">
+      <div>
+        <dt><code>fetch-fault</code>, <code>target-fault</code>, <code>data-fault</code></dt>
+        <dd><code>fault</code> describes the address, access, width and cause.</dd>
+      </div>
+      <div>
+        <dt><code>page-fault</code></dt>
+        <dd><code>pageFault</code> includes the linear address and guest paging error code.</dd>
+      </div>
+      <div>
+        <dt><code>physical-memory-fault</code></dt>
+        <dd><code>physicalMemoryFault</code> describes the guest physical access.</dd>
+      </div>
+      <div>
+        <dt>
+          <code>segment-fault</code>, <code>protection-fault</code>,
+          <code>system-memory-fault</code>
+        </dt>
+        <dd>
+          <code>segmentFault</code>, <code>protectionFault</code> or <code>systemMemoryFault</code>.
+        </dd>
+      </div>
+      <div>
+        <dt>
+          <code>alignment-fault</code>, <code>alignment-check</code>, <code>debug-exception</code>
+        </dt>
+        <dd>
+          <code>alignmentFault</code>, <code>alignmentCheck</code> or <code>debugException</code>.
+        </dd>
+      </div>
+      <div>
+        <dt>
+          <code>simd-exception</code>, <code>x87-exception</code>, <code>general-protection</code>
+        </dt>
+        <dd>
+          <code>simdException</code>, <code>x87Exception</code> or
+          <code>generalProtectionFault</code>.
+        </dd>
+      </div>
+      <div>
+        <dt>
+          <code>invalid-encoding</code>, <code>device-not-available</code>,
+          <code>divide-error</code>
+        </dt>
+        <dd>
+          <code>invalid-encoding</code> can include <code>numericControlFault</code>.
+          <code>device-not-available</code> can include <code>deviceNotAvailable</code>.
+        </dd>
+      </div>
+    </dl>
+  </section>
 </section>
 
 <section id="memory" class="docs-topic" aria-labelledby="memory-title">
   <h1 id="memory-title" tabindex="-1">memory</h1>
-  <p>copy bytes from a readable linear address to a writable one.</p>
+  <p>copy bytes from a readable linear address to a writable one on an idle cpu.</p>
   <div class="docs-example">
     <div class="docs-example-bar">
       <a href="./examples/api/copy-guest-bytes.ts" download>copy-guest-bytes.ts</a>
@@ -259,62 +290,106 @@
     </div>
     <pre><code id="copy-guest-bytes"><!-- example:api/copy-guest-bytes.ts --></code></pre>
   </div>
-  <dl class="docs-members">
-    <div>
-      <dt><code>linear</code></dt>
-      <dd>
-        the default. pass <code>code</code> and <code>ram</code> as
-        <code>{ base: bigint, bytes: Uint8Array }</code>. execution starts at
-        <code>code.base</code>. code is readable and executable, ram is readable and writable.
-      </dd>
-    </div>
-    <div>
-      <dt><code>ia32e-paged</code></dt>
-      <dd>uses guest page tables in long64 or compatibility mode. pass <code>paging</code>.</dd>
-    </div>
-    <div>
-      <dt><code>physical</code></dt>
-      <dd>maps guest physical addresses. pass <code>context</code> and <code>paging</code>.</dd>
-    </div>
-  </dl>
-  <p>
-    custom linear maps, <code>ia32e-paged</code> and <code>physical</code> require
-    <code>entry</code>, <code>memoryLimits</code> and <code>memory: { backings, mappings }</code>.
-    each <code>MemoryBackingInput</code> pairs an <code>id</code> with <code>bytes</code>. each
-    <code>MemoryMapping</code> names a <code>backing</code> and supplies <code>base</code>,
-    <code>offset</code>, <code>length</code> and <code>permissions</code> for <code>read</code>,
-    <code>write</code> and <code>execute</code>. mappings must fit their backing and occupy distinct
-    guest ranges.
-  </p>
-  <p>
-    <code>MemoryLimits</code> requires <code>maxBackingBytes</code>, <code>maxBackings</code> and
-    <code>maxMappings</code>.
-  </p>
-  <dl class="docs-members">
-    <div>
-      <dt><code>readMemory(address: bigint, length: number): Uint8Array</code></dt>
-      <dt><code>writeMemory(address: bigint, bytes: Uint8Array): void</code></dt>
-      <dd>access linear mappings. reads return a copy.</dd>
-    </div>
-    <div>
-      <dt><code>readPhysicalMemory(address: bigint, length: number): Uint8Array</code></dt>
-      <dt><code>writePhysicalMemory(address: bigint, bytes: Uint8Array): void</code></dt>
-      <dd>
-        access guest physical mappings in <code>ia32e-paged</code> or <code>physical</code>. reads
-        return a copy.
-      </dd>
-    </div>
-    <div>
-      <dt><code>addBacking(input: MemoryBackingInput): void</code></dt>
-      <dt><code>removeBacking(id: string): void</code></dt>
-      <dt><code>setMappings(mappings: MemoryMapping[]): void</code></dt>
-      <dd>add bytes, remove an unmapped backing or replace the entire mapping list.</dd>
-    </div>
-  </dl>
-  <p>
-    on a parallel machine, call shared memory and mapping methods on the machine. they return
-    promises.
-  </p>
+  <section class="docs-api-group" aria-labelledby="memory-models-title">
+    <h2 id="memory-models-title" tabindex="-1">memory models</h2>
+    <dl class="docs-members">
+      <div>
+        <dt><code>linear</code></dt>
+        <dd>
+          the default. pass <code>code</code> and <code>ram</code> as
+          <code>{ base: bigint, bytes: Uint8Array }</code>. execution starts at
+          <code>code.base</code>. code is readable and executable, ram is readable and writable.
+        </dd>
+      </div>
+      <div>
+        <dt><code>ia32e-paged</code></dt>
+        <dd>uses guest page tables in long64 or compatibility mode. pass <code>paging</code>.</dd>
+      </div>
+      <div>
+        <dt><code>physical</code></dt>
+        <dd>maps guest physical addresses. pass <code>context</code> and <code>paging</code>.</dd>
+      </div>
+    </dl>
+  </section>
+  <section class="docs-api-group" aria-labelledby="memory-access-title">
+    <h2 id="memory-access-title" tabindex="-1">read and write</h2>
+    <dl class="docs-members">
+      <div>
+        <dt id="cpu.readMemory" tabindex="-1">
+          <a href="#cpu.readMemory"
+            ><code>readMemory(address: bigint, length: number): Uint8Array</code></a
+          >
+        </dt>
+        <dt id="cpu.writeMemory" tabindex="-1">
+          <a href="#cpu.writeMemory"
+            ><code>writeMemory(address: bigint, bytes: Uint8Array): void</code></a
+          >
+        </dt>
+        <dd>access linear mappings. reads return a copy.</dd>
+      </div>
+      <div>
+        <dt id="cpu.readPhysicalMemory" tabindex="-1">
+          <a href="#cpu.readPhysicalMemory"
+            ><code>readPhysicalMemory(address: bigint, length: number): Uint8Array</code></a
+          >
+        </dt>
+        <dt id="cpu.writePhysicalMemory" tabindex="-1">
+          <a href="#cpu.writePhysicalMemory"
+            ><code>writePhysicalMemory(address: bigint, bytes: Uint8Array): void</code></a
+          >
+        </dt>
+        <dd>
+          access guest physical mappings in <code>ia32e-paged</code> or <code>physical</code>. reads
+          return a copy.
+        </dd>
+      </div>
+    </dl>
+    <p>
+      on a <a href="#parallel">parallel machine</a>, call shared memory and mapping methods on the
+      machine. they return promises.
+    </p>
+  </section>
+  <section class="docs-api-group" aria-labelledby="memory-mappings-title">
+    <h2 id="memory-mappings-title" tabindex="-1">backings and mappings</h2>
+    <p>
+      custom linear maps, <code>ia32e-paged</code> and <code>physical</code> require
+      <code>entry</code>, <code>memoryLimits</code> and <code>memory: { backings, mappings }</code>.
+    </p>
+    <dl class="docs-members">
+      <div>
+        <dt><code>MemoryBackingInput</code></dt>
+        <dd>pairs an <code>id</code> with <code>bytes</code>.</dd>
+      </div>
+      <div>
+        <dt><code>MemoryMapping</code></dt>
+        <dd>
+          names a <code>backing</code> and supplies <code>base</code>, <code>offset</code>,
+          <code>length</code> and <code>permissions</code> for <code>read</code>,
+          <code>write</code> and <code>execute</code>. mappings must fit their backing and occupy
+          distinct guest ranges.
+        </dd>
+      </div>
+      <div>
+        <dt><code>MemoryLimits</code></dt>
+        <dd>
+          requires <code>maxBackingBytes</code>, <code>maxBackings</code> and
+          <code>maxMappings</code>.
+        </dd>
+      </div>
+      <div>
+        <dt id="cpu.addBacking" tabindex="-1">
+          <a href="#cpu.addBacking"><code>addBacking(input: MemoryBackingInput): void</code></a>
+        </dt>
+        <dt id="cpu.removeBacking" tabindex="-1">
+          <a href="#cpu.removeBacking"><code>removeBacking(id: string): void</code></a>
+        </dt>
+        <dt id="cpu.setMappings" tabindex="-1">
+          <a href="#cpu.setMappings"><code>setMappings(mappings: MemoryMapping[]): void</code></a>
+        </dt>
+        <dd>add bytes, remove an unmapped backing or replace the entire mapping list.</dd>
+      </div>
+    </dl>
+  </section>
 </section>
 
 <section id="state" class="docs-topic" aria-labelledby="state-title">

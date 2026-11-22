@@ -98,7 +98,8 @@
   font-weight: 750;
 }
 
-.docs-content p + p {
+.docs-content p + p,
+.docs-content :is(h2, dl, details) + p {
   margin-block-start: 0.625rem;
 }
 
@@ -247,16 +248,16 @@
   font-weight: 600;
 }
 
-.docs-api-group dt a {
+.docs-members dt a {
   text-decoration: none;
 }
 
-.docs-api-group dt a:hover,
-.docs-api-group dt a:focus-visible {
+.docs-members dt a:hover,
+.docs-members dt a:focus-visible {
   text-decoration: underline;
 }
 
-.docs-api-group dt:target {
+.docs-members dt:target {
   color: var(--brick);
 }
 
