@@ -401,6 +401,17 @@ pub extern "C" fn core_paged_sse_loop_guard(pc: u64, bytes: u32, flags: u64, sha
     paged_loop_guard::<false, true, false>(pc, bytes, flags, shadow)
 }
 
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[unsafe(no_mangle)]
+pub extern "C" fn core_paged_sse_write_loop_guard32(
+    pc: u64,
+    bytes: u32,
+    flags: u64,
+    shadow: u32,
+) -> i32 {
+    paged_loop_guard::<false, true, true>(pc, bytes, flags, shadow)
+}
+
 #[cfg(not(feature = "parallel"))]
 #[unsafe(no_mangle)]
 pub extern "C" fn core_paged_write_loop_guard32(
@@ -435,7 +446,9 @@ fn paged_loop_guard<const FLAT_DATA32: bool, const SSE: bool, const FLAT_WRITE32
                 || state.mxcsr & MXCSR_EXCEPTION_MASKS != MXCSR_EXCEPTION_MASKS))
             || ((FLAT_DATA32 || SSE && !core.context.is_long64())
                 && !core.context.flat_paged_data32())
-            || (FLAT_WRITE32 && !core.context.flat_paged_write32())
+            || (FLAT_WRITE32
+                && (!core.context.flat_paged_write32()
+                    || SSE && core.context.mode() != crate::x86::context::Mode::Compatibility))
             || !core.context.single_page_code_span(pc, bytes)
             || state.event.kind != 0
             || state.interrupts != Default::default()

@@ -328,6 +328,10 @@ impl StructuredLoop {
         if self.paged_sse() {
             return [false, true];
         }
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if self.paged_sse_write() && !unit.context.is_long64() {
+            return [false, true];
+        }
         let mut widths = [false; 2];
         if self.paged_fetch_bytes.is_some() {
             for instruction in &unit.instructions[self.earlier as usize..self.tail as usize] {
@@ -390,11 +394,17 @@ impl StructuredLoop {
     pub(super) fn select_paged_sse_write(unit: &super::Unit) -> Option<Self> {
         use crate::x86::{
             context::Segment,
-            instruction::{VectorMask, VectorOperand},
+            instruction::{AddressBase, VectorMask, VectorOperand},
         };
-        if !unit.context.is_long64() {
+        let long64 = unit.context.is_long64();
+        if !long64
+            && (unit.context.mode() != Mode::Compatibility || !unit.context.flat_paged_write32())
+        {
             return None;
         }
+        let data = |address: Address| {
+            address.segment == Segment::Ds && (long64 || address.size == Width::W32)
+        };
         let graph = super::loop_cfg::select_paged_sse_write_graph(&unit.instructions, |body| {
             let mut vector_load = false;
             let mut compare = false;
@@ -402,16 +412,12 @@ impl StructuredLoop {
             let mut dword_store = false;
             body.iter().all(|instruction| match instruction.operation {
                 Operation::Vector(VectorInstruction::Move {
-                    operand:
-                        VectorOperand::Memory(Address {
-                            segment: Segment::Ds,
-                            ..
-                        }),
+                    operand: VectorOperand::Memory(address),
                     bytes: 16,
                     aligned: false,
                     store: false,
                     ..
-                }) => {
+                }) if data(address) => {
                     vector_load = true;
                     true
                 }
@@ -431,21 +437,36 @@ impl StructuredLoop {
                 }
                 Operation::Store {
                     width: Width::W32,
-                    address:
-                        Address {
-                            segment: Segment::Ds,
-                            ..
-                        },
+                    address,
                     ..
-                } => {
+                } if data(address) => {
                     dword_store = true;
                     true
                 }
-                Operation::Load { .. } => {
-                    paged_read_width(instruction.operation, None) == Some(Width::W32)
+                Operation::Load {
+                    width: Width::W32,
+                    address,
+                    ..
+                } => {
+                    data(address)
+                        || (!long64
+                            && matches!(
+                                address,
+                                Address {
+                                    segment: Segment::Ss,
+                                    size: Width::W32,
+                                    base: AddressBase::Register(4 | 5),
+                                    index: None,
+                                    ..
+                                }
+                            ))
                 }
                 Operation::Jump { target } | Operation::Jcc { target, .. } => {
-                    crate::memory::canonical48(target)
+                    if long64 {
+                        crate::memory::canonical48(target)
+                    } else {
+                        target <= unit.context.code_limit()
+                    }
                 }
                 op => inside_register_body(op),
             }) && vector_load

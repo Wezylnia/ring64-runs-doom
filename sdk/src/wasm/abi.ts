@@ -132,6 +132,12 @@ export type CoreExports = WebAssembly.Exports & {
   core_paged_walk_loop_guard32?(pc: bigint, bytes: number, flags: bigint, shadow: number): number;
   core_paged_read_loop_guard32?(pc: bigint, bytes: number, flags: bigint, shadow: number): number;
   core_paged_sse_loop_guard?(pc: bigint, bytes: number, flags: bigint, shadow: number): number;
+  core_paged_sse_write_loop_guard32?(
+    pc: bigint,
+    bytes: number,
+    flags: bigint,
+    shadow: number,
+  ): number;
   core_paged_write_loop_guard32?(pc: bigint, bytes: number, flags: bigint, shadow: number): number;
   core_paged_loop_read_dword?(address: bigint): bigint;
   core_paged_loop_walk_dword?(address: bigint): bigint;

@@ -1053,6 +1053,10 @@ fn emit_body(
             };
             return import_function(name, index);
         }
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if paged_sse_write && !unit.context.is_long64() {
+            return import_function("paged_sse_write_loop_guard32", index);
+        }
         #[cfg(not(feature = "parallel"))]
         if paged_sse_write || loop_body.is_some_and(StructuredLoop::paged_sse) {
             return import_function("paged_sse_loop_guard", index);
