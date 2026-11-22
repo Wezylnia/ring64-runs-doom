@@ -614,7 +614,114 @@ fn nan(a: u128, b: u128) -> Option<Result> {
         ..Result::raw(raw)
     })
 }
-pub(super) fn binary(kind: Kind, mut a: u128, mut b: u128, cw: u16, extra: u16) -> Result {
+#[inline]
+fn exact_pc64_difference(kind: Kind, a: u128, b: u128, cw: u16, extra: u16) -> Option<u128> {
+    if extra != 0
+        || !matches!(kind, Kind::Add | Kind::Sub | Kind::SubReverse)
+        || precision(cw) != 64
+    {
+        return None;
+    }
+    let a_exp_sign = (a >> 64) as u16;
+    let b_exp_sign = (b >> 64) as u16;
+    let signs_differ = (a_exp_sign ^ b_exp_sign) >> 15 != 0;
+    let exponent = a_exp_sign & 0x7fff;
+    let a_sig = a as u64;
+    let b_sig = b as u64;
+    if signs_differ != (kind == Kind::Add)
+        || (a_exp_sign ^ b_exp_sign) & 0x7fff != 0
+        || exponent == 0
+        || exponent == 0x7fff
+        || (a_sig & b_sig) >> 63 == 0
+    {
+        return None;
+    }
+    if a_sig == b_sig {
+        return Some(if rc(cw) == 1 { SIGN } else { 0 });
+    }
+    let a_larger = a_sig > b_sig;
+    let difference = a_sig.abs_diff(b_sig);
+    let shift = difference.leading_zeros() as u16;
+    if exponent <= shift {
+        return None;
+    }
+    // Equal exponents with opposite effective signs produce an exact u64 difference.
+    let negative = (a_exp_sign >> 15 != 0) ^ (kind == Kind::SubReverse) ^ !a_larger;
+    let result_exp_sign = (u16::from(negative) << 15) | (exponent - shift);
+    Some((u128::from(result_exp_sign) << 64) | u128::from(difference << shift))
+}
+
+pub(super) fn binary(kind: Kind, a: u128, b: u128, cw: u16, extra: u16) -> Result {
+    if let Some(value) = exact_pc64_difference(kind, a, b, cw, extra) {
+        return Result::raw(value);
+    }
+    binary_general(kind, a, b, cw, extra)
+}
+
+#[cfg(test)]
+#[test]
+fn exact_pc64_difference_matches_general_binary80_arithmetic() {
+    let value = |exponent, significand| (u128::from(exponent) << 64) | u128::from(significand);
+    let fields = |result: Result| {
+        (
+            result.value,
+            result.pre,
+            result.post,
+            result.up,
+            result.suppress,
+        )
+    };
+    let lo = 1u64 << 63;
+    let one = value(0x3fffu16, lo);
+    let next = value(0x3fffu16, lo + 1);
+    let least_normal = value(1u16, lo);
+    assert_eq!(
+        exact_pc64_difference(Kind::Sub, next, one, 0x37f, 0),
+        Some(value(0x3fc0u16, lo))
+    );
+    assert_eq!(
+        exact_pc64_difference(Kind::SubReverse, next, one, 0x37f, 0),
+        Some(value(0xbfc0u16, lo))
+    );
+    assert_eq!(
+        exact_pc64_difference(Kind::Add, next, next | SIGN, 0x77f, 0),
+        Some(SIGN)
+    );
+    assert_eq!(exact_pc64_difference(Kind::Sub, next, one, 0x27f, 0), None);
+    assert_eq!(exact_pc64_difference(Kind::Sub, next, one, 0x37f, 2), None);
+    assert_eq!(
+        exact_pc64_difference(Kind::Sub, least_normal | 1, least_normal, 0x37f, 0),
+        None
+    );
+
+    for exponent in [0u16, 1, 2, 63, 64, 0x3fff, 0x7ffe, 0x7fff] {
+        for asig in [0, lo - 1, lo, lo + 1, lo | 0x13, u64::MAX] {
+            for bsig in [0, lo - 1, lo, lo + 1, lo | 0x13, u64::MAX] {
+                for signs in [(0, 0), (0, SIGN), (SIGN, 0), (SIGN, SIGN)] {
+                    let a = value(exponent, asig) | signs.0;
+                    let b = value(exponent, bsig) | signs.1;
+                    for pc in 0..4 {
+                        for round in 0..4 {
+                            for masks in [0, 0x3f] {
+                                let cw = 0x40 | (pc << 8) | (round << 10) | masks;
+                                for kind in [Kind::Add, Kind::Sub, Kind::SubReverse, Kind::Mul] {
+                                    let expected = fields(binary_general(kind, a, b, cw, 0));
+                                    assert_eq!(
+                                        fields(binary(kind, a, b, cw, 0)),
+                                        expected,
+                                        "{kind:?}, {a:#x}, {b:#x}, {cw:#x}"
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn binary_general(kind: Kind, mut a: u128, mut b: u128, cw: u16, extra: u16) -> Result {
     use Class::*;
     if let Some(mut r) = nan(a, b) {
         r.pre |= extra & 1;
