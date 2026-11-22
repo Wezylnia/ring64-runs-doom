@@ -1346,8 +1346,21 @@ impl Emitter {
     pub(super) fn store_result_slow(&mut self, width: Width, exit_depth: u32) {
         self.stores = true;
         self.linear_address();
-        self.op(Op::I32Const(i32::from(width.bytes())))
-            .op(Op::LocalGet(RESULT));
+        let bytes = i32::from(width.bytes());
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        let bytes = if self.paged
+            && self.context.is_long64()
+            && self.segment == Segment::Ss
+            && width == Width::W64
+            && matches!(
+                self.current_operation,
+                crate::x86::instruction::Operation::Call { .. }
+            ) {
+            crate::embedding::layout::PAGED_STACK_QWORD as i32
+        } else {
+            bytes
+        };
+        self.op(Op::I32Const(bytes)).op(Op::LocalGet(RESULT));
         if !self.context.is_long64() {
             self.op(Op::I32Const(self.segment as i32));
         }

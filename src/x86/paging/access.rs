@@ -630,6 +630,50 @@ impl<'a> Memory<'a> {
         })
     }
 
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    pub(crate) fn write_stack_qword(
+        &mut self,
+        address: u64,
+        value: u64,
+    ) -> Result<(), AccessFailure> {
+        if address & 7 == 0 && self.try_retained_stack_qword(address, value) {
+            return Ok(());
+        }
+        self.write_aligned(address, 8, value, Intent::Natural(8))
+    }
+
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    #[inline(never)]
+    fn try_retained_stack_qword(&self, address: u64, value: u64) -> bool {
+        let Some(cache) = self.cache else {
+            return false;
+        };
+        if self.class == AccessClass::ImplicitSupervisor
+            || check_span(address, 8, Access::Write).is_err()
+        {
+            return false;
+        }
+        let mut storage = self.storage.borrow_mut();
+        if storage
+            .work
+            .pending
+            .iter()
+            .any(|prepared| prepared.address == address && prepared.width == 8)
+        {
+            return false;
+        }
+        let request = Request {
+            linear: address,
+            access: Access::Write,
+            class: self.class,
+        };
+        cache.write_retained_span(self.paging, request, self.keys, 8, |physical| {
+            storage
+                .image
+                .physical_direct_write(physical, value.to_le_bytes())
+        })
+    }
+
     fn publish_write_metadata(
         &self,
         prepared: &Prepared,

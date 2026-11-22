@@ -590,3 +590,43 @@ fn retained_vector_store_skips_preflight_only_for_one_dirty_unwatched_span() {
         assert_eq!(image.physical_read(0x4008, 8), Ok(0x9067));
     }
 }
+
+#[cfg(not(feature = "parallel"))]
+#[test]
+fn retained_qword_store_keeps_unaligned_access_on_the_checked_path() {
+    for pte in [0x9027, 0x9067] {
+        let (mut image, mut state, mut work, cache) = fixture(pte, 0);
+        state.cr0 |= 1 << 18;
+        image
+            .set_mappings(vec![MappingInput {
+                base: 0,
+                backing: "ram".into(),
+                offset: 0,
+                length: 0x10000,
+                permissions: Permissions {
+                    read: true,
+                    write: true,
+                    execute: false,
+                },
+            }])
+            .unwrap();
+        let mut memory =
+            Memory::new(&mut image, &state, 3, 0x40002, &mut work, &Keys::ZERO).with_cache(&cache);
+        memory.read(0x1000, 8).unwrap();
+        Image::take_physical_preflight_count();
+        memory
+            .write_stack_qword(0x1000, 0x1122334455667788)
+            .unwrap();
+        assert_eq!(Image::take_physical_preflight_count() == 0, pte == 0x9067);
+        assert!(matches!(
+            memory.write_stack_qword(0x1001, 0),
+            Err(AccessFailure::AlignmentCheck(_))
+        ));
+        assert!(matches!(
+            memory.write_stack_qword(0x1ffc, 0),
+            Err(AccessFailure::Paging(Failure::Page(walk::PageFault { .. })))
+        ));
+        assert_eq!(image.physical_read(0x4008, 8), Ok(0x9067));
+        assert_eq!(image.physical_read(0x9000, 8), Ok(0x1122334455667788));
+    }
+}

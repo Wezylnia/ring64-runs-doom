@@ -136,15 +136,15 @@ fn core_load_for_write_impl<const OBSERVED: bool, const PAGED: bool>(
 
 #[unsafe(no_mangle)]
 pub extern "C" fn core_store(address: u64, width: u32, value: u64) -> i32 {
-    core_store_impl::<false, false>(address, width, value)
+    core_store_impl::<false, false, false>(address, width, value)
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn core_store_observed(address: u64, width: u32, value: u64) -> i32 {
-    core_store_impl::<true, false>(address, width, value)
+    core_store_impl::<true, false, false>(address, width, value)
 }
 
-fn core_store_impl<const OBSERVED: bool, const PAGED: bool>(
+fn core_store_impl<const OBSERVED: bool, const PAGED: bool, const STACK_QWORD: bool>(
     address: u64,
     width: u32,
     value: u64,
@@ -155,7 +155,25 @@ fn core_store_impl<const OBSERVED: bool, const PAGED: bool>(
         if PAGED {
             core.alignment_check = None;
         }
-        match guest_access!(core, PAGED, write(address, width, value)) {
+        #[cfg(not(feature = "parallel"))]
+        let written = if STACK_QWORD {
+            let state = unsafe { &*core.state.get() };
+            crate::x86::paging::access::Memory::new(
+                &mut core.image,
+                core.paging.as_ref().expect("paged helper profile"),
+                core.context.cpl(),
+                state.flags,
+                &mut core.paging_work,
+                &state.protection_keys,
+            )
+            .with_cache(&core.translation_cache)
+            .write_stack_qword(address, value)
+        } else {
+            guest_access!(core, PAGED, write(address, width, value))
+        };
+        #[cfg(feature = "parallel")]
+        let written = guest_access!(core, PAGED, write(address, width, value));
+        match written {
             Ok(()) => {
                 if OBSERVED {
                     core.debug_operand(address, width, Access::Write);
@@ -211,12 +229,20 @@ pub extern "C" fn core_paged_load_for_write_observed(address: u64, width: u32) -
 
 #[unsafe(no_mangle)]
 pub extern "C" fn core_paged_store(address: u64, width: u32, value: u64) -> i32 {
-    core_store_impl::<false, true>(address, width, value)
+    #[cfg(not(feature = "parallel"))]
+    if width == crate::embedding::layout::PAGED_STACK_QWORD {
+        return core_store_impl::<false, true, true>(address, 8, value);
+    }
+    core_store_impl::<false, true, false>(address, width, value)
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn core_paged_store_observed(address: u64, width: u32, value: u64) -> i32 {
-    core_store_impl::<true, true>(address, width, value)
+    #[cfg(not(feature = "parallel"))]
+    if width == crate::embedding::layout::PAGED_STACK_QWORD {
+        return core_store_impl::<true, true, true>(address, 8, value);
+    }
+    core_store_impl::<true, true, false>(address, width, value)
 }
 
 #[unsafe(no_mangle)]
