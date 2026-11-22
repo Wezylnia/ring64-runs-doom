@@ -113,6 +113,135 @@ fn guarded_byte_store_slot_keeps_write_authority_and_fetch_recency() {
 
 #[cfg(not(feature = "parallel"))]
 #[test]
+fn guarded_dword_store_memo_rechecks_evicted_and_replaced_slots() {
+    let (mut image, mut first, read) = fixture();
+    first.cr4 |= 1 << 17;
+    first.cr3 = 0x1001;
+    let second = State {
+        cr3: 0x5002,
+        ..first
+    };
+    for (address, value) in [(0x4008, 0xa067), (0x4010, 0xc027), (0x8010, 0xd027)] {
+        image.physical_write(address, 8, value).unwrap();
+    }
+    let cache = Cache::with_capacity(2);
+    let fetch = Request {
+        linear: 0x2000,
+        access: Access::Execute,
+        ..read
+    };
+    let write = Request {
+        access: Access::Write,
+        ..read
+    };
+    let fill = |image: &Image, state, request| {
+        let translation = walk::peek(image, state, request, &Keys::ZERO).unwrap();
+        cache.fill(state, request, translation);
+    };
+    let store = |state| cache.write_dword_then_fetch(state, write, &Keys::ZERO, Some);
+    fill(&image, &first, read);
+    fill(&image, &first, fetch);
+    assert_eq!(store(&first), Some(0xa234));
+    let original_slot = cache.last_dword_write.get().unwrap();
+
+    // A full-cache insertion evicts the memo's local occupant.
+    fill(&image, &second, read);
+    let index = usize::from(original_slot.get() - 1);
+    assert_eq!(
+        cache.entries.borrow().slots[index].unwrap().pcid,
+        second.pcid()
+    );
+    assert_eq!(store(&first), None);
+    assert_eq!(cache.last_dword_write.get(), Some(original_slot));
+    fill(&image, &second, fetch);
+    assert_eq!(store(&second), Some(0xb234));
+
+    cache.invalidate_pcid(second.pcid());
+    assert_eq!(store(&second), None);
+    for leaf in [0xa027, 0xa065] {
+        image.physical_write(0x4008, 8, leaf).unwrap();
+        fill(&image, &first, read);
+        fill(&image, &first, fetch);
+        let clock = cache.entries.borrow().clock;
+        assert_eq!(cache.last_dword_write.get(), Some(original_slot));
+        assert_eq!(
+            cache.write_dword_then_fetch(&first, write, &Keys::ZERO, |_| {
+                panic!("Write rights or a pending dirty update must refuse the fast path")
+            }),
+            None::<()>
+        );
+        assert_eq!(cache.entries.borrow().clock, clock);
+    }
+}
+
+#[cfg(not(feature = "parallel"))]
+#[test]
+fn guarded_dword_store_memo_preserves_backing_admission_and_recency() {
+    let (mut image, state, read) = fixture();
+    image
+        .set_mappings(vec![MappingInput {
+            base: 0,
+            backing: "ram".into(),
+            offset: 0,
+            length: 0x10000,
+            permissions: Permissions {
+                read: true,
+                write: true,
+                execute: false,
+            },
+        }])
+        .unwrap();
+    for (address, value) in [(0x4008, 0xa067), (0x4010, 0xc027), (0x4018, 0xd027)] {
+        image.physical_write(address, 8, value).unwrap();
+    }
+    let cache = Cache::with_capacity(3);
+    let fetch = Request {
+        linear: 0x2000,
+        access: Access::Execute,
+        ..read
+    };
+    let write = Request {
+        access: Access::Write,
+        ..read
+    };
+    let unrelated = Request {
+        linear: 0x3000,
+        ..read
+    };
+    for request in [read, fetch] {
+        let translation = walk::peek(&image, &state, request, &Keys::ZERO).unwrap();
+        cache.fill(&state, request, translation);
+    }
+    let store = |image: &mut Image, value: u32| {
+        cache.write_dword_then_fetch(&state, write, &Keys::ZERO, |physical| {
+            image.physical_direct_write(physical, value.to_le_bytes())
+        })
+    };
+    assert_eq!(store(&mut image, 0x11223344), Some(()));
+    let other = walk::peek(&image, &state, unrelated, &Keys::ZERO).unwrap();
+    cache.fill(&state, unrelated, other);
+    cache.lookup(&state, fetch, &Keys::ZERO).unwrap().unwrap();
+    let clock = cache.entries.borrow().clock;
+    let owner = image.register_dependencies([], [(0xa234, 4)]).unwrap();
+    assert!(image.activate(owner));
+    assert_eq!(store(&mut image, 0xdeadbeef), None);
+    assert_eq!(cache.entries.borrow().clock, clock);
+    assert!(image.source_is_active(owner));
+    assert_eq!(image.physical_read(0xa234, 4), Ok(0x11223344));
+
+    image.release(owner);
+    assert_eq!(store(&mut image, 0x55667788), Some(()));
+    assert_eq!(image.physical_read(0xa234, 4), Ok(0x55667788));
+    let entries = cache.entries.borrow();
+    let data = entries.find(&state, write).unwrap();
+    let code = entries.find(&state, fetch).unwrap();
+    assert_eq!(entries.clock, clock + 2);
+    assert_eq!(entries.hint, Some(code));
+    assert_eq!(entries.slots[data].unwrap().used, entries.clock - 1);
+}
+
+#[cfg(not(feature = "parallel"))]
+#[test]
 fn guarded_dword_candidates_revalidate_removals_and_later_ordinary_fills() {
     let (mut image, mut origin, request) = fixture();
     origin.cr4 |= (1 << 7) | (1 << 17);

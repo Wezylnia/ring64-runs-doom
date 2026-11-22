@@ -1151,13 +1151,22 @@ fn paged_loop_write<const WIDTH: usize>(address: u64, value: [u8; WIDTH]) -> i32
                 state.flags & crate::x86::flags::AC != 0,
             ),
         };
+        let write = |physical| core.image.physical_direct_write(physical, value);
+        if WIDTH == 4 {
+            return core.translation_cache.write_dword_then_fetch(
+                paging,
+                request,
+                &state.protection_keys,
+                write,
+            );
+        }
         core.translation_cache.data_then_fetch::<true, _>(
             paging,
             request,
             &state.protection_keys,
             WIDTH as u32,
             false,
-            |physical| core.image.physical_direct_write(physical, value),
+            write,
         )
     });
     i32::from(written.is_some())
