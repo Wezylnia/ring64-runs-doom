@@ -23,7 +23,11 @@ use wasm_encoder::{
 // A clone can touch the executable leaf once when every admitted instruction
 // stays on that leaf and can neither access memory nor change the controls.
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-fn paged_register_prefixes(unit: &Unit, loops: [Option<StructuredLoop>; 2]) -> Vec<Option<usize>> {
+fn paged_register_prefixes(
+    unit: &Unit,
+    loops: [Option<StructuredLoop>; 2],
+    short_indexed_reads: bool,
+) -> Vec<Option<usize>> {
     let instructions = &unit.instructions;
     let long64 = unit.context.is_long64();
     let short_register_prefixes = long64 && unit.sampled;
@@ -127,7 +131,13 @@ fn paged_register_prefixes(unit: &Unit, loops: [Option<StructuredLoop>; 2]) -> V
         }
         let minimum = if short_register_prefixes && (!has_read || has_wide_read && has_branch) {
             2
-        } else if has_branch {
+        } else if has_branch
+            || short_indexed_reads
+                && instructions[first..end]
+                    .iter()
+                    .copied()
+                    .any(super::instruction::paged_prefix_dword_read)
+        {
             3
         } else {
             4
@@ -1094,11 +1104,33 @@ fn emit_body(
         .any(|i| matches!(i.operation, Operation::SegmentBase { write: true, .. }))
         .then(|| add_function_type(&mut types, [ValType::I32, ValType::I64], [ValType::I32]));
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let indexed_paging =
+        paged && observed && !mmio && unit.context.is_long64() && unit.context.cpl() == 0;
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let retouch_prefix_fetch = indexed_paging
+        && !unit.sampled
+        && optional.indexed_scalar_read
+        && unit.instructions.iter().any(|instruction| {
+            matches!(
+                instruction.operation,
+                Operation::Call {
+                    width: crate::x86::instruction::Width::W64,
+                    target: crate::x86::instruction::Operand::Register(_),
+                }
+            )
+        });
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let register_prefixes = (paged
         && !mmio
         && loop_body.is_none_or(StructuredLoop::paged_vector_copy)
         && optional.paged_register_prefixes)
-        .then(|| paged_register_prefixes(unit, [loop_body, optional.additional_copy]))
+        .then(|| {
+            paged_register_prefixes(
+                unit,
+                [loop_body, optional.additional_copy],
+                retouch_prefix_fetch && optional.indexed_dword_prefixes,
+            )
+        })
         .filter(|prefixes| prefixes.iter().any(Option::is_some));
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let register_prefix_guard_type = register_prefixes.as_ref().map(|_| {
@@ -2458,9 +2490,6 @@ fn emit_body(
     #[cfg(any(feature = "parallel", not(target_arch = "wasm32")))]
     let quiet_fetch_page = None;
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    let indexed_paging =
-        paged && observed && !mmio && unit.context.is_long64() && unit.context.cpl() == 0;
-    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let indexed_scalar_scratch = (indexed_paging
         && optional.indexed_scalar_read
         && unit.instructions.iter().any(|instruction| {
@@ -2519,17 +2548,7 @@ fn emit_body(
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         sampled_region: unit.sampled,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-        retouch_prefix_fetch: !unit.sampled
-            && indexed_store_fill.is_some()
-            && unit.instructions.iter().any(|instruction| {
-                matches!(
-                    instruction.operation,
-                    Operation::Call {
-                        width: crate::x86::instruction::Width::W64,
-                        target: crate::x86::instruction::Operand::Register(_),
-                    }
-                )
-            }),
+        retouch_prefix_fetch,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         used_paged_quiet_completion: false,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
