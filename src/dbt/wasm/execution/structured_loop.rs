@@ -333,20 +333,23 @@ impl StructuredLoop {
 
     #[cfg(not(feature = "parallel"))]
     pub(super) fn select_paged_scalar_f32(unit: &super::Unit) -> Option<Self> {
-        if !unit.context.is_long64() {
+        let long64 = unit.context.is_long64();
+        if !long64 && !unit.context.flat_paged_data32() {
             return None;
         }
+        let address_size = (!long64).then_some(Width::W32);
+        let read = |operation| paged_scalar_f32_read(operation, address_size);
         Self::select_straight_body(
             &unit.instructions,
             LoopKind::PagedScalarF32,
             |operation| {
                 inside_register_body(operation)
-                    || paged_scalar_f32_read(operation)
+                    || read(operation)
                     || matches!(operation, Operation::Float(instruction)
                         if instruction.op.scalar && instruction.op.format == Format::F32
                             && instruction.op.kind == Kind::Add && matches!(instruction.src, Location::Register(_)))
             },
-            |body| body.iter().any(|i| paged_scalar_f32_read(i.operation)),
+            |body| body.iter().any(|i| read(i.operation)),
         )?
         .without_dword_projection()
         .within_paged_fetch(unit)
@@ -704,26 +707,30 @@ fn paged_write_graph_register(operation: Operation) -> bool {
 }
 
 #[cfg(not(feature = "parallel"))]
-fn paged_scalar_f32_read(operation: Operation) -> bool {
+fn paged_scalar_f32_read(operation: Operation, address_size: Option<Width>) -> bool {
     use crate::x86::{context::Segment, instruction::VectorOperand};
 
-    match operation {
+    let address = match operation {
         Operation::Vector(VectorInstruction::Move {
             operand: VectorOperand::Memory(address),
             bytes: 4,
             aligned: false,
             store: false,
             ..
-        }) => address.segment == Segment::Ds,
+        }) => address,
         Operation::Float(instruction)
             if instruction.op.scalar
                 && instruction.op.format == Format::F32
                 && instruction.op.kind == Kind::Mul =>
         {
-            matches!(instruction.src, Location::Memory(address) if address.segment == Segment::Ds)
+            let Location::Memory(address) = instruction.src else {
+                return false;
+            };
+            address
         }
-        _ => false,
-    }
+        _ => return false,
+    };
+    address.segment == Segment::Ds && address_size.is_none_or(|size| size == address.size)
 }
 
 fn integer_read(operation: Operation) -> bool {

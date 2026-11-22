@@ -370,7 +370,8 @@ fn paged_loop_guard<const FLAT_DATA32: bool, const SSE: bool, const FLAT_WRITE32
         if (SSE
             && (!core.numeric_admission_unrestricted()
                 || state.mxcsr & MXCSR_EXCEPTION_MASKS != MXCSR_EXCEPTION_MASKS))
-            || (FLAT_DATA32 && !core.context.flat_paged_data32())
+            || ((FLAT_DATA32 || SSE && !core.context.is_long64())
+                && !core.context.flat_paged_data32())
             || (FLAT_WRITE32 && !core.context.flat_paged_write32())
             || !core.context.single_page_code_span(pc, bytes)
             || state.event.kind != 0

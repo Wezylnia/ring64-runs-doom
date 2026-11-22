@@ -1,4 +1,5 @@
 import { BANK, PC, equal, initial, little, usingPaged, type Scenario } from './fixture.js';
+import { context } from '../modes/fixture.js';
 
 // Integer preload warms the data page before the six-instruction SSE loop.
 const code = '8b17f30f1007f30f5906f30f58c183c00183e90175ec';
@@ -248,6 +249,48 @@ export function pagingScalarF32LoopScenarios(compiler: WebAssembly.Module): Scen
               );
               equal(cpu.readXmmState()[1], directed ? 0x3f800003n : 0x42000000n, 'independent sum');
               equal(cpu.readMxcsr(), directed ? 0x5fa0 : 0x1f80, 'live rounding and sticky status');
+            },
+          );
+        }
+      },
+    },
+    {
+      name: 'paged compatibility32 scalar F32 loop uses only flat dword DS operands',
+      async run() {
+        for (const layout of ['flat', 'segmented', 'limited', 'unmasked'] as const) {
+          const execution = context('compatibility');
+          const base = layout === 'segmented' ? 0x800n : 0n;
+          execution.segments.ds.base = base;
+          if (layout === 'limited') execution.segments.ds.limit = Number(data + 3n);
+          const right = layout === 'unmasked' ? 0x7f800011n : 0x40000000n;
+          await usingPaged(
+            compiler,
+            {
+              code,
+              context: execution,
+              words: dataPages,
+              spans: [{ physical: 0xa000n, bytes: little([loaded, right], 4) }],
+            },
+            async (cpu) => {
+              cpu.setState(initial(PC, { 1: 2n, 6: data + 4n - base, 7: data - base }, 2n));
+              cpu.setXmmState([oldXmm, 0x3f800000n, ...Array<bigint>(14).fill(0n)]);
+              if (layout === 'unmasked') cpu.setMxcsr(0x1f00);
+              const result = await cpu.run({ budget: 30n, stop: PC + 22n });
+              if (layout === 'limited' || layout === 'unmasked') {
+                equal(
+                  result.reason,
+                  layout === 'limited' ? 'segment-fault' : 'simd-exception',
+                  layout,
+                );
+                equal(result.retired, 2n, 'only the prelude and MOVSS');
+                equal(result.state.rip, PC + 6n, 'MULSS fault');
+                equal(cpu.readXmmState()[0], loaded, 'failed MULSS keeps the MOVSS value');
+                equal(cpu.readMxcsr(), layout === 'limited' ? 0x1f80 : 0x1f01, 'checked status');
+              } else {
+                equal(result.reason, 'stop', layout);
+                equal(result.retired, 13n, 'all original instructions');
+                equal(cpu.readXmmState()[0], 0x40800000n, 'complete XMM result');
+              }
             },
           );
         }
