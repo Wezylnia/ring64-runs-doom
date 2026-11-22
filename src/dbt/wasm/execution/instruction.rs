@@ -1345,6 +1345,13 @@ impl Emitter {
                 terminal,
             };
             self.emit_instruction(*instruction, None, loop_depth, None, None, terminal);
+            if !terminal && self.stores {
+                self.code_write_boundary(
+                    loop_depth + 1,
+                    Some((instruction.next_pc, index as u32 + 1)),
+                );
+                self.stores = false;
+            }
         }
         self.instruction_retirement = InstructionRetirement::One;
         if !branch {

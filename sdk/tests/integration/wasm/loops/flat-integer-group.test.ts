@@ -199,6 +199,165 @@ test('flat sampled integer groups preserve exact faults across successful reads'
   }
 });
 
+test('flat write chains preserve prior effects and exit on a code alias write', async () => {
+  const head = 0x31000n;
+  const data = 0x40000n;
+  const alias = 0x41000n;
+  // INC EAX; MOV [ESI],EAX; INC ECX; PUSH EAX; ADD [EDI],EAX; ROL [EDI],1;
+  // INC EAX; CALL EBX; JMP head; RET.
+  const code = hex('40890641500107d10740ffd3ebf2c3');
+  const values = hex('00000000010000000000000000000000');
+  const seeds = [0n, 1n, 3n, 4n, 5n, 7n, 9n, 10n, 12n, 14n].map((offset) => head + offset);
+  const mapping = (base: bigint, backing: string, length: number, execute: boolean) => ({
+    base,
+    backing,
+    offset: 0,
+    length,
+    permissions: { read: true, write: !execute, execute },
+  });
+  const compile = Core.prototype.compile;
+  Core.prototype.compile = function (pc, limits, entries, regionPoints) {
+    if (pc === head && !entries?.length) return compile.call(this, pc, limits, seeds, true);
+    return compile.call(this, pc, limits, entries, regionPoints);
+  };
+  try {
+    const cpu = await createCpu({
+      compiler,
+      entry: head,
+      limits: LIMITS,
+      context: protectedSnapshot(),
+      memory: {
+        backings: [
+          { id: 'code', bytes: code },
+          { id: 'data', bytes: values },
+        ],
+        mappings: [
+          mapping(head, 'code', code.length, true),
+          mapping(alias, 'code', code.length, false),
+          mapping(data, 'data', values.length, false),
+        ],
+      },
+      memoryLimits: {
+        maxBackings: 2,
+        maxMappings: 3,
+        maxBackingBytes: code.length + values.length,
+      },
+    });
+    try {
+      for (const [esi, edi, esp, budget, stop, reason, retired, rip, eax, ecx, sp, contents] of [
+        [
+          data,
+          data + 4n,
+          data + 16n,
+          10n,
+          10n,
+          'stop',
+          7n,
+          10n,
+          4n,
+          1n,
+          data + 12n,
+          '03000000080000000000000003000000',
+        ],
+        [
+          data,
+          data + 4n,
+          data + 16n,
+          10n,
+          4n,
+          'stop',
+          3n,
+          4n,
+          3n,
+          1n,
+          data + 16n,
+          '03000000010000000000000000000000',
+        ],
+        [
+          data,
+          data + 4n,
+          data + 16n,
+          3n,
+          10n,
+          'budget',
+          3n,
+          4n,
+          3n,
+          1n,
+          data + 16n,
+          '03000000010000000000000000000000',
+        ],
+        [
+          head,
+          data + 4n,
+          data + 16n,
+          10n,
+          10n,
+          'data-fault',
+          1n,
+          1n,
+          3n,
+          0n,
+          data + 16n,
+          '00000000010000000000000000000000',
+        ],
+        [
+          data,
+          data + 4n,
+          data + 24n,
+          10n,
+          10n,
+          'data-fault',
+          3n,
+          4n,
+          3n,
+          1n,
+          data + 24n,
+          '03000000010000000000000000000000',
+        ],
+        [
+          data,
+          head,
+          data + 16n,
+          10n,
+          10n,
+          'data-fault',
+          4n,
+          5n,
+          3n,
+          1n,
+          data + 12n,
+          '03000000010000000000000003000000',
+        ],
+      ] as const) {
+        cpu.writeMemory(data, values);
+        cpu.setState(initial(head, { 0: 2n, 1: 0n, 3: head + 14n, 4: esp, 6: esi, 7: edi }));
+        const result = await cpu.run({ budget, stop: head + stop });
+        assert.equal(result.reason, reason);
+        assert.equal(result.retired, retired);
+        assert.equal(result.state.rip, head + rip);
+        assert.equal(result.state.registers[0], eax);
+        assert.equal(result.state.registers[1], ecx);
+        assert.equal(result.state.registers[4], sp);
+        assert.deepEqual(cpu.readMemory(data, 16), hex(contents));
+      }
+
+      cpu.setState(initial(head, { 0: 0x909090f3n, 1: 0n, 4: data + 16n, 6: alias + 3n }));
+      const patched = await cpu.run({ budget: 10n, stop: head + 10n });
+      assert.equal(patched.reason, 'halted');
+      assert.equal(patched.retired, 3n);
+      assert.equal(patched.state.rip, head + 4n);
+      assert.equal(patched.state.registers[1], 0n);
+      assert.equal(patched.state.registers[4], data + 16n);
+      assert.deepEqual(cpu.readMemory(head + 3n, 4), hex('f4909090'));
+    } finally {
+      cpu.dispose();
+    }
+  } finally {
+    Core.prototype.compile = compile;
+  }
+});
+
 test('a straight prefix preserves the high halves projected by a disjoint register loop', async () => {
   const head = 0x31000n;
   // ADD EAX,1; XOR EAX,2; ADD EAX,4; CALL EBX.

@@ -95,7 +95,7 @@ impl Emitter {
             return;
         }
         self.gates(exit_depth);
-        self.code_write_boundary(exit_depth);
+        self.code_write_boundary(exit_depth, None);
         if self.dense_dispatch {
             self.op(Op::Br(exit_depth - 1));
             return;
@@ -368,7 +368,7 @@ impl Emitter {
         if self.finish_instruction(exit_depth) {
             return;
         }
-        self.code_write_boundary(exit_depth);
+        self.code_write_boundary(exit_depth, None);
         if let Some(&index) = self.entries.get(&target) {
             let placement = if let Some((body, inner_depth)) = self.structured_loop {
                 // Count transient scopes (such as Jcc's If) on top of the
@@ -446,7 +446,7 @@ impl Emitter {
         }
     }
 
-    fn code_write_boundary(&mut self, exit_depth: u32) {
+    pub(super) fn code_write_boundary(&mut self, exit_depth: u32, prefix: Option<(u64, u32)>) {
         if self.stores {
             // Status two is successful storage that invalidated this owner.
             // All instruction effects and its retirement are committed first.
@@ -454,6 +454,10 @@ impl Emitter {
                 .op(Op::I32Const(2))
                 .op(Op::I32Eq)
                 .op(Op::If(BlockType::Empty));
+            if let Some((next, count)) = prefix {
+                self.op(Op::I64Const(next as i64)).op(Op::LocalSet(RIP));
+                self.retire_instructions(count);
+            }
             self.gates(exit_depth + 1);
             self.exit(DISPATCH, exit_depth + 1);
             self.op(Op::End);

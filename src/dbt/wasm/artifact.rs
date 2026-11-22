@@ -34,7 +34,7 @@ fn register_prefix_operation(operation: Operation) -> bool {
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 fn flat_integer_groups(unit: &Unit, structured: Option<StructuredLoop>) -> Vec<Option<usize>> {
-    use crate::x86::instruction::Width;
+    use crate::x86::instruction::{Shift, Width};
 
     let instructions = &unit.instructions;
     let mut groups = vec![None; instructions.len()];
@@ -54,27 +54,37 @@ fn flat_integer_groups(unit: &Unit, structured: Option<StructuredLoop>) -> Vec<O
                 }
                 break;
             }
-            let operand_read = match operation {
-                Operation::MemoryAlu { kind, operands, .. } => {
-                    !kind.writes_result() || matches!(operands, MemoryAluOperands::RegisterFirst(_))
-                }
-                Operation::Load { .. }
-                | Operation::Extend {
-                    src: Location::Memory(_),
-                    ..
-                }
-                | Operation::Imul {
-                    src: Location::Memory(_),
-                    width: Width::W32,
-                    ..
-                }
-                | Operation::Pop {
-                    width: Width::W32, ..
-                } => true,
-                _ => false,
-            };
+            let memory = matches!(
+                operation,
+                Operation::MemoryAlu { .. }
+                    | Operation::Load { .. }
+                    | Operation::Store { .. }
+                    | Operation::Extend {
+                        src: Location::Memory(_),
+                        ..
+                    }
+                    | Operation::Imul {
+                        src: Location::Memory(_),
+                        width: Width::W32,
+                        ..
+                    }
+                    | Operation::Pop {
+                        width: Width::W32,
+                        ..
+                    }
+                    | Operation::Push {
+                        width: Width::W32,
+                        ..
+                    }
+                    | Operation::Shift {
+                        kind: Shift::Rol | Shift::Ror,
+                        dst: Location::Memory(_),
+                        width: Width::W32,
+                        ..
+                    }
+            );
             if !register_prefix_operation(operation)
-                && !operand_read
+                && !memory
                 && !matches!(
                     operation,
                     Operation::Cmov {
