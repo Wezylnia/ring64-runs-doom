@@ -248,6 +248,7 @@ export type CoreExports = WebAssembly.Exports & {
   ): number;
   core_compile_with_paged_vector_copy?: CoreExports['core_compile'];
   core_compile_with_paged_copy_spans?: CoreExports['core_compile'];
+  core_compile_with_paged_entries?: CoreExports['core_compile'];
   core_paged_loop_write_block?(address: bigint, valuePointer: number): number;
   core_paged_loop_copy_window?(source: bigint, destination: bigint, width: number): number;
   core_load(address: bigint, width: number): bigint;

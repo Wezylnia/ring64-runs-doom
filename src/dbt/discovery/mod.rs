@@ -37,7 +37,20 @@ pub(crate) fn discover_with_profile(
     entry: u64,
     limits: Limits,
 ) -> Result<Unit, CompileError> {
+    discover_with_entry_seeds(image, context, paging, cache, entry, limits, &[])
+}
+
+pub(super) fn discover_with_entry_seeds(
+    image: &Image,
+    context: &ExecutionContext,
+    paging: Option<&crate::x86::paging::State>,
+    cache: Option<&crate::x86::paging::cache::Cache>,
+    entry: u64,
+    limits: Limits,
+    seeds: &[u64],
+) -> Result<Unit, CompileError> {
     let mut pending = VecDeque::from([entry]);
+    let mut seeds_to_visit = seeds.iter().copied();
     let mut visited = BTreeSet::new();
     let mut instructions = BTreeMap::new();
     let mut source = BTreeSet::new();
@@ -45,7 +58,7 @@ pub(crate) fn discover_with_profile(
     let mut fetch_pages = BTreeMap::new();
     let mut instruction_pages = Vec::new();
     let identity_source = context.is_long64() && paging.is_none();
-    while let Some(pc) = pending.pop_front() {
+    while let Some(pc) = pending.pop_front().or_else(|| seeds_to_visit.next()) {
         if instructions.len() >= limits.max_instructions as usize {
             break;
         }
@@ -159,10 +172,13 @@ pub(crate) fn discover_with_profile(
         }
         instructions.insert(pc, instruction);
     }
-    if !instructions.contains_key(&entry) {
+    if !instructions.contains_key(&entry)
+        || (!seeds.is_empty() && !seeds.iter().any(|pc| instructions.contains_key(pc)))
+    {
         return Err(CompileError::Resource);
     }
     let mut leaders = BTreeSet::from([entry]);
+    leaders.extend(seeds.iter().filter(|pc| instructions.contains_key(pc)));
     for instruction in instructions.values() {
         match instruction.operation {
             Operation::Jump { target } => {

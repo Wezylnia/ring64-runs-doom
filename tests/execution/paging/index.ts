@@ -11,6 +11,7 @@ import { pagingMutationOracleScenarios } from './mutation-oracles.js';
 import { pagingPermissionReviewScenarios } from './review-permissions.js';
 import { invpcidScenarios } from './invpcid.js';
 import { pagingRetentionLifecycleScenarios } from './retention-lifecycle.js';
+import { pagedRegionScenarios } from './regions.js';
 import { retainedTranslationScenarios } from './retained-translations.js';
 import { pagingScalarF32LoopScenarios } from './scalar-f32-loop.js';
 import type { Scenario } from '../../support/fixture.js';
@@ -32,5 +33,6 @@ export function pagingScenarios(compiler: WebAssembly.Module): Scenario[] {
     ...invpcidScenarios(compiler),
     ...pagingRetentionLifecycleScenarios(compiler),
     ...retainedTranslationScenarios(compiler),
+    ...pagedRegionScenarios(compiler),
   ];
 }

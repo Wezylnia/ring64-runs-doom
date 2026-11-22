@@ -36,6 +36,7 @@ import {
   type PageFault,
   type PhysicalMemoryFault,
 } from '../wasm/core.js';
+import { RegionTrace } from './regions.js';
 import { Translations, type InstalledEntry } from './translations.js';
 import {
   captureState,
@@ -745,6 +746,49 @@ export class Cpu {
     }
   }
 
+  async #tryRegion(
+    region: RegionTrace,
+    resources: Pick<RunResult['resources'], 'compilations' | 'generatedBytes'>,
+    timings: RunResult['timings'],
+  ): Promise<void> {
+    const engine = this.#engine;
+    const cache = this.#cache.resources();
+    const maxArtifactBytes = Math.min(
+      this.#limits.maxArtifactBytes,
+      this.#limits.maxCachedBytes - cache.cachedBytes,
+    );
+    if (
+      resources.compilations >= this.#limits.maxTranslationsPerRun ||
+      cache.cachedArtifacts >= this.#limits.maxCachedArtifacts ||
+      maxArtifactBytes <= 0 ||
+      engine.boundaryObserved() !== region.root.boundaryObserved ||
+      engine.hasQueuedInterrupts()
+    )
+      return;
+
+    // Owners bound the sampling metadata. The compiler decodes each selected
+    // target again against its current instruction-fetch authority.
+    const limits = { ...this.#limits, maxArtifactBytes };
+    const selected = region.choose(limits, (owner) => engine.valid(owner));
+    if (!selected) return;
+    resources.compilations++;
+    const started = performance.now();
+    const output = engine.compile(selected.entry, limits, selected.seeds);
+    timings.translationMs += performance.now() - started;
+    if (!output) return;
+    resources.generatedBytes += output.bytes.length;
+    let installed = false;
+    try {
+      const began = performance.now();
+      const module = await WebAssembly.compile(output.bytes);
+      timings.browserCompileMs += performance.now() - began;
+      const ready = this.#cache.installCompiled(engine, module, output.metadata, timings);
+      installed = ready !== undefined && ready !== 'resource-limit';
+    } finally {
+      if (!installed) engine.release(output.metadata.owner);
+    }
+  }
+
   async run(options: RunOptions): Promise<RunResult> {
     const run = this[BEGIN_RUN](options);
     const { budget, stop, repeatBudget, deliveryBudget, resources, timings } = run;
@@ -787,6 +831,9 @@ export class Cpu {
         servicingEvent = eventKind === 'pending' || eventKind === 'pending-interrupt';
       }
       let dispatchedPc: bigint | undefined;
+      let canSampleRegion =
+        deliveryBudget === undefined && !queuedInterrupts && engine.supportsRegionCompilation;
+      let region: RegionTrace | undefined;
       execution: for (;;) {
         if (eventKind === 'shutdown' && (deliveryBudget === undefined || !engine.shutdownCanWake()))
           return finish('shutdown');
@@ -985,6 +1032,18 @@ export class Cpu {
         this.pruneTranslations();
         resources.dispatches++;
         dispatchedPc = current.rip;
+        if (canSampleRegion) {
+          if (eventKind !== 'ready') {
+            canSampleRegion = false;
+          } else {
+            const metadata = entry.artifact.metadata;
+            region ??= new RegionTrace(pc, metadata);
+            if (region.sample(pc, current.rip, entry)) {
+              canSampleRegion = false;
+              await this.#tryRegion(region, resources, timings);
+            }
+          }
+        }
       }
     } catch (cause) {
       return this[FAIL_RUN](cause);

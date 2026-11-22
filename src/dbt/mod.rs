@@ -18,10 +18,11 @@ pub struct Limits {
     pub max_artifact_bytes: u32,
 }
 
-pub(crate) struct CompileProfile {
+pub(crate) struct CompileProfile<'a> {
     pub observed: bool,
     pub paged_vector_copy: bool,
     pub paged_copy_spans: bool,
+    pub entry_seeds: &'a [u64],
 }
 
 #[derive(Debug)]
@@ -93,6 +94,7 @@ pub fn compile_with_paging(
             observed,
             paged_vector_copy: false,
             paged_copy_spans: false,
+            entry_seeds: &[],
         },
     )
 }
@@ -105,7 +107,7 @@ pub(crate) fn compile_with_paging_cache(
     cache: &crate::x86::paging::cache::Cache,
     entry: u64,
     limits: Limits,
-    profile: CompileProfile,
+    profile: CompileProfile<'_>,
 ) -> Result<Artifact, CompileError> {
     compile_profile(image, context, paging, Some(cache), entry, limits, profile)
 }
@@ -117,14 +119,27 @@ fn compile_profile(
     cache: Option<&crate::x86::paging::cache::Cache>,
     entry: u64,
     limits: Limits,
-    profile: CompileProfile,
+    profile: CompileProfile<'_>,
 ) -> Result<Artifact, CompileError> {
     let CompileProfile {
         observed,
         paged_vector_copy: _paged_vector_copy,
         paged_copy_spans: _paged_copy_spans,
+        entry_seeds,
     } = profile;
-    let unit = discovery::discover_with_profile(image, context, paging, cache, entry, limits)?;
+    let unit = if entry_seeds.is_empty() {
+        discovery::discover_with_profile(image, context, paging, cache, entry, limits)?
+    } else {
+        discovery::discover_with_entry_seeds(
+            image,
+            context,
+            paging,
+            cache,
+            entry,
+            limits,
+            entry_seeds,
+        )?
+    };
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
     let emit = if image.has_mmio() {
         wasm::emit_mmio_profile

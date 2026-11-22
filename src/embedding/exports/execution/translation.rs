@@ -136,6 +136,7 @@ pub extern "C" fn core_compile(
         max_artifact_bytes,
         false,
         false,
+        &[],
     )
 }
 
@@ -154,6 +155,7 @@ pub extern "C" fn core_compile_with_paged_vector_copy(
         max_artifact_bytes,
         true,
         false,
+        &[],
     )
 }
 
@@ -172,6 +174,42 @@ pub extern "C" fn core_compile_with_paged_copy_spans(
         max_artifact_bytes,
         true,
         true,
+        &[],
+    )
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[unsafe(no_mangle)]
+pub extern "C" fn core_compile_with_paged_entries(
+    pc: u64,
+    max_instructions: u32,
+    max_source_bytes: u32,
+    max_artifact_bytes: u32,
+) -> i32 {
+    let Some((seeds, count)) = BRIDGE.with_borrow(|bridge| {
+        let mut seeds = [0; 8];
+        let count = bridge.input.len() / 8;
+        if count > seeds.len() || !bridge.input.len().is_multiple_of(8) {
+            return None;
+        }
+        for (seed, bytes) in seeds.iter_mut().zip(bridge.input.chunks_exact(8)) {
+            *seed = u64::from_le_bytes(bytes.try_into().unwrap());
+        }
+        if seeds[..count].iter().any(|target| target >> 12 != pc >> 12) {
+            return None;
+        }
+        Some((seeds, count))
+    }) else {
+        return RESOURCE;
+    };
+    compile_artifact(
+        pc,
+        max_instructions,
+        max_source_bytes,
+        max_artifact_bytes,
+        true,
+        true,
+        &seeds[..count],
     )
 }
 
@@ -182,6 +220,7 @@ fn compile_artifact(
     max_artifact_bytes: u32,
     paged_vector_copy: bool,
     paged_copy_spans: bool,
+    entry_seeds: &[u64],
 ) -> i32 {
     BRIDGE.with_borrow_mut(|bridge| {
         bridge.output.clear();
@@ -189,7 +228,15 @@ fn compile_artifact(
         let limits = Limits { max_instructions, max_source_bytes, max_artifact_bytes };
         core.reconcile_translation_changes();
         let observed = core.boundary_observed();
-        let profile = dbt::CompileProfile { observed, paged_vector_copy, paged_copy_spans };
+        #[cfg(not(feature = "parallel"))]
+        if !entry_seeds.is_empty()
+            && (!core.context.is_long64()
+                || !core.paging.is_some_and(|state| state.cr0 & (1 << 31) != 0)
+                || core.image.has_mmio() || core.io_present)
+        {
+            return RESOURCE;
+        }
+        let profile = dbt::CompileProfile { observed, paged_vector_copy, paged_copy_spans, entry_seeds };
         match dbt::compile_with_paging_cache(&core.image, &core.context, core.paging.as_ref(), &core.translation_cache, pc, limits, profile) {
             Ok(artifact) => {
                 let owner = match core.image.register_dependencies(

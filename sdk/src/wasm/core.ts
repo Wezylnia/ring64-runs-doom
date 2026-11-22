@@ -1152,15 +1152,29 @@ export class Core {
     return reason;
   }
 
+  get supportsRegionCompilation(): boolean {
+    return this.isPaged && typeof this.#exports.core_compile_with_paged_entries === 'function';
+  }
+
   compile(
     pc: bigint,
     limits: CompileLimits,
+    seeds?: readonly bigint[],
   ): { bytes: Uint8Array<ArrayBuffer>; metadata: UnitMetadata } | undefined {
     let compile = this.#exports.core_compile;
     if (this.isPaged && this.#exports.core_paged_loop_write_block) {
       compile = this.#exports.core_compile_with_paged_vector_copy ?? compile;
       if (this.#exports.core_paged_loop_copy_window)
         compile = this.#exports.core_compile_with_paged_copy_spans ?? compile;
+    }
+    if (seeds?.length) {
+      const seeded = this.#exports.core_compile_with_paged_entries;
+      if (!seeded) return undefined;
+      const length = seeds.length * 8;
+      const pointer = this.#exports.core_input(length) >>> 0;
+      const view = new DataView(this.#exports.memory.buffer, pointer, length);
+      seeds.forEach((seed, index) => view.setBigUint64(index * 8, seed, true));
+      compile = seeded;
     }
     const status = compile(
       pc,
