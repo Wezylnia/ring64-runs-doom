@@ -6,16 +6,16 @@ impl Core {
     #[cfg(not(feature = "parallel"))]
     #[cold]
     #[inline(never)]
-    fn recover_paged_loop_fetch(&mut self, pc: u64) -> bool {
-        let Some(paging) = self.paging.as_ref() else {
-            return false;
-        };
-        let Ok(linear) = self
+    fn recover_paged_fetch(&mut self, pc: u64) -> Option<crate::x86::instruction::Instruction> {
+        self.active_owner?;
+        if self.image.active_changed() {
+            return None;
+        }
+        let paging = self.paging.as_ref()?;
+        let linear = self
             .context
             .translate(pc, 1, Segment::Cs, Access::Execute, false)
-        else {
-            return false;
-        };
+            .ok()?;
         self.translation_cache
             .observe(
                 paging,
@@ -26,9 +26,11 @@ impl Core {
                 },
                 &Keys::ZERO,
             )
-            .is_ok_and(|entry| entry.is_some())
-            && self.revalidate_active_owner()
-            && self.warm_paged_instruction(pc).is_some()
+            .ok()??;
+        if !self.revalidate_active_owner() {
+            return None;
+        }
+        self.warm_paged_instruction(pc)
     }
 
     #[cfg(not(feature = "parallel"))]
@@ -384,7 +386,7 @@ fn paged_loop_guard<const FLAT_DATA32: bool, const SSE: bool, const FLAT_WRITE32
         }
         // A data TLB replacement can revoke the active owner's admission
         // while its executable translation and bytes remain current.
-        if core.warm_paged_instruction(pc).is_none() && !core.recover_paged_loop_fetch(pc) {
+        if core.warm_paged_instruction(pc).is_none() && core.recover_paged_fetch(pc).is_none() {
             return 0;
         }
         // The active owner covers every loop byte. A retained executable page
@@ -657,7 +659,10 @@ pub extern "C" fn core_paged_debug_begin(pc: u64, flags: u64, shadow: u32) -> i3
             return debug;
         }
         #[cfg(not(feature = "parallel"))]
-        if let Some(instruction) = core.warm_paged_instruction(pc) {
+        if let Some(instruction) = core
+            .warm_paged_instruction(pc)
+            .or_else(|| core.recover_paged_fetch(pc))
+        {
             core.reconcile_translation_changes();
             return core.instruction_admission(instruction.operation, pc, true);
         }

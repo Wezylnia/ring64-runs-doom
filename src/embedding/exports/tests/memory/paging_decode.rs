@@ -202,6 +202,17 @@ fn reached_long64_instruction_requires_a_live_tlb_hit() {
         core.translation_cache.clear();
     });
     check_miss();
+    BRIDGE.with_borrow_mut(|bridge| {
+        let core = bridge.core.as_mut().unwrap();
+        core.translation_cache.clear();
+        assert_mov(0, core.paged_decode(PC).unwrap());
+        core.reconcile_translation_changes();
+        assert_eq!(core.warm_paged_instruction(PC), None);
+    });
+    // The current fetch can be re-admitted without reading its bytes.
+    physical_counts::take();
+    assert_eq!(paging::core_paged_debug_begin(PC, RF, 0), 0);
+    assert_eq!(physical_counts::take(), [0; 6]);
 }
 
 #[cfg(not(feature = "parallel"))]
