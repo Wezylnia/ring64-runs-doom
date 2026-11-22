@@ -264,6 +264,7 @@ export function pagingBoundaryReviewScenarios(compiler: WebAssembly.Module): Sce
           equal(partial.state.rip, middle, 'precise second-lap continuation');
           equal(partial.state.registers[0], 2n, 'both additions completed');
           equal(partial.state.registers[1], 2n, 'only the first subtraction completed');
+          equal(partial.state.flags, 2n, 'a partial lap publishes the checked addition flags');
           const resumed = await cpu.run({ budget: 10n, stop: head + 8n });
           equal(resumed.reason, 'stop', 'resume directly at the saved middle entry');
           equal(resumed.retired, 5n, 'the prior addition does not replay');

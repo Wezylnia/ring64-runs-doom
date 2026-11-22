@@ -1316,7 +1316,7 @@ impl Emitter {
             // The complete-lap guard and the no-fault body rule hide intermediate status.
             // A worker signal can publish flags at any instruction entry.
             self.omit_result_status = !cfg!(feature = "parallel")
-                && !self.observed
+                && (!self.observed || self.guarded_paged_lap)
                 && body.kind == LoopKind::Registers
                 && self.loop_gates_prechecked
                 && status_effect(instructions[ordinal].operation) == StatusEffect::Replace
