@@ -355,22 +355,95 @@ fn quotient_bit(remainder: &mut u64, divisor: u64) -> u64 {
     u64::from(subtract)
 }
 
+fn fractional_quotient(mut remainder: u64, divisor: u64) -> (u64, u64) {
+    debug_assert!(divisor >= 1 << 63 && remainder < divisor);
+    if remainder == 0 {
+        return (0, 0);
+    }
+
+    const BASE: u64 = 1 << 32;
+    let high = divisor >> 32;
+    let low = u64::from(divisor as u32);
+    let mut fraction = 0;
+    // The low word of the numerator supplies two zero digits.
+    for _ in 0..2 {
+        let mut digit = (remainder / high).min(BASE - 1);
+        let mut upper = remainder - digit * high;
+        // A normalized divisor and remainder < divisor bound the estimate
+        // to at most two decrements. Avoid forming upper * BASE when it would overflow.
+        while upper < BASE && digit * low > upper << 32 {
+            digit -= 1;
+            upper += high;
+        }
+        // The exact remainder is below divisor, so its low word is sufficient.
+        remainder = (upper << 32).wrapping_sub(digit * low);
+        fraction = (fraction << 32) | digit;
+    }
+    (fraction, remainder)
+}
+
+#[cfg(test)]
+#[test]
+fn normalized_division_digits_match_wide_quotients_and_remainders() {
+    let check = |remainder: u64, divisor: u64| {
+        let numerator = u128::from(remainder) << 64;
+        let wide = u128::from(divisor);
+        assert_eq!(
+            fractional_quotient(remainder, divisor),
+            ((numerator / wide) as u64, (numerator % wide) as u64),
+            "remainder={remainder:#018x} divisor={divisor:#018x}"
+        );
+    };
+    for divisor in [
+        0x8000_0000_0000_0000,
+        0x8000_0000_0000_0001,
+        0x8000_0000_ffff_ffff,
+        0x8000_0001_0000_0000,
+        0xffff_ffff_0000_0000,
+        u64::MAX - 1,
+        u64::MAX,
+    ] {
+        for remainder in [
+            0,
+            1,
+            0xffff_ffff,
+            1 << 32,
+            divisor / 2,
+            divisor - 2,
+            divisor - 1,
+        ] {
+            check(remainder, divisor);
+        }
+    }
+    // The first estimate needs both correction steps.
+    check(0x7fff_ffff_0000_0000, 0x8000_0000_ffff_ffff);
+
+    let mut seed = 0x8d79_26a4_cf50_b13eu64;
+    let mut next = || {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        seed
+    };
+    for _ in 0..16384 {
+        let divisor = next() | (1 << 63);
+        check(next() % divisor, divisor);
+    }
+}
+
 fn divide(a: Num, b: Num) -> Num {
     let (sa, ea) = normalized(a);
     let (sb, eb) = normalized(b);
     let sa = sa as u64;
     let sb = sb as u64;
     let mut e = ea - eb;
-    let mut rem = if sa < sb {
+    let rem = if sa < sb {
         e -= 1;
         (sa << 1).wrapping_sub(sb)
     } else {
         sa - sb
     };
-    // The fractional quotient fits in one word. Its remainder is also
-    // below the divisor, so only the low word of the subtraction is needed.
-    let fraction = ((u128::from(rem) << 64) / u128::from(sb)) as u64;
-    rem = fraction.wrapping_mul(sb).wrapping_neg();
+    let (fraction, mut rem) = fractional_quotient(rem, sb);
     let q = (1u128 << 64) | u128::from(fraction);
     let mut tail = 0u64;
     for _ in 0..2 {
