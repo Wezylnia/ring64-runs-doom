@@ -1,13 +1,16 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { createCpu } from '../../../../src/index.js';
 import { Core } from '../../../../src/wasm/core.js';
 import { snapshot } from '../../../../../tests/execution/far-control/fixture.js';
 import {
   BANK,
   PC,
+  hex,
   initial,
   usingPaged,
 } from '../../../../../tests/execution/paging/fixture.js';
+import { LIMITS } from '../../../../../tests/support/fixture.js';
 import { compiler } from './fixture.js';
 
 const seed = Uint8Array.from({ length: 8 }, (_, index) => 19 * index + 3);
@@ -106,5 +109,72 @@ test('paged scalar copies preserve overlapping memory and a later write fault', 
     assert.equal(accepted, beforeAlignment);
   } finally {
     proto.artifactImports = imports;
+  }
+});
+
+test('flat scalar copy groups preserve MOVSD/MOVQ upper lanes and partial retirement', async () => {
+  const body = 'f20f1007f20f1106f30f7e4708660fd646080fb7471066894610';
+  const code = hex(body + '85c074e2');
+  const stop = PC + BigInt(code.length);
+  const data = new Uint8Array(4096);
+  data.set(seed, 3);
+  data.set(seed, 67);
+  const permissions = { read: true, write: true, execute: false };
+  const cpu = await createCpu({
+    compiler,
+    context: snapshot('protected'),
+    entry: PC,
+    limits: LIMITS,
+    memoryLimits: { maxBackings: 2, maxMappings: 3, maxBackingBytes: 8192 },
+    memory: {
+      backings: [
+        { id: 'code', bytes: code },
+        { id: 'data', bytes: data },
+      ],
+      mappings: [
+        {
+          base: PC,
+          length: code.length,
+          backing: 'code',
+          offset: 0,
+          permissions: { ...permissions, write: false, execute: true },
+        },
+        { base: PC + 0x1000n, length: 4096, backing: 'data', offset: 0, permissions },
+        { base: PC + 0x2000n, length: 4096, backing: 'data', offset: 0, permissions },
+      ],
+    },
+  });
+  const imports = proto.artifactImports;
+  let accepted = 0;
+  proto.artifactImports = function (observed) {
+    const env = imports.call(this, observed);
+    const write = env.write_span;
+    if (typeof write === 'function') {
+      env.write_span = (addr: bigint, width: number, segment: number) => {
+        const result = write(addr, width, segment);
+        if (width === 18 && result) accepted++;
+        return result;
+      };
+    }
+    return env;
+  };
+  try {
+    cpu.setXmmState(Array(16).fill((1n << 128n) - 1n));
+    cpu.setState(initial(PC, { 0: 0xffffffffn, 6: target, 7: source }));
+    const run = await cpu.run({ budget: 20n, stop });
+    assert.equal(run.reason, 'stop');
+    assert.equal(run.retired, 8n);
+    assert.equal(run.state.registers[0], value & 0xffffn);
+    assert.equal(cpu.readXmmState()[0], value);
+    assert.deepEqual(cpu.readMemory(target, 18), expected);
+    assert.equal(accepted, 1);
+    cpu.setState(initial(PC, { 0: 0xffffffffn, 6: target + 64n, 7: source + 64n }));
+    const partial = await cpu.run({ budget: 3n, stop });
+    assert.equal(partial.reason, 'budget');
+    assert.equal(partial.retired, 3n);
+    assert.deepEqual(cpu.readMemory(target + 72n, 8), new Uint8Array(8));
+  } finally {
+    proto.artifactImports = imports;
+    cpu.dispose();
   }
 });

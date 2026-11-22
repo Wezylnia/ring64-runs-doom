@@ -451,7 +451,7 @@ fn emit_placement_with_copy(
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         copy_prefix: _copy_prefix,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-        scalar_copy_prefix: _copy_prefix,
+        scalar_copy_prefix: _copy_prefix || (!paged && !observed && !mmio),
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         linear_recurrence: max_artifact_bytes >= 64 * 1024,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -1832,6 +1832,12 @@ fn emit_body(
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let write_caches = write_segments.map(|used| write_span.filter(|_| used).map(&mut span_cache));
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let linear_scalar_copy_prefix =
+        (!paged && !observed && !mmio && optional.scalar_copy_prefix && !unit.context.is_long64())
+            .then(|| ScalarCopyGroup::finite_prefix(unit, [loop_body, None]))
+            .flatten()
+            .zip(read_span.zip(write_caches[0]));
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let read_loop_diamond = loop_body.and_then(|body| {
         let enabled = if paged {
             optional.paged_read_diamond
@@ -2498,6 +2504,17 @@ fn emit_body(
             );
         }
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if let Some(((head, group), (read, write))) =
+            linear_scalar_copy_prefix.filter(|((head, _), _)| *head == index)
+        {
+            emitter.emit_linear_scalar_copy(
+                &unit.instructions[head..head + group.instructions],
+                group,
+                loop_depth,
+                (read.resolve, write.resolve),
+            );
+        }
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         if let Some((end, guard)) = register_prefixes
             .as_ref()
             .and_then(|p| p[index])
@@ -2702,7 +2719,9 @@ fn emit_body(
     let code_start = bytes.len();
     code.append_to(&mut bytes);
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    if bytes.len() > max_artifact_bytes && scalar_copy_prefix.is_some() {
+    if bytes.len() > max_artifact_bytes
+        && (scalar_copy_prefix.is_some() || linear_scalar_copy_prefix.is_some())
+    {
         return emit_body(
             unit,
             observed,

@@ -1,12 +1,12 @@
 use super::{
-    ADDRESS, Emitter, LHS, REMAINING, RHS, RIP, STORE_STATUS, StructuredLoop, Unit, VALUE,
+    ADDRESS, Emitter, LHS, REMAINING, RESULT, RHS, RIP, STORE_STATUS, StructuredLoop, Unit, VALUE,
 };
 use crate::x86::context::Segment;
 use crate::x86::instruction::{
     Address, AddressBase, Alu, DataOperand, Instruction, Location, Operation, RegisterView,
     VectorInstruction, VectorOperand, Width,
 };
-use wasm_encoder::{BlockType, Instruction as Op, MemArg};
+use wasm_encoder::{BlockType, Instruction as Op, MemArg, ValType};
 
 #[derive(Clone, Copy)]
 pub(super) struct CopyGroup {
@@ -71,14 +71,18 @@ impl ScalarCopyGroup {
         unit: &Unit,
         loops: [Option<StructuredLoop>; 2],
     ) -> Option<(usize, Self)> {
-        if !unit.context.is_long64() {
+        let size = if unit.context.is_long64() {
+            Width::W64
+        } else if unit.context.flat_paged_write32() {
+            Width::W32
+        } else {
             return None;
-        }
+        };
         unit.instructions
             .iter()
             .enumerate()
             .filter_map(|(head, first)| {
-                let group = Self::recognize(&unit.instructions[head..], Width::W64)?;
+                let group = Self::recognize(&unit.instructions[head..], size)?;
                 let end = head + group.instructions;
                 let length = u32::try_from(group.end.checked_sub(first.pc)?).ok()?;
                 if !unit.context.single_page_code_span(first.pc, length)
@@ -375,6 +379,68 @@ pub(super) struct CopyWindow {
 }
 
 impl Emitter {
+    pub(super) fn emit_linear_scalar_copy(
+        &mut self,
+        instructions: &[Instruction],
+        group: ScalarCopyGroup,
+        loop_depth: u32,
+        (read, write): (u32, u32),
+    ) {
+        self.guard_straight_prefix(
+            &instructions[0],
+            &instructions[group.instructions - 1],
+            group.instructions as u32,
+        );
+        self.address(group.source, 0);
+        self.op(Op::LocalSet(LHS));
+        self.linear_copy_host(LHS, group.width, read);
+        self.op(Op::LocalTee(STORE_STATUS))
+            .op(Op::If(BlockType::Empty));
+        self.address(group.destination, 0);
+        self.op(Op::LocalSet(RHS));
+        self.linear_copy_host(RHS, group.width, write);
+        self.op(Op::I64ExtendI32U)
+            .op(Op::LocalTee(ADDRESS))
+            .op(Op::I64Const(0))
+            .op(Op::I64Ne)
+            .op(Op::If(BlockType::Empty));
+        self.emit_scalar_transfers(group);
+        self.current_operation = instructions[group.instructions - 1].operation;
+        self.stores = false;
+        self.route(group.end, loop_depth + 3, loop_depth + 4);
+        self.op(Op::End).op(Op::End).op(Op::End);
+    }
+
+    fn linear_copy_host(&mut self, address: u32, width: u32, resolve: u32) {
+        use crate::memory::DirectSpan;
+
+        self.op(Op::LocalGet(address))
+            .op(Op::I32Const(width as i32))
+            .op(Op::I32Const(Segment::Ds as i32))
+            .op(Op::Call(resolve))
+            .op(Op::I64ExtendI32U)
+            .op(Op::LocalTee(RESULT))
+            .op(Op::I32WrapI64)
+            .op(Op::If(BlockType::Result(ValType::I32)))
+            .op(Op::LocalGet(address))
+            .op(Op::LocalGet(RESULT))
+            .op(Op::I32WrapI64)
+            .op(Op::I64Load(memory(
+                std::mem::offset_of!(DirectSpan, base) as u64
+            )))
+            .op(Op::I64Sub)
+            .op(Op::I32WrapI64)
+            .op(Op::LocalGet(RESULT))
+            .op(Op::I32WrapI64)
+            .op(Op::I32Load(memory(
+                std::mem::offset_of!(DirectSpan, host) as u64
+            )))
+            .op(Op::I32Add)
+            .op(Op::Else)
+            .op(Op::I32Const(0))
+            .op(Op::End);
+    }
+
     pub(super) fn emit_finite_scalar_copy(
         &mut self,
         instructions: &[Instruction],

@@ -591,7 +591,27 @@ impl Emitter {
         count: u32,
         guard: u32,
     ) {
-        use super::{REMAINING, SHADOW};
+        use super::SHADOW;
+
+        self.guard_straight_prefix(first, last, count);
+        self.op(Op::I64Const(first.pc as i64))
+            .op(Op::I32Const((last.next_pc - first.pc) as i32));
+        self.system_bits();
+        self.op(Op::LocalGet(SHADOW))
+            .op(Op::Call(guard))
+            .op(Op::I32Const(1))
+            .op(Op::I32Eq)
+            .op(Op::If(BlockType::Empty));
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn guard_straight_prefix(
+        &mut self,
+        first: &Instruction,
+        last: &Instruction,
+        count: u32,
+    ) {
+        use super::REMAINING;
 
         self.op(Op::LocalGet(REMAINING))
             .op(Op::I64Const(i64::from(count)))
@@ -607,14 +627,6 @@ impl Emitter {
             .op(Op::I32And)
             .op(Op::I32Eqz)
             .op(Op::I32And)
-            .op(Op::If(BlockType::Empty));
-        self.op(Op::I64Const(first.pc as i64))
-            .op(Op::I32Const((last.next_pc - first.pc) as i32));
-        self.system_bits();
-        self.op(Op::LocalGet(SHADOW))
-            .op(Op::Call(guard))
-            .op(Op::I32Const(1))
-            .op(Op::I32Eq)
             .op(Op::If(BlockType::Empty));
     }
 }
