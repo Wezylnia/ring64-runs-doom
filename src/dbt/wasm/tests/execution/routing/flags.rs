@@ -21,7 +21,7 @@ fn guarded_forward_graph_skips_only_unobservable_arithmetic_status() {
     let artifact = compiled_fixture(0x1000, &code, 0x1000);
     let (order, _) = select(&artifact.instructions).unwrap();
     let context = crate::x86::context::ExecutionContext::default();
-    let plan = compare_predicates(&artifact.instructions, order, &context, true);
+    let plan = compare_predicates(&artifact.instructions, order, &context, true, None);
     assert_eq!(
         plan[..4],
         [
@@ -32,7 +32,7 @@ fn guarded_forward_graph_skips_only_unobservable_arithmetic_status() {
         ]
     );
     assert_eq!(
-        compare_predicates(&artifact.instructions, order, &context, false)[..2],
+        compare_predicates(&artifact.instructions, order, &context, false, None)[..2],
         [CompareAction::Ordinary; 2]
     );
     let mut with_carry = artifact.instructions.clone();
@@ -43,7 +43,7 @@ fn guarded_forward_graph_skips_only_unobservable_arithmetic_status() {
         width: Width::W32,
     };
     assert_eq!(
-        compare_predicates(&with_carry, order, &context, true)[0],
+        compare_predicates(&with_carry, order, &context, true, None)[0],
         CompareAction::Ordinary
     );
     let input = [(0, 2), (3, 0), (6, 2), (7, 0x8000)];
@@ -141,7 +141,7 @@ fn memory_compare_predicate_keeps_flags_at_faults_and_checked_entries() {
         assert_eq!(max_lap, 6);
         let context = crate::x86::context::ExecutionContext::default();
         assert_eq!(
-            compare_predicates(&instructions, order, &context, true)[1],
+            compare_predicates(&instructions, order, &context, true, None)[1],
             CompareAction::Condition(ConditionSource::Operands(width))
         );
         let mut faulting = instructions.clone();
@@ -151,7 +151,7 @@ fn memory_compare_predicate_keeps_flags_at_faults_and_checked_entries() {
             width: Width::W32,
         };
         assert_eq!(
-            compare_predicates(&faulting, order, &context, true)[1],
+            compare_predicates(&faulting, order, &context, true, None)[1],
             CompareAction::Ordinary
         );
         let mut joined = instructions.clone();
@@ -172,7 +172,7 @@ fn memory_compare_predicate_keeps_flags_at_faults_and_checked_entries() {
         );
         let (joined_order, _) = select(&joined).unwrap();
         assert_eq!(
-            compare_predicates(&joined, joined_order, &context, true)[2],
+            compare_predicates(&joined, joined_order, &context, true, None)[2],
             CompareAction::Ordinary
         );
         let unit = unit(instructions);
@@ -317,7 +317,7 @@ fn compare_predicate_restores_flags_only_on_its_fallthrough_load_fault() {
         .collect();
     let (order, _) = select(&instructions).unwrap();
     let context = crate::x86::context::ExecutionContext::default();
-    let plan = compare_predicates(&instructions, order, &context, true);
+    let plan = compare_predicates(&instructions, order, &context, true, None);
     assert_eq!(
         plan[..3],
         [
@@ -345,7 +345,7 @@ fn compare_predicate_restores_flags_only_on_its_fallthrough_load_fault() {
     );
     let (joined_order, _) = select(&joined).unwrap();
     assert_eq!(
-        compare_predicates(&joined, joined_order, &context, true)[2],
+        compare_predicates(&joined, joined_order, &context, true, None)[2],
         CompareAction::Ordinary
     );
 
@@ -443,7 +443,7 @@ fn compare_predicate_restores_status_on_a_taken_loop_exit() {
     let context = crate::x86::context::ExecutionContext::default();
     let predicates = |instructions: &[Instruction]| {
         let (order, _) = select(instructions).unwrap();
-        compare_predicates(instructions, order, &context, true)
+        compare_predicates(instructions, order, &context, true, None)
     };
     assert_eq!(
         predicates(&artifact.instructions)[1..3],
@@ -545,7 +545,7 @@ fn conditional_move_preserves_sub_flags_across_an_intervening_scalar_load() {
     let context = crate::x86::context::ExecutionContext::default();
     let predicates = |instructions: &[Instruction]| {
         let (order, _) = select(instructions).unwrap();
-        compare_predicates(instructions, order, &context, true)
+        compare_predicates(instructions, order, &context, true, None)
     };
     assert_eq!(
         predicates(&artifact.instructions)[1..4],
@@ -659,7 +659,7 @@ fn guarded_backedge_uses_compare_operands_and_keeps_all_flags() {
     let context = crate::x86::context::ExecutionContext::default();
     let (order, _) = select(&artifact.instructions).unwrap();
     assert_eq!(
-        compare_predicates(&artifact.instructions, order, &context, true)[2..4],
+        compare_predicates(&artifact.instructions, order, &context, true, None)[2..4],
         [
             CompareAction::Ordinary,
             CompareAction::Condition(ConditionSource::Operands(Width::W32)),
@@ -671,7 +671,7 @@ fn guarded_backedge_uses_compare_operands_and_keeps_all_flags() {
         target: 0x1007,
     };
     assert_eq!(
-        compare_predicates(&joined, order, &context, true)[3],
+        compare_predicates(&joined, order, &context, true, None)[3],
         CompareAction::Ordinary
     );
 
@@ -768,8 +768,9 @@ fn guarded_shift_restores_flags_on_a_read_fault_before_compare_branch() {
     let context = crate::x86::context::ExecutionContext::default();
     let (order, _) = select(&artifact.instructions).unwrap();
     assert_eq!(read_prefix_len(&artifact.instructions, order), 2);
-    let predicates =
-        |instructions: &[Instruction]| compare_predicates(instructions, order, &context, true);
+    let predicates = |instructions: &[Instruction]| {
+        compare_predicates(instructions, order, &context, true, None)
+    };
     let plan = predicates(&artifact.instructions);
     assert_eq!(plan[0], CompareAction::SkipStatus);
     assert_eq!(
@@ -1007,7 +1008,7 @@ fn guarded_conditional_move_uses_comparison_and_result_sign_after_overflow() {
     let entries: Vec<_> = unit.instructions.iter().map(|i| i.pc).collect();
     let predicates = |unit: &Unit| {
         let (order, _) = select(&unit.instructions).unwrap();
-        compare_predicates(&unit.instructions, order, &unit.context, true)
+        compare_predicates(&unit.instructions, order, &unit.context, true, None)
     };
     let sources = predicates(&unit);
     assert_eq!(sources[1], CompareAction::SkipStatus);
