@@ -1288,6 +1288,8 @@ export class Core {
         env.paged_loop_read_pair = this.#exports.core_paged_loop_read_pair;
       if (this.#exports.core_paged_loop_read_span)
         env.paged_loop_read_span = this.#exports.core_paged_loop_read_span;
+      if (this.#exports.core_paged_loop_read_span_pages)
+        env.paged_loop_read_span_pages = this.#exports.core_paged_loop_read_span_pages;
       if (this.#exports.core_paged_loop_write_byte)
         env.paged_loop_write_byte = this.#exports.core_paged_loop_write_byte;
       if (this.#exports.core_paged_loop_write_dword)

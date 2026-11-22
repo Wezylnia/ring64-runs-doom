@@ -209,6 +209,21 @@ impl ReadLoop {
         })
     }
 
+    #[cfg(all(not(feature = "parallel"), any(test, target_arch = "wasm32")))]
+    pub(super) fn dense_ascending_bytes(self, instructions: &[Instruction]) -> bool {
+        let [Some(stream), None] = self.streams else {
+            return false;
+        };
+        self.byte_reads
+            && self.step * u64::from(stream.first.index.unwrap().scale)
+                == u64::from(stream.displacement_width(1).unwrap())
+            && instructions
+                .iter()
+                .filter_map(|instruction| Self::read_operand(instruction.operation, true).flatten())
+                .map(|address| address.displacement)
+                .eq(stream.first.displacement..=stream.last_displacement)
+    }
+
     fn recognize_body(
         context: &ExecutionContext,
         instructions: &[Instruction],
@@ -463,7 +478,9 @@ impl ReadLoop {
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-use super::{ADDRESS, Emitter, LHS, RESULT, RHS, STORE_STATUS, VALUE, memory::SpanCache};
+use super::{
+    ADDRESS, Emitter, LHS, REMAINING, RESULT, RHS, STORE_STATUS, VALUE, memory::SpanCache,
+};
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 use wasm_encoder::{BlockType, Instruction as Op, MemArg, ValType};
 
@@ -519,7 +536,7 @@ impl Emitter {
             .op(Op::Block(BlockType::Empty))
             .op(Op::LocalGet(guard_failed))
             .op(Op::BrIf(0));
-        self.guard_read_span(proof, span.resolve, first_bias);
+        self.guard_read_span(proof, span.resolve, first_bias, None);
         self.op(Op::I32Const(1))
             .op(Op::Br(1))
             .op(Op::End)
@@ -537,9 +554,29 @@ impl Emitter {
         resolve: u32,
         first_bias: u32,
     ) {
+        self.guard_integer_read_span(proof, resolve, first_bias, None);
+    }
+
+    pub(super) fn guard_funded_dense_read_loop(
+        &mut self,
+        proof: ReadLoop,
+        resolve: u32,
+        first_bias: u32,
+        lap_len: u32,
+    ) {
+        self.guard_integer_read_span(proof, resolve, first_bias, Some(lap_len));
+    }
+
+    fn guard_integer_read_span(
+        &mut self,
+        proof: ReadLoop,
+        resolve: u32,
+        first_bias: u32,
+        lap_len: Option<u32>,
+    ) {
         self.op(Op::Block(BlockType::Result(ValType::I32)))
             .op(Op::I32Const(0));
-        self.guard_read_span(proof, resolve, first_bias);
+        self.guard_read_span(proof, resolve, first_bias, lap_len);
         self.op(Op::Drop).op(Op::I32Const(1)).op(Op::End);
     }
 
@@ -737,10 +774,26 @@ impl Emitter {
         self.op(Op::Drop).op(Op::I32Const(1)).op(Op::End);
     }
 
-    fn guard_read_span(&mut self, proof: ReadLoop, resolve: u32, first_bias: u32) {
+    fn guard_read_span(
+        &mut self,
+        proof: ReadLoop,
+        resolve: u32,
+        first_bias: u32,
+        lap_len: Option<u32>,
+    ) {
         use crate::memory::DirectSpan as Descriptor;
 
         self.guard_read_trip_count(proof);
+        if let Some(lap_len) = lap_len {
+            self.op(Op::LocalGet(LHS))
+                .op(Op::I64Const(i64::from(proof.step.trailing_zeros())))
+                .op(Op::I64ShrU)
+                .op(Op::LocalGet(REMAINING))
+                .op(Op::I64Const(i64::from(lap_len)))
+                .op(Op::I64DivU)
+                .op(Op::I64GtU)
+                .op(Op::BrIf(0));
+        }
 
         for (slot, stream) in proof.streams.iter().flatten().enumerate() {
             self.guard_read_stream_length(proof, *stream);
@@ -1088,5 +1141,47 @@ mod tests {
         let mut instructions = candidate;
         instructions[2].next_pc += 1;
         assert!(ReadLoop::recognize(&context, &instructions).is_none());
+    }
+
+    #[cfg(not(feature = "parallel"))]
+    #[test]
+    fn dense_byte_loop_requires_consecutive_read_order_and_matching_stride() {
+        let context = ExecutionContext::default();
+        for (displacements, stride, dense) in [
+            ([0, 1, 2, 3], 4, true),
+            ([0, 2, 1, 3], 4, false),
+            ([0, 1, 3, 4], 4, false),
+            ([0, 1, 1, 3], 4, false),
+            ([0, 1, 2, 3], 2, false),
+        ] {
+            let mut instructions = fixture();
+            for (instruction, displacement) in instructions.iter_mut().zip(displacements) {
+                instruction.operation = Operation::Extend {
+                    dst: RegisterView::low(2),
+                    src: Location::Memory(Address {
+                        base: AddressBase::Register(7),
+                        index: Some(AddressIndex {
+                            register: 1,
+                            scale: 1,
+                        }),
+                        displacement,
+                        size: Width::W64,
+                        segment: Segment::Ds,
+                    }),
+                    source_width: Width::W8,
+                    width: Width::W32,
+                    signed: false,
+                };
+            }
+            instructions[4].operation = Operation::Nop;
+            instructions[5].operation = Operation::Alu {
+                kind: Alu::Add,
+                dst: RegisterView::low(1),
+                src: DataOperand::Immediate(stride),
+                width: Width::W64,
+            };
+            let proof = ReadLoop::recognize_integer(&context, &instructions).unwrap();
+            assert_eq!(proof.dense_ascending_bytes(&instructions), dense);
+        }
     }
 }

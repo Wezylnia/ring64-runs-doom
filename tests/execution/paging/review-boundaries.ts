@@ -759,8 +759,17 @@ export function pagingBoundaryReviewScenarios(compiler: WebAssembly.Module): Sce
         // Preload, then four indexed MOVZX loads and a four-byte induction step.
         const code = '0fb60731c90fb6040f0fb6540f010fb65c0f020fb6740f034101c04883c1044883f90875e0';
         const bytes = Uint8Array.of(0xff, 1, 2, 3, 4, 5, 6, 7);
-        for (const layout of ['local', 'split-ram', 'split-tlb', 'global', 'denied'] as const) {
+        for (const layout of [
+          'local',
+          'split-ram',
+          'split-tlb',
+          'contiguous-tlb',
+          'global',
+          'denied',
+        ] as const) {
           const splitTlb = layout === 'split-tlb';
+          const contiguousTlb = layout === 'contiguous-tlb';
+          const crossesTlb = splitTlb || contiguousTlb;
           const denied = layout === 'denied';
           const global = layout === 'global';
           const splitRam = denied || layout === 'split-ram';
@@ -787,10 +796,14 @@ export function pagingBoundaryReviewScenarios(compiler: WebAssembly.Module): Sce
                         read: !denied,
                       },
                     ]
-                  : [{ physical: 0xa000n, bytes }],
+                  : [{ physical: contiguousTlb ? 0xaffcn : 0xa000n, bytes }],
             },
             async (cpu) => {
-              const start = initial(head, { 7: splitTlb ? 0x401ffcn : 0x401000n, 8: 0n }, 2n);
+              const start = initial(head, { 7: crossesTlb ? 0x401ffcn : 0x401000n, 8: 0n }, 2n);
+              if (contiguousTlb) {
+                cpu.setState(initial(head, { 7: 0x402000n }, 2n));
+                equal((await cpu.run({ budget: 1n })).reason, 'budget', 'retain the second leaf');
+              }
               cpu.setState(start);
               const result = await cpu.run({ budget: 20n, stop: head + 37n });
               equal(result.reason, denied ? 'physical-memory-fault' : 'stop', layout);
@@ -801,7 +814,7 @@ export function pagingBoundaryReviewScenarios(compiler: WebAssembly.Module): Sce
               equal(result.state.registers[6], denied ? 3n : 7n, 'last successful byte');
               equal(result.state.registers[8], denied ? 255n : 259n, 'exact sum with byte 0xff');
               equal(result.state.flags, denied ? 0x97n : 0x46n, 'last comparison decides flags');
-              if (layout !== 'local') return;
+              if (layout !== 'local' && !contiguousTlb) return;
               cpu.setState(start);
               const partial = await cpu.run({ budget: 11n });
               equal(partial.reason, 'budget', 'partial second lap takes the checked entry');

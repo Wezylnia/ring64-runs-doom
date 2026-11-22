@@ -449,6 +449,17 @@ fn paged_loop_read<const WIDTH: u32>(address: u64) -> u64 {
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 #[unsafe(no_mangle)]
 pub extern "C" fn core_paged_loop_read_span(address: u64, bytes: u32, segment: u32) -> u32 {
+    paged_loop_read_span::<false>(address, bytes, segment)
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[unsafe(no_mangle)]
+pub extern "C" fn core_paged_loop_read_span_pages(address: u64, bytes: u32, segment: u32) -> u32 {
+    paged_loop_read_span::<true>(address, bytes, segment)
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+fn paged_loop_read_span<const MULTI_PAGE: bool>(address: u64, bytes: u32, segment: u32) -> u32 {
     if segment != Segment::Ds as u32
         || bytes == 0
         || crate::memory::check_span(address, bytes, Access::Read).is_err()
@@ -472,14 +483,26 @@ pub extern "C" fn core_paged_loop_read_span(address: u64, bytes: u32, segment: u
                 state.flags & crate::x86::flags::AC != 0,
             ),
         };
-        let Some(host) = core.translation_cache.data_then_fetch::<false, _>(
-            paging,
-            request,
-            &state.protection_keys,
-            bytes,
-            true,
-            |physical| core.image.physical_direct_read_pointer(physical, bytes),
-        ) else {
+        let read = |physical| core.image.physical_direct_read_pointer(physical, bytes);
+        let host = if MULTI_PAGE {
+            core.translation_cache.contiguous_read_then_fetch(
+                paging,
+                request,
+                &state.protection_keys,
+                bytes,
+                read,
+            )
+        } else {
+            core.translation_cache.data_then_fetch::<false, _>(
+                paging,
+                request,
+                &state.protection_keys,
+                bytes,
+                true,
+                read,
+            )
+        };
+        let Some(host) = host else {
             return 0;
         };
         core.direct_span = crate::memory::DirectSpan {

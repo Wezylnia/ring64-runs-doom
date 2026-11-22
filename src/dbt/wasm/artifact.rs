@@ -285,6 +285,8 @@ fn emit_placement(
         paged_float_dyadic: true,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_f32_read_pair: true,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        paged_dense_read_span: true,
     };
     let (bytes, extra_spans) = emit_body(
         unit,
@@ -362,6 +364,8 @@ struct OptionalLowering {
     paged_float_dyadic: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_f32_read_pair: bool,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    paged_dense_read_span: bool,
 }
 
 fn emit_body(
@@ -1126,6 +1130,14 @@ fn emit_body(
         .and_then(|body| body.paged_read_span)
         .map(|proof| (proof, span_import("paged_loop_read_span")));
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let paged_dense_read_span = loop_body
+        .filter(|_| optional.paged_dense_read_span)
+        .zip(paged_read_span)
+        .filter(|(body, (proof, _))| {
+            proof.dense_ascending_bytes(&unit.instructions[body.head as usize..=body.tail as usize])
+        })
+        .map(|_| span_import("paged_loop_read_span_pages"));
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let read_span = (!observed && !span_cycles.is_empty()).then(|| span_import("read_span"));
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let stack_read_span = read_span.filter(|_| {
@@ -1554,6 +1566,8 @@ fn emit_body(
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_read_span,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        paged_dense_read_span,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_dword_window,
         paged_loop_read_byte,
         paged_loop_read_dword,
@@ -1852,6 +1866,21 @@ fn emit_body(
             _guard_reads,
             OptionalLowering {
                 paged_f32_read_pair: false,
+                ..optional
+            },
+            max_artifact_bytes,
+        );
+    }
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    if bytes.len() > max_artifact_bytes && paged_dense_read_span.is_some() {
+        return emit_body(
+            unit,
+            observed,
+            (paged, mmio),
+            loop_body,
+            _guard_reads,
+            OptionalLowering {
+                paged_dense_read_span: false,
                 ..optional
             },
             max_artifact_bytes,

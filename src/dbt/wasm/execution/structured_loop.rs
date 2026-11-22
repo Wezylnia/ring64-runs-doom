@@ -1058,6 +1058,13 @@ impl Emitter {
                 self.paged_proved_f32_reads = Some((proof, bias));
             } else {
                 self.guard_integer_read_loop(proof, resolve, bias);
+                if let Some(resolve) = self.paged_dense_read_span {
+                    self.op(Op::If(BlockType::Result(wasm_encoder::ValType::I32)))
+                        .op(Op::I32Const(1))
+                        .op(Op::Else);
+                    self.guard_funded_dense_read_loop(proof, resolve, bias, body.max_lap_len);
+                    self.op(Op::End);
+                }
                 self.proved_reads = Some((proof, bias));
             }
             self.op(Op::If(BlockType::Empty));

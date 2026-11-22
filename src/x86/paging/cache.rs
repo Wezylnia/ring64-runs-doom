@@ -281,6 +281,63 @@ impl Cache {
         Some(value)
     }
 
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    pub(crate) fn contiguous_read_then_fetch<T>(
+        &self,
+        state: &State,
+        request: Request,
+        keys: &ProtectionKeys,
+        width: u32,
+        access: impl FnOnce(u64) -> Option<T>,
+    ) -> Option<T> {
+        const PAGE: u64 = 4096;
+        const MAX_PAGES: usize = 3;
+
+        let width = u64::from(width);
+        if width == 0 || width > PAGE * MAX_PAGES as u64 - (request.linear & (PAGE - 1)) {
+            return None;
+        }
+        let mut entries = self.entries.borrow_mut();
+        let fetch = entries
+            .hint
+            .filter(|&index| entries.slots[index].is_some())?;
+        let mut indices = [0; MAX_PAGES];
+        let mut used = 0;
+        let mut covered = 0;
+        let mut physical_start = None;
+        while covered < width {
+            let linear = request.linear.checked_add(covered)?;
+            let (index, translation) = entries.retained_data_span::<false>(
+                state,
+                Request { linear, ..request },
+                keys,
+                1,
+            )?;
+            if entries.slots[index].as_ref()?.global {
+                return None;
+            }
+            let first = *physical_start.get_or_insert(translation.physical);
+            if first.checked_add(covered) != Some(translation.physical) {
+                return None;
+            }
+            *indices.get_mut(used)? = index;
+            used += 1;
+            covered += translation.remaining.min(width - covered);
+        }
+        if used < 2 {
+            return None;
+        }
+        let value = access(physical_start?)?;
+        // Every dense byte is read before leaving the funded loop. The final
+        // touch on each data leaf ascends, and the successor fetch is newest.
+        for index in indices[..used].iter().copied().chain([fetch]) {
+            if entries.hint != Some(index) {
+                entries.touch(index);
+            }
+        }
+        Some(value)
+    }
+
     /// Pure retained-view projection: no A/D, fill, eviction or LRU effects.
     pub fn observe(
         &self,

@@ -242,6 +242,84 @@ fn guarded_read_span_rejects_global_or_split_without_touching_retained_ages() {
     assert!(!cache.take_changed());
 }
 
+#[cfg(not(feature = "parallel"))]
+#[test]
+fn contiguous_retained_span_touches_three_pages_atomically_in_linear_order() {
+    for layout in [
+        "local",
+        "missing",
+        "noncontiguous",
+        "global",
+        "physical-denied",
+    ] {
+        let (mut image, mut state, first) = fixture();
+        state.cr4 |= 1 << 7;
+        let second_leaf = match layout {
+            "noncontiguous" => 0xf067,
+            "global" => 0xb167,
+            _ => 0xb067,
+        };
+        for (address, leaf) in [
+            (0x4010, second_leaf),
+            (0x4018, 0xc067),
+            (0x4020, 0xd067),
+            (0x4028, 0xe067),
+        ] {
+            image.physical_write(address, 8, leaf).unwrap();
+        }
+        let at = |linear| Request { linear, ..first };
+        let code = Request {
+            access: Access::Execute,
+            ..at(0x4234)
+        };
+        let cache = Cache::with_capacity(4);
+        insert(&cache, &mut image, &state, at(0x3000));
+        if layout != "missing" {
+            insert(&cache, &mut image, &state, at(0x2000));
+        }
+        insert(&cache, &mut image, &state, first);
+        insert(&cache, &mut image, &state, code);
+        // A changed PTE does not replace the already retained translation.
+        if layout == "local" {
+            image.physical_write(0x4010, 8, 0xf007).unwrap();
+        }
+        let prior = cache.entries.borrow().clock;
+        let resolved = cache.contiguous_read_then_fetch(
+            &state,
+            at(0x1ffc),
+            &ProtectionKeys::ZERO,
+            0x1008,
+            |physical| {
+                assert!(matches!(layout, "local" | "physical-denied"));
+                assert_eq!(physical, 0xaffc);
+                (layout == "local").then_some(physical)
+            },
+        );
+        assert_eq!(resolved, (layout == "local").then_some(0xaffc));
+        if layout == "local" {
+            insert(&cache, &mut image, &state, at(0x5234));
+            assert!(
+                cache
+                    .observe(&state, first, &ProtectionKeys::ZERO)
+                    .unwrap()
+                    .is_none()
+            );
+            for request in [at(0x2000), at(0x3000), code] {
+                assert!(
+                    cache
+                        .observe(&state, request, &ProtectionKeys::ZERO)
+                        .unwrap()
+                        .is_some()
+                );
+            }
+            assert_eq!(image.physical_read(0x4010, 8), Ok(0xf007));
+        } else {
+            assert_eq!(cache.entries.borrow().clock, prior, "{layout}");
+            assert!(!cache.take_changed());
+        }
+    }
+}
+
 #[test]
 fn current_pcid_non_global_precedes_global_and_targeted_eviction_keeps_global() {
     let (mut image, mut first, request) = fixture();
