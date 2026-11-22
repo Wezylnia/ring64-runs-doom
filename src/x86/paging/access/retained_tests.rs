@@ -82,6 +82,7 @@ fn cold_scalar_read_matches_full_transaction_across_physical_backings() {
                 .unwrap();
             let memory =
                 Memory::new(&mut image, &state, 3, 2, &mut work, &Keys::ZERO).with_cache(&cache);
+            Image::take_physical_preflight_count();
             let result = if use_transaction {
                 memory
                     .prepare_aligned(
@@ -100,14 +101,19 @@ fn cold_scalar_read_matches_full_transaction_across_physical_backings() {
             } else {
                 memory.read(0x1000, 4)
             };
+            let preflights = Image::take_physical_preflight_count();
             let retained = cache
                 .observe(&state, request(0x1000), &Keys::ZERO)
                 .unwrap()
                 .map(|entry| (entry.physical, entry.cache_id, entry.dirty));
-            (result, retained, image.physical_read(0x4008, 8).unwrap())
+            let leaf = image.physical_read(0x4008, 8).unwrap();
+            ((result, retained, leaf), preflights)
         };
-        let actual = run(false);
-        assert_eq!(actual, run(true));
+        let (actual, preflights) = run(false);
+        let (transaction, transaction_preflights) = run(true);
+        assert_eq!(actual, transaction);
+        let delivery_preflight = usize::from(readable && !cfg!(feature = "parallel"));
+        assert_eq!(preflights + delivery_preflight, transaction_preflights);
         assert_eq!(actual.2, 0x9027);
         if readable {
             assert_eq!(actual.0, Ok(0x4433_22a1));

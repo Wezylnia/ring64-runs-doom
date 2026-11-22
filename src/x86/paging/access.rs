@@ -456,7 +456,7 @@ impl<'a> Memory<'a> {
             debug_assert!(u64::from(width) <= translation.remaining);
             storage
                 .image
-                .physical_check_access(translation.physical, width, Access::Read, false)
+                .physical_read_into(translation.physical, &mut bytes[..width as usize])
                 .map_err(|fault| {
                     AccessFailure::Paging(
                         request.physical_failure(fault, PhysicalPhase::FinalAccess),
@@ -465,10 +465,6 @@ impl<'a> Memory<'a> {
             if let Some(cache) = self.cache {
                 cache.fill(self.paging, request, translation);
             }
-            storage
-                .image
-                .physical_read_into(translation.physical, &mut bytes[..width as usize])
-                .expect("captured physical read admission");
             return Ok(());
         }
         let prepared = self.prepare::<false, true>(
