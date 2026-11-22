@@ -1225,7 +1225,7 @@ fn normal_binary64_store_matches_general_rounding() {
             for round in 0..4 {
                 for masks in [0, 63] {
                     let cw = (round << 10) | masks;
-                    for retained in [1 << 63, (1 << 63) | (1 << 11), u64::MAX & !0x7ff] {
+                    for retained in [1 << 63, (1 << 63) | (1 << 11), !0x7ffu64] {
                         for tail in 0..=0x7ff {
                             let raw =
                                 (u128::from(exponent | sign) << 64) | u128::from(retained | tail);
