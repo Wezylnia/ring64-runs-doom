@@ -32,6 +32,62 @@ fn snapshot() -> X87State {
 
 #[cfg(not(feature = "parallel"))]
 #[test]
+fn x87_register_store_pop_matches_the_full_evaluator() {
+    initialize(0x1000, &[0xf4]);
+    for top in 0..8 {
+        for index in 0..8 {
+            let op = Op {
+                index,
+                pop: 1,
+                ..operation(Kind::Store, Format::Register, 0x5d8 + u16::from(index))
+            };
+            for (raw, tag, control_word) in [
+                (0x4000_c000_0000_0000_0000, 2, 0x37f),
+                (0x8000_0000_0000_0000_0000, 0, 0x37f),
+                (0x7fff_8000_0000_0000_0001, 0, 0x37f),
+                (0x4000_c000_0000_0000_0000, 3, 0x37f),
+                (0x4000_c000_0000_0000_0000, 3, 0x37e),
+            ] {
+                let mut prior = X87State {
+                    control_word,
+                    status_word: (top << 11) | 0x4700 | 0x20,
+                    tag_word: 0,
+                    opcode: 0x123,
+                    instruction_pointer: 0xdead,
+                    data_pointer: 0x4000,
+                    ..X87State::default()
+                };
+                prior.set_raw(usize::from(top), raw);
+                prior.set_tag(usize::from(top), tag);
+                let mut expected = prior;
+                crate::x86::x87::eval(&mut expected, op, 0, 0x202);
+                expected.instruction_pointer = 0x1000;
+                if expected.pending() != 0 {
+                    expected.opcode = op.encoding;
+                }
+                install(prior);
+                assert_eq!(invoke(op, 0, 0x1000, 0x202, 0), 0);
+                assert_eq!(snapshot(), expected);
+            }
+        }
+    }
+
+    let pending = X87State {
+        control_word: 0x37e,
+        status_word: 0x8081,
+        ..X87State::default()
+    };
+    install(pending);
+    let op = Op {
+        pop: 1,
+        ..operation(Kind::Store, Format::Register, 0x5d8)
+    };
+    assert_eq!(invoke(op, 0, 0x1000, 0x202, 0), X87_EXCEPTION);
+    assert_eq!(snapshot(), pending);
+}
+
+#[cfg(not(feature = "parallel"))]
+#[test]
 fn x87_register_pairs_keep_numeric_and_environment_effects_or_refuse_before_either() {
     use crate::x86::x87::REGISTER_PAIR_SEGMENT;
 

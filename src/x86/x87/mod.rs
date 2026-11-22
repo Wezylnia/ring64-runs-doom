@@ -179,6 +179,22 @@ impl State {
             && self.tag(self.physical(index)) != 3
             && self.tag((self.top() + 7) & 7) == 3
     }
+
+    pub(crate) fn store_register_pop(&mut self, index: u8) -> bool {
+        let top = self.top();
+        if self.tag(top) == 3 {
+            return false;
+        }
+        let other = (top + usize::from(index)) & 7;
+        self.status_word &= !0x200;
+        self.refresh();
+        if other != top {
+            self.put(other, self.raw(top));
+        }
+        self.set_tag(top, 3);
+        self.top_to(top + 1);
+        true
+    }
 }
 
 impl Op {

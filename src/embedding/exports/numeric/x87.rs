@@ -162,6 +162,19 @@ fn core_x87_impl<const OBSERVED: bool, const PAGED: bool>(
         if operation.is_waiting() && pending != 0 {
             return core.pending_x87_reason();
         }
+        #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+        if !OBSERVED
+            && !PAGED
+            && operation.kind == x87::Kind::Store
+            && operation.format == x87::Format::Register
+            && operation.pop == 1
+        {
+            let state = unsafe { &mut (*core.state.get()).x87 };
+            if state.store_register_pop(operation.index) {
+                x87_environment(&core.context, state, operation, instruction_pc, None);
+                return 0;
+            }
+        }
         let store = operation.is_store();
         let private_linear = !PAGED && !cfg!(feature = "parallel");
         let width = operation.memory_bytes();
