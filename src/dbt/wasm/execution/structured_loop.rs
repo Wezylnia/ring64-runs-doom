@@ -1675,6 +1675,7 @@ impl Emitter {
             .op(Op::I64GeU)
             .op(Op::I32And)
             .op(Op::If(BlockType::Empty));
+        self.clear_quiet_fetch();
         if self.paged_preamble_latch {
             self.op(Op::LocalGet(inherited))
                 .op(Op::If(BlockType::Result(wasm_encoder::ValType::I32)))
@@ -1832,6 +1833,7 @@ impl Emitter {
             .op(Op::I64GeU)
             .op(Op::I32And)
             .op(Op::If(BlockType::Empty));
+        self.clear_quiet_fetch();
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         if let Some(inherited) = inherited {
             self.op(Op::LocalGet(inherited))

@@ -94,6 +94,59 @@ test('sampled quiet completion keeps branch, single-step, and execute breakpoint
   }
 });
 
+test('sampled direct jumps carry quiet fetch only within a native entry', async () => {
+  // JMP second; NOP; NOP; JMP stop; HLT.
+  const second = PC + 4n;
+  const stop = PC + 6n;
+  const prototype = Core.prototype as unknown as {
+    artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
+  };
+  const imports = prototype.artifactImports;
+  const compile = Core.prototype.compile;
+  const begins: bigint[] = [];
+  Core.prototype.compile = function (pc, limits, seeds, regionPoints) {
+    if (pc === PC && !seeds?.length)
+      return compile.call(this, pc, limits, [PC, second, stop], true);
+    return compile.call(this, pc, limits, seeds, regionPoints);
+  };
+  prototype.artifactImports = function (observed) {
+    const env = imports.call(this, observed);
+    const begin = env.debug_begin;
+    if (typeof begin === 'function') {
+      env.debug_begin = (pc: bigint, flags: bigint, shadow: number) => {
+        begins.push(pc);
+        return begin(pc, flags, shadow);
+      };
+    }
+    return env;
+  };
+  try {
+    await usingPaged(compiler, { code: 'eb029090eb00f4' }, async (cpu) => {
+      for (let wave = 0; wave < 3; wave++) {
+        begins.length = 0;
+        cpu.setState(initial(PC));
+        const result = await cpu.run({ stop, budget: 10n });
+        assert.equal(result.reason, 'stop');
+        assert.equal(result.retired, 2n);
+      }
+      assert.deepEqual(begins, [PC]);
+      begins.length = 0;
+      cpu.setState(initial(second));
+      assert.equal((await cpu.run({ stop, budget: 10n })).retired, 1n);
+      assert.deepEqual(begins, [second]);
+      cpu.setDebugState({ addresses: [second, 0n, 0n, 0n], dr6: 0n, dr7: 1n });
+      cpu.setState(initial(PC));
+      const watched = await cpu.run({ stop, budget: 10n });
+      assert.equal(watched.reason, 'debug-exception');
+      assert.equal(watched.retired, 1n);
+      assert.equal(watched.state.rip, second);
+    });
+  } finally {
+    prototype.artifactImports = imports;
+    Core.prototype.compile = compile;
+  }
+});
+
 test('a taken same-page prefix branch carries only the immediately preceding fetch', async () => {
   // Register prefix, CALL, and the INC/CMP/JB prefix which returns to the first prefix.
   const code = '8b0783c00131d285c0e807000000ffc53b2e72ecf4c3';

@@ -121,7 +121,7 @@ impl Emitter {
         }
         #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
         self.parallel_boundary(exit_depth);
-        self.begin(instruction.operation, exit_depth);
+        self.begin(instruction.operation, instruction.next_pc, exit_depth);
         #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
         let exit_depth = self.begin_parallel_instruction(instruction, exit_depth);
         match instruction.operation {
@@ -617,6 +617,7 @@ impl Emitter {
         use super::SHADOW;
 
         self.guard_straight_prefix(first, last, count);
+        self.clear_quiet_fetch();
         if let Some(local) = handoff {
             let expected = self.current_index as i32 + 1;
             self.op(Op::LocalGet(local))

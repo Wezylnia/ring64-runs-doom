@@ -138,6 +138,7 @@ const ENTRY_FLAGS: u32 = 36;
 
 struct Emitter {
     paged: bool,
+    quiet_fetch_page: Option<u32>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_quiet_completion: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]

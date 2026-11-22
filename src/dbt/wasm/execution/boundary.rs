@@ -78,6 +78,12 @@ impl Emitter {
             )
     }
 
+    pub(super) fn clear_quiet_fetch(&mut self) {
+        if let Some(page) = self.quiet_fetch_page {
+            self.op(Op::I64Const(0)).op(Op::LocalSet(page));
+        }
+    }
+
     pub(super) fn external_boundary(&mut self, exit_depth: u32) {
         let Some(helper) = self.external_step else {
             return;
@@ -91,8 +97,9 @@ impl Emitter {
             }))
             .op(Op::I64Eqz)
             .op(Op::I32Eqz)
-            .op(Op::If(BlockType::Empty))
-            .op(Op::LocalGet(RIP));
+            .op(Op::If(BlockType::Empty));
+        self.clear_quiet_fetch();
+        self.op(Op::LocalGet(RIP));
         self.full_flags();
         self.op(Op::LocalGet(SHADOW))
             .op(Op::Call(helper))
@@ -181,15 +188,31 @@ impl Emitter {
             .op(Op::LocalSet(SYSTEM));
     }
 
-    pub(super) fn begin(&mut self, operation: Operation, exit_depth: u32) {
+    pub(super) fn begin(&mut self, operation: Operation, next_pc: u64, exit_depth: u32) {
         if !self.observed || self.guarded_paged_lap {
             return;
+        }
+        use crate::embedding::layout::debug::CONTINUE_ACTIVE;
+        let quiet_completion = self.can_complete_paged_quietly(operation);
+        let page = self.current_pc & !4095;
+        let retained = self.quiet_fetch_page.filter(|_| {
+            quiet_completion && next_pc > self.current_pc && (next_pc - 1) & !4095 == page
+        });
+        let tag = (page | 1) as i64;
+        if let Some(local) = retained {
+            self.op(Op::LocalGet(local))
+                .op(Op::I64Const(tag))
+                .op(Op::I64Eq)
+                .op(Op::If(BlockType::Result(wasm_encoder::ValType::I32)))
+                .op(Op::I32Const(CONTINUE_ACTIVE))
+                .op(Op::Else);
+        } else {
+            self.clear_quiet_fetch();
         }
         self.op(Op::I64Const(self.current_pc as i64));
         self.full_flags();
         let debug_begin = self.debug_begin.expect("debug begin import");
         self.op(Op::LocalGet(SHADOW));
-        let quiet_completion = self.can_complete_paged_quietly(operation);
         #[cfg(not(feature = "parallel"))]
         if quiet_completion {
             #[cfg(target_arch = "wasm32")]
@@ -219,6 +242,18 @@ impl Emitter {
             .op(Op::I32Or);
         }
         self.op(Op::Call(debug_begin));
+        if let Some(local) = retained {
+            // Only the existing observed begin can grant a quiet source page.
+            self.op(Op::LocalTee(REASON))
+                .op(Op::I64Const(tag))
+                .op(Op::I64Const(0))
+                .op(Op::LocalGet(REASON))
+                .op(Op::I32Const(CONTINUE_ACTIVE))
+                .op(Op::I32Eq)
+                .op(Op::Select)
+                .op(Op::LocalSet(local))
+                .op(Op::End);
+        }
         if quiet_completion {
             let result = self.boundary_result.unwrap();
             self.op(Op::LocalTee(REASON))
