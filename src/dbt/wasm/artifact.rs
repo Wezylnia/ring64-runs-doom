@@ -118,6 +118,52 @@ fn paged_register_prefixes(unit: &Unit, loops: [Option<StructuredLoop>; 2]) -> V
     prefixes
 }
 
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[derive(Clone, Copy, Default)]
+struct PrefixFetchEdge {
+    receives: bool,
+    destination: Option<usize>,
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+// The admitted read-only clone leaves its executable translation newest and
+// cannot change code or controls. A same-page successor needs no new touch.
+fn paged_prefix_handoffs(
+    unit: &Unit,
+    prefixes: &[Option<usize>],
+    earlier_clones: [Option<usize>; 2],
+) -> Option<Vec<PrefixFetchEdge>> {
+    if !unit.context.is_long64() {
+        return None;
+    }
+    let instructions = &unit.instructions;
+    let mut edges = None;
+    for (start, &end) in prefixes.iter().enumerate() {
+        let Some(end) = end else { continue };
+        let Operation::Jcc { target, .. } = instructions[end - 1].operation else {
+            continue;
+        };
+        if target & !4095 != instructions[start].pc & !4095
+            || instructions[start..end]
+                .iter()
+                .copied()
+                .any(super::instruction::paged_prefix_dword_store)
+        {
+            continue;
+        }
+        if let Ok(destination) = instructions.binary_search_by_key(&target, |i| i.pc)
+            && prefixes[destination].is_some()
+            && !earlier_clones.contains(&Some(destination))
+        {
+            let edges =
+                edges.get_or_insert_with(|| vec![PrefixFetchEdge::default(); prefixes.len()]);
+            edges[destination].receives = true;
+            edges[start].destination = Some(destination);
+        }
+    }
+    edges
+}
+
 fn add_function_type<const PARAMS: usize, const RESULTS: usize>(
     types: &mut TypeSection,
     params: [ValType; PARAMS],
@@ -2051,6 +2097,25 @@ fn emit_body(
         (guard, attempts)
     });
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let prefix_fetch_handoff = register_prefixes
+        .as_deref()
+        .and_then(|prefixes| {
+            paged_prefix_handoffs(
+                unit,
+                prefixes,
+                [
+                    copy_prefix.map(|(head, _)| head),
+                    scalar_copy_prefix.map(|(head, _)| head),
+                ],
+            )
+        })
+        .map(|edges| {
+            let handoff = next_local;
+            locals.push((1, ValType::I32));
+            next_local += 1;
+            (handoff, edges)
+        });
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let paged_preamble = paged_preamble.map(|body| {
         let handoff = next_local;
         locals.push((2, ValType::I32));
@@ -2355,6 +2420,8 @@ fn emit_body(
         paged_prefix_read: None,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_prefix_store: None,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        paged_prefix_fetch_out: None,
         paged_loop_guard,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_preamble,
@@ -2580,6 +2647,9 @@ fn emit_body(
                 guard,
                 register_prefix_read,
                 write_dword.filter(|_| prefix_write_dword),
+                prefix_fetch_handoff.as_ref().map(|(local, edges)| {
+                    (*local, edges[index].receives, edges[index].destination)
+                }),
             );
         }
 

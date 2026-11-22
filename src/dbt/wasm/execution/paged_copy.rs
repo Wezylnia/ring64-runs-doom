@@ -468,6 +468,7 @@ impl Emitter {
             &instructions[group.instructions - 1],
             group.instructions as u32,
             guard,
+            None,
         );
         self.address(group.source, 0);
         self.op(Op::LocalSet(LHS));
@@ -492,7 +493,7 @@ impl Emitter {
         guard: u32,
         resolve: u32,
     ) {
-        self.guard_straight_paged_prefix(&instructions[0], &instructions[3], 4, guard);
+        self.guard_straight_paged_prefix(&instructions[0], &instructions[3], 4, guard, None);
         self.address(group.source, 0);
         self.op(Op::LocalSet(LHS));
         self.address(group.destination, 0);

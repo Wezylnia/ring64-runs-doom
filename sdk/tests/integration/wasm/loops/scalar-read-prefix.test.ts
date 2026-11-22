@@ -5,6 +5,98 @@ import { snapshot } from '../../../../../tests/execution/far-control/fixture.js'
 import { BANK, PC, initial, usingPaged } from '../../../../../tests/execution/paging/fixture.js';
 import { compiler } from './fixture.js';
 
+test('a taken same-page prefix branch carries only the immediately preceding fetch', async () => {
+  // Register prefix, CALL, and the INC/CMP/JB prefix which returns to the first prefix.
+  const code = '8b0783c00131d285c0e807000000ffc53b2e72ecf4c3';
+  const stop = PC + 20n;
+  const tail = PC + 14n;
+  const source = PC + 0x1000n;
+  const data = new Uint8Array(4096);
+  data.set([13, 0, 0, 0, 64]);
+  const prototype = Core.prototype as unknown as {
+    artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
+  };
+  const imports = prototype.artifactImports;
+  let headGuards = 0;
+  let tailGuards = 0;
+  prototype.artifactImports = function (observed) {
+    const env = imports.call(this, observed);
+    const guard = env.paged_loop_guard;
+    if (typeof guard === 'function') {
+      env.paged_loop_guard = (pc: bigint, bytes: number, flags: bigint, shadow: number) => {
+        if (pc === PC) headGuards++;
+        if (pc === tail) tailGuards++;
+        return guard(pc, bytes, flags, shadow);
+      };
+    }
+    return env;
+  };
+  try {
+    await usingPaged(
+      compiler,
+      {
+        code,
+        words: [
+          [0x4008n, 0xa007n],
+          [0x4010n, 0xb007n],
+        ],
+        spans: [
+          { physical: 0xa000n, bytes: data },
+          { physical: 0xb000n, bytes: new Uint8Array(4096) },
+        ],
+      },
+      async (cpu) => {
+        const enter = (rip = PC, read = source) =>
+          cpu.setState(initial(rip, { 4: PC + 0x3000n, 5: 0n, 6: source + 4n, 7: read }));
+        for (let wave = 0; wave < 3; wave++) {
+          headGuards = tailGuards = 0;
+          enter();
+          const result = await cpu.run({ stop, budget: 1000n });
+          assert.equal(result.reason, 'stop');
+          assert.equal(result.retired, 576n);
+          assert.equal(result.state.registers[0], 14n);
+        }
+        assert.ok(tailGuards > 50);
+        assert.ok(headGuards < 4, 'the taken branches should carry the tail fetch');
+
+        enter();
+        const short = await cpu.run({ stop, budget: 10n });
+        assert.equal(short.reason, 'budget');
+        assert.equal(short.retired, 10n);
+        assert.equal(short.state.rip, PC + 2n);
+
+        enter(tail);
+        const interior = await cpu.run({ stop: PC + 2n, budget: 10n });
+        assert.equal(interior.reason, 'stop');
+        assert.equal(interior.retired, 4n);
+        assert.equal(interior.state.registers[0], 13n);
+
+        enter(tail, PC + 0x4000n);
+        const fault = await cpu.run({ stop, budget: 10n });
+        assert.equal(fault.reason, 'page-fault');
+        assert.equal(fault.retired, 3n);
+        assert.equal(fault.state.rip, PC);
+
+        enter(tail);
+        cpu.setDebugState({ addresses: [PC, 0n, 0n, 0n], dr6: 0n, dr7: 1n });
+        const debug = await cpu.run({ stop, budget: 10n });
+        assert.equal(debug.reason, 'debug-exception');
+        assert.equal(debug.retired, 3n);
+        assert.equal(debug.state.rip, PC);
+
+        cpu.setDebugState({ addresses: [0n, 0n, 0n, 0n], dr6: 0n, dr7: 0n });
+        cpu.writePhysicalMemory(0x9004n, Uint8Array.of(2));
+        enter(tail);
+        const modified = await cpu.run({ stop, budget: 1000n });
+        assert.equal(modified.reason, 'stop');
+        assert.equal(modified.state.registers[0], 15n);
+      },
+    );
+  } finally {
+    prototype.artifactImports = imports;
+  }
+});
+
 test('guarded scalar read prefixes preserve stop, single-step, and split-page fault ordering', async () => {
   const code = '0fb70783c00331c983c001'; // MOVZX EAX,word [RDI]; ADD EAX,3; XOR ECX,ECX; ADD EAX,1
   const stop = PC + BigInt(code.length / 2);

@@ -470,6 +470,13 @@ impl Emitter {
                     self.arithmetic_result(Alu::Cmp, width);
                     self.arithmetic_flags(Alu::Cmp, width);
                 }
+                #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+                if let Some((local, destination)) = self.paged_prefix_fetch_out {
+                    // A successful retained read leaves the same fetch newest.
+                    // Publish the proof only on this decoded, same-page edge.
+                    self.op(Op::I32Const(destination as i32 + 1))
+                        .op(Op::LocalSet(local));
+                }
                 self.target(target, loop_depth + 1, exit_depth + 1);
                 self.op(Op::End);
                 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -515,10 +522,12 @@ impl Emitter {
         guard: u32,
         read_import: Option<u32>,
         write_import: Option<u32>,
+        fetch_handoff: Option<(u32, bool, Option<usize>)>,
     ) {
         let first = instructions.first().unwrap();
         let last = instructions.last().unwrap();
-        self.guard_straight_paged_prefix(first, last, instructions.len() as u32, guard);
+        let incoming = fetch_handoff.and_then(|(local, incoming, _)| incoming.then_some(local));
+        self.guard_straight_paged_prefix(first, last, instructions.len() as u32, guard, incoming);
         let read = paged_prefix_read(*first)
             .map(|operation| (read_import.expect("leading read prefix import"), operation));
         if let Some((read, (register, address, source_width, width))) = read {
@@ -571,6 +580,8 @@ impl Emitter {
         let loop_depth = loop_depth + 2 + u32::from(read.is_some());
         self.guarded_paged_lap = true;
         self.loop_gates_prechecked = true;
+        self.paged_prefix_fetch_out =
+            fetch_handoff.and_then(|(local, _, outgoing)| outgoing.map(|target| (local, target)));
         for instruction in &instructions[usize::from(read.is_some())..] {
             self.paged_prefix_read = read_import.filter(|_| paged_prefix_dword_read(*instruction));
             self.paged_prefix_store =
@@ -579,6 +590,7 @@ impl Emitter {
         }
         self.paged_prefix_read = None;
         self.paged_prefix_store = None;
+        self.paged_prefix_fetch_out = None;
         self.loop_gates_prechecked = false;
         self.route(last.next_pc, loop_depth, loop_depth + 1);
         self.guarded_paged_lap = false;
@@ -586,6 +598,11 @@ impl Emitter {
             self.op(Op::End);
         }
         self.op(Op::End).op(Op::End);
+        if let Some(local) = incoming {
+            // A stop or short budget can reject the group before it consumes
+            // the handoff. The checked copy cannot carry that proof forward.
+            self.op(Op::I32Const(0)).op(Op::LocalSet(local));
+        }
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -595,16 +612,30 @@ impl Emitter {
         last: &Instruction,
         count: u32,
         guard: u32,
+        handoff: Option<u32>,
     ) {
         use super::SHADOW;
 
         self.guard_straight_prefix(first, last, count);
+        if let Some(local) = handoff {
+            let expected = self.current_index as i32 + 1;
+            self.op(Op::LocalGet(local))
+                .op(Op::I32Const(expected))
+                .op(Op::I32Eq)
+                .op(Op::I32Const(0))
+                .op(Op::LocalSet(local))
+                .op(Op::If(BlockType::Result(wasm_encoder::ValType::I32)))
+                .op(Op::I32Const(1))
+                .op(Op::Else);
+        }
         self.op(Op::I64Const(first.pc as i64))
             .op(Op::I32Const((last.next_pc - first.pc) as i32));
         self.system_bits();
-        self.op(Op::LocalGet(SHADOW))
-            .op(Op::Call(guard))
-            .op(Op::I32Const(1))
+        self.op(Op::LocalGet(SHADOW)).op(Op::Call(guard));
+        if handoff.is_some() {
+            self.op(Op::End);
+        }
+        self.op(Op::I32Const(1))
             .op(Op::I32Eq)
             .op(Op::If(BlockType::Empty));
     }
