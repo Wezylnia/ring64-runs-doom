@@ -83,6 +83,20 @@ impl ScalarCopyGroup {
             .enumerate()
             .filter_map(|(head, first)| {
                 let group = Self::recognize(&unit.instructions[head..], size)?;
+                // Flat scalar accesses already use direct spans. A group earns
+                // its two span probes by replacing multiple checked XMM moves.
+                if size == Width::W32
+                    && group
+                        .transfers
+                        .iter()
+                        .flatten()
+                        .filter(|step| matches!(step.register, CopyRegister::Vector(_)))
+                        .take(2)
+                        .count()
+                        != 2
+                {
+                    return None;
+                }
                 let end = head + group.instructions;
                 let length = u32::try_from(group.end.checked_sub(first.pc)?).ok()?;
                 if !unit.context.single_page_code_span(first.pc, length)
