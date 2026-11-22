@@ -1,6 +1,7 @@
 use super::{Access, Fault, Image};
 
 /// A complete ordinary write whose mapping layout is held until publication.
+#[cfg(any(target_arch = "wasm32", test))]
 pub(crate) struct PreparedLinearWrite<'a> {
     image: &'a mut Image,
     address: u64,
@@ -8,6 +9,7 @@ pub(crate) struct PreparedLinearWrite<'a> {
     first: usize,
 }
 
+#[cfg(any(target_arch = "wasm32", test))]
 impl PreparedLinearWrite<'_> {
     pub(crate) fn publish(self, bytes: &[u8]) {
         assert_eq!(bytes.len(), self.width as usize);
@@ -29,6 +31,7 @@ pub(crate) struct PreparedPhysicalWrite {
 pub(crate) struct PreparedPhysicalUpdate(PreparedPhysicalWrite);
 
 impl Image {
+    #[cfg(any(target_arch = "wasm32", test))]
     pub(crate) fn prepare_linear_write(
         &mut self,
         address: u64,
