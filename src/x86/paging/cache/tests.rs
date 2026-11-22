@@ -53,6 +53,53 @@ pub(super) fn fixture() -> (Image, State, Request) {
 
 #[cfg(not(feature = "parallel"))]
 #[test]
+fn current_fetch_requires_the_right_physical_span_and_live_execute_rights() {
+    use crate::x86::paging::{CR4_SMAP, CR4_SMEP};
+
+    let (mut image, mut state, read) = fixture();
+    state.efer |= 1 << 11;
+    let cache = Cache::default();
+    let fetch = Request {
+        access: Access::Execute,
+        ..read
+    };
+    let supervisor = Request {
+        class: AccessClass::Supervisor { ac: false },
+        ..fetch
+    };
+    let fill = |image: &mut Image| {
+        let translation = walk::walk(image, &state, read, &ProtectionKeys::ZERO).unwrap();
+        cache.fill(&state, read, translation);
+        translation.physical
+    };
+    let physical = fill(&mut image);
+    assert!(cache.touch_current_fetch(&state, fetch, physical));
+    let smap = State {
+        cr4: state.cr4 | CR4_SMAP,
+        ..state
+    };
+    assert!(cache.touch_current_fetch(&smap, supervisor, physical));
+    let smep = State {
+        cr4: state.cr4 | CR4_SMEP,
+        ..state
+    };
+    let clock = cache.entries.borrow().clock;
+    assert!(!cache.touch_current_fetch(&smep, supervisor, physical));
+    assert!(!cache.touch_current_fetch(&state, fetch, physical + 1));
+    assert_eq!(cache.entries.borrow().clock, clock);
+    assert!(cache.touch_current_fetch(&smep, fetch, physical));
+
+    cache.invalidate_page(state.pcid(), read.linear, false);
+    assert!(!cache.touch_current_fetch(&state, fetch, physical));
+    image.physical_write(0x4008, 8, 0xa067 | (1 << 63)).unwrap();
+    assert_eq!(fill(&mut image), physical);
+    let clock = cache.entries.borrow().clock;
+    assert!(!cache.touch_current_fetch(&state, fetch, physical));
+    assert_eq!(cache.entries.borrow().clock, clock);
+}
+
+#[cfg(not(feature = "parallel"))]
+#[test]
 fn retained_dword_read_checks_the_live_occupant_after_invalidation() {
     let (mut image, state, first) = fixture();
     let code = Request {

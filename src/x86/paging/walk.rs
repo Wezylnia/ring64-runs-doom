@@ -113,23 +113,35 @@ pub struct Rights {
 }
 
 impl Rights {
+    #[inline]
+    pub(super) fn allows_execute(self, state: &State, class: AccessClass) -> bool {
+        self.executable
+            && if class.is_user() {
+                self.user
+            } else {
+                !self.user || state.cr4 & CR4_SMEP == 0
+            }
+    }
+
     pub fn authorize(
         self,
         state: &State,
         request: Request,
         keys: &ProtectionKeys,
     ) -> Result<(), Failure> {
+        if request.access == Access::Execute {
+            return if self.allows_execute(state, request.class) {
+                Ok(())
+            } else {
+                Err(request.page_fault(state, true, false, false))
+            };
+        }
         let user_request = request.class.is_user();
         let protection_denied = !user_request
             && self.user
-            && if request.access == Access::Execute {
-                state.cr4 & CR4_SMEP != 0
-            } else {
-                state.cr4 & CR4_SMAP != 0
-                    && !matches!(request.class, AccessClass::Supervisor { ac: true })
-            };
-        let key_denied = request.access != Access::Execute
-            && state.cr0 & (1 << 31) != 0
+            && state.cr4 & CR4_SMAP != 0
+            && !matches!(request.class, AccessClass::Supervisor { ac: true });
+        let key_denied = state.cr0 & (1 << 31) != 0
             && state.efer & (1 << 10) != 0
             && if self.user {
                 state.cr4 & CR4_PKE != 0 && key_denied(keys.pkru, self.key, state, request)
@@ -140,7 +152,6 @@ impl Rights {
             || request.access == Access::Write
                 && !self.writable
                 && (user_request || state.cr0 & (1 << 16) != 0)
-            || request.access == Access::Execute && !self.executable
             || protection_denied
             || key_denied
         {

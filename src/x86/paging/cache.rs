@@ -366,12 +366,9 @@ impl Cache {
         let Some(index) = entries.find(state, request) else {
             return false;
         };
-        let translation = entries.slots[index].unwrap().translation.at(request.linear);
-        if translation.physical != physical
-            || translation
-                .rights
-                .authorize(state, request, &ProtectionKeys::ZERO)
-                .is_err()
+        let translation = &entries.slots[index].as_ref().unwrap().translation;
+        if translation.physical_base + (request.linear - translation.linear_base) != physical
+            || !translation.rights.allows_execute(state, request.class)
         {
             return false;
         }
