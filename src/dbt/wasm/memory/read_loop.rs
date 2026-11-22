@@ -209,6 +209,23 @@ impl ReadLoop {
         })
     }
 
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn dense_f32_lap(self, instructions: &[Instruction]) -> bool {
+        self.step == 4
+            && self.streams[1].is_some()
+            && self.streams.iter().flatten().all(|stream| {
+                stream.first.index.is_some_and(|index| index.scale == 4)
+                    && stream.displacement_width(4) == Some(16)
+                    && instructions
+                        .iter()
+                        .filter_map(|instruction| {
+                            let address = Self::read_operand(instruction.operation, false)??;
+                            stream.matches(address).then_some(address.displacement)
+                        })
+                        .eq((stream.first.displacement..=stream.last_displacement).step_by(4))
+            })
+    }
+
     #[cfg(all(not(feature = "parallel"), any(test, target_arch = "wasm32")))]
     pub(super) fn dense_ascending_bytes(self, instructions: &[Instruction]) -> bool {
         let [Some(stream), None] = self.streams else {
@@ -623,6 +640,17 @@ impl Emitter {
             .op(Op::LocalSet(VALUE));
     }
 
+    fn guard_read_lap_budget(&mut self, proof: ReadLoop, lap_len: u32) {
+        self.op(Op::LocalGet(LHS))
+            .op(Op::I64Const(i64::from(proof.step.trailing_zeros())))
+            .op(Op::I64ShrU)
+            .op(Op::LocalGet(REMAINING))
+            .op(Op::I64Const(i64::from(lap_len)))
+            .op(Op::I64DivU)
+            .op(Op::I64GtU)
+            .op(Op::BrIf(0));
+    }
+
     pub(super) fn guard_paged_f32_read_loop(
         &mut self,
         proof: ReadLoop,
@@ -727,12 +755,16 @@ impl Emitter {
         resolve: u32,
         last: u32,
         first_bias: u32,
+        funded_lap: Option<u32>,
     ) {
         let addresses = [RESULT, RHS];
         let order = [1 - last, last];
         self.op(Op::Block(BlockType::Result(ValType::I32)))
             .op(Op::I32Const(0));
         self.guard_read_trip_count(proof);
+        if let Some(lap_len) = funded_lap {
+            self.guard_read_lap_budget(proof, lap_len);
+        }
         for (slot, (stream, address)) in proof.streams.into_iter().zip(addresses).enumerate() {
             let stream = stream.unwrap();
             self.guard_read_stream_length(proof, stream);
@@ -785,14 +817,7 @@ impl Emitter {
 
         self.guard_read_trip_count(proof);
         if let Some(lap_len) = lap_len {
-            self.op(Op::LocalGet(LHS))
-                .op(Op::I64Const(i64::from(proof.step.trailing_zeros())))
-                .op(Op::I64ShrU)
-                .op(Op::LocalGet(REMAINING))
-                .op(Op::I64Const(i64::from(lap_len)))
-                .op(Op::I64DivU)
-                .op(Op::I64GtU)
-                .op(Op::BrIf(0));
+            self.guard_read_lap_budget(proof, lap_len);
         }
 
         for (slot, stream) in proof.streams.iter().flatten().enumerate() {

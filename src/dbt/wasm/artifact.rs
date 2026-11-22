@@ -303,6 +303,8 @@ fn emit_placement(
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_f32_read_pair: true,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        paged_f32_split_pair: true,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_dense_read_span: true,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_read_rearm: true,
@@ -392,6 +394,8 @@ struct OptionalLowering {
     paged_float_dyadic: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_f32_read_pair: bool,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    paged_f32_split_pair: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_dense_read_span: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -1320,17 +1324,17 @@ fn emit_body(
         .filter(|body| optional.paged_f32_read_pair && body.paged_sse())
         .zip(paged_read_span)
         .and_then(|(body, (proof, _))| {
-            let last_stream = proof
-                .last_memory_stream(&unit.instructions[body.head as usize..=body.tail as usize])?;
+            let instructions = &unit.instructions[body.head as usize..=body.tail as usize];
+            let last_stream = proof.last_memory_stream(instructions)?;
             let signature = add_function_type(
                 &mut types,
                 [ValType::I64, ValType::I32, ValType::I64, ValType::I32],
                 [ValType::I64],
             );
-            Some((
-                import_function("paged_loop_read_pair", signature),
-                last_stream,
-            ))
+            let pair = import_function("paged_loop_read_pair", signature);
+            let split = (optional.paged_f32_split_pair && proof.dense_f32_lap(instructions))
+                .then(|| import_function("paged_loop_read_split_pair", signature));
+            Some((pair, last_stream, split))
         });
     let mut functions = FunctionSection::new();
     functions.function(3);
@@ -2043,6 +2047,23 @@ fn emit_body(
     }
     let code_start = bytes.len();
     code.append_to(&mut bytes);
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    if bytes.len() > max_artifact_bytes
+        && paged_f32_read_pair.is_some_and(|(_, _, split)| split.is_some())
+    {
+        return emit_body(
+            unit,
+            observed,
+            (paged, mmio),
+            loop_body,
+            _guard_reads,
+            OptionalLowering {
+                paged_f32_split_pair: false,
+                ..optional
+            },
+            max_artifact_bytes,
+        );
+    }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if bytes.len() > max_artifact_bytes && paged_preamble.is_some() {
         return emit_body(

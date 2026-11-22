@@ -816,10 +816,33 @@ pub extern "C" fn core_paged_loop_read_pair(
     last: u64,
     last_bytes: u32,
 ) -> u64 {
+    paged_loop_read_pair::<false>(first, first_bytes, last, last_bytes)
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[unsafe(no_mangle)]
+pub extern "C" fn core_paged_loop_read_split_pair(
+    first: u64,
+    first_bytes: u32,
+    last: u64,
+    last_bytes: u32,
+) -> u64 {
+    paged_loop_read_pair::<true>(first, first_bytes, last, last_bytes)
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[inline(always)]
+fn paged_loop_read_pair<const SPLIT: bool>(
+    first: u64,
+    first_bytes: u32,
+    last: u64,
+    last_bytes: u32,
+) -> u64 {
     let spans = [(first, first_bytes), (last, last_bytes)];
     if spans.iter().any(|&(address, bytes)| {
         address & 3 != 0
             || bytes < 4
+            || (SPLIT && bytes & 15 != 0)
             || crate::memory::check_span(address, bytes, Access::Read).is_err()
     }) {
         return 0;
@@ -850,18 +873,28 @@ pub extern "C" fn core_paged_loop_read_pair(
                     bytes,
                 )
             });
-            core.translation_cache.read_pair_then_fetch(
-                paging,
-                &state.protection_keys,
-                requests,
-                |[first, last]| {
-                    let first = core
-                        .image
-                        .physical_direct_read_pointer(first, first_bytes)?;
-                    let last = core.image.physical_direct_read_pointer(last, last_bytes)?;
-                    Some(u64::from(first) | (u64::from(last) << 32))
-                },
-            )
+            let access = |[first, last]: [u64; 2]| {
+                let first = core
+                    .image
+                    .physical_direct_read_pointer(first, first_bytes)?;
+                let last = core.image.physical_direct_read_pointer(last, last_bytes)?;
+                Some(u64::from(first) | (u64::from(last) << 32))
+            };
+            if SPLIT {
+                core.translation_cache.read_split_pair_then_fetch(
+                    paging,
+                    &state.protection_keys,
+                    requests,
+                    access,
+                )
+            } else {
+                core.translation_cache.read_pair_then_fetch(
+                    paging,
+                    &state.protection_keys,
+                    requests,
+                    access,
+                )
+            }
         })
         .unwrap_or(0)
 }

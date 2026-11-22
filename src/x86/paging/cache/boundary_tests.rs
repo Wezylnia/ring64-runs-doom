@@ -285,6 +285,128 @@ fn guarded_read_span_rejects_global_or_split_without_touching_retained_ages() {
 
 #[cfg(not(feature = "parallel"))]
 #[test]
+fn split_pair_ages_match_ordered_reads_when_data_and_fetch_alias() {
+    for (other, code) in [
+        (0x3000, 0x4000),
+        (0x1100, 0x4000),
+        (0x2100, 0x4000),
+        (0x3000, 0x1100),
+        (0x3000, 0x2100),
+        (0x4100, 0x4000),
+    ] {
+        for starts in [[0x1fe0, other], [other, 0x1fe0]] {
+            let order = |split_pair| {
+                let (mut image, state, first) = fixture();
+                for page in 2..=5 {
+                    image
+                        .physical_write(0x4000 + page * 8, 8, ((0x9 + page) << 12) | 0x67)
+                        .unwrap();
+                }
+                let at = |linear| Request { linear, ..first };
+                let fetch = Request {
+                    access: Access::Execute,
+                    ..at(code)
+                };
+                let cache = Cache::with_capacity(5);
+                for page in [5, 3, 1, 4, 2] {
+                    insert(&cache, &mut image, &state, at(page << 12));
+                }
+                assert!(cache.touch_current_fetch(&state, fetch, code + 0x9000));
+                if split_pair {
+                    assert_eq!(
+                        cache.read_split_pair_then_fetch(
+                            &state,
+                            &ProtectionKeys::ZERO,
+                            starts.map(|start| (at(start), 64)),
+                            Some,
+                        ),
+                        Some(starts.map(|start| start + 0x9000)),
+                    );
+                } else {
+                    for offset in (0..64).step_by(4) {
+                        for start in starts {
+                            assert!(
+                                cache
+                                    .lookup(&state, at(start + offset), &ProtectionKeys::ZERO)
+                                    .unwrap()
+                                    .is_some()
+                            );
+                            assert!(cache.touch_current_fetch(&state, fetch, code + 0x9000));
+                        }
+                    }
+                }
+                assert!(!cache.take_changed());
+                let entries = cache.entries.borrow();
+                let mut age: Vec<_> = entries
+                    .slots
+                    .iter()
+                    .flatten()
+                    .map(|entry| (entry.used, entry.translation.linear_base))
+                    .collect();
+                age.sort_unstable();
+                age.into_iter()
+                    .map(|(_, linear)| linear)
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(order(true), order(false), "{starts:x?}, code {code:x}");
+        }
+    }
+}
+
+#[cfg(not(feature = "parallel"))]
+#[test]
+fn split_pair_refusal_preserves_ages_and_never_partially_resolves() {
+    for case in [
+        "missing",
+        "noncontiguous",
+        "global",
+        "final-lap",
+        "both",
+        "physical",
+    ] {
+        let (mut image, mut state, first) = fixture();
+        state.cr4 |= 1 << 7;
+        let second = match case {
+            "noncontiguous" => 0xf067,
+            "global" => 0xb167,
+            _ => 0xb067,
+        };
+        for (page, leaf) in [(2, second), (3, 0xc067), (4, 0xd067), (5, 0xe067)] {
+            image.physical_write(0x4000 + page * 8, 8, leaf).unwrap();
+        }
+        let at = |linear| Request { linear, ..first };
+        let cache = Cache::with_capacity(5);
+        for page in [3, 2, 4, 1, 5] {
+            if page != 2 || case != "missing" {
+                insert(&cache, &mut image, &state, at(page << 12));
+            }
+        }
+        let spans = match case {
+            "final-lap" => [(at(0x1ff8), 16), (at(0x3000), 16)],
+            "both" => [(at(0x1fe0), 64), (at(0x3fe0), 64)],
+            _ => [(at(0x1fe0), 64), (at(0x3000), 64)],
+        };
+        let clock = cache.entries.borrow().clock;
+        assert_eq!(
+            cache.read_split_pair_then_fetch::<()>(
+                &state,
+                &ProtectionKeys::ZERO,
+                spans,
+                |physical| {
+                    assert_eq!(case, "physical");
+                    assert_eq!(physical, [0xafe0, 0xc000]);
+                    None
+                },
+            ),
+            None,
+        );
+        assert_eq!(cache.entries.borrow().clock, clock, "{case}");
+        assert!(!cache.take_changed());
+    }
+}
+
+#[cfg(not(feature = "parallel"))]
+#[test]
 fn contiguous_retained_span_touches_three_pages_atomically_in_linear_order() {
     for layout in [
         "local",

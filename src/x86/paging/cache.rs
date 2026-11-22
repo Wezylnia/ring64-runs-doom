@@ -397,6 +397,65 @@ impl Cache {
     }
 
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    pub(crate) fn read_split_pair_then_fetch<T>(
+        &self,
+        state: &State,
+        keys: &ProtectionKeys,
+        spans: [(Request, u32); 2],
+        access: impl FnOnce([u64; 2]) -> Option<T>,
+    ) -> Option<T> {
+        let mut entries = self.entries.borrow_mut();
+        let fetch = entries
+            .hint
+            .filter(|&index| entries.slots[index].is_some())?;
+        let mut prefix = None;
+        let mut ends = [0; 2];
+        let mut physical = [0; 2];
+        for (slot, (request, bytes)) in spans.into_iter().enumerate() {
+            let (first, start) = entries.retained_data_span::<false>(state, request, keys, 1)?;
+            if entries.slots[first].as_ref()?.global {
+                return None;
+            }
+            ends[slot] = first;
+            physical[slot] = start.physical;
+            if start.remaining >= u64::from(bytes) {
+                continue;
+            }
+            // Exactly one stream may cross a leaf, outside its final lap.
+            if prefix.is_some() || start.remaining > u64::from(bytes.checked_sub(16)?) {
+                return None;
+            }
+            let next = Request {
+                linear: request.linear.checked_add(start.remaining)?,
+                ..request
+            };
+            let (last, end) = entries.retained_data_span::<false>(
+                state,
+                next,
+                keys,
+                bytes - start.remaining as u32,
+            )?;
+            if entries.slots[last].as_ref()?.global
+                || start.physical.checked_add(start.remaining) != Some(end.physical)
+            {
+                return None;
+            }
+            prefix = Some(first);
+            ends[slot] = last;
+        }
+        let prefix = prefix?;
+        let value = access(physical)?;
+        // In the funded final lap both streams touch their end leaves,
+        // strictly after the prefix's last use. Aliases are touched in order.
+        for index in [prefix, ends[0], ends[1], fetch] {
+            if entries.hint != Some(index) {
+                entries.touch(index);
+            }
+        }
+        Some(value)
+    }
+
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
     pub(crate) fn contiguous_read_then_fetch<T>(
         &self,
         state: &State,

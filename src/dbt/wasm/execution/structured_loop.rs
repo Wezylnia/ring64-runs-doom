@@ -1331,11 +1331,18 @@ impl Emitter {
         if let Some((proof, resolve, bias)) = self.paged_read_span {
             if body.paged_sse() {
                 self.guard_paged_f32_read_loop(proof, resolve, bias);
-                if let Some((resolve, last)) = self.paged_f32_read_pair {
+                if let Some((resolve, last, split)) = self.paged_f32_read_pair {
                     self.op(Op::If(BlockType::Result(wasm_encoder::ValType::I32)))
                         .op(Op::I32Const(1))
                         .op(Op::Else);
-                    self.guard_paged_f32_pair(proof, resolve, last, bias);
+                    self.guard_paged_f32_pair(proof, resolve, last, bias, None);
+                    if let Some(split) = split {
+                        self.op(Op::If(BlockType::Result(wasm_encoder::ValType::I32)))
+                            .op(Op::I32Const(1))
+                            .op(Op::Else);
+                        self.guard_paged_f32_pair(proof, split, last, bias, Some(body.max_lap_len));
+                        self.op(Op::End);
+                    }
                     self.op(Op::End);
                 }
                 self.paged_proved_f32_reads = Some((proof, bias));

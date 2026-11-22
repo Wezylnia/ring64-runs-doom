@@ -154,6 +154,12 @@ export type CoreExports = WebAssembly.Exports & {
     last: bigint,
     lastBytes: number,
   ): bigint;
+  core_paged_loop_read_split_pair?(
+    first: bigint,
+    firstBytes: number,
+    last: bigint,
+    lastBytes: number,
+  ): bigint;
   core_paged_loop_read_span_pages?(address: bigint, bytes: number, segment: number): number;
   core_paged_loop_read_span_ready?(address: bigint, bytes: number, segment: number): number;
   core_paged_loop_write_byte?(address: bigint, value: number): number;
