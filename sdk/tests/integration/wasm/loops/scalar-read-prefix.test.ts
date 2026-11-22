@@ -100,6 +100,78 @@ test('sampled quiet completion keeps branch, single-step, and execute breakpoint
   }
 });
 
+test('a sampled register prefix preserves stop and budget at an external branch target', async () => {
+  // CMP RAX,0; JNE next page; INC RCX; HLT.
+  const code = '4883f8000f85f60f000048ffc1f4';
+  const branch = PC + 4n;
+  const fallthrough = PC + 10n;
+  const stop = PC + 13n;
+  const target = PC + 4096n;
+  const prototype = Core.prototype as unknown as {
+    artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
+  };
+  const imports = prototype.artifactImports;
+  const compile = Core.prototype.compile;
+  let admissions = 0;
+  Core.prototype.compile = function (pc, limits, seeds, regionPoints) {
+    if (pc === PC && !seeds?.length)
+      return compile.call(this, pc, limits, [PC, branch, fallthrough, stop], true);
+    return compile.call(this, pc, limits, seeds, regionPoints);
+  };
+  prototype.artifactImports = function (observed) {
+    const env = imports.call(this, observed);
+    const guard = env.paged_loop_guard;
+    if (typeof guard === 'function') {
+      env.paged_loop_guard = (pc: bigint, bytes: number, flags: bigint, shadow: number) => {
+        const result = guard(pc, bytes, flags, shadow);
+        if (pc === PC && bytes === 10 && result === 1) admissions++;
+        return result;
+      };
+    }
+    return env;
+  };
+  try {
+    await usingPaged(compiler, { code }, async (cpu) => {
+      const enter = (rax: bigint) => cpu.setState(initial(PC, { 0: rax, 1: 5n }));
+
+      enter(0n);
+      const untaken = await cpu.run({ budget: 8n, stop });
+      assert.equal(untaken.reason, 'stop');
+      assert.equal(untaken.retired, 3n);
+      assert.equal(untaken.state.registers[1], 6n);
+
+      enter(1n);
+      const taken = await cpu.run({ budget: 8n, stop: target });
+      assert.equal(taken.reason, 'stop');
+      assert.equal(taken.retired, 2n);
+      assert.equal(taken.state.rip, target);
+      assert.equal(taken.state.registers[1], 5n);
+      assert.ok(admissions > 0, 'the guard should cover both CMP and JNE');
+
+      enter(1n);
+      const exactBudget = await cpu.run({ budget: 2n, stop: target });
+      assert.equal(exactBudget.reason, 'budget');
+      assert.equal(exactBudget.retired, 2n);
+      assert.equal(exactBudget.state.rip, target);
+
+      enter(1n);
+      const unavailable = await cpu.run({ budget: 8n });
+      assert.equal(unavailable.reason, 'page-fault');
+      assert.equal(unavailable.retired, 2n);
+      assert.equal(unavailable.state.rip, target);
+
+      enter(1n);
+      const beforeBranch = await cpu.run({ budget: 8n, stop: branch });
+      assert.equal(beforeBranch.reason, 'stop');
+      assert.equal(beforeBranch.retired, 1n);
+      assert.equal(beforeBranch.state.rip, branch);
+    });
+  } finally {
+    prototype.artifactImports = imports;
+    Core.prototype.compile = compile;
+  }
+});
+
 test('sampled direct jumps carry quiet fetch only within a native entry', async () => {
   // JMP second; NOP; NOP; JMP stop; HLT.
   const second = PC + 4n;

@@ -52,13 +52,15 @@ fn paged_register_prefixes(unit: &Unit, loops: [Option<StructuredLoop>; 2]) -> V
                 }
             )
     };
-    let terminal_branch = |instruction: &Instruction, wide_read: bool| {
+    let terminal_branch = |instruction: &Instruction, has_read: bool, wide_read: bool| {
         long64
             && matches!(
                 instruction.operation,
                 Operation::Jcc { target, .. }
                     if crate::memory::canonical48(target)
-                        && (wide_read || instructions.binary_search_by_key(&target, |i| i.pc).is_ok())
+                        && ((short_register_prefixes && !has_read)
+                            || wide_read
+                            || instructions.binary_search_by_key(&target, |i| i.pc).is_ok())
             )
     };
     let mut prefixes = vec![None; instructions.len()];
@@ -81,7 +83,7 @@ fn paged_register_prefixes(unit: &Unit, loops: [Option<StructuredLoop>; 2]) -> V
                     has_wide_read || end - first >= 2
                 } else {
                     short_register_prefixes && end > first
-                } && terminal_branch(instruction, has_wide_read))
+                } && terminal_branch(instruction, has_read, has_wide_read))
                 || (short_register_prefixes
                     && !has_read
                     && super::instruction::paged_prefix_wide_read(*instruction))
@@ -109,7 +111,7 @@ fn paged_register_prefixes(unit: &Unit, loops: [Option<StructuredLoop>; 2]) -> V
                     super::instruction::paged_prefix_dword_read(*instruction)
                 };
             end += 1;
-            if terminal_branch(instruction, has_wide_read) {
+            if terminal_branch(instruction, has_read, has_wide_read) {
                 has_branch = true;
                 break;
             }
