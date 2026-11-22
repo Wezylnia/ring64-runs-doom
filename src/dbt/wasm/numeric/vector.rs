@@ -212,12 +212,14 @@ impl Emitter {
         if bytes == 16
             && !aligned
             && address.segment == crate::x86::context::Segment::Ds
-            && let Some(read) = self.paged_loop_read_block
+            && let Some((read, split)) = self.paged_loop_read_block
         {
             if self.guarded_paged_lap {
-                self.op(Op::I32Const(16))
-                    .op(Op::I32Const(address.segment as i32))
-                    .op(Op::Call(read))
+                if !split {
+                    self.op(Op::I32Const(16))
+                        .op(Op::I32Const(address.segment as i32));
+                }
+                self.op(Op::Call(read))
                     .op(Op::LocalTee(STORE_STATUS))
                     .op(Op::I32Eqz);
                 self.retry_guarded_paged_operand(exit_depth, true);

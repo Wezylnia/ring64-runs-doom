@@ -426,6 +426,92 @@ export function pagingBoundaryReviewScenarios(compiler: WebAssembly.Module): Sce
       },
     },
     {
+      name: 'paged packed SSE re-enters after a checked split and preserves a later split fault',
+      async run() {
+        const head = 0x400000n;
+        const source = 0x401ff8n;
+        const denied = 0x403000n;
+        const output = 0x404000n;
+        // MOVUPS; CMPNLEPS; MOVMSKPS; TEST; LEA; JNZ head; store; load; JMP head.
+        const code = '0f100e0fc2c8060f50c185c0488d761075ee890f8b13ebe8';
+        const input = new Uint8Array(0x2000);
+        input.fill(0xff, 0x1ff8);
+        let splitReady = false;
+        let retainedAfterSplit = false;
+        const refused: bigint[] = [];
+        const create = Core.create;
+        Core.create = async (...args) => {
+          const core = await create(...args);
+          const imports = Reflect.get(core, 'artifactImports') as (
+            observed: boolean,
+          ) => Record<string, WebAssembly.ImportValue>;
+          Reflect.set(core, 'artifactImports', (observed: boolean) => {
+            const env = imports.call(core, observed);
+            const ready = env.paged_loop_split_read_ready;
+            const read = env.paged_loop_read_block;
+            if (typeof ready === 'function' && typeof read === 'function') {
+              env.paged_loop_split_read_ready = (address: bigint, width: number) => {
+                const result = ready(address, width);
+                if (address === source && width === 16 && result === 1) splitReady = true;
+                return result;
+              };
+              env.paged_loop_read_block = (address: bigint) => {
+                const result = read(address);
+                if (splitReady && result !== 0) retainedAfterSplit = true;
+                if (splitReady && result === 0) refused.push(address);
+                return result;
+              };
+            }
+            return env;
+          });
+          return core;
+        };
+        try {
+          await usingPaged(
+            compiler,
+            {
+              code,
+              words: [
+                [0x4008n, 0xa007n],
+                [0x4010n, 0xb007n],
+                [0x4020n, 0xc007n],
+              ],
+              spans: [
+                { physical: 0xa000n, bytes: input },
+                { physical: 0xc000n, bytes: little([0x1234_0000_0000n]) },
+              ],
+            },
+            async (cpu) => {
+              cpu.setState(
+                initial(head, { 1: 0x12345678n, 3: output + 4n, 6: source, 7: output }, 2n),
+              );
+              const fault = await cpu.run({ budget: 2400n });
+              check(
+                splitReady && retainedAfterSplit,
+                'the checked split permits retained re-entry',
+              );
+              same(refused, [denied - 8n], 'one later split returns to the checked operand');
+              equal(fault.reason, 'page-fault', 'the second leaf is missing');
+              equal(fault.retired, 2304n, '256 complete laps retire');
+              equal(fault.state.rip, head, 'the original MOVUPS remains unretired');
+              equal(fault.state.registers[6], denied - 8n, 'the faulting lap does not advance');
+              equal(fault.state.flags, 0x46n, 'the previous TEST flags survive');
+              equal(cpu.readXmmState()[1], 0n, 'the first half does not publish on a split fault');
+              equal(cpu.readPagingState().cr2, denied, 'CR2 points to the denied half');
+              equal(word(cpu, 0xc000n), 0x1234_1234_5678n, 'preceding stores and metadata survive');
+              same(
+                [word(cpu, 0x4008n), word(cpu, 0x4010n), word(cpu, 0x4018n), word(cpu, 0x4020n)],
+                [0xa027n, 0xb027n, 0n, 0xc067n],
+                'only successfully used leaves acquire accessed and dirty bits',
+              );
+            },
+          );
+        } finally {
+          Core.create = create;
+        }
+      },
+    },
+    {
       name: 'paged register loop preserves checked reentry and observation boundaries',
       async run() {
         const head = 0x400000n;

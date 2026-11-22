@@ -451,7 +451,19 @@ pub extern "C" fn core_paged_loop_read_ready(address: u64, width: u32) -> i32 {
         16 => crate::memory::check_span(address, width, Access::Read).is_ok(),
         _ => false,
     };
-    i32::from(supported && paged_loop_operand_ready::<false>(address, width))
+    i32::from(supported && paged_loop_operand_ready::<false, false>(address, width))
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[unsafe(no_mangle)]
+pub extern "C" fn core_paged_loop_split_read_ready(address: u64, width: u32) -> i32 {
+    if width != 16 {
+        return core_paged_loop_read_ready(address, width);
+    }
+    i32::from(
+        crate::memory::check_span(address, width, Access::Read).is_ok()
+            && paged_loop_operand_ready::<false, true>(address, width),
+    )
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -460,11 +472,14 @@ pub extern "C" fn core_paged_loop_write_ready(address: u64, width: u32) -> i32 {
     if width != 4 || address & 3 != 0 || !crate::memory::canonical48(address) {
         return 0;
     }
-    i32::from(paged_loop_operand_ready::<true>(address, width))
+    i32::from(paged_loop_operand_ready::<true, false>(address, width))
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-fn paged_loop_operand_ready<const WRITE: bool>(address: u64, width: u32) -> bool {
+fn paged_loop_operand_ready<const WRITE: bool, const SPLIT: bool>(
+    address: u64,
+    width: u32,
+) -> bool {
     // The checked instruction already performed its architectural access.
     // Project the retained result without doing a second access or aging it.
     BRIDGE.with_borrow(|bridge| {
@@ -486,7 +501,27 @@ fn paged_loop_operand_ready<const WRITE: bool>(address: u64, width: u32) -> bool
             .is_ok_and(|entry| {
                 entry.is_some_and(|entry| {
                     if entry.remaining < u64::from(width) {
-                        return false;
+                        if !SPLIT || entry.global {
+                            return false;
+                        }
+                        let offset = entry.remaining;
+                        let next = paging::walk::Request {
+                            linear: address + offset,
+                            ..request
+                        };
+                        let contiguous = core
+                            .translation_cache
+                            .observe(paging, next, &state.protection_keys)
+                            .is_ok_and(|last| {
+                                last.is_some_and(|last| {
+                                    !last.global
+                                        && last.remaining >= u64::from(width) - offset
+                                        && entry.physical.checked_add(offset) == Some(last.physical)
+                                })
+                            });
+                        if !contiguous {
+                            return false;
+                        }
                     }
                     if WRITE {
                         core.image
@@ -543,14 +578,30 @@ fn paged_loop_read<const WIDTH: u32>(address: u64) -> u64 {
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 #[unsafe(no_mangle)]
+#[inline(never)]
 pub extern "C" fn core_paged_loop_read_span(address: u64, bytes: u32, segment: u32) -> u32 {
     paged_loop_read_span::<false>(address, bytes, segment)
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 #[unsafe(no_mangle)]
+#[inline(never)]
 pub extern "C" fn core_paged_loop_read_span_pages(address: u64, bytes: u32, segment: u32) -> u32 {
     paged_loop_read_span::<true>(address, bytes, segment)
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[unsafe(no_mangle)]
+pub extern "C" fn core_paged_loop_read_block(address: u64) -> u32 {
+    let segment = Segment::Ds as u32;
+    // Keep the generic bodies inlined in their established span exports.
+    let span = core_paged_loop_read_span(address, 16, segment);
+    if span != 0 || address & 0xfff <= 0xff0 {
+        span
+    } else {
+        // At most two leaves can contribute to this single vector operand.
+        core_paged_loop_read_span_pages(address, 16, segment)
+    }
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
