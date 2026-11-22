@@ -1833,6 +1833,10 @@ impl Emitter {
                 // The guard funded the complete lap. Register operations and
                 // proved reads cannot fault, and numeric rejection publishes its prefix.
                 InstructionRetirement::AfterPrefix(position)
+            } else if proved_lap && body.kind == LoopKind::IntegerReads && !self.context.is_long64()
+            {
+                // Carry the guest PC per instruction and retire the full lap at its latch.
+                InstructionRetirement::Deferred
             } else if commit_lap {
                 InstructionRetirement::DeferredCommit
             } else if position < read_prefix_len {
