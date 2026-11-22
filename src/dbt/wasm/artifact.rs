@@ -2026,6 +2026,12 @@ fn emit_body(
             .flatten()
             .zip(read_span.zip(write_caches[0]));
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let linear_vector_copy_prefixes = (!paged && !observed && !mmio && optional.scalar_copy_prefix)
+        .then_some(read_span.zip(write_caches[0]))
+        .flatten()
+        .map(|spans| (CopyGroup::flat_prefixes(unit, loop_body), spans))
+        .filter(|(prefixes, _)| !prefixes.is_empty());
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let read_loop_diamond = loop_body.and_then(|body| {
         let enabled = if paged {
             optional.paged_read_diamond
@@ -2760,7 +2766,11 @@ fn emit_body(
     {
         emitter.load_retained_flat_spans(
             [read_span, stack_read_span, flat_stack_pointer_span],
-            write_caches[0].filter(|_| cyclic_vector_store || linear_scalar_copy_prefix.is_some()),
+            write_caches[0].filter(|_| {
+                cyclic_vector_store
+                    || linear_scalar_copy_prefix.is_some()
+                    || linear_vector_copy_prefixes.is_some()
+            }),
         );
     }
     emitter.op(Op::Block(BlockType::Empty));
@@ -2843,6 +2853,25 @@ fn emit_body(
                 group,
                 loop_depth,
                 (read, write),
+            );
+        }
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if let Some(((head, group), spans)) =
+            linear_vector_copy_prefixes
+                .as_ref()
+                .and_then(|(prefixes, spans)| {
+                    prefixes
+                        .iter()
+                        .copied()
+                        .find(|(head, _)| *head == index)
+                        .map(|group| (group, *spans))
+                })
+        {
+            emitter.emit_linear_vector_copy(
+                &unit.instructions[head..head + group.instruction_count() as usize],
+                group,
+                loop_depth,
+                spans,
             );
         }
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -3121,7 +3150,9 @@ fn emit_body(
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if bytes.len() > max_artifact_bytes
-        && (scalar_copy_prefix.is_some() || linear_scalar_copy_prefix.is_some())
+        && (scalar_copy_prefix.is_some()
+            || linear_scalar_copy_prefix.is_some()
+            || linear_vector_copy_prefixes.is_some())
     {
         return emit_body(
             unit,

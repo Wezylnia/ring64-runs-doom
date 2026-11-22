@@ -229,7 +229,11 @@ impl CopyGroup {
                 .windows(guard_count)
                 .enumerate()
                 .find_map(|(head, instructions)| {
-                    let group = Self::recognize_with_minimum_pairs(instructions, minimum_pairs)?;
+                    let group = Self::recognize_with_minimum_pairs(
+                        instructions,
+                        minimum_pairs,
+                        Width::W64,
+                    )?;
                     let start = instructions[0].pc;
                     let end = instructions[guard_count - 1].next_pc;
                     let length = u32::try_from(end.checked_sub(start)?).ok()?;
@@ -250,11 +254,55 @@ impl CopyGroup {
     }
 
     pub(super) fn recognize(lap: &[Instruction]) -> Option<Self> {
-        Self::recognize_with_minimum_pairs(lap, 2)
+        Self::recognize_with_minimum_pairs(lap, 2, Width::W64)
     }
 
-    fn recognize_with_minimum_pairs(lap: &[Instruction], minimum_pairs: u32) -> Option<Self> {
-        fn vector_move(instruction: Instruction, writing: bool) -> Option<(Address, u8)> {
+    pub(super) fn flat_prefixes(unit: &Unit, body: Option<StructuredLoop>) -> Vec<(usize, Self)> {
+        if !unit.sampled || !unit.context.flat_paged_write32() {
+            return Vec::new();
+        }
+        let instructions = &unit.instructions;
+        let mut prefixes = Vec::new();
+        let mut next = 0;
+        for (head, first) in instructions.iter().enumerate() {
+            if head < next {
+                continue;
+            }
+            let tail = &instructions[head..];
+            let Some(group) = [4, 6].into_iter().find_map(|len| {
+                Self::recognize_with_minimum_pairs(tail.get(..len)?, 2, Width::W32)
+            }) else {
+                continue;
+            };
+            let group_end = head + group.instruction_count() as usize;
+            let bytes = group.end.saturating_sub(first.pc);
+            if bytes == 0
+                || bytes > 4096
+                || !unit.context.single_page_code_span(first.pc, bytes as u32)
+                || instructions[head..group_end]
+                    .windows(2)
+                    .any(|pair| pair[0].next_pc != pair[1].pc)
+                || body.is_some_and(|body| {
+                    (head..group_end).any(|index| body.order().position(index as u32).is_some())
+                })
+            {
+                continue;
+            }
+            prefixes.push((head, group));
+            next = group_end;
+            if prefixes.len() == 2 {
+                break;
+            }
+        }
+        prefixes
+    }
+
+    fn recognize_with_minimum_pairs(
+        lap: &[Instruction],
+        minimum_pairs: u32,
+        size: Width,
+    ) -> Option<Self> {
+        let vector_move = |instruction: Instruction, writing: bool| -> Option<(Address, u8)> {
             let Operation::Vector(VectorInstruction::Move {
                 operand: VectorOperand::Memory(address),
                 register,
@@ -268,10 +316,10 @@ impl CopyGroup {
             };
             (store == writing
                 && address.segment == Segment::Ds
-                && address.size == Width::W64
+                && address.size == size
                 && address.base != AddressBase::NextPc)
                 .then_some((address, register))
-        }
+        };
 
         let (source, register) = vector_move(*lap.first()?, false)?;
         let (first_store, adjustment) = if vector_move(*lap.get(1)?, true).is_some() {
@@ -355,7 +403,7 @@ impl DestinationAdjustment {
         let Operation::Lea {
             dst: register,
             address,
-            width: Width::W64,
+            width,
         } = lea.operation
         else {
             return None;
@@ -364,14 +412,16 @@ impl DestinationAdjustment {
             kind: Alu::Add,
             dst,
             src: DataOperand::Immediate(advance),
-            width: Width::W64,
+            width: add_width,
         } = advance.operation
         else {
             return None;
         };
         // Subsequent loads still use the preflighted source expression.
         (register == dst
-            && address.size == Width::W64
+            && width == source.size
+            && add_width == width
+            && address.size == width
             && address.base != AddressBase::NextPc
             && source.base != AddressBase::Register(register.bank)
             && source
@@ -419,31 +469,69 @@ impl Emitter {
         instructions: &[Instruction],
         group: ScalarCopyGroup,
         loop_depth: u32,
-        (read, write): (SpanCache, SpanCache),
+        spans: (SpanCache, SpanCache),
     ) {
-        self.guard_straight_prefix(
-            &instructions[0],
-            &instructions[group.instructions - 1],
-            group.instructions as u32,
+        self.guard_linear_copy(
+            instructions,
+            group.source,
+            group.destination,
+            group.width,
+            spans,
         );
-        self.address(group.source, 0);
-        self.op(Op::LocalSet(LHS));
-        self.flat_copy_span_host(LHS, group.width, read);
-        self.op(Op::LocalTee(STORE_STATUS))
-            .op(Op::If(BlockType::Empty));
-        self.address(group.destination, 0);
-        self.op(Op::LocalSet(RHS));
-        self.flat_copy_span_host(RHS, group.width, write);
-        self.op(Op::I64ExtendI32U)
-            .op(Op::LocalTee(ADDRESS))
-            .op(Op::I64Const(0))
-            .op(Op::I64Ne)
-            .op(Op::If(BlockType::Empty));
         self.emit_scalar_transfers(group);
         self.current_operation = instructions[group.instructions - 1].operation;
         self.stores = false;
         self.route(group.end, loop_depth + 3, loop_depth + 4);
         self.op(Op::End).op(Op::End).op(Op::End);
+    }
+
+    pub(super) fn emit_linear_vector_copy(
+        &mut self,
+        instructions: &[Instruction],
+        group: CopyGroup,
+        loop_depth: u32,
+        spans: (SpanCache, SpanCache),
+    ) {
+        self.guard_linear_copy(
+            instructions,
+            group.source,
+            group.destination,
+            group.width,
+            spans,
+        );
+        self.emit_ordered_copy(group);
+        self.current_operation = instructions.last().unwrap().operation;
+        self.stores = false;
+        self.route(group.end, loop_depth + 3, loop_depth + 4);
+        self.op(Op::End).op(Op::End).op(Op::End);
+    }
+
+    fn guard_linear_copy(
+        &mut self,
+        instructions: &[Instruction],
+        source: Address,
+        destination: Address,
+        bytes: u32,
+        (read, write): (SpanCache, SpanCache),
+    ) {
+        self.guard_straight_prefix(
+            &instructions[0],
+            instructions.last().unwrap(),
+            instructions.len() as u32,
+        );
+        self.address(source, 0);
+        self.op(Op::LocalSet(LHS));
+        self.flat_copy_span_host(LHS, bytes, read);
+        self.op(Op::LocalTee(STORE_STATUS))
+            .op(Op::If(BlockType::Empty));
+        self.address(destination, 0);
+        self.op(Op::LocalSet(RHS));
+        self.flat_copy_span_host(RHS, bytes, write);
+        self.op(Op::I64ExtendI32U)
+            .op(Op::LocalTee(ADDRESS))
+            .op(Op::I64Const(0))
+            .op(Op::I64Ne)
+            .op(Op::If(BlockType::Empty));
     }
 
     pub(super) fn emit_finite_scalar_copy(
@@ -618,12 +706,13 @@ impl Emitter {
                 self.op(Op::LocalGet(STORE_STATUS))
                     .op(Op::V128Load(memory(0)))
                     .op(Op::LocalSet(xmm));
-                self.lea(adjustment.register, adjustment.address, Width::W64, 0);
+                let width = adjustment.address.size;
+                self.lea(adjustment.register, adjustment.address, width, 0);
                 self.integer(
                     Alu::Add,
                     adjustment.register,
                     DataOperand::Immediate(adjustment.advance),
-                    Width::W64,
+                    width,
                     None,
                 );
                 self.op(Op::LocalGet(ADDRESS))
