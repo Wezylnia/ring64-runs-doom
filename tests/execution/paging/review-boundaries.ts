@@ -322,6 +322,92 @@ export function pagingBoundaryReviewScenarios(compiler: WebAssembly.Module): Sce
       },
     },
     {
+      name: 'paged compatibility rotated memory compare preserves exact branch and fault state',
+      async run() {
+        const prefix = 0x3fffd0n;
+        const head = prefix + 6n;
+        const compare = prefix + 15n;
+        const exit = prefix + 27n;
+        const execution = context('compatibility');
+        execution.segments.cs.base = 0x30n;
+        const code = '89d339dd73ba89de29eed1ee8d142e393c9173ec01f54539dd72eb';
+        const table = new Uint8Array(4096);
+        table.set(little([0n, 1n, 2n, 3n], 4));
+        await usingPaged(
+          compiler,
+          {
+            code,
+            context: execution,
+            words: [[0x4008n, 0xa027n]],
+            spans: [{ physical: 0xa000n, bytes: table }],
+          },
+          async (cpu) => {
+            const start = (base: bigint, needle: bigint, upper = 4n) =>
+              initial(head, { 1: base, 2: 0n, 3: upper, 5: 0n, 6: 0n, 7: needle }, 2n);
+            cpu.setState(start(0x401000n, 2n));
+            equal(
+              (await cpu.run({ budget: 5n })).state.rip,
+              compare + 3n,
+              'warm the first compare',
+            );
+            cpu.setState(start(0x401000n, 2n));
+            const done = await cpu.run({ budget: 32n, stop: exit });
+            equal(done.reason, 'stop', 'both halves reach the falling exit');
+            equal(done.retired, 19n, 'nine upper and ten lower steps');
+            equal(done.state.rip, exit, 'the falling PC remains CS relative');
+            equal(done.state.registers[3], 2n, 'upper bound');
+            equal(done.state.registers[5], 2n, 'lower bound');
+            equal(done.state.flags & 0x8d7n, 0x46n, 'bound comparison flags');
+
+            const outside = prefix - 64n;
+            cpu.setState(start(0x401000n, 0n, 1n));
+            const taken = await cpu.run({ budget: 32n, stop: outside });
+            equal(taken.reason, 'stop', 'the rotated prefix can take the outside edge');
+            equal(taken.retired, 9n, 'the exiting prefix retires');
+            equal(taken.state.rip, outside, 'stop wins before the next fetch');
+
+            cpu.setState(start(0x401000n, 2n));
+            const partial = await cpu.run({ budget: 10n });
+            equal(partial.reason, 'budget', 'a short upper path leaves one checked instruction');
+            equal(partial.retired, 10n, 'the complete upper path and next MOV retire');
+            equal(partial.state.rip, head + 2n, 'resume before the second SUB');
+
+            cpu.setState(start(0x401000n, 2n));
+            const stopped = await cpu.run({ budget: 32n, stop: prefix });
+            equal(stopped.reason, 'stop', 'the rotated prefix is a stop boundary');
+            equal(stopped.retired, 6n, 'prefix effects have not occurred');
+            equal(stopped.state.registers[3], 4n, 'the upper bound remains unchanged');
+
+            cpu.setState(start(0x401ff4n, 1n));
+            const denied = await cpu.run({ budget: 32n });
+            equal(denied.reason, 'page-fault', 'the second compare faults');
+            equal(denied.retired, 14n, 'first lap and second arithmetic prefix retire once');
+            equal(denied.state.rip, compare, 'retry starts at the unretired compare');
+            equal(denied.state.registers[5], 3n, 'first lap lower bound is visible');
+            equal(denied.state.registers[2], 3n, 'second prefix formed the faulting index');
+            equal(denied.state.flags & 0x8d7n, 0x47n, 'incoming SHR flags survive');
+            equal(
+              denied.pageFault?.address,
+              0x402000n,
+              'checked replay publishes the exact address',
+            );
+
+            cpu.setState(start(0xfffffff6n, 1n));
+            const wrap = await cpu.run({ budget: 32n });
+            equal(wrap.reason, 'segment-fault', 'a dword crossing 4GiB faults before walking');
+            equal(wrap.retired, 4n, 'only the arithmetic prefix retires');
+            equal(wrap.state.rip, compare, 'wrapped operand keeps the original entry');
+            equal(wrap.segmentFault?.segment, 'ds', 'segment admission gives the fault');
+            equal(
+              wrap.segmentFault?.offset,
+              0xfffffffen,
+              'the exact wrapped dword starting offset',
+            );
+          },
+        );
+      },
+    },
+    {
       name: 'paged MOVZX keeps the exact byte loop prefix before a missed read',
       async run() {
         const head = 0x400000n;

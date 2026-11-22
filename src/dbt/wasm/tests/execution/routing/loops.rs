@@ -273,6 +273,79 @@ fn paged_rotated_compare_requires_its_whole_code_span_and_a_ds_operand() {
 
 #[cfg(not(feature = "parallel"))]
 #[test]
+fn paged_32_bit_rotated_compare_checks_its_linear_code_span_and_segment() {
+    use crate::memory::Image;
+    use crate::x86::context::{ExecutionContext, Mode, Segment};
+
+    let code = [
+        0x89, 0xd3, 0x39, 0xdd, 0x73, 0xba, 0x89, 0xde, 0x29, 0xee, 0xd1, 0xee, 0x8d, 0x14, 0x2e,
+        0x39, 0x3c, 0x91, 0x73, 0xec, 0x01, 0xf5, 0x45, 0x39, 0xdd, 0x72, 0xeb,
+    ];
+    let mut context = ExecutionContext::default();
+    context.set_mode_and_cpl(Mode::Protected, 0);
+    let mut cs = context.segment(Segment::Cs);
+    cs.default32 = true;
+    cs.base = 0x30;
+    let mut cs_attributes = context.attributes(Segment::Cs);
+    cs_attributes.long = false;
+    context.set_segment(Segment::Cs, 8, cs, cs_attributes);
+    let fixture = |base: u64| {
+        let image = Image::new(base + 0x30, code.to_vec(), 0x8000, vec![0; 8]).unwrap();
+        let artifact = crate::dbt::compile_with_context(
+            &image,
+            &context,
+            base + 6,
+            crate::dbt::Limits {
+                max_instructions: 64,
+                max_source_bytes: 256,
+                max_artifact_bytes: 65536,
+            },
+        )
+        .unwrap();
+        Unit {
+            context: context.clone(),
+            ..unit(artifact.instructions)
+        }
+    };
+    let same_page = fixture(0x1000);
+    // The guest offsets fit one page. Their CS-based linear addresses do not.
+    let split_page = fixture(0x1fcc);
+    let mut fs = fixture(0x1000);
+    let compare = fs
+        .instructions
+        .iter_mut()
+        .find_map(|instruction| match &mut instruction.operation {
+            Operation::MemoryAlu { address, .. } => Some(address),
+            _ => None,
+        })
+        .unwrap();
+    compare.segment = Segment::Fs;
+    let mut limit = fixture(0x1000);
+    let mut cs = limit.context.segment(Segment::Cs);
+    cs.limit = 0x101f;
+    limit.context.set_segment(Segment::Cs, 8, cs, cs_attributes);
+    let outside = limit
+        .instructions
+        .iter_mut()
+        .find_map(|instruction| match &mut instruction.operation {
+            Operation::Jcc { target, .. } if *target < 0x1000 => Some(target),
+            _ => None,
+        })
+        .unwrap();
+    *outside = 0x1020;
+    let full = emit_profile(&same_page, true, true, usize::MAX);
+    let capped = emit_profile(&same_page, true, true, full.len() - 1);
+    let split = emit_profile(&split_page, true, true, usize::MAX);
+    let fs = emit_profile(&fs, true, true, usize::MAX);
+    let limit = emit_profile(&limit, true, true, usize::MAX);
+    for (bytes, loops) in [(full, 3), (capped, 1), (split, 1), (fs, 1), (limit, 1)] {
+        assert_eq!(wasm_loop_count(&bytes), loops);
+        wasmparser::Validator::new().validate_all(&bytes).unwrap();
+    }
+}
+
+#[cfg(not(feature = "parallel"))]
+#[test]
 fn paged_32_bit_reads_require_flat_ds_and_dword_addresses() {
     use crate::memory::Image;
     use crate::x86::context::{ExecutionContext, Mode, Segment, SegmentType};

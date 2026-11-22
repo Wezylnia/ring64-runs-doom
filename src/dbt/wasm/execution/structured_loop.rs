@@ -208,20 +208,29 @@ impl StructuredLoop {
         if !unit.instructions.iter().any(|i| read(i.operation)) {
             return None;
         }
+        let scalar_read = |op| read(op) && (long64 || !matches!(op, Operation::MemoryAlu { .. }));
         let simple = Self::select_straight_body(
             &unit.instructions,
             LoopKind::PagedReads,
-            |op| inside_register_body(op) || read(op),
-            |body| body.iter().filter(|i| read(i.operation)).take(4).count() == 4,
+            |op| inside_register_body(op) || scalar_read(op),
+            |body| {
+                body.iter()
+                    .filter(|i| scalar_read(i.operation))
+                    .take(4)
+                    .count()
+                    == 4
+            },
         );
         simple
             .or_else(|| {
-                if !long64 {
-                    return None;
-                }
                 super::loop_cfg::select_paged_read_graph(&unit.instructions, |body| {
                     body.iter().any(|i| read(i.operation))
-                        && body.iter().all(|i| inside_paged_read_graph(i.operation))
+                        && body.iter().all(|i| match i.operation {
+                            Operation::Jump { target } | Operation::Jcc { target, .. } => {
+                                target <= unit.context.code_limit()
+                            }
+                            op => inside_register_body(op) || read(op),
+                        })
                 })
                 .map(Self::forward)
             })
@@ -562,7 +571,7 @@ fn paged_read_width(operation: Operation, address_size: Option<Width>) -> Option
             width: Width::W32,
             address,
             ..
-        } if address_size.is_none() => (address, Width::W32),
+        } => (address, Width::W32),
         Operation::Extend {
             src: Location::Memory(address),
             source_width: Width::W8,
