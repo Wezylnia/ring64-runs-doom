@@ -25,43 +25,48 @@
 
       <main class="landing">
         <div class="project-overview">
-          <h1 class="project-slogan">
-            x86 cpu emulator<br />
-            for javascript runtimes
-          </h1>
-          <div class="install">
-            <code id="install-command">npm install ring64</code>
-            <button
-              type="button"
-              id="copy-install"
-              class="icon-button"
-              aria-label="copy install command"
-              title="copy install command"
-              hidden
-            >
-              <svg
-                class="copy-icon"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.6"
-                aria-hidden="true"
+          <div class="project-heading">
+            <h1 class="project-slogan">
+              the fastest x86 cpu emulator<br />
+              for javascript runtimes
+            </h1>
+          </div>
+          <div class="project-details">
+            <p class="project-summary">32-bit and 64-bit x86.</p>
+            <div class="install">
+              <code id="install-command">npm install ring64</code>
+              <button
+                type="button"
+                id="copy-install"
+                class="icon-button"
+                aria-label="copy install command"
+                title="copy install command"
+                hidden
               >
-                <rect x="8" y="8" width="12" height="12" rx="2" />
-                <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />
-              </svg>
-              <svg
-                class="copied-icon"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.8"
-                aria-hidden="true"
-              >
-                <path d="m5 12 4 4 10-10" stroke-linecap="round" stroke-linejoin="round" />
-              </svg>
-            </button>
-            <span id="copy-status" class="visually-hidden" role="status"></span>
+                <svg
+                  class="copy-icon"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  aria-hidden="true"
+                >
+                  <rect x="8" y="8" width="12" height="12" rx="2" />
+                  <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />
+                </svg>
+                <svg
+                  class="copied-icon"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  aria-hidden="true"
+                >
+                  <path d="m5 12 4 4 10-10" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+              </button>
+              <span id="copy-status" class="visually-hidden" role="status"></span>
+            </div>
           </div>
         </div>
         <figure class="wet-ink" aria-labelledby="wet-ink-title">
