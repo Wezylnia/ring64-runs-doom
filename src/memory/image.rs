@@ -365,6 +365,16 @@ impl Image {
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     fn readable_direct_span(&self, address: u64, width: u32) -> Option<DirectSpan> {
         let mapping = &self.mappings[self.locate_index(address)?];
+        self.readable_direct_span_in(mapping, address, width)
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    fn readable_direct_span_in(
+        &self,
+        mapping: &Mapping,
+        address: u64,
+        width: u32,
+    ) -> Option<DirectSpan> {
         let relative = address - mapping.base;
         if !mapping.permissions.read || u64::from(width) > u64::from(mapping.length) - relative {
             return None;
@@ -376,6 +386,35 @@ impl Image {
             length: mapping.length,
             host: backing.bytes.as_ptr().wrapping_add(mapping.offset as usize) as u32,
         })
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(crate) fn physical_direct_copy_spans(
+        &mut self,
+        source: u64,
+        destination: u64,
+        width: u32,
+    ) -> Option<(DirectSpan, DirectSpan)> {
+        if !self.physical {
+            return None;
+        }
+        let mapping = &self.mappings[self.locate_index(source)?];
+        let read_span = self.readable_direct_span_in(mapping, source, width)?;
+        let write_offset = destination.wrapping_sub(mapping.base);
+        if write_offset < u64::from(mapping.length) {
+            if !self.direct_mapping_writable(mapping, write_offset, width) {
+                return None;
+            }
+            let span = DirectSpan {
+                host: self.backings[mapping.backing]
+                    .bytes
+                    .as_mut_ptr()
+                    .wrapping_add(mapping.offset as usize) as u32,
+                ..read_span
+            };
+            return Some((span, span));
+        }
+        Some((read_span, self.writable_direct_span(destination, width)?))
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]

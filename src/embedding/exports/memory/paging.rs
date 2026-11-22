@@ -1191,11 +1191,11 @@ pub extern "C" fn core_paged_loop_copy_window(source: u64, destination: u64, wid
                     &state.protection_keys,
                     width,
                     |read, write| {
-                        let read_span =
-                            core.image.physical_direct_read_span(read.physical, width)?;
-                        let write_span = core
-                            .image
-                            .physical_direct_write_span(write.physical, width)?;
+                        let (read_span, write_span) = core.image.physical_direct_copy_spans(
+                            read.physical,
+                            write.physical,
+                            width,
+                        )?;
                         let read_offset = (read.physical - read_span.base) as u32;
                         let write_offset = (write.physical - write_span.base) as u32;
                         // A 4 KiB window also bounds potential shadowing by overlapping local leaves.
