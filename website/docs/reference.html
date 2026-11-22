@@ -1,51 +1,108 @@
 <section id="cpu" class="docs-topic" aria-labelledby="api">
   <h1 id="api" tabindex="-1">cpu</h1>
   <p>
-    import <code>ring64</code> to create a standalone cpu. the <a href="#quickstart">quickstart</a>
-    shows a complete setup.
+    create a standalone cpu, run the guest toward a stop address, then release the cpu. the
+    <a href="#quickstart">quickstart</a> shows how to prepare <code>options</code>.
   </p>
-  <dl class="docs-members">
-    <div>
-      <dt><code>loadCpuCompiler(): Promise&lt;WebAssembly.Module&gt;</code></dt>
-      <dd>loads the packaged <code>ring64.wasm</code>. reuse the module across cpus.</dd>
+  <div class="docs-example">
+    <div class="docs-example-bar">
+      <a href="./examples/api/run-cpu.ts" download>run-cpu.ts</a>
+      <button type="button" data-copy-code="run-cpu" aria-label="copy run-cpu.ts" hidden>
+        copy
+      </button>
     </div>
-    <div>
-      <dt><code>createCpu(options: Options): Promise&lt;Cpu&gt;</code></dt>
-      <dd>
-        pass a <code>compiler</code> as wasm bytes or a compiled module, plus
-        <a href="#limits">limits</a> and a <a href="#memory">memory configuration</a>.
-        <code>context</code> sets the initial execution mode and segments.
-      </dd>
-    </div>
-    <div>
-      <dt><code>cpu.run(options: RunOptions): Promise&lt;RunResult&gt;</code></dt>
-      <dd>resumes from the current state. read or change state and memory between runs.</dd>
-    </div>
-    <div>
-      <dt><code>cpu.requestInterrupt(vector: number): boolean</code></dt>
-      <dt><code>cpu.requestNmi(): void</code></dt>
-      <dd>
-        queue an interrupt for the next run. irq vectors are 0–255.
-        <code>requestInterrupt</code> returns <code>false</code> if an irq is already queued.
-      </dd>
-    </div>
-    <div>
-      <dt><code>cpu.reset(): void</code></dt>
-      <dt><code>cpu.dispose(): void</code></dt>
-      <dd>
-        <code>reset</code> resets state and preserves memory in physical mode.
-        <code>dispose</code> releases the cpu after its run settles.
-      </dd>
-    </div>
-    <div>
-      <dt><code>cpu.inspectTranslations(): UnitMetadata[]</code></dt>
-      <dd>returns a snapshot of the cached translations.</dd>
-    </div>
-    <div>
-      <dt><code>cpu.creationMs: number</code></dt>
-      <dd>cpu creation time in milliseconds.</dd>
-    </div>
-  </dl>
+    <pre><code id="run-cpu"><!-- example:api/run-cpu.ts --></code></pre>
+  </div>
+  <section class="docs-api-group" aria-labelledby="cpu-create">
+    <h2 id="cpu-create" tabindex="-1">create and run</h2>
+    <dl class="docs-members">
+      <div>
+        <dt id="loadCpuCompiler" tabindex="-1">
+          <a href="#loadCpuCompiler"
+            ><code>loadCpuCompiler(): Promise&lt;WebAssembly.Module&gt;</code></a
+          >
+        </dt>
+        <dd>loads the packaged <code>ring64.wasm</code>. reuse the module across cpus.</dd>
+      </div>
+      <div>
+        <dt id="createCpu" tabindex="-1">
+          <a href="#createCpu"><code>createCpu(options: Options): Promise&lt;Cpu&gt;</code></a>
+        </dt>
+        <dd>
+          pass a <code>compiler</code> as wasm bytes or a compiled module, plus
+          <a href="#limits">limits</a> and a <a href="#memory">memory configuration</a>.
+          <code>context</code> sets the initial execution mode and segments.
+        </dd>
+      </div>
+      <div>
+        <dt id="cpu.run" tabindex="-1">
+          <a href="#cpu.run"><code>cpu.run(options: RunOptions): Promise&lt;RunResult&gt;</code></a>
+        </dt>
+        <dd>
+          resumes from the current state. read or change state and memory between runs.
+          <a href="#run-result">run options and results</a> describes the budget and stop reasons.
+        </dd>
+      </div>
+    </dl>
+  </section>
+  <section class="docs-api-group" aria-labelledby="cpu-lifecycle">
+    <h2 id="cpu-lifecycle" tabindex="-1">lifecycle</h2>
+    <dl class="docs-members">
+      <div>
+        <dt id="cpu.dispose" tabindex="-1">
+          <a href="#cpu.dispose"><code>cpu.dispose(): void</code></a>
+        </dt>
+        <dd>releases the cpu. wait for any active run to settle before calling it.</dd>
+      </div>
+      <div>
+        <dt id="cpu.reset" tabindex="-1">
+          <a href="#cpu.reset"><code>cpu.reset(): void</code></a>
+        </dt>
+        <dd>resets an idle cpu in physical mode and preserves its memory.</dd>
+      </div>
+    </dl>
+  </section>
+  <section class="docs-api-group" aria-labelledby="cpu-interrupts">
+    <h2 id="cpu-interrupts" tabindex="-1">interrupts</h2>
+    <dl class="docs-members">
+      <div>
+        <dt id="cpu.requestInterrupt" tabindex="-1">
+          <a href="#cpu.requestInterrupt"
+            ><code>cpu.requestInterrupt(vector: number): boolean</code></a
+          >
+        </dt>
+        <dd>
+          queues an irq for an idle cpu. use a vector from 0 to 255. returns <code>false</code> if
+          an irq is already queued.
+        </dd>
+      </div>
+      <div>
+        <dt id="cpu.requestNmi" tabindex="-1">
+          <a href="#cpu.requestNmi"><code>cpu.requestNmi(): void</code></a>
+        </dt>
+        <dd>queues a non-maskable interrupt for an idle cpu.</dd>
+      </div>
+    </dl>
+  </section>
+  <section class="docs-api-group" aria-labelledby="cpu-diagnostics">
+    <h2 id="cpu-diagnostics" tabindex="-1">diagnostics</h2>
+    <dl class="docs-members">
+      <div>
+        <dt id="cpu.inspectTranslations" tabindex="-1">
+          <a href="#cpu.inspectTranslations"
+            ><code>cpu.inspectTranslations(): UnitMetadata[]</code></a
+          >
+        </dt>
+        <dd>returns a snapshot of the cached translations.</dd>
+      </div>
+      <div>
+        <dt id="cpu.creationMs" tabindex="-1">
+          <a href="#cpu.creationMs"><code>cpu.creationMs: number</code></a>
+        </dt>
+        <dd>cpu creation time in milliseconds.</dd>
+      </div>
+    </dl>
+  </section>
 </section>
 
 <section id="limits" class="docs-topic" aria-labelledby="limits-title">
