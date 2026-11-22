@@ -200,9 +200,9 @@ test('flat scalar copy groups preserve MOVSD/MOVQ upper lanes and partial retire
 
 test('flat vector pairs preserve affine setup, overlapping loads and a late store fault', async () => {
   // MOVUPS XMM0,[EDI]; LEA EDX,[ESI]; ADD EDX,32; MOVUPS [EDX-32],XMM0;
-  // MOVDQU XMM0,[EDI+16]; MOVDQU [EDX-16],XMM0; TEST EAX,EAX; JZ start; HLT.
-  const code = hex('0f10078d1683c2200f1142e0f30f6f4710f30f7f42f085c074e6f4');
-  const stop = PC + 26n;
+  // MOVDQU XMM0,[EDI+16]; MOVDQU [EDX-16],XMM0; ADD EDI,32; CMP EDI,ECX; JB start.
+  const code = hex('0f10078d1683c2200f1142e0f30f6f4710f30f7f42f083c72039cf72e3f4');
+  const stop = PC + 29n;
   const data = PC + 0x1000n;
   const original = Uint8Array.from({ length: 48 }, (_, index) => index + 1);
   const ram = new Uint8Array(4096);
@@ -231,16 +231,8 @@ test('flat vector pairs preserve affine setup, overlapping loads and a late stor
       ],
     },
   });
-  const compile = Core.prototype.compile;
   const imports = proto.artifactImports;
   let pairedWrite = 0;
-  Core.prototype.compile = function (pc, limits, seeds, regionPoints) {
-    if (pc === PC && !seeds?.length) {
-      const points = [0n, 3n, 5n, 8n, 12n, 17n, 22n, 24n, 26n].map((offset) => PC + offset);
-      return compile.call(this, pc, limits, points, true);
-    }
-    return compile.call(this, pc, limits, seeds, regionPoints);
-  };
   proto.artifactImports = function (observed) {
     const env = imports.call(this, observed);
     const write = env.write_span;
@@ -254,17 +246,29 @@ test('flat vector pairs preserve affine setup, overlapping loads and a late stor
     return env;
   };
   try {
-    const enter = (destination: bigint) =>
-      cpu.setState(initial(PC, { 0: 1n, 2: 0n, 6: destination, 7: data }));
+    const enter = (destination: bigint, limit = data + 32n) =>
+      cpu.setState(initial(PC, { 1: limit, 2: 0n, 6: destination, 7: data }));
     enter(data + 16n);
     const copied = await cpu.run({ budget: 20n, stop });
     assert.equal(copied.reason, 'stop');
-    assert.equal(copied.retired, 8n);
+    assert.equal(copied.retired, 9n);
+    assert.equal(copied.state.registers[7], data + 32n);
+    assert.equal(copied.state.flags & 0x41n, 0x40n);
     assert.equal(copied.state.registers[2], data + 48n);
     const first = original.slice(0, 16);
     assert.deepEqual(cpu.readMemory(data + 16n, 16), first);
     assert.deepEqual(cpu.readMemory(data + 32n, 16), first);
     assert.equal(pairedWrite, 1, 'one range proof admits both stores');
+
+    cpu.writeMemory(data, original);
+    enter(data + 16n, data + 64n);
+    const partial = await cpu.run({ budget: 10n, stop });
+    assert.equal(partial.reason, 'budget');
+    assert.equal(partial.retired, 10n);
+    assert.equal(partial.state.rip, PC + 3n);
+    assert.equal(partial.state.registers[7], data + 32n);
+    assert.equal(partial.state.flags & 0x41n, 1n);
+    assert.deepEqual(cpu.readMemory(data + 32n, 16), first);
 
     cpu.writeMemory(data, original);
     enter(data + 16n);
@@ -273,7 +277,7 @@ test('flat vector pairs preserve affine setup, overlapping loads and a late stor
     assert.equal(interior.retired, 3n);
     assert.equal(interior.state.registers[2], data + 48n);
     assert.deepEqual(cpu.readMemory(data, 48), original);
-    assert.equal(pairedWrite, 1);
+    assert.equal(pairedWrite, 2);
 
     enter(data + 4080n);
     const split = await cpu.run({ budget: 20n, stop });
@@ -282,7 +286,6 @@ test('flat vector pairs preserve affine setup, overlapping loads and a late stor
     assert.equal(split.state.rip, PC + 17n);
     assert.deepEqual(cpu.readMemory(data + 4080n, 16), first);
   } finally {
-    Core.prototype.compile = compile;
     proto.artifactImports = imports;
     cpu.dispose();
   }

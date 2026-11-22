@@ -5,8 +5,8 @@ use super::{
 };
 use crate::x86::context::Segment;
 use crate::x86::instruction::{
-    Address, AddressBase, Alu, DataOperand, Instruction, Location, Operation, RegisterView,
-    VectorInstruction, VectorOperand, Width,
+    Address, AddressBase, Alu, Condition, DataOperand, Instruction, Location, Operation,
+    RegisterView, VectorInstruction, VectorOperand, Width,
 };
 use wasm_encoder::{BlockType, Instruction as Op, MemArg};
 
@@ -18,6 +18,65 @@ pub(super) struct CopyGroup {
     width: u32,
     end: u64,
     adjustment: Option<DestinationAdjustment>,
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct FlatVectorCopy {
+    group: CopyGroup,
+    tail: Option<FlatCopyTail>,
+}
+
+#[derive(Clone, Copy)]
+struct FlatCopyTail {
+    advance: RegisterView,
+    step: u64,
+    compare: RegisterView,
+    limit: RegisterView,
+    condition: Condition,
+    next_pc: u64,
+}
+
+impl FlatVectorCopy {
+    pub(super) fn instruction_count(self) -> u32 {
+        self.group.instruction_count() + 3 * u32::from(self.tail.is_some())
+    }
+}
+
+impl FlatCopyTail {
+    fn recognize(instructions: &[Instruction], head: u64) -> Option<Self> {
+        let [advance, compare, branch, ..] = instructions else {
+            return None;
+        };
+        let Operation::Alu {
+            kind: Alu::Add,
+            dst: advance_register,
+            src: DataOperand::Immediate(step),
+            width: Width::W32,
+        } = advance.operation
+        else {
+            return None;
+        };
+        let Operation::Alu {
+            kind: Alu::Cmp,
+            dst: compare_register,
+            src: DataOperand::Register(limit),
+            width: Width::W32,
+        } = compare.operation
+        else {
+            return None;
+        };
+        let Operation::Jcc { condition, target } = branch.operation else {
+            return None;
+        };
+        (target == head).then_some(Self {
+            advance: advance_register,
+            step,
+            compare: compare_register,
+            limit,
+            condition,
+            next_pc: branch.next_pc,
+        })
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -257,8 +316,11 @@ impl CopyGroup {
         Self::recognize_with_minimum_pairs(lap, 2, Width::W64)
     }
 
-    pub(super) fn flat_prefixes(unit: &Unit, body: Option<StructuredLoop>) -> Vec<(usize, Self)> {
-        if !unit.sampled || !unit.context.flat_paged_write32() {
+    pub(super) fn flat_prefixes(
+        unit: &Unit,
+        body: Option<StructuredLoop>,
+    ) -> Vec<(usize, FlatVectorCopy)> {
+        if !unit.context.flat_paged_write32() {
             return Vec::new();
         }
         let instructions = &unit.instructions;
@@ -274,8 +336,15 @@ impl CopyGroup {
             }) else {
                 continue;
             };
-            let group_end = head + group.instruction_count() as usize;
-            let bytes = group.end.saturating_sub(first.pc);
+            let tail =
+                FlatCopyTail::recognize(&tail[group.instruction_count() as usize..], first.pc);
+            if !unit.sampled && tail.is_none() {
+                continue;
+            }
+            let copy = FlatVectorCopy { group, tail };
+            let group_end = head + copy.instruction_count() as usize;
+            let end = tail.map_or(group.end, |tail| tail.next_pc);
+            let bytes = end.saturating_sub(first.pc);
             if bytes == 0
                 || bytes > 4096
                 || !unit.context.single_page_code_span(first.pc, bytes as u32)
@@ -288,7 +357,7 @@ impl CopyGroup {
             {
                 continue;
             }
-            prefixes.push((head, group));
+            prefixes.push((head, copy));
             next = group_end;
             if prefixes.len() == 2 {
                 break;
@@ -488,10 +557,14 @@ impl Emitter {
     pub(super) fn emit_linear_vector_copy(
         &mut self,
         instructions: &[Instruction],
-        group: CopyGroup,
+        copy: FlatVectorCopy,
         loop_depth: u32,
         spans: (SpanCache, SpanCache),
     ) {
+        let FlatVectorCopy { group, tail } = copy;
+        if tail.is_some() {
+            self.op(Op::Loop(BlockType::Empty));
+        }
         self.guard_linear_copy(
             instructions,
             group.source,
@@ -499,11 +572,46 @@ impl Emitter {
             group.width,
             spans,
         );
-        self.emit_ordered_copy(group);
         self.current_operation = instructions.last().unwrap().operation;
         self.stores = false;
-        self.route(group.end, loop_depth + 3, loop_depth + 4);
+        if let Some(tail) = tail {
+            // Both spans and the complete lap passed admission. Only the final
+            // comparison can publish flags or affect the next branch.
+            let omit = self.omit_result_status;
+            self.omit_result_status = true;
+            self.copy_ordered_vectors(group);
+            self.integer(
+                Alu::Add,
+                tail.advance,
+                DataOperand::Immediate(tail.step),
+                Width::W32,
+                None,
+            );
+            self.omit_result_status = false;
+            self.integer(
+                Alu::Cmp,
+                tail.compare,
+                DataOperand::Register(tail.limit),
+                Width::W32,
+                None,
+            );
+            self.omit_result_status = omit;
+            self.retire_instructions(copy.instruction_count());
+            self.op(Op::I64Const(instructions[0].pc as i64))
+                .op(Op::LocalSet(RIP));
+            self.condition(tail.condition);
+            self.op(Op::BrIf(3))
+                .op(Op::I64Const(tail.next_pc as i64))
+                .op(Op::LocalSet(RIP));
+            self.route(tail.next_pc, loop_depth + 4, loop_depth + 5);
+        } else {
+            self.emit_ordered_copy(group);
+            self.route(group.end, loop_depth + 3, loop_depth + 4);
+        }
         self.op(Op::End).op(Op::End).op(Op::End);
+        if tail.is_some() {
+            self.op(Op::End);
+        }
     }
 
     fn guard_linear_copy(
@@ -698,6 +806,16 @@ impl Emitter {
     }
 
     fn emit_ordered_copy(&mut self, group: CopyGroup) {
+        self.copy_ordered_vectors(group);
+        self.op(Op::I64Const(group.end as i64))
+            .op(Op::LocalSet(RIP))
+            .op(Op::LocalGet(REMAINING))
+            .op(Op::I64Const(i64::from(group.instruction_count())))
+            .op(Op::I64Sub)
+            .op(Op::LocalSet(REMAINING));
+    }
+
+    fn copy_ordered_vectors(&mut self, group: CopyGroup) {
         let xmm = self.xmm(group.register);
         for offset in (0..group.width).step_by(16) {
             if offset == 0
@@ -731,12 +849,6 @@ impl Emitter {
             }
             self.op(Op::V128Store(memory(u64::from(offset))));
         }
-        self.op(Op::I64Const(group.end as i64))
-            .op(Op::LocalSet(RIP))
-            .op(Op::LocalGet(REMAINING))
-            .op(Op::I64Const(i64::from(group.instruction_count())))
-            .op(Op::I64Sub)
-            .op(Op::LocalSet(REMAINING));
     }
 }
 
