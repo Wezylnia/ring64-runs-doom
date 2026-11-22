@@ -706,7 +706,7 @@ pub(super) fn binary(kind: Kind, a: u128, b: u128, cw: u16, extra: u16) -> Resul
     if let Some(result) = normal_pc64_addition(kind, a, b, cw, extra) {
         return result;
     }
-    binary_general(kind, a, b, cw, extra)
+    binary_general::<true>(kind, a, b, cw, extra)
 }
 
 #[cfg(test)]
@@ -758,7 +758,8 @@ fn exact_pc64_difference_matches_general_binary80_arithmetic() {
                             for masks in [0, 0x3f] {
                                 let cw = 0x40 | (pc << 8) | (round << 10) | masks;
                                 for kind in [Kind::Add, Kind::Sub, Kind::SubReverse, Kind::Mul] {
-                                    let expected = fields(binary_general(kind, a, b, cw, 0));
+                                    let expected =
+                                        fields(binary_general::<false>(kind, a, b, cw, 0));
                                     assert_eq!(
                                         fields(binary(kind, a, b, cw, 0)),
                                         expected,
@@ -792,7 +793,7 @@ fn normal_pc64_addition_matches_general_rounding_across_exponent_gaps() {
     let half = value(0x3ffeu16, lo);
     let pair = (
         fields(binary(Kind::Add, one, half, 0x37f, 0)),
-        fields(binary_general(Kind::Add, one, half, 0x37f, 0)),
+        fields(binary_general::<false>(Kind::Add, one, half, 0x37f, 0)),
     );
     assert_eq!(pair.0, pair.1);
     assert!(normal_pc64_addition(Kind::Add, one, half, 0x37f, 0).is_some());
@@ -842,7 +843,7 @@ fn normal_pc64_addition_matches_general_rounding_across_exponent_gaps() {
                                 for kind in [Kind::Add, Kind::Sub, Kind::SubReverse] {
                                     assert_eq!(
                                         fields(binary(kind, a, b, cw, 0)),
-                                        fields(binary_general(kind, a, b, cw, 0)),
+                                        fields(binary_general::<false>(kind, a, b, cw, 0)),
                                         "{kind:?}, {a:#x}, {b:#x}, {cw:#x}"
                                     );
                                 }
@@ -855,7 +856,117 @@ fn normal_pc64_addition_matches_general_rounding_across_exponent_gaps() {
     }
 }
 
-fn binary_general(kind: Kind, mut a: u128, mut b: u128, cw: u16, extra: u16) -> Result {
+#[inline(never)]
+fn normal_pc64_quotient(a: u128, b: u128, cw: u16, extra: u16) -> Option<Result> {
+    if extra != 0 || precision(cw) != 64 {
+        return None;
+    }
+    let a_exp = ((a >> 64) as u16) & 0x7fff;
+    let b_exp = ((b >> 64) as u16) & 0x7fff;
+    let a_sig = a as u64;
+    let b_sig = b as u64;
+    if a_exp == 0 || b_exp == 0 || a_exp == 0x7fff || b_exp == 0x7fff || (a_sig & b_sig) >> 63 == 0
+    {
+        return None;
+    }
+    let mut exponent = i32::from(a_exp) - i32::from(b_exp) + 16383;
+    let remainder = if a_sig < b_sig {
+        exponent -= 1;
+        (a_sig << 1).wrapping_sub(b_sig)
+    } else {
+        a_sig - b_sig
+    };
+    let (fraction, remainder) = fractional_quotient(remainder, b_sig);
+    let truncated = (1 << 63) | (fraction >> 1);
+    // The last computed quotient bit is halfway and the exact remainder is sticky.
+    let halfway = fraction & 1 != 0;
+    let inexact = halfway || remainder != 0;
+    let negative = (a ^ b) & SIGN != 0;
+    let up = inexact
+        && match rc(cw) {
+            0 => halfway && (remainder != 0 || truncated & 1 != 0),
+            1 => negative,
+            2 => !negative,
+            _ => false,
+        };
+    let (rounded, carry) = truncated.overflowing_add(u64::from(up));
+    exponent += i32::from(carry);
+    if !(1..0x7fff).contains(&exponent) {
+        return None;
+    }
+    let significand = rounded | (u64::from(carry) << 63);
+    let exponent_sign = (u16::from(negative) << 15) | exponent as u16;
+    Some(Result {
+        post: if inexact { 32 } else { 0 },
+        up,
+        ..Result::raw((u128::from(exponent_sign) << 64) | u128::from(significand))
+    })
+}
+
+#[cfg(test)]
+#[test]
+fn normal_pc64_quotient_matches_general_binary80_division() {
+    let value = |exponent, significand| (u128::from(exponent) << 64) | u128::from(significand);
+    let fields = |r: Result| (r.value, r.pre, r.post, r.up, r.suppress);
+    let lo = 1u64 << 63;
+    let one = value(0x3fffu16, lo);
+    let next = value(0x3fffu16, lo + 1);
+    assert_eq!(
+        normal_pc64_quotient(next, one, 0x37f, 0).map(fields),
+        Some((next, 0, 0, false, false))
+    );
+    assert!(normal_pc64_quotient(next, next, 0x27f, 0).is_none());
+    assert!(normal_pc64_quotient(next, next, 0x37f, 2).is_none());
+    assert!(normal_pc64_quotient(value(1u16, lo), value(0x7ffeu16, lo), 0x37f, 0).is_none());
+    assert!(normal_pc64_quotient(value(0x7ffeu16, lo), value(1u16, lo), 0x37f, 0).is_none());
+
+    let mut seed = 0xb79d_64fe_4358_2961u64;
+    let mut next = || {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        seed
+    };
+    for a_exp in [0u16, 1, 2, 0x3ffe, 0x3fff, 0x4000, 0x7ffd, 0x7ffe, 0x7fff] {
+        for b_exp in [0u16, 1, 2, 0x3ffe, 0x3fff, 0x4000, 0x7ffd, 0x7ffe, 0x7fff] {
+            for (a, b) in [
+                (0, lo),
+                (lo - 1, lo),
+                (lo, lo),
+                (lo + 1, lo + 1),
+                (lo + (lo >> 1), lo + (lo >> 1)),
+                (u64::MAX, u64::MAX),
+                (lo | next(), lo | next()),
+                (lo | next(), lo | next()),
+            ] {
+                for signs in [(0, 0), (SIGN, 0), (0, SIGN), (SIGN, SIGN)] {
+                    let a = value(a_exp, a) | signs.0;
+                    let b = value(b_exp, b) | signs.1;
+                    for round in 0..4 {
+                        for cw in [0x140 | (round << 10), 0x37f | (round << 10)] {
+                            for kind in [Kind::Div, Kind::DivReverse] {
+                                let expected = binary_general::<false>(kind, a, b, cw, 0);
+                                assert_eq!(
+                                    fields(binary(kind, a, b, cw, 0)),
+                                    fields(expected),
+                                    "{kind:?}, {a:#x}, {b:#x}, {cw:#x}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn binary_general<const DIRECT_DIVISION: bool>(
+    kind: Kind,
+    mut a: u128,
+    mut b: u128,
+    cw: u16,
+    extra: u16,
+) -> Result {
     use Class::*;
     if let Some(mut r) = nan(a, b) {
         r.pre |= extra & 1;
@@ -928,6 +1039,9 @@ fn binary_general(kind: Kind, mut a: u128, mut b: u128, cw: u16, extra: u16) -> 
             scale: 0,
         }
     } else {
+        if DIRECT_DIVISION && let Some(result) = normal_pc64_quotient(a, b, cw, pre) {
+            return result;
+        }
         divide(na, nb)
     };
     let mut r = round_num(n, precision(cw), Format::F80, cw);
