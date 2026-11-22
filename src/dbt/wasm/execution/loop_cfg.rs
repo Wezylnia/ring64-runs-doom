@@ -409,6 +409,7 @@ pub(super) fn compare_predicates(
     instructions: &[Instruction],
     order: LoopOrder,
     context: &ExecutionContext,
+    omit_dead_status: bool,
 ) -> Vec<CompareAction> {
     let source = &instructions[order.earlier as usize..=order.tail as usize];
     let position_at = |pc| {
@@ -421,6 +422,15 @@ pub(super) fn compare_predicates(
         } else {
             target <= context.code_limit()
         }
+    };
+    let writes_status = |operation| match operation {
+        Operation::Alu { kind, .. } => !matches!(kind, Alu::Adc | Alu::Sbb),
+        Operation::Unary {
+            kind: Unary::Neg,
+            dst: Location::Register(_),
+            ..
+        } => omit_dead_status,
+        _ => false,
     };
     let len = order.len() as usize;
     let mut explicit_entry = vec![false; len];
@@ -518,7 +528,7 @@ pub(super) fn compare_predicates(
                 };
             }
             replaces[position] = match instruction.operation {
-                Operation::Alu { kind, .. } => !matches!(kind, Alu::Adc | Alu::Sbb),
+                operation if writes_status(operation) => true,
                 Operation::Mov { .. }
                 | Operation::Lea { .. }
                 | Operation::Extend {
@@ -607,6 +617,21 @@ pub(super) fn compare_predicates(
         } else {
             ConditionSource::Operands(width)
         });
+    }
+    // Condition consumers and fault reconstruction keep their existing plans.
+    // A pure register producer can skip flags when a forward path replaces them.
+    if !omit_dead_status {
+        return predicates;
+    }
+    for (position, action) in predicates.iter_mut().enumerate() {
+        let instruction = instructions[order.at(position as u32) as usize];
+        if *action == CompareAction::Ordinary
+            && writes_status(instruction.operation)
+            && position_at(instruction.next_pc)
+                .is_some_and(|next| next > position && replaces[next])
+        {
+            *action = CompareAction::SkipStatus;
+        }
     }
     predicates
 }

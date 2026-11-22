@@ -1,5 +1,93 @@
 use super::*;
 
+#[cfg(not(feature = "parallel"))]
+#[test]
+fn guarded_forward_graph_skips_only_unobservable_arithmetic_status() {
+    use super::super::loop_cfg::{CompareAction, compare_predicates, select};
+    use crate::embedding::layout::DATA;
+    use crate::x86::instruction::Width;
+
+    let code = [
+        0x83, 0xe8, 1, // sub eax, 1
+        0xf7, 0xd8, // neg eax
+        0x89, 0xc2, // mov edx, eax
+        0x01, 0xda, // add edx, ebx
+        0x74, 2, // je after_load
+        0x8b, 0x0f, // mov ecx, [rdi]
+        0x83, 0xee, 1, // after_load: sub esi, 1
+        0x75, 0xee, // jne head
+        0x90,
+    ];
+    let artifact = compiled_fixture(0x1000, &code, 0x1000);
+    let (order, _) = select(&artifact.instructions).unwrap();
+    let context = crate::x86::context::ExecutionContext::default();
+    let plan = compare_predicates(&artifact.instructions, order, &context, true);
+    assert_eq!(
+        plan[..4],
+        [
+            CompareAction::SkipStatus,
+            CompareAction::SkipStatus,
+            CompareAction::Ordinary,
+            CompareAction::Ordinary,
+        ]
+    );
+    assert_eq!(
+        compare_predicates(&artifact.instructions, order, &context, false)[..2],
+        [CompareAction::Ordinary; 2]
+    );
+    let mut with_carry = artifact.instructions.clone();
+    with_carry[1].operation = Operation::Alu {
+        kind: Alu::Adc,
+        dst: RegisterView::low(0),
+        src: DataOperand::Immediate(0),
+        width: Width::W32,
+    };
+    assert_eq!(
+        compare_predicates(&with_carry, order, &context, true)[0],
+        CompareAction::Ordinary
+    );
+    let input = [(0, 2), (3, 0), (6, 2), (7, 0x8000)];
+    let mut fault = execution_case(
+        &artifact.bytes,
+        &artifact.entries,
+        &input,
+        2,
+        0x1000,
+        40,
+        (
+            &[(0, 0xffffffff), (2, 0xffffffff)],
+            0x86,
+            0x100b,
+            DATA as u32,
+            35,
+        ),
+    );
+    fault["accesses"] = json!([
+        {"kind":"load","args":["8000",4],"result":"0"},
+        {"kind":"access_failed","args":[],"result":DATA}
+    ]);
+    let partial = execution_case(
+        &artifact.bytes,
+        &artifact.entries,
+        &input,
+        0x8d7,
+        0x1000,
+        1,
+        (&[(0, 1)], 2, 0x1003, BUDGET as u32, 0),
+    );
+    let mut stopped = execution_case(
+        &artifact.bytes,
+        &artifact.entries,
+        &input,
+        2,
+        0x1000,
+        40,
+        (&[(0, 0xffffffff)], 0x97, 0x1005, STOP as u32, 38),
+    );
+    stopped["stop"] = json!("1005");
+    run_cases(vec![fault, partial, stopped]);
+}
+
 #[test]
 fn memory_compare_predicate_keeps_flags_at_faults_and_checked_entries() {
     use super::super::loop_cfg::{CompareAction, ConditionSource, compare_predicates, select};
@@ -53,7 +141,7 @@ fn memory_compare_predicate_keeps_flags_at_faults_and_checked_entries() {
         assert_eq!(max_lap, 6);
         let context = crate::x86::context::ExecutionContext::default();
         assert_eq!(
-            compare_predicates(&instructions, order, &context)[1],
+            compare_predicates(&instructions, order, &context, true)[1],
             CompareAction::Condition(ConditionSource::Operands(width))
         );
         let mut faulting = instructions.clone();
@@ -63,7 +151,7 @@ fn memory_compare_predicate_keeps_flags_at_faults_and_checked_entries() {
             width: Width::W32,
         };
         assert_eq!(
-            compare_predicates(&faulting, order, &context)[1],
+            compare_predicates(&faulting, order, &context, true)[1],
             CompareAction::Ordinary
         );
         let mut joined = instructions.clone();
@@ -84,7 +172,7 @@ fn memory_compare_predicate_keeps_flags_at_faults_and_checked_entries() {
         );
         let (joined_order, _) = select(&joined).unwrap();
         assert_eq!(
-            compare_predicates(&joined, joined_order, &context)[2],
+            compare_predicates(&joined, joined_order, &context, true)[2],
             CompareAction::Ordinary
         );
         let unit = unit(instructions);
@@ -229,7 +317,7 @@ fn compare_predicate_restores_flags_only_on_its_fallthrough_load_fault() {
         .collect();
     let (order, _) = select(&instructions).unwrap();
     let context = crate::x86::context::ExecutionContext::default();
-    let plan = compare_predicates(&instructions, order, &context);
+    let plan = compare_predicates(&instructions, order, &context, true);
     assert_eq!(
         plan[..3],
         [
@@ -257,7 +345,7 @@ fn compare_predicate_restores_flags_only_on_its_fallthrough_load_fault() {
     );
     let (joined_order, _) = select(&joined).unwrap();
     assert_eq!(
-        compare_predicates(&joined, joined_order, &context)[2],
+        compare_predicates(&joined, joined_order, &context, true)[2],
         CompareAction::Ordinary
     );
 
@@ -355,7 +443,7 @@ fn compare_predicate_restores_status_on_a_taken_loop_exit() {
     let context = crate::x86::context::ExecutionContext::default();
     let predicates = |instructions: &[Instruction]| {
         let (order, _) = select(instructions).unwrap();
-        compare_predicates(instructions, order, &context)
+        compare_predicates(instructions, order, &context, true)
     };
     assert_eq!(
         predicates(&artifact.instructions)[1..3],
@@ -457,7 +545,7 @@ fn conditional_move_preserves_sub_flags_across_an_intervening_scalar_load() {
     let context = crate::x86::context::ExecutionContext::default();
     let predicates = |instructions: &[Instruction]| {
         let (order, _) = select(instructions).unwrap();
-        compare_predicates(instructions, order, &context)
+        compare_predicates(instructions, order, &context, true)
     };
     assert_eq!(
         predicates(&artifact.instructions)[1..4],
@@ -571,7 +659,7 @@ fn guarded_backedge_uses_compare_operands_and_keeps_all_flags() {
     let context = crate::x86::context::ExecutionContext::default();
     let (order, _) = select(&artifact.instructions).unwrap();
     assert_eq!(
-        compare_predicates(&artifact.instructions, order, &context)[2..4],
+        compare_predicates(&artifact.instructions, order, &context, true)[2..4],
         [
             CompareAction::Ordinary,
             CompareAction::Condition(ConditionSource::Operands(Width::W32)),
@@ -583,7 +671,7 @@ fn guarded_backedge_uses_compare_operands_and_keeps_all_flags() {
         target: 0x1007,
     };
     assert_eq!(
-        compare_predicates(&joined, order, &context)[3],
+        compare_predicates(&joined, order, &context, true)[3],
         CompareAction::Ordinary
     );
 
@@ -681,7 +769,7 @@ fn guarded_shift_restores_flags_on_a_read_fault_before_compare_branch() {
     let (order, _) = select(&artifact.instructions).unwrap();
     assert_eq!(read_prefix_len(&artifact.instructions, order), 2);
     let predicates =
-        |instructions: &[Instruction]| compare_predicates(instructions, order, &context);
+        |instructions: &[Instruction]| compare_predicates(instructions, order, &context, true);
     let plan = predicates(&artifact.instructions);
     assert_eq!(plan[0], CompareAction::SkipStatus);
     assert_eq!(
@@ -919,7 +1007,7 @@ fn guarded_conditional_move_uses_comparison_and_result_sign_after_overflow() {
     let entries: Vec<_> = unit.instructions.iter().map(|i| i.pc).collect();
     let predicates = |unit: &Unit| {
         let (order, _) = select(&unit.instructions).unwrap();
-        compare_predicates(&unit.instructions, order, &unit.context)
+        compare_predicates(&unit.instructions, order, &unit.context, true)
     };
     let sources = predicates(&unit);
     assert_eq!(sources[1], CompareAction::SkipStatus);

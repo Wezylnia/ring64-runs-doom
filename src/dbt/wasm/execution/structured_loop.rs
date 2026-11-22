@@ -1266,7 +1266,12 @@ impl Emitter {
                     0
                 };
                 (
-                    super::loop_cfg::compare_predicates(instructions, order, &self.context),
+                    super::loop_cfg::compare_predicates(
+                        instructions,
+                        order,
+                        &self.context,
+                        !self.paged,
+                    ),
                     read_prefix_len,
                 )
             } else {
