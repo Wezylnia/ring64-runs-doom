@@ -1,8 +1,8 @@
 {
   "name": "ring64",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
-  "description": "An x86 and x86-64 CPU emulator for JavaScript runtimes",
+  "description": "The fastest x86 and x86-64 CPU emulator for JavaScript runtimes",
   "license": "MIT",
   "type": "module",
   "exports": {
