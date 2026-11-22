@@ -30,6 +30,35 @@ pub(super) fn paged_prefix_read(
     (address.segment == Segment::Ds).then_some((dst, address, source_width, width))
 }
 
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+pub(super) fn paged_prefix_dword_read(instruction: Instruction) -> bool {
+    use crate::x86::context::Segment;
+    use crate::x86::instruction::{Location, MemoryAluOperands, Width};
+
+    let address = match instruction.operation {
+        Operation::Load {
+            address,
+            width: Width::W32,
+            ..
+        }
+        | Operation::Imul {
+            src: Location::Memory(address),
+            width: Width::W32,
+            ..
+        } => address,
+        Operation::MemoryAlu {
+            kind,
+            address,
+            operands,
+            width: Width::W32,
+        } if matches!(operands, MemoryAluOperands::RegisterFirst(_)) || !kind.writes_result() => {
+            address
+        }
+        _ => return false,
+    };
+    address.segment == Segment::Ds
+}
+
 impl Emitter {
     pub(super) fn instruction(
         &mut self,
@@ -459,7 +488,7 @@ impl Emitter {
         instructions: &[Instruction],
         loop_depth: u32,
         guard: u32,
-        read: Option<u32>,
+        read_import: Option<u32>,
     ) {
         use super::{REMAINING, SHADOW};
         let first = instructions.first().unwrap();
@@ -489,7 +518,7 @@ impl Emitter {
             .op(Op::I32Eq)
             .op(Op::If(BlockType::Empty));
         let read = paged_prefix_read(*first)
-            .map(|operation| (read.expect("leading read prefix import"), operation));
+            .map(|operation| (read_import.expect("leading read prefix import"), operation));
         if let Some((read, (register, address, source_width, width))) = read {
             use super::{ADDRESS, STORE_STATUS};
             use crate::x86::instruction::Width;
@@ -535,8 +564,10 @@ impl Emitter {
         self.guarded_paged_lap = true;
         self.loop_gates_prechecked = true;
         for instruction in &instructions[usize::from(read.is_some())..] {
+            self.paged_prefix_read = read_import.filter(|_| paged_prefix_dword_read(*instruction));
             self.emit_instruction(*instruction, None, loop_depth, None, None, false);
         }
+        self.paged_prefix_read = None;
         self.loop_gates_prechecked = false;
         self.route(last.next_pc, loop_depth, loop_depth + 1);
         self.guarded_paged_lap = false;

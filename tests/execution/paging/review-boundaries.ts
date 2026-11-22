@@ -24,6 +24,108 @@ const PAGED_BYTE_STORE_LOOP = '0fb6073c407602fec0880648ffc748ffc6ffc975eb';
 export function pagingBoundaryReviewScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [
     {
+      name: 'paged mixed prefixes resume the checked scalar read without repeating earlier effects',
+      async run() {
+        const head = 0x400000n;
+        const secondRead = head + 7n;
+        const end = head + 11n;
+        const data = 0x401000n;
+        const missing = 0x402000n;
+        // INC ECX; MOV EAX,[RDI]; XOR EAX,5; ADD EAX,[RSI]; INC EDX; HLT.
+        const code = 'ffc18b0783f0050306ffc2f4';
+        const reads: Array<[bigint, boolean]> = [];
+        const create = Core.create;
+        Core.create = async (...args) => {
+          const core = await create(...args);
+          const imports = Reflect.get(core, 'artifactImports') as (
+            observed: boolean,
+          ) => Record<string, WebAssembly.ImportValue>;
+          Reflect.set(core, 'artifactImports', (observed: boolean) => {
+            const env = imports.call(core, observed);
+            const read = env.paged_loop_read_span;
+            if (typeof read === 'function') {
+              env.paged_loop_read_span = (address: bigint, width: number, segment: number) => {
+                const pointer = read(address, width, segment);
+                reads.push([address, pointer !== 0]);
+                return pointer;
+              };
+            }
+            return env;
+          });
+          return core;
+        };
+        try {
+          await usingPaged(
+            compiler,
+            {
+              code,
+              words: [[0x4008n, 0xa007n]],
+              spans: [{ physical: 0xa000n, bytes: little([2n, 11n], 4) }],
+            },
+            async (cpu) => {
+              const start = initial(head, { 1: 4n, 2: 23n, 6: data + 4n, 7: data }, 2n);
+              cpu.setState(start);
+              const cold = await cpu.run({ stop: end, budget: 8n });
+              equal(cold.reason, 'stop', 'the checked read fills the data translation');
+              cpu.setState(start);
+              reads.length = 0;
+              const warm = await cpu.run({ stop: end, budget: 8n });
+              equal(warm.reason, 'stop', 'the guarded prefix reaches its successor');
+              equal(warm.retired, 5n, 'both loads and three register operations retire');
+              equal(
+                warm.state.registers[0],
+                18n,
+                'the second operand uses the updated accumulator',
+              );
+              same(
+                reads,
+                [
+                  [data, true],
+                  [data + 4n, true],
+                ],
+                'both warmed reads take the guard',
+              );
+
+              cpu.setState(initial(head, { 1: 4n, 2: 23n, 6: missing, 7: data }, 2n));
+              reads.length = 0;
+              const fault = await cpu.run({ stop: end, budget: 8n });
+              equal(fault.reason, 'page-fault', 'the observed read publishes the paging exception');
+              equal(fault.state.rip, secondRead, 'the refused instruction remains unstarted');
+              equal(fault.pageFault?.address, missing, 'the original operand address faults');
+              equal(fault.retired, 3n, 'the first three effects retire once');
+              equal(fault.state.registers[0], 7n, 'the successful load and XOR remain committed');
+              equal(fault.state.registers[1], 5n, 'the guarded prefix does not repeat its INC');
+              equal(fault.state.registers[2], 23n, 'the suffix does not run');
+              equal(fault.state.flags, 2n, 'the fault preserves the preceding XOR flags');
+              same(
+                reads,
+                [
+                  [data, true],
+                  [missing, false],
+                ],
+                'only the original faulting slot replays',
+              );
+
+              cpu.setState(start);
+              reads.length = 0;
+              const stop = await cpu.run({ stop: secondRead, budget: 8n });
+              equal(stop.reason, 'stop', 'an interior stop wins over the second read');
+              equal(stop.retired, 3n, 'the stop remains precise');
+              same(reads, [], 'an interior stop refuses the mixed clone');
+
+              cpu.setState(start);
+              const partial = await cpu.run({ stop: end, budget: 3n });
+              equal(partial.reason, 'budget', 'a short budget takes the checked prefix');
+              same(partial.state, stop.state, 'the same prefix commits at the budget boundary');
+              same(reads, [], 'a short budget skips guarded operands');
+            },
+          );
+        } finally {
+          Core.create = create;
+        }
+      },
+    },
+    {
       name: 'paged straight register prefixes preserve precise stops, debug, and code replacement',
       async run() {
         // MOV EAX,EDI; INC EAX; SHL EAX,1; XOR EAX,5; AND EAX,255;

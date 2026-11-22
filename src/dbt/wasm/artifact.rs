@@ -43,9 +43,12 @@ fn paged_register_prefixes(unit: &Unit, loops: [Option<StructuredLoop>; 2]) -> V
                 .flatten()
                 .any(|body| body.order().position(end as u32).is_some())
             && (is_register_only(instruction)
-                || (end == first
-                    && unit.context.is_long64()
-                    && super::instruction::paged_prefix_read(*instruction).is_some()))
+                || (unit.context.is_long64()
+                    && if end == first {
+                        super::instruction::paged_prefix_read(*instruction).is_some()
+                    } else {
+                        super::instruction::paged_prefix_dword_read(*instruction)
+                    }))
             && instruction.next_pc > instruction.pc
             && instruction.next_pc.checked_sub(pc).is_some_and(|bytes| {
                 bytes <= 4096 && unit.context.single_page_code_span(pc, bytes as u32)
@@ -53,6 +56,12 @@ fn paged_register_prefixes(unit: &Unit, loops: [Option<StructuredLoop>; 2]) -> V
             && (end == first || instructions[end - 1].next_pc == instruction.pc)
         {
             end += 1;
+        }
+        // Each successful read accounts for the next fetch. Leave a following
+        // in-prefix instruction so a stop or exhausted budget cannot omit it.
+        while end > first + 1 && super::instruction::paged_prefix_dword_read(instructions[end - 1])
+        {
+            end -= 1;
         }
         if end - first >= 4 {
             prefixes[first] = Some(end);
@@ -981,8 +990,14 @@ fn emit_body(
     let register_prefix_read_type = register_prefixes
         .as_ref()
         .filter(|prefixes| {
-            prefixes.iter().zip(&unit.instructions).any(|(end, first)| {
-                end.is_some() && super::instruction::paged_prefix_read(*first).is_some()
+            prefixes.iter().enumerate().any(|(first, end)| {
+                end.is_some_and(|end| {
+                    super::instruction::paged_prefix_read(unit.instructions[first]).is_some()
+                        || unit.instructions[first + 1..end]
+                            .iter()
+                            .copied()
+                            .any(super::instruction::paged_prefix_dword_read)
+                })
             })
         })
         .map(|_| {
@@ -2202,6 +2217,8 @@ fn emit_body(
         structured_loop: None,
         loop_gates_prechecked: false,
         guarded_paged_lap: false,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        paged_prefix_read: None,
         paged_loop_guard,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_preamble,
