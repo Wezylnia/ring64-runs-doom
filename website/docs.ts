@@ -27,6 +27,24 @@ if (menuToggle) {
     const isOpen = menuToggle.getAttribute('aria-expanded') === 'true';
     menuToggle.setAttribute('aria-expanded', String(!isOpen));
   });
+  const topicNav = menuToggle.closest('nav');
+  topicNav?.addEventListener('focusout', (event) => {
+    if (event.relatedTarget instanceof Node && !topicNav.contains(event.relatedTarget)) {
+      menuToggle.setAttribute('aria-expanded', 'false');
+    }
+  });
+  topicNav?.addEventListener('keydown', (event) => {
+    if (
+      event.key !== 'Escape' ||
+      menuToggle.getAttribute('aria-expanded') !== 'true' ||
+      !menuToggle.offsetHeight
+    ) {
+      return;
+    }
+    event.preventDefault();
+    menuToggle.setAttribute('aria-expanded', 'false');
+    menuToggle.focus();
+  });
   for (const link of topicLinks) {
     link.addEventListener('click', (event) => {
       if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;

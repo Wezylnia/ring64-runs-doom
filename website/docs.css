@@ -275,6 +275,7 @@
   }
 
   .docs-toc {
+    position: static;
     inset-block-start: 0;
     z-index: 1;
     max-block-size: none;
@@ -283,6 +284,10 @@
     border-inline-end: 0;
     border-block-end: 1px solid var(--rule);
     background: var(--paper);
+  }
+
+  .docs-toc:has(#docs-menu-toggle:not([hidden])) {
+    position: sticky;
   }
 
   #docs-menu-toggle {
@@ -316,6 +321,14 @@
 
   #docs-menu-toggle[aria-expanded='false']:not([hidden]) + #docs-menu {
     display: none;
+  }
+
+  #docs-menu-toggle:not([hidden]) + #docs-menu {
+    position: absolute;
+    inset-block-start: 100%;
+    inset-inline: 0;
+    border-block-end: 1px solid var(--rule);
+    background: var(--paper);
   }
 
   #docs-menu {
