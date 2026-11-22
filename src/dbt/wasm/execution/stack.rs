@@ -111,13 +111,109 @@ impl Emitter {
             Operand::Register(_) | Operand::Memory(_) => {
                 self.operand(target, width, next_pc, exit_depth);
                 self.op(Op::LocalSet(RHS));
-                self.check_runtime_target(exit_depth);
-                self.op(Op::I64Const(next_pc as i64))
-                    .op(Op::LocalSet(RESULT));
-                self.push_result(width, exit_depth);
+                self.push_runtime_call(width, next_pc, exit_depth);
                 self.commit_runtime_target(exit_depth);
             }
         }
+    }
+
+    fn push_runtime_call(&mut self, width: Width, next_pc: u64, exit_depth: u32) {
+        self.check_runtime_target(exit_depth);
+        self.op(Op::I64Const(next_pc as i64))
+            .op(Op::LocalSet(RESULT));
+        self.push_result(width, exit_depth);
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn guarded_paged_register_call(
+        &mut self,
+        instruction: crate::x86::instruction::Instruction,
+        exit_depth: u32,
+    ) -> bool {
+        use super::{STORE_STATUS, instruction::IndexedOperand};
+        use crate::embedding::layout::debug::CONTINUE_ACTIVE;
+        use crate::x86::instruction::Operation;
+        use wasm_encoder::{BlockType, MemArg, ValType};
+
+        let Operation::Call {
+            target: Operand::Register(register),
+            width: Width::W64,
+        } = instruction.operation
+        else {
+            return false;
+        };
+        let page = instruction.pc & !4095;
+        if !self.retouch_prefix_fetch
+            || !self.paged_quiet_completion
+            || !self.context.is_long64()
+            || self.context.cpl() != 0
+            || self.context.stack_width() != Width::W64
+            || !self.uses_indexed_scalar_write(instruction.operation)
+            || instruction.next_pc <= instruction.pc
+            || (instruction.next_pc - 1) & !4095 != page
+        {
+            return false;
+        }
+
+        self.operand(
+            Operand::Register(register),
+            Width::W64,
+            instruction.next_pc,
+            exit_depth,
+        );
+        self.op(Op::LocalSet(RHS))
+            .op(Op::Block(BlockType::Result(ValType::I32)))
+            .op(Op::I32Const(0))
+            .op(Op::Block(BlockType::Empty))
+            // An in-page target of this admitted long-mode instruction is canonical.
+            .op(Op::LocalGet(RHS))
+            .op(Op::I64Const(page as i64))
+            .op(Op::I64Xor)
+            .op(Op::I64Const(4095))
+            .op(Op::I64GtU)
+            .op(Op::BrIf(0));
+        self.newest_prefix_fetch(instruction.pc, true);
+        self.op(Op::I32Eqz)
+            .op(Op::BrIf(0))
+            .op(Op::LocalGet(RSP))
+            .op(Op::I64Const(8))
+            .op(Op::I64Sub)
+            .op(Op::LocalSet(ADDRESS));
+        self.indexed_read_host(
+            self.indexed_paged_read.unwrap(),
+            8,
+            false,
+            IndexedOperand::Write,
+        );
+        let boundary_result = self.boundary_result.unwrap();
+        self.op(Op::LocalTee(STORE_STATUS))
+            .op(Op::I32Eqz)
+            .op(Op::BrIf(0))
+            .op(Op::LocalGet(STORE_STATUS))
+            .op(Op::I64Const(instruction.next_pc as i64))
+            .op(Op::I64Store(MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            }))
+            .op(Op::LocalGet(ADDRESS))
+            .op(Op::LocalSet(RSP))
+            .op(Op::I32Const(CONTINUE_ACTIVE))
+            .op(Op::LocalSet(boundary_result))
+            .op(Op::I32Const(1))
+            .op(Op::LocalSet(STORE_STATUS))
+            .op(Op::I32Const(1))
+            .op(Op::Br(1))
+            .op(Op::End)
+            .op(Op::End)
+            .op(Op::I32Eqz)
+            .unlikely(Op::If(BlockType::Empty));
+        // Any refusal precedes the stack store and uses the ordinary begin/fault order.
+        self.begin(instruction.operation, instruction.next_pc, exit_depth + 1);
+        self.push_runtime_call(Width::W64, instruction.next_pc, exit_depth + 1);
+        self.op(Op::End);
+        self.commit_runtime_target(exit_depth);
+        true
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]

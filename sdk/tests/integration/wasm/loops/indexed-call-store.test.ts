@@ -26,6 +26,7 @@ test('an indexed near call preserves checked fetch and writes in a guarded handl
   const imports = prototype.artifactImports;
   const compile = Core.prototype.compile;
   let handlerGuards = 0;
+  let callBegins = 0;
   let guardedWrites = 0;
   let returnBegins = 0;
   Core.prototype.compile = function (pc, limits, seeds, regionPoints) {
@@ -45,6 +46,7 @@ test('an indexed near call preserves checked fetch and writes in a guarded handl
     if (typeof begin === 'function') {
       env.debug_begin = (pc: bigint, flags: bigint, shadow: number) => {
         if (pc === returnPc) returnBegins++;
+        if (pc === PC) callBegins++;
         return begin(pc, flags, shadow);
       };
     }
@@ -70,6 +72,7 @@ test('an indexed near call preserves checked fetch and writes in a guarded handl
           cpu.setState(initial(PC, { 0: target, 1: 0n, 4: rsp, 6: store, 7: data }));
         for (let wave = 1; wave <= 3; wave++) {
           handlerGuards = 0;
+          callBegins = 0;
           guardedWrites = 0;
           returnBegins = 0;
           enter();
@@ -82,6 +85,7 @@ test('an indexed near call preserves checked fetch and writes in a guarded handl
           assert.equal(word(cpu, 0xa040n), BigInt(wave * 4));
         }
         assert.equal(handlerGuards, 1, 'only the first handler needs checked admission');
+        assert.equal(callBegins, 1, 'only the first call needs the checked begin');
         assert.equal(guardedWrites, 0, 'warm handler stores use the retained writable mapping');
         assert.equal(returnBegins, 0, 'warm returns reuse the admitted handler fetch');
         enter();

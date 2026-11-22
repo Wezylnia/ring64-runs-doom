@@ -234,6 +234,10 @@ impl Emitter {
         #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
         self.parallel_boundary(exit_depth);
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if self.guarded_paged_register_call(instruction, exit_depth) {
+            return;
+        }
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         let guarded_return = self.try_guarded_return_read(instruction, exit_depth);
         #[cfg(any(feature = "parallel", not(target_arch = "wasm32")))]
         let guarded_return = false;
