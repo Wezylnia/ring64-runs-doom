@@ -2,6 +2,7 @@ use super::{Emitter, FLAGS, GPR, REASON, STORE_STATUS};
 use crate::embedding::layout::RunState;
 use crate::x86::context::Segment;
 use crate::x86::instruction::X87Instruction;
+use crate::x86::x87::Kind;
 use std::mem::offset_of;
 use wasm_encoder::{Instruction as Wasm, MemArg};
 
@@ -82,6 +83,7 @@ impl Emitter {
         exit_depth: u32,
     ) {
         let operation = instruction.op;
+        let writes_ax = operation.writes_ax();
         let helper = self.x87.expect("x87 import");
         self.op(Wasm::I32Const(operation.encode() as i32));
         let segment = if let Some(address) = instruction.address {
@@ -95,19 +97,25 @@ impl Emitter {
             .op(Wasm::I64Const(pc as i64));
         if operation.writes_flags() {
             self.full_flags();
-        } else {
+        } else if operation.kind == Kind::ConditionalMove {
             self.status_flags();
+        } else {
+            self.op(Wasm::I64Const(0));
         }
-        self.op(Wasm::LocalGet(GPR))
-            .op(Wasm::Call(helper))
-            .op(Wasm::LocalTee(REASON))
-            .op(Wasm::I32Eqz)
-            .op(Wasm::LocalGet(REASON))
-            .op(Wasm::I32Const(2))
-            .op(Wasm::I32Eq)
-            .op(Wasm::I32Or)
-            .op(Wasm::I32Eqz)
-            .op(Wasm::BrIf(exit_depth));
+        self.op(if writes_ax {
+            Wasm::LocalGet(GPR)
+        } else {
+            Wasm::I64Const(0)
+        })
+        .op(Wasm::Call(helper))
+        .op(Wasm::LocalTee(REASON))
+        .op(Wasm::I32Eqz)
+        .op(Wasm::LocalGet(REASON))
+        .op(Wasm::I32Const(2))
+        .op(Wasm::I32Eq)
+        .op(Wasm::I32Or)
+        .op(Wasm::I32Eqz)
+        .op(Wasm::BrIf(exit_depth));
         if operation.writes_flags() {
             self.op(Wasm::LocalGet(0))
                 .op(Wasm::I64Load(MemArg {
@@ -119,7 +127,7 @@ impl Emitter {
                 .op(Wasm::I64And)
                 .op(Wasm::LocalSet(FLAGS));
         }
-        if operation.writes_ax() {
+        if writes_ax {
             self.op(Wasm::LocalGet(0))
                 .op(Wasm::I64Load(MemArg {
                     offset: offset_of!(RunState, registers) as u64,

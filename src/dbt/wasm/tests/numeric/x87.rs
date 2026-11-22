@@ -52,13 +52,14 @@ fn x87_helpers_are_imported_only_for_units_that_execute_x87() {
 #[test]
 fn x87_generated_boundaries_capture_live_operands_and_reload_only_written_projections() {
     let mut cases = vec![];
-    // Both helpers see live EAX/FLAGS after unpublished GP predecessors.
+    // Each helper sees its live input after unpublished GP predecessors.
     // Their unrelated canonical writes must be overwritten by the right owner.
-    for (suffix, op, input_flags, output, flags, registers) in [
+    for (suffix, op, input_flags, input_rax, output, flags, registers) in [
         (
             &[0xdf, 0xe0][..],
             helper(Kind::StoreStatus, Format::Ax, 0x7e0),
-            "2",
+            "0",
+            "deadbeef",
             json!({"reason":0,"rax":"deadaabb","flags":"2"}),
             0x402,
             vec![(0, 0xdeadaabb)],
@@ -74,6 +75,7 @@ fn x87_generated_boundaries_capture_live_operands_and_reload_only_written_projec
             }
             .encode() as i32,
             "402",
+            "0",
             json!({"reason":0,"flags":"47","rax":"1234"}),
             0x447,
             vec![(0, 0xdeadbeef)],
@@ -87,7 +89,7 @@ fn x87_generated_boundaries_capture_live_operands_and_reload_only_written_projec
             3,
             (&registers, flags, 0x1009, BUDGET as u32, 0),
         );
-        p["accesses"] = json!([{"kind":"x87","args":[op,"0",Segment::Ds as u32,"1007",input_flags,"deadbeef"],"result":output}]);
+        p["accesses"] = json!([{"kind":"x87","args":[op,"0",Segment::Ds as u32,"1007",input_flags,input_rax],"result":output}]);
         cases.push(p);
     }
     run_cases(cases);
@@ -103,7 +105,7 @@ fn x87_waiting_detector_obeys_predecessor_retirement_budget_stop_and_middle_entr
         2,
         (&[(0, 0xdeadbeef)], 0xcd7, 0x1005, X87_EXCEPTION as u32, 1),
     );
-    failed["accesses"] = json!([{"kind":"x87","args":[wait,"0",Segment::Ds as u32,"1005","8d7","deadbeef"],"result":{"reason":X87_EXCEPTION}}]);
+    failed["accesses"] = json!([{"kind":"x87","args":[wait,"0",Segment::Ds as u32,"1005","0","0"],"result":{"reason":X87_EXCEPTION}}]);
     let budget = packet(
         &code,
         0x1000,
@@ -123,7 +125,7 @@ fn x87_waiting_detector_obeys_predecessor_retirement_budget_stop_and_middle_entr
         1,
         (&[], 0xcd7, 0x1005, X87_EXCEPTION as u32, 1),
     );
-    middle["accesses"] = json!([{"kind":"x87","args":[wait,"0",Segment::Ds as u32,"1005","8d7","1122334400000000"],"result":{"reason":X87_EXCEPTION}}]);
+    middle["accesses"] = json!([{"kind":"x87","args":[wait,"0",Segment::Ds as u32,"1005","0","0"],"result":{"reason":X87_EXCEPTION}}]);
     run_cases(vec![failed, budget, stop, middle]);
 }
 
@@ -141,7 +143,7 @@ fn x87_code_writes_retire_before_dispatch_and_obey_budget_stop_priority() {
             budget,
             (&[], 0xcd7, 0x1002, reason as u32, remaining),
         );
-        p["accesses"] = json!([{"kind":"x87","args":[helper(Kind::StoreControl, Format::None, 0x13b),"1122334400000003",Segment::Ds as u32,"1000","8d7","1122334400000000"],"result":{"reason":2}}]);
+        p["accesses"] = json!([{"kind":"x87","args":[helper(Kind::StoreControl, Format::None, 0x13b),"1122334400000003",Segment::Ds as u32,"1000","0","0"],"result":{"reason":2}}]);
         if stop {
             p["stop"] = json!("1002");
         }

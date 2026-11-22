@@ -30,6 +30,50 @@ import {
 export function boundaryScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [
     {
+      name: 'x87 FCMOVU consumes deferred parity and FNSTSW writes only AX',
+      async run() {
+        // TEST AL, AL; FCMOVU ST, ST(1); FNSTSW AX.
+        await using(compiler, '84c0dad9dfe0', LONG, async (cpu) => {
+          const two = raw(0x4000);
+          for (const [al, parity] of [
+            [1n, 0n],
+            [3n, 4n],
+          ] as const) {
+            const upper = 0x1122334455660000n;
+            const before = input(0x1000n, { 0: upper | al }, 2n | (parity ^ 4n));
+            const state = stack({ 0: ONE, 1: two }, 0, 0x37f, 0x200);
+            cpu.setState(before);
+            seed(cpu, state);
+            const result = await cpu.run({ budget: 3n });
+            outcome(
+              result,
+              'budget',
+              3n,
+              3n,
+              3n,
+              0n,
+              changed(before, 0x1006n, { 0: upper | 0x200n }, 2n | parity),
+            );
+            const after = environment(state, 0x1002n);
+            if (parity) slot(after, 0, two);
+            x87(cpu, after);
+            other(cpu);
+            noFault(result);
+          }
+
+          const before = input(0x1000n, { 0: 3n }, 2n);
+          const state = stack({ 0: ONE, 1: two }, 0, 0x37e, 0x8081);
+          cpu.setState(before);
+          seed(cpu, state);
+          const exception = await cpu.run({ budget: 3n });
+          outcome(exception, 'x87-exception', 3n, 1n, 3n, 0n, changed(before, 0x1002n, {}, 6n));
+          x87(cpu, state);
+          other(cpu);
+          pending(exception, state, 0x1002n);
+        });
+      },
+    },
+    {
       name: 'x87 pending detection follows decode legality and precedes waiting operands while FN stores retain their own failures',
       async run() {
         for (const [code, reason, width] of [

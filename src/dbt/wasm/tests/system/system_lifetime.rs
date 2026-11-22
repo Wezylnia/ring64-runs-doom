@@ -112,7 +112,7 @@ fn canonical_flag_writing_compares_preserve_live_controls_before_later_fault_pub
             }
             .encode();
             let mut accesses = vec![
-                json!({"kind":"x87","args":[op,"0",Segment::Ds as u32,"1000","3c7ed7","1122334455667788"],"result":{"reason":0,"flags":"3c7603"}}),
+                json!({"kind":"x87","args":[op,"0",Segment::Ds as u32,"1000","3c7ed7","0"],"result":{"reason":0,"flags":"3c7603"}}),
             ];
             if wait {
                 let wait = Numeric {
@@ -121,7 +121,8 @@ fn canonical_flag_writing_compares_preserve_live_controls_before_later_fault_pub
                     ..Numeric::default()
                 }
                 .encode();
-                accesses.push(json!({"kind":"x87","args":[wait,"0",Segment::Ds as u32,"1002","3","1122334455667788"],"result":{"reason":X87_EXCEPTION}}));
+                // The fault publishes the live controls in the architectural result.
+                accesses.push(json!({"kind":"x87","args":[wait,"0",Segment::Ds as u32,"1002","0","0"],"result":{"reason":X87_EXCEPTION}}));
             } else {
                 accesses.extend([
                     json!({"kind":"load","args":["7000",4],"result":"0"}),
@@ -154,7 +155,7 @@ fn unchanged_controls_survive_a_nonwriting_helper_failure_and_a_live_direction_c
         ..Numeric::default()
     }
     .encode();
-    p["accesses"] = json!([{"kind":"x87","args":[wait,"0",Segment::Ds as u32,"1001","8d7","1122334400000000"],"result":{"reason":X87_EXCEPTION}}]);
+    p["accesses"] = json!([{"kind":"x87","args":[wait,"0",Segment::Ds as u32,"1001","0","0"],"result":{"reason":X87_EXCEPTION}}]);
     run_cases(vec![p]);
     let a = compiled_fixture(0x1000, &[0xfc, 0x90], 0x1000);
     run_cases(vec![execution_case(
