@@ -350,6 +350,22 @@ impl StructuredLoop {
         Self::select_body(instructions, LoopKind::Registers).map(Self::without_dword_projection)
     }
 
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn linear_recurrence(
+        self,
+        unit: &super::Unit,
+    ) -> Option<super::linear_recurrence::Recurrence> {
+        if self.kind != LoopKind::Registers
+            || self.paged_fetch_bytes.is_none()
+            || !unit.context.is_long64()
+        {
+            return None;
+        }
+        super::linear_recurrence::Recurrence::recognize(
+            &unit.instructions[self.head as usize..=self.tail as usize],
+        )
+    }
+
     #[cfg(not(feature = "parallel"))]
     pub(super) fn select_paged_reads(unit: &super::Unit) -> Option<Self> {
         let long64 = unit.context.is_long64();
@@ -1673,6 +1689,10 @@ impl Emitter {
             .op(Op::I32Const(0))
             .op(Op::LocalSet(REASON));
         self.guarded_paged_lap = true;
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if let Some(recurrence) = self.linear_recurrence {
+            self.emit_linear_recurrence(recurrence);
+        }
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         if let Some(window) = self.paged_copy_window {
             self.op(Op::I64Const(0)).op(Op::LocalSet(window.limit));

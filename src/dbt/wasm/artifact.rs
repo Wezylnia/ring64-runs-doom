@@ -397,6 +397,8 @@ fn emit_placement(
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_register_prefixes: true,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        linear_recurrence: max_artifact_bytes >= 64 * 1024,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         direct_vector_loads: true,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         direct_vector_stores: true,
@@ -507,6 +509,8 @@ struct OptionalLowering {
     x87_register_pairs: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_register_prefixes: bool,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    linear_recurrence: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     direct_vector_loads: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -1601,6 +1605,10 @@ fn emit_body(
                 .then(|| import_function("paged_loop_read_split_pair", signature));
             Some((pair, last_stream, split))
         });
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let linear_recurrence = loop_body
+        .filter(|_| optional.linear_recurrence)
+        .and_then(|body| body.linear_recurrence(unit));
     let mut functions = FunctionSection::new();
     functions.function(3);
     if dynamic_targets {
@@ -2103,6 +2111,8 @@ fn emit_body(
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_copy_window,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        linear_recurrence,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_write_ready,
         paged_loop_write_byte,
         paged_loop_write_dword,
@@ -2464,6 +2474,21 @@ fn emit_body(
             _guard_reads,
             OptionalLowering {
                 paged_vector_window: false,
+                ..optional
+            },
+            max_artifact_bytes,
+        );
+    }
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    if bytes.len() > max_artifact_bytes && linear_recurrence.is_some() {
+        return emit_body(
+            unit,
+            observed,
+            (paged, mmio),
+            loop_body,
+            _guard_reads,
+            OptionalLowering {
+                linear_recurrence: false,
                 ..optional
             },
             max_artifact_bytes,

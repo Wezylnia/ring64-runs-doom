@@ -45,6 +45,9 @@ mod integer;
 mod integer_memory;
 #[path = "system/io.rs"]
 mod io;
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[path = "execution/linear_recurrence.rs"]
+mod linear_recurrence;
 #[path = "execution/loop_cfg.rs"]
 mod loop_cfg;
 #[path = "memory/memory.rs"]
@@ -220,6 +223,8 @@ struct Emitter {
     paged_loop_write_block: Option<u32>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_copy_window: Option<paged_copy::CopyWindow>,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    linear_recurrence: Option<linear_recurrence::Recurrence>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_write_ready: Option<u32>,
     paged_loop_write_byte: Option<u32>,
