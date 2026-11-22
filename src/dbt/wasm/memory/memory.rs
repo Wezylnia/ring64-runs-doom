@@ -31,6 +31,16 @@ pub(super) struct PagedDwordWindow {
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[derive(Clone, Copy)]
+pub(super) struct PagedByteWritePair {
+    pub(super) load: u32,
+    pub(super) store: u32,
+    pub(super) read: u32,
+    pub(super) write: u32,
+    pub(super) slot: u32,
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 impl SpanCache {
     pub(super) fn new(resolve: u32, first: u32) -> Self {
         Self {
@@ -292,6 +302,12 @@ impl Emitter {
             }
             _ => None,
         };
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        let pair = self
+            .paged_byte_write_pair
+            .filter(|pair| pair.load == self.current_index);
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        let read = pair.map(|pair| pair.read).or(read);
         let Some(read) = read else {
             return false;
         };
@@ -309,6 +325,18 @@ impl Emitter {
             .op(Op::I64Const(-1))
             .op(Op::I64Eq);
         self.retry_guarded_paged_operand(exit_depth, true);
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if let Some(pair) = pair {
+            self.op(Op::LocalGet(VALUE))
+                .op(Op::I32WrapI64)
+                .op(Op::I32Const(8))
+                .op(Op::I32ShrU)
+                .op(Op::LocalSet(pair.slot))
+                .op(Op::LocalGet(VALUE))
+                .op(Op::I64Const(255))
+                .op(Op::I64And)
+                .op(Op::LocalSet(VALUE));
+        }
         true
     }
 
@@ -898,6 +926,12 @@ impl Emitter {
             _ => None,
         };
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        let pair = self
+            .paged_byte_write_pair
+            .filter(|pair| pair.store == self.current_index);
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        let paged_write = pair.map(|pair| pair.write).or(paged_write);
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         let write_ready = self
             .paged_write_ready
             .filter(|_| matches!((width, address.segment), (Width::W32, Segment::Ds)));
@@ -907,7 +941,12 @@ impl Emitter {
             self.address(address, next_pc);
             self.data_operand(src, width);
             // The helper admits only writes that leave the active source valid.
-            self.op(Op::I32WrapI64).op(Op::Call(write)).op(Op::I32Eqz);
+            self.op(Op::I32WrapI64);
+            #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+            if let Some(pair) = pair {
+                self.op(Op::LocalGet(pair.slot));
+            }
+            self.op(Op::Call(write)).op(Op::I32Eqz);
             #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
             let replay = write_ready.is_some();
             #[cfg(not(all(not(feature = "parallel"), target_arch = "wasm32")))]

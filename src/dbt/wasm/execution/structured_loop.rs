@@ -481,6 +481,56 @@ impl StructuredLoop {
                 .any(|instruction| paged_byte_store(instruction.operation, None))
     }
 
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn paged_byte_write_pair(self, unit: &super::Unit) -> Option<(u32, u32)> {
+        use crate::x86::instruction::AddressBase;
+
+        if !unit.context.is_long64()
+            || !self.paged_source_is_4k(unit)
+            || !self.has_paged_byte_store(unit)
+        {
+            return None;
+        }
+        let body = &unit.instructions[self.head as usize..=self.tail as usize];
+        body.windows(3).enumerate().find_map(|(offset, triple)| {
+            let Operation::Extend {
+                dst: load_dst,
+                src: Location::Memory(address),
+                ..
+            } = triple[0].operation
+            else {
+                return None;
+            };
+            let Operation::Alu { dst: alu_dst, .. } = triple[1].operation else {
+                return None;
+            };
+            let Operation::Store { address: store, .. } = triple[2].operation else {
+                return None;
+            };
+            let replaces_address = |register| {
+                address.base == AddressBase::Register(register)
+                    || address
+                        .index
+                        .is_some_and(|index| index.register == register)
+            };
+            if address != store
+                || address.base == AddressBase::NextPc
+                || paged_read_width(triple[0].operation, None) != Some(Width::W8)
+                || !paged_byte_store(triple[2].operation, None)
+                || replaces_address(load_dst.bank)
+                || replaces_address(alu_dst.bank)
+                || body.iter().any(|i| {
+                    matches!(i.operation, Operation::Jump { target } | Operation::Jcc { target, .. }
+                        if (triple[1].pc..=triple[2].pc).contains(&target))
+                })
+            {
+                return None;
+            }
+            let load = self.head + offset as u32;
+            Some((load, load + 2))
+        })
+    }
+
     #[cfg(not(feature = "parallel"))]
     pub(super) fn select_paged_scalar_f32(unit: &super::Unit) -> Option<Self> {
         let long64 = unit.context.is_long64();

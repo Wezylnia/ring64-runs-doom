@@ -309,6 +309,8 @@ fn emit_placement(
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_read_rearm: true,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        paged_byte_write_pair: true,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_split_vectors: true,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_read_diamond: true,
@@ -402,6 +404,8 @@ struct OptionalLowering {
     paged_dense_read_span: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_read_rearm: bool,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    paged_byte_write_pair: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_split_vectors: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -826,6 +830,18 @@ fn emit_body(
     let paged_loop_write_type = (paged_write_byte || paged_write_dword)
         .then(|| add_function_type(&mut types, [ValType::I64, ValType::I32], [ValType::I32]));
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let paged_byte_write_pair = loop_body
+        .filter(|_| optional.paged_byte_write_pair && !mmio)
+        .and_then(|body| body.paged_byte_write_pair(unit));
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let paged_byte_write_pair_type = paged_byte_write_pair.map(|_| {
+        add_function_type(
+            &mut types,
+            [ValType::I64, ValType::I32, ValType::I32],
+            [ValType::I32],
+        )
+    });
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let paged_dense_bytes = loop_body.is_some_and(|body| {
         body.paged_read_span.is_some_and(|proof| {
             proof.dense_ascending_bytes(&unit.instructions[body.head as usize..=body.tail as usize])
@@ -1137,6 +1153,18 @@ fn emit_body(
     let paged_loop_write_dword = paged_loop_write_type
         .filter(|_| paged_write_dword)
         .map(|index| import_function("paged_loop_write_dword", index));
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let paged_byte_write_pair =
+        paged_byte_write_pair
+            .zip(paged_byte_write_pair_type)
+            .map(|((load, store), write_type)| {
+                let read = import_function(
+                    "paged_loop_read_byte_for_store",
+                    paged_loop_read_type.unwrap(),
+                );
+                let write = import_function("paged_loop_write_byte_after_read", write_type);
+                (load, store, read, write)
+            });
     let debug_begin = debug_begin_type.map(|index| import_function("debug_begin", index));
     let debug_step = debug_type.map(|index| import_function("debug_finish", index));
     let external_step = external_step_type.map(|index| import_function("external_step", index));
@@ -1606,6 +1634,19 @@ fn emit_body(
             host: first + 2,
         }
     });
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let paged_byte_write_pair = paged_byte_write_pair.map(|(load, store, read, write)| {
+        let slot = next_local;
+        locals.push((1, ValType::I32));
+        next_local += 1;
+        memory::PagedByteWritePair {
+            load,
+            store,
+            read,
+            write,
+            slot,
+        }
+    });
     let boundary_locals = observed.then(|| {
         let result = [next_local, next_local + 1, next_local + 2, next_local + 3];
         locals.push((4, ValType::I32));
@@ -1760,6 +1801,8 @@ fn emit_body(
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_dword_window,
         paged_loop_read_byte,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        paged_byte_write_pair,
         paged_loop_read_dword,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_loop_read_block,
@@ -2072,6 +2115,21 @@ fn emit_body(
     }
     let code_start = bytes.len();
     code.append_to(&mut bytes);
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    if bytes.len() > max_artifact_bytes && paged_byte_write_pair.is_some() {
+        return emit_body(
+            unit,
+            observed,
+            (paged, mmio),
+            loop_body,
+            _guard_reads,
+            OptionalLowering {
+                paged_byte_write_pair: false,
+                ..optional
+            },
+            max_artifact_bytes,
+        );
+    }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if bytes.len() > max_artifact_bytes
         && paged_read_span.is_some_and(|(proof, _, _)| proof.is_countdown())

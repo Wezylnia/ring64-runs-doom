@@ -472,7 +472,7 @@ fn paged_loop_guard<const FLAT_DATA32: bool, const SSE: bool, const FLAT_WRITE32
 #[cfg(not(feature = "parallel"))]
 #[unsafe(no_mangle)]
 pub extern "C" fn core_paged_loop_read_dword(address: u64) -> u64 {
-    paged_loop_read::<4>(address)
+    paged_loop_read::<4, false>(address)
 }
 
 #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
@@ -535,7 +535,13 @@ pub extern "C" fn core_paged_loop_walk_dword(address: u64) -> u64 {
 #[cfg(not(feature = "parallel"))]
 #[unsafe(no_mangle)]
 pub extern "C" fn core_paged_loop_read_byte(address: u64) -> u64 {
-    paged_loop_read::<1>(address)
+    paged_loop_read::<1, false>(address)
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[unsafe(no_mangle)]
+pub extern "C" fn core_paged_loop_read_byte_for_store(address: u64) -> u64 {
+    paged_loop_read::<1, true>(address)
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -635,7 +641,7 @@ fn paged_loop_operand_ready<const WRITE: bool, const SPLIT: bool>(
 }
 
 #[cfg(not(feature = "parallel"))]
-fn paged_loop_read<const WIDTH: u32>(address: u64) -> u64 {
+fn paged_loop_read<const WIDTH: u32, const CAPTURE_SLOT: bool>(address: u64) -> u64 {
     let read = || {
         if address & u64::from(WIDTH - 1) != 0 || !crate::memory::canonical48(address) {
             return None;
@@ -653,18 +659,36 @@ fn paged_loop_read<const WIDTH: u32>(address: u64) -> u64 {
                 access: Access::Read,
                 class,
             };
+            let read = |physical| {
+                core.image
+                    .physical_read(physical, WIDTH)
+                    .ok()
+                    .map(|value| value as u32)
+            };
+            if CAPTURE_SLOT {
+                if !core
+                    .active_owner
+                    .is_some_and(|owner| core.image.source_is_active(owner))
+                {
+                    return None;
+                }
+                return core.translation_cache.data_byte_then_fetch::<false, _>(
+                    paging,
+                    request,
+                    &state.protection_keys,
+                    None,
+                    |index, translation| {
+                        read(translation.physical).map(|value| ((index as u32 + 1) << 8) | value)
+                    },
+                );
+            }
             core.translation_cache.data_then_fetch::<false, _>(
                 paging,
                 request,
                 &state.protection_keys,
                 WIDTH,
                 false,
-                |physical| {
-                    core.image
-                        .physical_read(physical, WIDTH)
-                        .ok()
-                        .map(|value| value as u32)
-                },
+                read,
             )
         })
     };
@@ -994,6 +1018,48 @@ fn paged_loop_write<const WIDTH: usize>(address: u64, value: [u8; WIDTH]) -> i32
             WIDTH as u32,
             false,
             |physical| core.image.physical_direct_write(physical, value),
+        )
+    });
+    i32::from(written.is_some())
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[unsafe(no_mangle)]
+pub extern "C" fn core_paged_loop_write_byte_after_read(
+    address: u64,
+    value: u32,
+    slot: u32,
+) -> i32 {
+    if !crate::memory::canonical48(address) {
+        return 0;
+    }
+    let written = BRIDGE.with_borrow_mut(|bridge| {
+        let core = bridge.core.as_mut().unwrap();
+        if !core
+            .active_owner
+            .is_some_and(|owner| core.image.source_is_active(owner))
+        {
+            return None;
+        }
+        let paging = core.paging.as_ref()?;
+        let state = unsafe { &*core.state.get() };
+        let request = paging::walk::Request {
+            linear: address,
+            access: Access::Write,
+            class: paging::walk::AccessClass::operand(
+                core.context.cpl(),
+                state.flags & crate::x86::flags::AC != 0,
+            ),
+        };
+        core.translation_cache.data_byte_then_fetch::<true, _>(
+            paging,
+            request,
+            &state.protection_keys,
+            slot.checked_sub(1).map(|index| index as usize),
+            |_, translation| {
+                core.image
+                    .physical_direct_write(translation.physical, [value as u8])
+            },
         )
     });
     i32::from(written.is_some())

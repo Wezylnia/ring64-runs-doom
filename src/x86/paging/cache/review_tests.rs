@@ -53,6 +53,66 @@ fn fixture() -> (Image, State, Request) {
 
 #[cfg(not(feature = "parallel"))]
 #[test]
+fn guarded_byte_store_slot_keeps_write_authority_and_fetch_recency() {
+    use std::cell::Cell;
+
+    for (leaf, admitted) in [(0xa067, true), (0xa027, false), (0xa065, false)] {
+        let (mut image, state, read) = fixture();
+        image.physical_write(0x4008, 8, leaf).unwrap();
+        image.physical_write(0x4010, 8, 0xc027).unwrap();
+        let fetch = Request {
+            linear: 0x2000,
+            access: Access::Execute,
+            ..read
+        };
+        let cache = Cache::with_capacity(2);
+        for request in [read, fetch] {
+            let entry = walk::peek(&image, &state, request, &Keys::ZERO).unwrap();
+            cache.fill(&state, request, entry);
+        }
+        let slot = cache
+            .data_byte_then_fetch::<false, _>(
+                &state,
+                read,
+                &Keys::ZERO,
+                None,
+                |slot, translation| {
+                    assert_eq!(translation.physical, 0xa234);
+                    Some(slot)
+                },
+            )
+            .unwrap();
+        let write = Request {
+            access: Access::Write,
+            ..read
+        };
+        let oldest_order = {
+            let entries = cache.entries.borrow();
+            (entries.clock, entries.hint)
+        };
+        for selected in [slot, 1 - slot, usize::MAX] {
+            let used = Cell::new(false);
+            let result = cache.data_byte_then_fetch::<true, _>(
+                &state,
+                write,
+                &Keys::ZERO,
+                Some(selected),
+                |actual_slot, translation| {
+                    assert_eq!(actual_slot, slot);
+                    used.set(true);
+                    Some(translation.physical)
+                },
+            );
+            assert_eq!(result, admitted.then_some(0xa234));
+            assert_eq!(used.get(), admitted);
+            let entries = cache.entries.borrow();
+            assert_eq!((entries.clock, entries.hint), oldest_order);
+        }
+    }
+}
+
+#[cfg(not(feature = "parallel"))]
+#[test]
 fn guarded_dword_candidates_revalidate_removals_and_later_ordinary_fills() {
     let (mut image, mut origin, request) = fixture();
     origin.cr4 |= (1 << 7) | (1 << 17);

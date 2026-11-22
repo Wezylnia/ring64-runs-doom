@@ -1300,6 +1300,8 @@ export class Core {
         env.paged_loop_write_ready = this.#exports.core_paged_loop_write_ready;
       if (this.#exports.core_paged_loop_read_byte)
         env.paged_loop_read_byte = this.#exports.core_paged_loop_read_byte;
+      if (this.#exports.core_paged_loop_read_byte_for_store)
+        env.paged_loop_read_byte_for_store = this.#exports.core_paged_loop_read_byte_for_store;
       if (this.#exports.core_paged_loop_read_pair)
         env.paged_loop_read_pair = this.#exports.core_paged_loop_read_pair;
       if (this.#exports.core_paged_loop_read_split_pair)
@@ -1312,6 +1314,8 @@ export class Core {
         env.paged_loop_read_span_ready = this.#exports.core_paged_loop_read_span_ready;
       if (this.#exports.core_paged_loop_write_byte)
         env.paged_loop_write_byte = this.#exports.core_paged_loop_write_byte;
+      if (this.#exports.core_paged_loop_write_byte_after_read)
+        env.paged_loop_write_byte_after_read = this.#exports.core_paged_loop_write_byte_after_read;
       if (this.#exports.core_paged_loop_write_dword)
         env.paged_loop_write_dword = this.#exports.core_paged_loop_write_dword;
       if (this.#exports.core_write_segment_base)

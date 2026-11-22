@@ -293,6 +293,50 @@ impl Cache {
     }
 
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    #[inline]
+    pub(crate) fn data_byte_then_fetch<const WRITE: bool, T>(
+        &self,
+        state: &State,
+        request: Request,
+        keys: &ProtectionKeys,
+        slot: Option<usize>,
+        access: impl FnOnce(usize, Translation) -> Option<T>,
+    ) -> Option<T> {
+        let mut entries = self.entries.borrow_mut();
+        let fetch = entries
+            .hint
+            .filter(|&index| entries.slots[index].is_some())?;
+        let preferred = slot.and_then(|index| {
+            let entry = entries.slots.get(index)?.as_ref()?;
+            // A live local entry is unique for these coordinates. The normal
+            // lookup must decide which translation shadows a retained global.
+            (!entry.global
+                && entry.family == family(state)
+                && entry.pcid == state.pcid()
+                && entry.translation.contains(request.linear))
+            .then(|| (index, entry.translation.at(request.linear)))
+        });
+        let (data, translation) = if let Some((index, translation)) = preferred {
+            if WRITE && translation.dirty
+                || translation.remaining < 1
+                || translation.rights.authorize(state, request, keys).is_err()
+            {
+                return None;
+            }
+            (index, translation)
+        } else {
+            entries.retained_data_span::<WRITE>(state, request, keys, 1)?
+        };
+        let value = access(data, translation)?;
+        // Preserve the normal guarded data-then-fetch recency order.
+        if data != fetch && entries.slots[data].as_ref().unwrap().used != entries.clock - 1 {
+            entries.touch(data);
+            entries.touch(fetch);
+        }
+        Some(value)
+    }
+
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
     pub(crate) fn read_dword_then_fetch(
         &self,
         image: &crate::memory::Image,
