@@ -167,19 +167,10 @@ impl Emitter {
         next_pc: u64,
         exit_depth: u32,
     ) {
-        if bytes == 4
-            && !aligned
-            && self.load_guarded_paged_value(address, Width::W32, next_pc, exit_depth)
-        {
-            self.op(Op::V128Const(0))
-                .op(Op::LocalGet(super::VALUE))
-                .op(Op::I64x2ReplaceLane(0));
-            return;
-        }
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         if bytes == 4
             && !aligned
-            && let Some((proof, first_bias)) = self.proved_reads
+            && let Some((proof, first_bias)) = self.paged_proved_f32_reads.or(self.proved_reads)
             && let Some((slot, index, offset)) = proof.vector_slot(address)
         {
             self.address(index, next_pc);
@@ -191,6 +182,15 @@ impl Emitter {
                     align: 0,
                     memory_index: 0,
                 }));
+            return;
+        }
+        if bytes == 4
+            && !aligned
+            && self.load_guarded_paged_value(address, Width::W32, next_pc, exit_depth)
+        {
+            self.op(Op::V128Const(0))
+                .op(Op::LocalGet(super::VALUE))
+                .op(Op::I64x2ReplaceLane(0));
             return;
         }
         self.address(address, next_pc);

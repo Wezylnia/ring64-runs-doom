@@ -164,6 +164,33 @@ impl ReadLoop {
         Self::recognize_body(context, instructions, true)
     }
 
+    #[cfg(any(test, all(not(feature = "parallel"), target_arch = "wasm32")))]
+    pub(super) fn recognize_paged_f32(
+        context: &ExecutionContext,
+        instructions: &[Instruction],
+    ) -> Option<Self> {
+        use crate::x86::context::Segment;
+
+        let proof = Self::recognize(context, instructions)?;
+        let [body @ .., _, _, _] = instructions else {
+            return None;
+        };
+        if !context.is_long64() || proof.streams[1].is_none() {
+            return None;
+        }
+        for instruction in body {
+            if let Some(address) = Self::read_operand(instruction.operation, false)?
+                && (address.segment != Segment::Ds
+                    || address.size != Width::W64
+                    || address.index?.scale != 4
+                    || address.displacement % 4 != 0)
+            {
+                return None;
+            }
+        }
+        Some(proof)
+    }
+
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     pub(super) fn one_stream(self) -> bool {
         self.streams[1].is_none()
@@ -423,7 +450,7 @@ impl ReadLoop {
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-use super::{ADDRESS, Emitter, LHS, RHS, STORE_STATUS, VALUE, memory::SpanCache};
+use super::{ADDRESS, Emitter, LHS, RESULT, RHS, STORE_STATUS, VALUE, memory::SpanCache};
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 use wasm_encoder::{BlockType, Instruction as Op, MemArg, ValType};
 
@@ -503,9 +530,7 @@ impl Emitter {
         self.op(Op::Drop).op(Op::I32Const(1)).op(Op::End);
     }
 
-    fn guard_read_span(&mut self, proof: ReadLoop, resolve: u32, first_bias: u32) {
-        use crate::memory::DirectSpan as Descriptor;
-
+    fn guard_read_trip_count(&mut self, proof: ReadLoop) {
         match proof.end {
             ReadLimit::Register(end) => self.register(end, proof.count_width),
             ReadLimit::Immediate(end) => {
@@ -526,25 +551,130 @@ impl Emitter {
             .op(Op::I64Eqz)
             .op(Op::I32Eqz)
             .op(Op::BrIf(0));
+    }
+
+    fn guard_read_stream_length(&mut self, proof: ReadLoop, stream: Stream) {
+        let scale = u64::from(stream.first.index.unwrap().scale);
+        let bytes = if proof.byte_reads { 1 } else { 4 };
+        let displacement_width = u64::from(stream.displacement_width(bytes).unwrap());
+        // Length = (end - start - step) * scale + displacement width.
+        let max_count = (u64::from(u32::MAX) - displacement_width) / scale + proof.step;
+        self.op(Op::LocalGet(LHS))
+            .op(Op::I64Const(max_count as i64))
+            .op(Op::I64GtU)
+            .op(Op::BrIf(0))
+            .op(Op::LocalGet(LHS))
+            .op(Op::I64Const(proof.step as i64))
+            .op(Op::I64Sub)
+            .op(Op::I64Const(scale as i64))
+            .op(Op::I64Mul)
+            .op(Op::I64Const(displacement_width as i64))
+            .op(Op::I64Add)
+            .op(Op::LocalSet(VALUE));
+    }
+
+    pub(super) fn guard_paged_f32_read_loop(
+        &mut self,
+        proof: ReadLoop,
+        resolve: u32,
+        first_bias: u32,
+    ) {
+        use crate::{memory::DirectSpan, x86::context::Segment};
+
+        self.op(Op::Block(BlockType::Result(ValType::I32)))
+            .op(Op::I32Const(0));
+        self.guard_read_trip_count(proof);
+        for (slot, stream) in proof.streams.iter().flatten().copied().enumerate() {
+            self.guard_read_stream_length(proof, stream);
+            self.address(stream.first, 0);
+            // Scale and constant offsets are multiples of four in both streams.
+            self.op(Op::LocalTee(ADDRESS))
+                .op(Op::I64Const(3))
+                .op(Op::I64And)
+                .op(Op::I64Eqz)
+                .op(Op::I32Eqz)
+                .op(Op::BrIf(0))
+                .op(Op::LocalGet(ADDRESS))
+                .op(Op::LocalGet(VALUE))
+                .op(Op::I64Const(1))
+                .op(Op::I64Sub)
+                .op(Op::I64Add)
+                .op(Op::LocalTee(VALUE))
+                .op(Op::LocalGet(ADDRESS))
+                .op(Op::I64LtU)
+                .op(Op::BrIf(0));
+            if slot == 0 {
+                self.op(Op::LocalGet(ADDRESS))
+                    .op(Op::LocalSet(RESULT))
+                    .op(Op::LocalGet(VALUE))
+                    .op(Op::LocalSet(RHS));
+            } else {
+                self.op(Op::LocalGet(ADDRESS))
+                    .op(Op::LocalGet(RESULT))
+                    .op(Op::LocalGet(ADDRESS))
+                    .op(Op::LocalGet(RESULT))
+                    .op(Op::I64LtU)
+                    .op(Op::Select)
+                    .op(Op::LocalSet(RESULT))
+                    .op(Op::LocalGet(VALUE))
+                    .op(Op::LocalGet(RHS))
+                    .op(Op::LocalGet(VALUE))
+                    .op(Op::LocalGet(RHS))
+                    .op(Op::I64GtU)
+                    .op(Op::Select)
+                    .op(Op::LocalSet(RHS));
+            }
+        }
+        // Resolve the bounding interval once. Both streams then touch the
+        // same local translation and backing, with the fetched code still MRU.
+        self.op(Op::LocalGet(RHS))
+            .op(Op::LocalGet(RESULT))
+            .op(Op::I64Sub)
+            .op(Op::LocalTee(VALUE))
+            .op(Op::I64Const(i64::from(u32::MAX - 1)))
+            .op(Op::I64GtU)
+            .op(Op::BrIf(0))
+            .op(Op::LocalGet(RESULT))
+            .op(Op::LocalGet(VALUE))
+            .op(Op::I64Const(1))
+            .op(Op::I64Add)
+            .op(Op::I32WrapI64)
+            .op(Op::I32Const(Segment::Ds as i32))
+            .op(Op::Call(resolve))
+            .op(Op::LocalTee(STORE_STATUS))
+            .op(Op::I32Eqz)
+            .op(Op::BrIf(0));
+        for (slot, stream) in proof.streams.iter().flatten().enumerate() {
+            self.op(Op::LocalGet(STORE_STATUS))
+                .op(Op::I32Load(MemArg {
+                    offset: std::mem::offset_of!(DirectSpan, host) as u64,
+                    align: 2,
+                    memory_index: 0,
+                }))
+                .op(Op::LocalGet(RESULT))
+                .op(Op::I32WrapI64)
+                .op(Op::I32Sub);
+            self.address(
+                Address {
+                    index: None,
+                    ..stream.first
+                },
+                0,
+            );
+            self.op(Op::I32WrapI64)
+                .op(Op::I32Add)
+                .op(Op::LocalSet(first_bias + slot as u32));
+        }
+        self.op(Op::Drop).op(Op::I32Const(1)).op(Op::End);
+    }
+
+    fn guard_read_span(&mut self, proof: ReadLoop, resolve: u32, first_bias: u32) {
+        use crate::memory::DirectSpan as Descriptor;
+
+        self.guard_read_trip_count(proof);
 
         for (slot, stream) in proof.streams.iter().flatten().enumerate() {
-            let scale = u64::from(stream.first.index.unwrap().scale);
-            let bytes = if proof.byte_reads { 1 } else { 4 };
-            let displacement_width = u64::from(stream.displacement_width(bytes).unwrap());
-            // Length = (end - start - step) * scale + displacement width.
-            let max_count = (u64::from(u32::MAX) - displacement_width) / scale + proof.step;
-            self.op(Op::LocalGet(LHS))
-                .op(Op::I64Const(max_count as i64))
-                .op(Op::I64GtU)
-                .op(Op::BrIf(0))
-                .op(Op::LocalGet(LHS))
-                .op(Op::I64Const(proof.step as i64))
-                .op(Op::I64Sub)
-                .op(Op::I64Const(scale as i64))
-                .op(Op::I64Mul)
-                .op(Op::I64Const(displacement_width as i64))
-                .op(Op::I64Add)
-                .op(Op::LocalSet(VALUE));
+            self.guard_read_stream_length(proof, *stream);
             self.address(stream.first, 0);
             self.op(Op::LocalTee(ADDRESS))
                 .op(Op::LocalGet(VALUE))
@@ -685,6 +815,43 @@ mod tests {
             instructions.map(|i| proof.stream_for(i.operation)),
             [Some(0), Some(1), None, Some(0), Some(1), None, None, None]
         );
+    }
+
+    #[test]
+    fn paged_f32_read_loop_proves_only_two_aligned_ds_streams() {
+        let context = ExecutionContext::default();
+        let candidate = fixture();
+        assert!(ReadLoop::recognize_paged_f32(&context, &candidate).is_some());
+        let Operation::Vector(VectorInstruction::Move {
+            operand: VectorOperand::Memory(address),
+            ..
+        }) = candidate[0].operation
+        else {
+            unreachable!();
+        };
+        for modified in [
+            Address {
+                segment: Segment::Fs,
+                ..address
+            },
+            Address {
+                size: Width::W32,
+                ..address
+            },
+            Address {
+                displacement: 5,
+                ..address
+            },
+        ] {
+            let mut instructions = candidate;
+            let Operation::Vector(VectorInstruction::Move { operand, .. }) =
+                &mut instructions[0].operation
+            else {
+                unreachable!();
+            };
+            *operand = VectorOperand::Memory(modified);
+            assert!(ReadLoop::recognize_paged_f32(&context, &instructions).is_none());
+        }
     }
 
     #[test]

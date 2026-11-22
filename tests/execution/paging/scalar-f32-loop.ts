@@ -180,5 +180,78 @@ export function pagingScalarF32LoopScenarios(compiler: WebAssembly.Module): Scen
         );
       },
     },
+    {
+      name: 'paged aligned scalar F32 span preserves both operands and live rounding',
+      async run() {
+        // Warm both data translations, then MOVSS/MULSS/ADDSS with a shared SIB index.
+        const code = '8b178b16f30f10049ff30f59049ef30f58c848ffc34839cb75ea';
+        for (const layout of [
+          'union',
+          'reversed',
+          'split-backing',
+          'split-leaf',
+          'unaligned',
+          'round-up',
+          'partial',
+        ] as const) {
+          const directed = layout === 'round-up';
+          const left = little(
+            directed ? [0x3f800001n] : [0x3f800000n, 0x40000000n, 0x40400000n],
+            4,
+          );
+          const right = little(
+            directed ? [0x3f800001n] : [0x40800000n, 0x40a00000n, 0x40c00000n],
+            4,
+          );
+          const first = layout === 'reversed' ? 16n : 0n;
+          const other =
+            layout === 'split-leaf' ? 0x1000n : layout === 'unaligned' ? 17n : 16n - first;
+          const payload = new Uint8Array(32);
+          payload.set(left, Number(first));
+          payload.set(right, Number(other & 0xfffn));
+          const spans =
+            layout === 'split-backing' || layout === 'split-leaf'
+              ? [
+                  { physical: 0xa000n, bytes: left },
+                  { physical: 0xa000n + other, bytes: right },
+                ]
+              : [{ physical: 0xa000n, bytes: payload }];
+          const iterations = directed ? 1n : 3n;
+          await usingPaged(
+            compiler,
+            {
+              code,
+              words: [...dataPages, [0x4010n, 0xb027n]],
+              spans,
+            },
+            async (cpu) => {
+              cpu.setState(
+                initial(PC, { 1: iterations, 3: 0n, 6: data + other, 7: data + first }, 2n),
+              );
+              cpu.setMxcsr(directed ? 0x5f80 : 0x1f80);
+              let prefix = 0n;
+              if (layout === 'partial') {
+                const partial = await cpu.run({ budget: 9n, stop: PC + 26n });
+                equal(partial.reason, 'budget', 'one full lap and the next MOVSS');
+                equal(partial.retired, 9n, 'exact partial prefix');
+                equal(partial.state.rip, PC + 9n, 'the second MULSS is unstarted');
+                equal(cpu.readXmmState()[0], 0x40000000n, 'the second MOVSS completed');
+                equal(cpu.readXmmState()[1], 0x40800000n, 'first sum is already published');
+                prefix = partial.retired;
+              }
+              const result = await cpu.run({ budget: 27n, stop: PC + 26n });
+              equal(result.reason, 'stop', layout);
+              equal(
+                result.retired + prefix,
+                2n + 6n * iterations,
+                'two preloads and each original lap',
+              );
+              equal(cpu.readXmmState()[1], directed ? 0x3f800003n : 0x42000000n, 'independent sum');
+              equal(cpu.readMxcsr(), directed ? 0x5fa0 : 0x1f80, 'live rounding and sticky status');
+            },
+          );
+        }
+      },
+    },
   ];
 }

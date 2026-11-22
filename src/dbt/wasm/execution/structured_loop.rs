@@ -338,6 +338,16 @@ impl StructuredLoop {
         Some(self)
     }
 
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn with_paged_f32_read_span(mut self, unit: &super::Unit) -> Option<Self> {
+        debug_assert!(self.paged_sse());
+        self.paged_read_span = Some(super::read_loop::ReadLoop::recognize_paged_f32(
+            &unit.context,
+            &unit.instructions[self.head as usize..=self.tail as usize],
+        )?);
+        Some(self)
+    }
+
     #[cfg(not(feature = "parallel"))]
     pub(super) fn within_paged_fetch(mut self, unit: &super::Unit) -> Option<Self> {
         let first = unit.instructions[self.earlier as usize].pc;
@@ -913,11 +923,17 @@ impl Emitter {
         self.guarded_paged_lap = true;
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         if let Some((proof, resolve, bias)) = self.paged_read_span {
-            self.guard_integer_read_loop(proof, resolve, bias);
+            if body.paged_sse() {
+                self.guard_paged_f32_read_loop(proof, resolve, bias);
+                self.paged_proved_f32_reads = Some((proof, bias));
+            } else {
+                self.guard_integer_read_loop(proof, resolve, bias);
+                self.proved_reads = Some((proof, bias));
+            }
             self.op(Op::If(BlockType::Empty));
-            self.proved_reads = Some((proof, bias));
             self.emit_prechecked_body(instructions, body, loop_depth + 4, None);
             self.proved_reads = None;
+            self.paged_proved_f32_reads = None;
             self.op(Op::Else);
             self.emit_prechecked_body(instructions, body, loop_depth + 4, None);
             self.op(Op::End);

@@ -88,6 +88,20 @@ pub(crate) fn emit_profile(
     }
     #[cfg(not(feature = "parallel"))]
     if paged && let Some(body) = StructuredLoop::select_paged_scalar_f32(unit) {
+        #[cfg(target_arch = "wasm32")]
+        if let Some(span) = body.with_paged_f32_read_span(unit) {
+            let bytes = emit_placement(
+                unit,
+                observed,
+                (paged, false),
+                Some(span),
+                false,
+                max_artifact_bytes,
+            );
+            if bytes.len() <= max_artifact_bytes {
+                return bytes;
+            }
+        }
         let bytes = emit_placement(
             unit,
             observed,
@@ -1322,8 +1336,13 @@ fn emit_body(
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let paged_read_span = paged_read_span.map(|(proof, resolve)| {
         let bias = next_local;
-        locals.push((1, ValType::I32));
-        next_local += 1;
+        let biases = if loop_body.is_some_and(StructuredLoop::paged_sse) {
+            read_loop::ReadLoop::BIAS_LOCALS
+        } else {
+            1
+        };
+        locals.push((biases, ValType::I32));
+        next_local += biases;
         (proof, resolve, bias)
     });
     let boundary_locals = observed.then(|| {
@@ -1406,6 +1425,8 @@ fn emit_body(
         indexed_read_window,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         proved_reads: None,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        paged_proved_f32_reads: None,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         proved_read_retry: proved_reads.map(|(_, _, _, _, retry)| retry),
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
