@@ -241,6 +241,13 @@ impl Emitter {
             ))
             .op(Op::I32Or);
         }
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if self.uses_indexed_scalar_read(operation) {
+            self.op(Op::I32Const(
+                crate::embedding::layout::debug::PAGED_INDEXED_SCALAR_READ as i32,
+            ))
+            .op(Op::I32Or);
+        }
         self.op(Op::Call(debug_begin));
         if let Some(local) = retained {
             // Only the existing observed begin can grant a quiet source page.

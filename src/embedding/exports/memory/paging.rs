@@ -3,6 +3,19 @@ use crate::x86::paging::{self, walk::Failure};
 use crate::x86::protection_keys::State as Keys;
 
 impl Core {
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn remember_indexed_scalar_read(&self, address: u64, width: u32) {
+        if self.state.indexed_paged_reads != 0
+            && let Some(paging) = self.paging.as_ref()
+            && let Some((slot, translation)) =
+                self.translation_cache.recent_indexed_read(paging, address)
+            && let Some((page, host)) = indexed_read_page(&self.image, address, width, translation)
+        {
+            self.translation_cache
+                .remember_indexed_read(slot, page, host);
+        }
+    }
+
     #[cfg(not(feature = "parallel"))]
     #[cold]
     #[inline(never)]
@@ -1194,6 +1207,25 @@ pub extern "C" fn core_paged_loop_retouch_block_window(address: u64) -> i32 {
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+fn indexed_read_page(
+    image: &crate::memory::Image,
+    address: u64,
+    width: u32,
+    translation: paging::walk::Translation,
+) -> Option<(u64, u32)> {
+    let page = address & !4095;
+    let offset = address - page;
+    if offset + u64::from(width) > 4096
+        || !translation.contains(page)
+        || translation.remaining < 4096 - offset
+    {
+        return None;
+    }
+    let host = image.physical_direct_read_pointer(translation.physical - offset, 4096)?;
+    Some((page, host))
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 fn paged_loop_read_span<
     const MULTI_PAGE: bool,
     const HOST_POINTER: bool,
@@ -1253,17 +1285,11 @@ fn paged_loop_read_span<
                     bytes,
                     true,
                     |slot, translation| {
-                        let page = address & !4095;
-                        let offset = address - page;
-                        if offset + u64::from(bytes) <= 4096
-                            && translation.contains(page)
-                            && translation.remaining >= 4096 - offset
-                            && let Some(host) = core
-                                .image
-                                .physical_direct_read_pointer(translation.physical - offset, 4096)
+                        if let Some((page, host)) =
+                            indexed_read_page(&core.image, address, bytes, translation)
                         {
                             indexed_page = Some((slot, page, host));
-                            return Some(host + offset as u32);
+                            return Some(host + (address - page) as u32);
                         }
                         read(translation.physical)
                     },
@@ -1705,6 +1731,14 @@ pub extern "C" fn core_paged_debug_begin(pc: u64, flags: u64, shadow: u32) -> i3
     BRIDGE.with_borrow_mut(|bridge| {
         let core = bridge.core.as_mut().unwrap();
         core.clear_paged_instruction();
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        let (indexed_scalar, shadow) = {
+            use crate::embedding::layout::debug::PAGED_INDEXED_SCALAR_READ;
+            (
+                shadow & PAGED_INDEXED_SCALAR_READ != 0,
+                shadow & !PAGED_INDEXED_SCALAR_READ,
+            )
+        };
         #[cfg(not(feature = "parallel"))]
         let (near_transfer, quiet_completion, shadow) = {
             use crate::embedding::layout::debug::{PAGED_NEAR_TRANSFER, PAGED_QUIET_COMPLETION};
@@ -1721,6 +1755,17 @@ pub extern "C" fn core_paged_debug_begin(pc: u64, flags: u64, shadow: u32) -> i3
         #[cfg(not(feature = "parallel"))]
         if core.warm_guarded_code_page(pc, !near_transfer) {
             core.reconcile_translation_changes();
+            #[cfg(target_arch = "wasm32")]
+            if indexed_scalar {
+                if core.debug_completion_quiet() {
+                    core.admit_indexed_paged_reads();
+                    if core.state.indexed_paged_reads != 0 {
+                        core.fault = None;
+                    }
+                } else {
+                    core.state.indexed_paged_reads = 0;
+                }
+            }
             if quiet_completion
                 && core.paged_region_trace.is_none()
                 && flags & crate::x86::flags::TF == 0
@@ -1730,6 +1775,10 @@ pub extern "C" fn core_paged_debug_begin(pc: u64, flags: u64, shadow: u32) -> i3
                 return crate::embedding::layout::debug::CONTINUE_ACTIVE;
             }
             return 0;
+        }
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if indexed_scalar {
+            core.state.indexed_paged_reads = 0;
         }
         #[cfg(not(feature = "parallel"))]
         if let Some(instruction) = core

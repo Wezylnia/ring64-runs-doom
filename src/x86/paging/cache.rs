@@ -437,6 +437,22 @@ impl Cache {
         self.entries.borrow().indexed_reads.get() as u32
     }
 
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(crate) fn recent_indexed_read(
+        &self,
+        state: &State,
+        linear: u64,
+    ) -> Option<(usize, Translation)> {
+        let entries = self.entries.borrow();
+        let slot = entries.hint()?;
+        let entry = entries.slots[slot]?;
+        (!entry.global
+            && entry.family == family(state)
+            && entry.pcid == state.pcid()
+            && entry.translation.contains(linear))
+        .then(|| (slot, entry.translation.at(linear)))
+    }
+
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
     pub(crate) fn clear_indexed_reads(&self) {
         self.entries

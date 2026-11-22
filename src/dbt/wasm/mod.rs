@@ -142,6 +142,8 @@ struct Emitter {
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     indexed_paged_read: Option<[u32; 4]>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    indexed_scalar_scratch: Option<[u32; 2]>,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_quiet_completion: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     sampled_region: bool,

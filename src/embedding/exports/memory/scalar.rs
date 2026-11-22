@@ -91,6 +91,19 @@ pub extern "C" fn core_load_observed(address: u64, width: u32) -> u64 {
 }
 
 fn core_load_impl<const OBSERVED: bool, const PAGED: bool>(address: u64, width: u32) -> u64 {
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let (width, indexed) = {
+        use crate::embedding::layout::paging::INDEXED_SCALAR_READ;
+        let indexed = OBSERVED && PAGED && width & INDEXED_SCALAR_READ != 0;
+        (
+            if indexed {
+                width & !INDEXED_SCALAR_READ
+            } else {
+                width
+            },
+            indexed,
+        )
+    };
     BRIDGE.with_borrow_mut(|bridge| {
         let core = bridge.core.as_mut().unwrap();
         core.fault = None;
@@ -101,6 +114,10 @@ fn core_load_impl<const OBSERVED: bool, const PAGED: bool>(address: u64, width: 
             Ok(value) => {
                 if OBSERVED {
                     core.debug_operand(address, width, Access::Read);
+                }
+                #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+                if indexed {
+                    core.remember_indexed_scalar_read(address, width);
                 }
                 value
             }
@@ -234,15 +251,18 @@ pub extern "C" fn core_paged_load(address: u64, width: u32) -> u64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn core_paged_load_observed(address: u64, width: u32) -> u64 {
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    if width == crate::embedding::layout::PAGED_RETURN_QWORD {
-        return u64::from(paged_return_read(address));
+    {
+        use crate::embedding::layout::{PAGED_RETURN_QWORD, paging::INDEXED_SCALAR_READ};
+        if width & !INDEXED_SCALAR_READ == PAGED_RETURN_QWORD {
+            return u64::from(paged_return_read(address, width != PAGED_RETURN_QWORD));
+        }
     }
     core_load_impl::<true, true>(address, width)
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 #[inline(never)]
-fn paged_return_read(address: u64) -> u32 {
+fn paged_return_read(address: u64, indexed: bool) -> u32 {
     use crate::embedding::layout::{QUIET_RETURN_READ, ReturnRead};
     BRIDGE.with_borrow_mut(|bridge| {
         let core = bridge.core.as_mut().unwrap();
@@ -262,6 +282,9 @@ fn paged_return_read(address: u64) -> u32 {
         core.return_read = match read {
             Ok(value) => {
                 core.debug_operand(address, 8, Access::Read);
+                if indexed {
+                    core.remember_indexed_scalar_read(address, 8);
+                }
                 // Aliased execution records this retirement in debug_finish.
                 let quiet = core.paged_region_trace.is_none()
                     && !core.image.active_changed()

@@ -6,6 +6,33 @@ use crate::x86::instruction::{Alu, Instruction, Operation};
 use wasm_encoder::{BlockType, Instruction as Op};
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+pub(super) fn indexed_scalar_read(operation: Operation) -> bool {
+    use crate::x86::context::Segment;
+    use crate::x86::instruction::{Location, MemoryAluOperands, Width};
+    let address = match operation {
+        Operation::Load { address, .. }
+        | Operation::Extend {
+            src: Location::Memory(address),
+            ..
+        } => address,
+        Operation::MemoryAlu {
+            address,
+            kind,
+            operands,
+            ..
+        } if !kind.writes_result() || matches!(operands, MemoryAluOperands::RegisterFirst(_)) => {
+            address
+        }
+        Operation::Pop { .. }
+        | Operation::Return {
+            width: Width::W64, ..
+        } => return true,
+        _ => return false,
+    };
+    matches!(address.segment, Segment::Ds | Segment::Ss)
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 pub(super) fn paged_prefix_read(
     instruction: Instruction,
 ) -> Option<(
@@ -85,6 +112,13 @@ pub(super) fn paged_prefix_dword_store(instruction: Instruction) -> bool {
 }
 
 impl Emitter {
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn uses_indexed_scalar_read(&self, operation: Operation) -> bool {
+        self.indexed_scalar_scratch.is_some()
+            && !self.guarded_paged_lap
+            && indexed_scalar_read(operation)
+    }
+
     pub(super) fn instruction(
         &mut self,
         instruction: Instruction,
@@ -530,7 +564,8 @@ impl Emitter {
         let read = paged_prefix_read(*first)
             .map(|operation| (read_import.expect("leading read prefix import"), operation));
         let indexed = self.indexed_paged_read.filter(|_| {
-            incoming.is_none()
+            self.sampled_region
+                && incoming.is_none()
                 && read.is_some_and(|(_, (_, _, source_width, _))| source_width.bytes() <= 2)
         });
         self.guard_straight_paged_prefix(
@@ -554,7 +589,7 @@ impl Emitter {
             self.address(address, first.next_pc);
             if let Some(locals) = indexed {
                 self.op(Op::LocalSet(ADDRESS));
-                self.indexed_prefix_read_host(locals, source_width.bytes());
+                self.indexed_read_host(locals, source_width.bytes(), true);
                 self.op(Op::LocalTee(STORE_STATUS))
                     .op(Op::If(BlockType::Result(ValType::I32)))
                     .op(Op::LocalGet(STORE_STATUS))
@@ -645,7 +680,12 @@ impl Emitter {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    fn indexed_prefix_read_host(&mut self, [table, entry, data, fetch]: [u32; 4], width: u8) {
+    pub(super) fn indexed_read_host(
+        &mut self,
+        [table, entry, data, fetch]: [u32; 4],
+        width: u8,
+        preserve_fetch: bool,
+    ) {
         use super::{ADDRESS, LHS, STORE_STATUS, VALUE};
         use crate::embedding::layout::StateStorage;
         use crate::x86::paging::cache::{
@@ -662,6 +702,11 @@ impl Emitter {
         let clock = mem(offset_of!(IndexedReadTable, clock), 3);
         let ages = mem(offset_of!(IndexedReadTable, ages), 3);
         let live_ids = mem(offset_of!(IndexedReadTable, live_ids), 3);
+        let [id, stamp] = if preserve_fetch {
+            [LHS, VALUE]
+        } else {
+            self.indexed_scalar_scratch.unwrap()
+        };
         // Keep a zero result beneath the inner checks. An invalid authority
         // exits the inner block without touching recency or operand memory.
         self.op(Op::Block(BlockType::Result(ValType::I32)))
@@ -704,75 +749,112 @@ impl Emitter {
             .op(Op::BrIf(0))
             .op(Op::LocalGet(entry))
             .op(Op::I64Load(mem(offset_of!(IndexedReadEntry, id), 3)))
-            .op(Op::LocalTee(LHS))
+            .op(Op::LocalTee(id))
             .op(Op::I64Eqz)
             .op(Op::BrIf(0))
             .op(Op::LocalGet(entry))
-            .op(Op::I32Load(mem(offset_of!(IndexedReadEntry, slot), 2)))
-            .op(Op::LocalSet(data))
-            .op(Op::LocalGet(table))
-            .op(Op::I32Load(mem(offset_of!(IndexedReadTable, hint), 2)))
-            .op(Op::LocalSet(fetch));
-        for slot in [data, fetch] {
-            self.op(Op::LocalGet(slot))
+            .op(Op::I32Load(mem(offset_of!(IndexedReadEntry, slot), 2)));
+        if preserve_fetch {
+            self.op(Op::LocalSet(data))
+                .op(Op::LocalGet(table))
+                .op(Op::I32Load(mem(offset_of!(IndexedReadTable, hint), 2)))
+                .op(Op::LocalSet(fetch));
+            for slot in [data, fetch] {
+                self.op(Op::LocalGet(slot))
+                    .op(Op::I32Const(CAPACITY as i32))
+                    .op(Op::I32GeU)
+                    .op(Op::BrIf(0))
+                    .op(Op::LocalGet(table))
+                    .op(Op::LocalGet(slot))
+                    .op(Op::I32Const(3))
+                    .op(Op::I32Shl)
+                    .op(Op::I32Add)
+                    .op(Op::LocalSet(slot));
+            }
+            self.op(Op::LocalGet(data))
+                .op(Op::I64Load(live_ids))
+                .op(Op::LocalGet(id))
+                .op(Op::I64Ne)
+                .op(Op::BrIf(0))
+                .op(Op::LocalGet(fetch))
+                .op(Op::I64Load(live_ids))
+                .op(Op::I64Eqz)
+                .op(Op::BrIf(0))
+                .op(Op::LocalGet(table))
+                .op(Op::I64Load(clock))
+                .op(Op::LocalTee(stamp))
+                .op(Op::I64Const(-3))
+                .op(Op::I64GtU)
+                .op(Op::BrIf(0))
+                .op(Op::LocalGet(fetch))
+                .op(Op::I64Load(ages))
+                .op(Op::LocalGet(stamp))
+                .op(Op::I64Ne)
+                .op(Op::BrIf(0));
+
+            // Match data_translation_then_fetch. Leave the hot data/fetch order
+            // untouched if it already matches and otherwise install both ages.
+            self.op(Op::LocalGet(data))
+                .op(Op::LocalGet(fetch))
+                .op(Op::I32Ne)
+                .op(Op::LocalGet(data))
+                .op(Op::I64Load(ages))
+                .op(Op::LocalGet(stamp))
+                .op(Op::I64Const(1))
+                .op(Op::I64Sub)
+                .op(Op::I64Ne)
+                .op(Op::I32And)
+                .op(Op::If(BlockType::Empty));
+            for (slot, advance) in [(data, 1), (fetch, 2)] {
+                self.op(Op::LocalGet(slot))
+                    .op(Op::LocalGet(stamp))
+                    .op(Op::I64Const(advance))
+                    .op(Op::I64Add)
+                    .op(Op::I64Store(ages));
+            }
+            self.op(Op::LocalGet(table))
+                .op(Op::LocalGet(stamp))
+                .op(Op::I64Const(2))
+                .op(Op::I64Add)
+                .op(Op::I64Store(clock))
+                .op(Op::End);
+        } else {
+            // A checked scalar operand touches only the data leaf.
+            let hint = mem(offset_of!(IndexedReadTable, hint), 2);
+            self.op(Op::LocalTee(data))
                 .op(Op::I32Const(CAPACITY as i32))
                 .op(Op::I32GeU)
                 .op(Op::BrIf(0))
                 .op(Op::LocalGet(table))
-                .op(Op::LocalGet(slot))
+                .op(Op::LocalGet(data))
                 .op(Op::I32Const(3))
                 .op(Op::I32Shl)
                 .op(Op::I32Add)
-                .op(Op::LocalSet(slot));
-        }
-        self.op(Op::LocalGet(data))
-            .op(Op::I64Load(live_ids))
-            .op(Op::LocalGet(LHS))
-            .op(Op::I64Ne)
-            .op(Op::BrIf(0))
-            .op(Op::LocalGet(fetch))
-            .op(Op::I64Load(live_ids))
-            .op(Op::I64Eqz)
-            .op(Op::BrIf(0))
-            .op(Op::LocalGet(table))
-            .op(Op::I64Load(clock))
-            .op(Op::LocalTee(VALUE))
-            .op(Op::I64Const(-3))
-            .op(Op::I64GtU)
-            .op(Op::BrIf(0))
-            .op(Op::LocalGet(fetch))
-            .op(Op::I64Load(ages))
-            .op(Op::LocalGet(VALUE))
-            .op(Op::I64Ne)
-            .op(Op::BrIf(0));
-
-        // Match data_translation_then_fetch. Leave the hot data/fetch order
-        // untouched if it already matches and otherwise install both ages.
-        self.op(Op::LocalGet(data))
-            .op(Op::LocalGet(fetch))
-            .op(Op::I32Ne)
-            .op(Op::LocalGet(data))
-            .op(Op::I64Load(ages))
-            .op(Op::LocalGet(VALUE))
-            .op(Op::I64Const(1))
-            .op(Op::I64Sub)
-            .op(Op::I64Ne)
-            .op(Op::I32And)
-            .op(Op::If(BlockType::Empty));
-        for (slot, advance) in [(data, 1), (fetch, 2)] {
-            self.op(Op::LocalGet(slot))
-                .op(Op::LocalGet(VALUE))
-                .op(Op::I64Const(advance))
+                .op(Op::LocalTee(fetch))
+                .op(Op::I64Load(live_ids))
+                .op(Op::LocalGet(id))
+                .op(Op::I64Ne)
+                .op(Op::BrIf(0))
+                .op(Op::LocalGet(table))
+                .op(Op::I64Load(clock))
+                .op(Op::LocalTee(stamp))
+                .op(Op::I64Const(-1))
+                .op(Op::I64Eq)
+                .op(Op::BrIf(0))
+                .op(Op::LocalGet(table))
+                .op(Op::LocalGet(data))
+                .op(Op::I32Store(hint))
+                .op(Op::LocalGet(fetch))
+                .op(Op::LocalGet(stamp))
+                .op(Op::I64Const(1))
                 .op(Op::I64Add)
-                .op(Op::I64Store(ages));
+                .op(Op::LocalTee(stamp))
+                .op(Op::I64Store(ages))
+                .op(Op::LocalGet(table))
+                .op(Op::LocalGet(stamp))
+                .op(Op::I64Store(clock));
         }
-        self.op(Op::LocalGet(table))
-            .op(Op::LocalGet(VALUE))
-            .op(Op::I64Const(2))
-            .op(Op::I64Add)
-            .op(Op::I64Store(clock))
-            .op(Op::End)
-            .op(Op::LocalGet(entry))
+        self.op(Op::LocalGet(entry))
             .op(Op::I32Load(mem(offset_of!(IndexedReadEntry, host), 2)))
             .op(Op::LocalGet(STORE_STATUS))
             .op(Op::I32Add)

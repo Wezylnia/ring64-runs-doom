@@ -7,6 +7,8 @@ pub(crate) const PREFIX_DWORD_READ_SEGMENT: u32 = 16;
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 pub(crate) const PREFIX_INDEXED_READ_SEGMENT: u32 = 17;
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+pub(crate) const INDEXED_SCALAR_READ: u32 = 1 << 31;
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 pub(crate) const INDEXED_PAGED_READ_GUARD: u32 = 1 << 31;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

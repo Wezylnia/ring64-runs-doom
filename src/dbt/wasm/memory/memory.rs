@@ -1295,6 +1295,34 @@ impl Emitter {
     pub(super) fn load_address_slow(&mut self, width: Width, for_write: bool, exit_depth: u32) {
         self.linear_address();
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        let indexed = !for_write && self.uses_indexed_scalar_read(self.current_operation);
+        #[cfg(any(feature = "parallel", not(target_arch = "wasm32")))]
+        let indexed = false;
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if indexed {
+            self.op(Op::LocalSet(ADDRESS));
+            self.indexed_read_host(self.indexed_paged_read.unwrap(), width.bytes(), false);
+            self.op(Op::LocalTee(STORE_STATUS))
+                .op(Op::If(BlockType::Empty))
+                .op(Op::LocalGet(STORE_STATUS));
+            self.direct_scalar_load(
+                width,
+                MemArg {
+                    offset: 0,
+                    align: 0,
+                    memory_index: 0,
+                },
+            );
+            if self.paged_return_uses_read_result() {
+                self.op(Op::I32Const(
+                    crate::embedding::layout::QUIET_RETURN_READ as i32,
+                ))
+                .op(Op::LocalSet(STORE_STATUS));
+            }
+            self.op(Op::Else).op(Op::LocalGet(ADDRESS));
+        }
+        let read_exit = exit_depth + u32::from(indexed);
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         if !for_write
             && width == Width::W64
             && self.segment == Segment::Ss
@@ -1302,7 +1330,12 @@ impl Emitter {
         {
             use crate::embedding::layout::{PAGED_RETURN_QWORD, ReturnRead};
             self.used_paged_quiet_completion = true;
-            self.op(Op::I32Const(PAGED_RETURN_QWORD as i32))
+            let packed = if indexed {
+                PAGED_RETURN_QWORD | crate::embedding::layout::paging::INDEXED_SCALAR_READ
+            } else {
+                PAGED_RETURN_QWORD
+            };
+            self.op(Op::I32Const(packed as i32))
                 .op(Op::Call(0))
                 .op(Op::LocalTee(VALUE))
                 .op(Op::I32WrapI64)
@@ -1314,7 +1347,7 @@ impl Emitter {
                 .op(Op::LocalTee(STORE_STATUS))
                 .op(Op::I32Eqz)
                 .op(Op::If(BlockType::Empty));
-            self.memory_failure(exit_depth + 1);
+            self.memory_failure(read_exit + 1);
             self.op(Op::End)
                 .op(Op::LocalGet(VALUE))
                 .op(Op::I32WrapI64)
@@ -1324,9 +1357,19 @@ impl Emitter {
                     memory_index: 0,
                 }))
                 .op(Op::LocalSet(VALUE));
+            if indexed {
+                self.op(Op::End);
+            }
             return;
         }
-        self.op(Op::I32Const(i32::from(width.bytes())));
+        let packed = u32::from(width.bytes());
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        let packed = if indexed {
+            packed | crate::embedding::layout::paging::INDEXED_SCALAR_READ
+        } else {
+            packed
+        };
+        self.op(Op::I32Const(packed as i32));
         if !self.context.is_long64() {
             self.op(Op::I32Const(self.segment as i32));
         }
@@ -1334,8 +1377,11 @@ impl Emitter {
             .op(Op::LocalSet(VALUE))
             .op(Op::Call(2))
             .op(Op::If(BlockType::Empty));
-        self.memory_failure(exit_depth + 1);
+        self.memory_failure(read_exit + 1);
         self.op(Op::End);
+        if indexed {
+            self.op(Op::End);
+        }
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         if !for_write && let Some(ready) = self.checked_paged_read_rearm(width) {
             self.rearm_paged_read(width, ready);
