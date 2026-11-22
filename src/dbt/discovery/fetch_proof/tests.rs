@@ -131,12 +131,16 @@ fn guarded_dword_walk_import_requires_a_small_executable_leaf_and_keeps_the_cap_
     assert_eq!(emit_profile(&wide, true, true, tight_cap), wide_tight);
     assert_eq!(emit_profile(&small, true, true, tight_cap), wide_tight);
     let mut with_small_proof = emit_profile(&small, true, true, usize::MAX);
-    let walk = b"paged_loop_walk_dword";
-    let start = with_small_proof
-        .windows(walk.len())
-        .position(|part| part == walk)
-        .unwrap();
-    with_small_proof[start..start + walk.len()].copy_from_slice(b"paged_loop_read_dword");
+    for (selected, ordinary) in [
+        (&b"paged_loop_walk_dword"[..], &b"paged_loop_read_dword"[..]),
+        (&b"paged_walk_guard"[..], &b"paged_loop_guard"[..]),
+    ] {
+        let start = with_small_proof
+            .windows(selected.len())
+            .position(|part| part == selected)
+            .unwrap();
+        with_small_proof[start..start + selected.len()].copy_from_slice(ordinary);
+    }
     assert_eq!(with_small_proof, with_wide_proof);
 }
 

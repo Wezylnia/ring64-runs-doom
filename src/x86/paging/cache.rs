@@ -292,7 +292,7 @@ impl Cache {
         state: &State,
         request: Request,
         keys: &ProtectionKeys,
-        active_source: impl FnOnce() -> bool,
+        peek: impl FnOnce() -> Option<Translation>,
     ) -> Option<u32> {
         debug_assert_eq!(request.access, Access::Read);
         debug_assert_eq!(request.linear & 3, 0);
@@ -305,14 +305,7 @@ impl Cache {
             .filter(|&index| entries.slots[index].is_some())?;
         let Some(data) = entries.find(state, request) else {
             drop(entries);
-            return self.fill_dword_miss_then_fetch(
-                image,
-                state,
-                request,
-                keys,
-                fetch,
-                active_source,
-            );
+            return self.fill_dword_miss_then_fetch(image, state, request, fetch, peek);
         };
         let translation = entries.slots[data].unwrap().translation.at(request.linear);
         if translation.remaining < 4 || translation.rights.authorize(state, request, keys).is_err()
@@ -334,9 +327,8 @@ impl Cache {
         image: &crate::memory::Image,
         state: &State,
         request: Request,
-        keys: &ProtectionKeys,
         fetch: usize,
-        active_source: impl FnOnce() -> bool,
+        peek: impl FnOnce() -> Option<Translation>,
     ) -> Option<u32> {
         let entries = self.entries.borrow();
         // This private caller runs only in the admitted read-only loop.
@@ -349,12 +341,11 @@ impl Cache {
             || code.translation.span != 4096
             || code.family != family(state)
             || !code.global && code.pcid != state.pcid()
-            || !active_source()
         {
             return None;
         }
         let (translation, value) = image.probe_physical_read(|image| {
-            let translation = super::walk::peek(image, state, request, keys).ok()?;
+            let translation = peek()?;
             if !translation.accessed
                 || translation.span != 4096
                 || translation.remaining < 4

@@ -126,6 +126,8 @@ struct Core {
     paging_work: crate::x86::paging::access::AccessState,
     translation_cache: crate::x86::paging::cache::Cache,
     active_owner: Option<u64>,
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    guarded_walk: RefCell<Option<paging::GuardedWalk>>,
     paging_failure: Option<crate::x86::paging::walk::Failure>,
     pdpte_load_fault: Option<(u8, u8, Fault)>,
     paging_system: Option<crate::x86::protection::SystemPagingFault>,
@@ -203,6 +205,8 @@ impl Bridge {
             paging_work: Default::default(),
             translation_cache: Default::default(),
             active_owner: None,
+            #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+            guarded_walk: Default::default(),
             paging_failure: None,
             pdpte_load_fault: None,
             paging_system: None,

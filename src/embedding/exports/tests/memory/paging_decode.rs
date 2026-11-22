@@ -248,6 +248,111 @@ fn guarded_dword_walk_requires_the_active_source_and_keeps_flags_on_refusal() {
 
 #[cfg(not(feature = "parallel"))]
 #[test]
+fn guarded_upper_walk_replays_a_cold_leaf_and_reloads_words_on_new_entry() {
+    fixture("long64", true, true);
+    BRIDGE.with_borrow_mut(|bridge| {
+        let image = &mut bridge.core.as_mut().unwrap().image;
+        for (address, word) in [
+            (0x3008, 0x5027),
+            (0x5000, 0x7027),
+            (0x5008, 0x8007),
+            (0x5010, 0x8027),
+            (0x6010, 0x7027),
+            (0x6018, 0),
+        ] {
+            image.physical_write(address, 8, word).unwrap();
+        }
+        image.physical_write(0x7000, 4, 0x11223344).unwrap();
+        image.physical_write(0x8000, 4, 0xaabbccdd).unwrap();
+    });
+    let owner = activate_single_instruction();
+    assert_eq!(paging::core_paged_debug_begin(PC, RF, 0), 0);
+    assert_eq!(paging::core_paged_walk_guard(PC, 3, 2, 0), 1);
+    physical_counts::take();
+    assert_eq!(paging::core_paged_loop_walk_dword(0x200000), 0x11223344);
+    assert_eq!(physical_counts::take(), [4, 32, 0, 0, 0, 0]);
+    assert_eq!(paging::core_paged_loop_walk_dword(0x201000), u64::MAX);
+    assert_eq!(physical_counts::take(), [1, 8, 0, 0, 0, 0]);
+    BRIDGE.with_borrow(|bridge| {
+        let core = bridge.core.as_ref().unwrap();
+        assert!(core.guarded_walk.borrow().is_none());
+        assert_eq!(core.image.physical_read(0x5008, 8).unwrap(), 0x8007);
+    });
+    assert_eq!(
+        super::super::scalar::core_paged_load(0x201000, 4),
+        0xaabbccdd
+    );
+    BRIDGE.with_borrow_mut(|bridge| {
+        let core = bridge.core.as_mut().unwrap();
+        assert_eq!(core.image.physical_read(0x5008, 8).unwrap(), 0x8027);
+        // A write in checked execution can change a data-table prefix that
+        // does not belong to the still-active executable source.
+        core.image.physical_write(0x3008, 8, 0x6027).unwrap();
+        assert!(core.image.source_is_active(owner));
+    });
+    assert_eq!(paging::core_paged_walk_guard(PC, 3, 2, 0), 1);
+    physical_counts::take();
+    assert_eq!(paging::core_paged_loop_walk_dword(0x202000), 0x11223344);
+    assert_eq!(physical_counts::take(), [4, 32, 0, 0, 0, 0]);
+    assert_eq!(paging::core_paged_loop_walk_dword(0x203000), u64::MAX);
+    assert_eq!(physical_counts::take(), [1, 8, 0, 0, 0, 0]);
+    BRIDGE.with_borrow(|bridge| {
+        let core = bridge.core.as_ref().unwrap();
+        assert!(core.guarded_walk.borrow().is_none());
+        assert_eq!(core.paging.unwrap().cr2, 0xdead);
+    });
+}
+
+#[cfg(not(feature = "parallel"))]
+#[test]
+fn guarded_upper_walk_reloads_after_host_mutation_and_guest_root_change() {
+    fixture("long64", true, true);
+    BRIDGE.with_borrow_mut(|bridge| {
+        let image = &mut bridge.core.as_mut().unwrap().image;
+        for (address, word) in [
+            (0x3008, 0x5027),
+            (0x5000, 0x7027),
+            (0x5008, 0x7027),
+            (0x6000, 0x8027),
+            (0x6008, 0x8027),
+            (0x7008, 0x2027),
+            (0x7000, 0x2027),
+        ] {
+            image.physical_write(address, 8, word).unwrap();
+        }
+        image.physical_write(0x7010, 4, 0x11223344).unwrap();
+        image.physical_write(0x8010, 4, 0xaabbccdd).unwrap();
+    });
+    activate_single_instruction();
+    assert_eq!(paging::core_paged_debug_begin(PC, RF, 0), 0);
+    assert_eq!(paging::core_paged_walk_guard(PC, 3, 2, 0), 1);
+    assert_eq!(paging::core_paged_loop_walk_dword(0x200010), 0x11223344);
+
+    BRIDGE.with_borrow_mut(|bridge| bridge.input = 0x6027u64.to_le_bytes().to_vec());
+    assert_eq!(mapped::core_write_memory(0x3008), 0);
+    assert_eq!(paging::core_paged_debug_begin(PC, RF, 0), 0);
+    assert_eq!(paging::core_paged_walk_guard(PC, 3, 2, 0), 1);
+    physical_counts::take();
+    assert_eq!(paging::core_paged_loop_walk_dword(0x201010), 0xaabbccdd);
+    assert_eq!(physical_counts::take(), [4, 32, 0, 0, 0, 0]);
+
+    BRIDGE.with_borrow_mut(|bridge| {
+        let core = bridge.core.as_mut().unwrap();
+        core.paging.as_mut().unwrap().cr3 = 0x7000;
+        core.translation_cache.clear();
+        core.guest_root_changed();
+    });
+    assert_eq!(paging::core_paged_loop_walk_dword(0x200010), u64::MAX);
+    activate_single_instruction();
+    assert_eq!(paging::core_paged_debug_begin(PC, RF, 0), 0);
+    assert_eq!(paging::core_paged_walk_guard(PC, 3, 2, 0), 1);
+    physical_counts::take();
+    assert_eq!(paging::core_paged_loop_walk_dword(0x200010), 0xaabbccdd);
+    assert_eq!(physical_counts::take(), [4, 32, 0, 0, 0, 0]);
+}
+
+#[cfg(not(feature = "parallel"))]
+#[test]
 fn paged_loop_revalidation_rejects_the_same_instruction_on_a_new_physical_page() {
     fixture("long64", true, true);
     BRIDGE.with_borrow_mut(|bridge| {

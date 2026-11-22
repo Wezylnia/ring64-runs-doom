@@ -244,17 +244,79 @@ pub fn peek(
     request: Request,
     keys: &ProtectionKeys,
 ) -> Result<Translation, Failure> {
+    peek_with_reader(state, request, keys, |address, width| {
+        read_walk_word(image, address, width)
+    })
+}
+
+fn read_walk_word(image: &Image, address: u64, width: u32) -> Result<u64, Fault> {
+    #[cfg(test)]
+    physical_counts::read(width);
+    image.physical_read(address, width)
+}
+
+fn peek_with_reader(
+    state: &State,
+    request: Request,
+    keys: &ProtectionKeys,
+    mut read: impl FnMut(u64, u32) -> Result<u64, Fault>,
+) -> Result<Translation, Failure> {
     walk_with::<false, false>(
         state,
         request,
-        |address, width, _| {
-            #[cfg(test)]
-            physical_counts::read(width);
-            image.physical_read(address, width).map(Some)
-        },
+        |address, width, _| read(address, width).map(Some),
         keys,
     )
     .map(|translation| translation.expect("observational walk cannot restart"))
+}
+
+#[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+#[derive(Default)]
+pub(crate) struct UpperWords {
+    words: [WalkWord; 3],
+}
+
+#[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+#[derive(Default)]
+struct WalkWord {
+    address: u64,
+    value: u64,
+    width: u32,
+}
+
+#[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+impl UpperWords {
+    pub(crate) fn peek(
+        &mut self,
+        image: &Image,
+        state: &State,
+        request: Request,
+        keys: &ProtectionKeys,
+    ) -> Result<Translation, Failure> {
+        // The pure walker reads once per visited level. Only the possible
+        // ancestors of a 4 KiB leaf are eligible. An early large-leaf result
+        // is refused by the caller, which drops this visit's scratch.
+        let upper = if state.efer & (1 << 10) != 0 { 3 } else { 1 };
+        let mut level = 0;
+        peek_with_reader(state, request, keys, |address, width| {
+            let index = level;
+            level += 1;
+            if index >= upper {
+                return read_walk_word(image, address, width);
+            }
+            let word = &mut self.words[index];
+            if word.width == width && word.address == address {
+                return Ok(word.value);
+            }
+            let value = read_walk_word(image, address, width)?;
+            *word = WalkWord {
+                address,
+                value,
+                width,
+            };
+            Ok(value)
+        })
+    }
 }
 
 pub fn walk(

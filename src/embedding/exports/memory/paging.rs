@@ -323,6 +323,67 @@ pub extern "C" fn core_paged_loop_guard(pc: u64, bytes: u32, flags: u64, shadow:
     paged_loop_guard::<false, false, false>(pc, bytes, flags, shadow)
 }
 
+#[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+pub(super) struct GuardedWalk {
+    owner: u64,
+    cr3: u64,
+    pdpte: Option<[u64; 4]>,
+    words: paging::walk::UpperWords,
+}
+
+#[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+#[unsafe(no_mangle)]
+pub extern "C" fn core_paged_walk_guard(pc: u64, bytes: u32, flags: u64, shadow: u32) -> i32 {
+    paged_walk_guard::<false>(pc, bytes, flags, shadow)
+}
+
+#[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+#[unsafe(no_mangle)]
+pub extern "C" fn core_paged_walk_loop_guard32(
+    pc: u64,
+    bytes: u32,
+    flags: u64,
+    shadow: u32,
+) -> i32 {
+    paged_walk_guard::<true>(pc, bytes, flags, shadow)
+}
+
+#[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+fn clear_guarded_walk() {
+    BRIDGE.with_borrow(|bridge| {
+        if let Some(core) = bridge.core.as_ref() {
+            *core.guarded_walk.borrow_mut() = None;
+        }
+    });
+}
+
+#[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+fn paged_walk_guard<const FLAT_DATA32: bool>(pc: u64, bytes: u32, flags: u64, shadow: u32) -> i32 {
+    // Only this read-only, synchronous body can use the lease. Each new
+    // entry starts empty, including across a checked replay or host boundary.
+    clear_guarded_walk();
+    let status = paged_loop_guard::<FLAT_DATA32, false, false>(pc, bytes, flags, shadow);
+    if status == 1 {
+        BRIDGE.with_borrow(|bridge| {
+            let core = bridge.core.as_ref().unwrap();
+            if !core.image.has_mmio()
+                && let Some(owner) = core
+                    .active_owner
+                    .filter(|&owner| core.image.source_is_active(owner))
+                && let Some(paging) = core.paging
+            {
+                *core.guarded_walk.borrow_mut() = Some(GuardedWalk {
+                    owner,
+                    cr3: paging.cr3,
+                    pdpte: paging.pdpte,
+                    words: Default::default(),
+                });
+            }
+        });
+    }
+    status
+}
+
 #[cfg(not(feature = "parallel"))]
 #[unsafe(no_mangle)]
 pub extern "C" fn core_paged_read_loop_guard32(
@@ -407,6 +468,7 @@ pub extern "C" fn core_paged_loop_read_dword(address: u64) -> u64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn core_paged_loop_walk_dword(address: u64) -> u64 {
     if address & 3 != 0 || !crate::memory::canonical48(address) {
+        clear_guarded_walk();
         return u64::MAX;
     }
     BRIDGE.with_borrow(|bridge| {
@@ -428,12 +490,34 @@ pub extern "C" fn core_paged_loop_walk_dword(address: u64) -> u64 {
                 request,
                 &state.protection_keys,
                 || {
-                    core.active_owner
-                        .is_some_and(|owner| core.image.source_is_active(owner))
+                    let owner = core
+                        .active_owner
+                        .filter(|&owner| core.image.source_is_active(owner))?;
+                    let mut guarded_walk = core.guarded_walk.borrow_mut();
+                    if let Some(lease) = guarded_walk.as_mut()
+                        && lease.owner == owner
+                        && lease.cr3 == paging.cr3
+                        && lease.pdpte == paging.pdpte
+                    {
+                        return lease
+                            .words
+                            .peek(&core.image, paging, request, &state.protection_keys)
+                            .ok();
+                    }
+                    *guarded_walk = None;
+                    paging::walk::peek(&core.image, paging, request, &state.protection_keys).ok()
                 },
             )
         };
-        read().map_or(u64::MAX, u64::from)
+        match read() {
+            Some(value) => u64::from(value),
+            None => {
+                // Checked replay may publish A bits before changing or
+                // re-entering this clone.
+                *bridge.core.as_ref().unwrap().guarded_walk.borrow_mut() = None;
+                u64::MAX
+            }
+        }
     })
 }
 

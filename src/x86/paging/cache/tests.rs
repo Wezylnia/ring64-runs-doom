@@ -110,8 +110,15 @@ fn guarded_dword_miss_matches_checked_fill_and_successor_fetch() {
         cache.fill(&state, page, translation);
         reference.fill(&state, page, translation);
     }
-    let read =
-        |image: &Image, source| cache.read_dword_then_fetch(image, &state, data, keys, || source);
+    let read = |image: &Image, source| {
+        cache.read_dword_then_fetch(image, &state, data, keys, || {
+            if source {
+                walk::peek(image, &state, data, keys).ok()
+            } else {
+                None
+            }
+        })
+    };
     let before = cache.entries.borrow().clock;
     assert_eq!(read(&image, true), None);
     assert_eq!(image.physical_read(0x4010, 8).unwrap(), 0xb007);
@@ -170,7 +177,7 @@ fn guarded_dword_miss_refuses_eviction_of_code_or_a_retained_denial() {
     cached.fill(&state, code, execute);
     image.physical_write(0x4010, 8, 0xb027).unwrap();
     assert_eq!(
-        capacity_one.read_dword_then_fetch(&image, &state, data, keys, || true),
+        capacity_one.read_dword_then_fetch(&image, &state, data, keys, || panic!("code eviction")),
         None
     );
     assert_eq!(capacity_one.entries.borrow().clock, 1);
@@ -179,7 +186,9 @@ fn guarded_dword_miss_refuses_eviction_of_code_or_a_retained_denial() {
     // A stale small code entry can coexist with a new covering PDE.
     image.physical_write(0x3000, 8, 0xa7).unwrap();
     assert_eq!(
-        cached.read_dword_then_fetch(&image, &state, data, keys, || true),
+        cached.read_dword_then_fetch(&image, &state, data, keys, || {
+            walk::peek(&image, &state, data, keys).ok()
+        }),
         None
     );
     assert_eq!(cached.entries.borrow().clock, 1);

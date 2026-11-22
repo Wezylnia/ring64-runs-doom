@@ -40,6 +40,55 @@ fn fixture() -> (Image, State) {
     )
 }
 
+#[cfg(not(feature = "parallel"))]
+#[test]
+fn guarded_upper_walk_scratch_is_independent_and_leaves_the_leaf_live() {
+    let (mut first, state) = fixture();
+    let (mut second, _) = fixture();
+    second.physical_write(0x3000, 8, 0x27).unwrap();
+    second.physical_write(8, 8, 0xb027).unwrap();
+    let request = Request {
+        linear: 0x1234,
+        access: Access::Read,
+        class: AccessClass::User,
+    };
+    let keys = &ProtectionKeys::ZERO;
+    let mut first_words = UpperWords::default();
+    let mut second_words = UpperWords::default();
+    physical_counts::take();
+    assert_eq!(
+        first_words
+            .peek(&first, &state, request, keys)
+            .unwrap()
+            .physical,
+        0xa234
+    );
+    assert_eq!(
+        second_words
+            .peek(&second, &state, request, keys)
+            .unwrap()
+            .physical,
+        0xb234
+    );
+    assert_eq!(physical_counts::take(), [8, 64, 0, 0, 0, 0]);
+    first.physical_write(0x4008, 8, 0xc027).unwrap();
+    assert_eq!(
+        first_words
+            .peek(&first, &state, request, keys)
+            .unwrap()
+            .physical,
+        0xc234
+    );
+    assert_eq!(
+        second_words
+            .peek(&second, &state, request, keys)
+            .unwrap()
+            .physical,
+        0xb234
+    );
+    assert_eq!(physical_counts::take(), [2, 16, 0, 0, 0, 0]);
+}
+
 #[test]
 fn literal_nonidentity_walk_peeks_without_accessed_effects() {
     let (image, state) = fixture();

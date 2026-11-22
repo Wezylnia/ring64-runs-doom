@@ -1035,7 +1035,24 @@ fn emit_body(
         write_segment_base_type.map(|index| import_function("write_segment_base", index));
     let processor = processor_type.map(|index| import_function("processor", index));
     let protection_key = protection_key_type.map(|index| import_function("protection_key", index));
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    let paged_dword_walk = !mmio
+        && !paged_read_byte
+        && paged_read_dword
+        && loop_body.is_some_and(|body| body.can_walk_paged_dword(unit));
     let paged_loop_guard = paged_loop_guard_type.map(|index| {
+        #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+        if paged_dword_walk {
+            const _: () = assert!("paged_walk_guard".len() == "paged_loop_guard".len());
+            const _: () =
+                assert!("paged_walk_loop_guard32".len() == "paged_read_loop_guard32".len());
+            let name = if unit.context.is_long64() {
+                "paged_walk_guard"
+            } else {
+                "paged_walk_loop_guard32"
+            };
+            return import_function(name, index);
+        }
         #[cfg(not(feature = "parallel"))]
         if paged_sse_write || loop_body.is_some_and(StructuredLoop::paged_sse) {
             return import_function("paged_sse_loop_guard", index);
@@ -1056,10 +1073,7 @@ fn emit_body(
         .filter(|_| paged_read_dword)
         .map(|index| {
             #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
-            if !mmio
-                && !paged_read_byte
-                && loop_body.is_some_and(|body| body.can_walk_paged_dword(unit))
-            {
+            if paged_dword_walk {
                 // Keep the old artifact size and its size-limit fallbacks.
                 const _: () =
                     assert!("paged_loop_walk_dword".len() == "paged_loop_read_dword".len());
