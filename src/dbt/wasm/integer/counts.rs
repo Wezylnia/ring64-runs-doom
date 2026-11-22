@@ -26,7 +26,10 @@ impl Emitter {
     ) {
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         let proof = match dst {
-            Location::Memory(address) if self.uses_indexed_scalar_rmw() => {
+            Location::Memory(address)
+                if self.uses_indexed_scalar_rmw()
+                    || (self.linear_call_spans && matches!(kind, Shift::Rol | Shift::Ror)) =>
+            {
                 self.load_cached_rmw(address, width, next_pc, exit_depth)
             }
             _ => None,

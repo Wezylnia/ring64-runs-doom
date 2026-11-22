@@ -482,3 +482,94 @@ test('sampled stack stores preserve failed PUSH and POP restart state', async ()
     Core.prototype.compile = compile;
   }
 });
+
+test('flat memory rotates reuse checked spans and fault before changing flags', async () => {
+  const head = 0x31000n;
+  const data = 0x49000n;
+  // MOV [EBX],EDI; MOV ESI,[EBX]; ROL [EBX],CL; ROR [EBX],CL; CALL EAX; DEC EDX; JNZ head.
+  const code = hex('893b8b33d303d30bffd04a75f390');
+  const codeMap = {
+    base: head,
+    backing: 'code',
+    offset: 0,
+    length: code.length,
+    permissions: { read: true, write: false, execute: true },
+  };
+  const dataMap = {
+    base: data,
+    backing: 'data',
+    offset: 0,
+    length: 4,
+    permissions: { read: true, write: true, execute: false },
+  };
+  const cpu = await createCpu({
+    compiler,
+    entry: head,
+    limits: LIMITS,
+    context: protectedSnapshot(),
+    memory: {
+      backings: [
+        { id: 'code', bytes: code },
+        { id: 'data', bytes: new Uint8Array(4) },
+        { id: 'readonly', bytes: hex('78563412') },
+      ],
+      mappings: [codeMap, dataMap],
+    },
+    memoryLimits: { maxBackings: 3, maxMappings: 2, maxBackingBytes: code.length + 8 },
+  });
+  const prototype = Core.prototype as unknown as {
+    artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
+  };
+  const imports = prototype.artifactImports;
+  let checkedReads = 0;
+  prototype.artifactImports = function (observed) {
+    const env = imports.call(this, observed);
+    const read = env.segmented_load_for_write;
+    assert.ok(typeof read === 'function');
+    env.segmented_load_for_write = (address: bigint, width: number, segment: number) => {
+      checkedReads++;
+      return read(address, width, segment);
+    };
+    return env;
+  };
+  try {
+    const flags = 0x42n;
+    for (const [count, retired, offset, value, expectedFlags] of [
+      [1n, 3n, 6n, '03000000', flags | 0x801n],
+      [1n, 4n, 8n, '01000080', flags | 0x801n],
+      [32n, 4n, 8n, '01000080', flags],
+    ] as const) {
+      cpu.setState(initial(head, { 1: count, 3: data, 7: 0x80000001n }, flags));
+      const result = await cpu.run({ budget: 20n, stop: head + offset });
+      assert.equal(result.reason, 'stop');
+      assert.equal(result.retired, retired);
+      assert.equal(result.state.flags, expectedFlags);
+      assert.deepEqual(cpu.readMemory(data, 4), hex(value));
+    }
+    assert.equal(checkedReads, 0);
+    cpu.setMappings([
+      codeMap,
+      { ...dataMap, backing: 'readonly', permissions: { ...dataMap.permissions, write: false } },
+    ]);
+    cpu.removeBacking('data');
+    cpu.setState(initial(head + 4n, { 1: 32n, 3: data }, flags));
+    const denied = await cpu.run({ budget: 20n, stop: head + 6n });
+    assert.equal(denied.reason, 'data-fault');
+    assert.equal(denied.retired, 0n);
+    assert.equal(denied.state.flags, flags);
+    assert.equal(checkedReads, 1);
+    assert.deepEqual(cpu.readMemory(data, 4), hex('78563412'));
+    fault(denied, {
+      instructionPc: head + 4n,
+      address: data,
+      width: 4,
+      segment: 'ds',
+      access: 'write',
+      cause: 'permission',
+      failingAddress: data,
+    });
+  } finally {
+    prototype.artifactImports = imports;
+    cpu.dispose();
+  }
+});
