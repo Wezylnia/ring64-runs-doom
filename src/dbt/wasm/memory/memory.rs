@@ -1001,7 +1001,7 @@ impl Emitter {
         exit_depth: u32,
         slow: impl FnOnce(&mut Self, u32),
     ) -> bool {
-        use crate::memory::{Access, DirectSpan as Descriptor};
+        use crate::memory::Access;
         let bytes = match operand {
             DirectOperand::ScalarLoad(width) | DirectOperand::ScalarStore(width) => {
                 u32::from(width.bytes())
@@ -1070,18 +1070,7 @@ impl Emitter {
         self.op(Op::Block(BlockType::Empty));
         self.linear_address();
         if flat32 {
-            // A retained span cannot cross 4 GiB. An offset below its base
-            // wraps to an unsigned delta at or beyond the end of that span.
-            self.op(Op::I32WrapI64)
-                .op(Op::LocalGet(span.base))
-                .op(Op::I32WrapI64)
-                .op(Op::I32Sub)
-                .op(Op::I64ExtendI32U)
-                .op(Op::LocalTee(VALUE));
-            if bytes > 1 {
-                self.op(Op::I64Const(i64::from(bytes - 1))).op(Op::I64Add);
-            }
-            self.op(Op::LocalGet(span.length)).op(Op::I64LtU);
+            self.flat_span_contains(span, bytes);
         } else {
             self.op(Op::LocalGet(span.base))
                 .op(Op::I64Sub)
@@ -1118,6 +1107,97 @@ impl Emitter {
             .unlikely(Op::If(BlockType::Empty));
         slow(self, exit_depth + 3);
         self.op(Op::Br(2)).op(Op::End);
+        self.load_span_descriptor(span);
+        self.linear_address();
+        self.op(Op::LocalGet(span.base))
+            .op(Op::I64Sub)
+            .op(Op::LocalSet(VALUE))
+            .op(Op::End)
+            .op(Op::LocalGet(span.host))
+            .op(Op::LocalGet(VALUE))
+            .op(Op::I32WrapI64)
+            .op(Op::I32Add);
+        let memory = MemArg {
+            offset: 0,
+            align: 0,
+            memory_index: 0,
+        };
+        match operand {
+            DirectOperand::VectorDword(vector) => {
+                self.op(Op::V128Load32Zero(memory)).op(Op::LocalSet(vector));
+            }
+            DirectOperand::VectorBlock(vector) => {
+                self.op(Op::V128Load(memory)).op(Op::LocalSet(vector));
+            }
+            DirectOperand::VectorBlockStore { value, .. } => {
+                self.op(Op::LocalGet(value))
+                    .op(Op::V128Store(memory))
+                    .op(Op::I32Const(1))
+                    .op(Op::LocalSet(STORE_STATUS));
+            }
+            DirectOperand::ScalarLoad(width) => self.direct_scalar_load(width, memory),
+            DirectOperand::ScalarStore(width) => {
+                self.op(Op::LocalGet(RESULT));
+                self.direct_scalar_store(width, memory);
+                self.op(Op::I32Const(1)).op(Op::LocalSet(STORE_STATUS));
+            }
+        }
+        self.op(Op::End);
+        true
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn flat_copy_span_host(&mut self, address: u32, width: u32, span: SpanCache) {
+        use wasm_encoder::ValType;
+
+        self.op(Op::Block(BlockType::Result(ValType::I32)))
+            .op(Op::LocalGet(address));
+        self.flat_span_contains(span, width);
+        self.op(Op::I32Eqz)
+            .unlikely(Op::If(BlockType::Empty))
+            .op(Op::LocalGet(address))
+            .op(Op::I32Const(width as i32))
+            .op(Op::I32Const(Segment::Ds as i32))
+            .op(Op::Call(span.resolve))
+            .op(Op::LocalTee(span.descriptor))
+            .op(Op::I32Eqz)
+            .unlikely(Op::If(BlockType::Empty))
+            .op(Op::I32Const(0))
+            .op(Op::Br(2))
+            .op(Op::End);
+        self.load_span_descriptor(span);
+        self.op(Op::LocalGet(address))
+            .op(Op::LocalGet(span.base))
+            .op(Op::I64Sub)
+            .op(Op::LocalSet(VALUE))
+            .op(Op::End)
+            .op(Op::LocalGet(span.host))
+            .op(Op::LocalGet(VALUE))
+            .op(Op::I32WrapI64)
+            .op(Op::I32Add)
+            .op(Op::End);
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    fn flat_span_contains(&mut self, span: SpanCache, bytes: u32) {
+        // A retained span cannot cross 4 GiB. An offset below its base
+        // wraps to an unsigned delta at or beyond the end of that span.
+        self.op(Op::I32WrapI64)
+            .op(Op::LocalGet(span.base))
+            .op(Op::I32WrapI64)
+            .op(Op::I32Sub)
+            .op(Op::I64ExtendI32U)
+            .op(Op::LocalTee(VALUE));
+        if bytes > 1 {
+            self.op(Op::I64Const(i64::from(bytes - 1))).op(Op::I64Add);
+        }
+        self.op(Op::LocalGet(span.length)).op(Op::I64LtU);
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    fn load_span_descriptor(&mut self, span: SpanCache) {
+        use crate::memory::DirectSpan as Descriptor;
+
         let field = |offset, align| MemArg {
             offset,
             align,
@@ -1141,38 +1221,6 @@ impl Emitter {
                 2,
             )))
             .op(Op::LocalSet(span.host));
-        self.linear_address();
-        self.op(Op::LocalGet(span.base))
-            .op(Op::I64Sub)
-            .op(Op::LocalSet(VALUE))
-            .op(Op::End)
-            .op(Op::LocalGet(span.host))
-            .op(Op::LocalGet(VALUE))
-            .op(Op::I32WrapI64)
-            .op(Op::I32Add);
-        let memory = field(0, 0);
-        match operand {
-            DirectOperand::VectorDword(vector) => {
-                self.op(Op::V128Load32Zero(memory)).op(Op::LocalSet(vector));
-            }
-            DirectOperand::VectorBlock(vector) => {
-                self.op(Op::V128Load(memory)).op(Op::LocalSet(vector));
-            }
-            DirectOperand::VectorBlockStore { value, .. } => {
-                self.op(Op::LocalGet(value))
-                    .op(Op::V128Store(memory))
-                    .op(Op::I32Const(1))
-                    .op(Op::LocalSet(STORE_STATUS));
-            }
-            DirectOperand::ScalarLoad(width) => self.direct_scalar_load(width, memory),
-            DirectOperand::ScalarStore(width) => {
-                self.op(Op::LocalGet(RESULT));
-                self.direct_scalar_store(width, memory);
-                self.op(Op::I32Const(1)).op(Op::LocalSet(STORE_STATUS));
-            }
-        }
-        self.op(Op::End);
-        true
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]

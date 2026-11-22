@@ -2760,7 +2760,7 @@ fn emit_body(
     {
         emitter.load_retained_flat_spans(
             [read_span, stack_read_span, flat_stack_pointer_span],
-            write_caches[0].filter(|_| cyclic_vector_store),
+            write_caches[0].filter(|_| cyclic_vector_store || linear_scalar_copy_prefix.is_some()),
         );
     }
     emitter.op(Op::Block(BlockType::Empty));
@@ -2842,7 +2842,7 @@ fn emit_body(
                 &unit.instructions[head..head + group.instructions],
                 group,
                 loop_depth,
-                (read.resolve, write.resolve),
+                (read, write),
             );
         }
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]

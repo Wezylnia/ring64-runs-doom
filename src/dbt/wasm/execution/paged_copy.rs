@@ -1,13 +1,14 @@
 use super::instruction::PagedPrefixFetch;
 use super::{
-    ADDRESS, Emitter, LHS, REMAINING, RESULT, RHS, RIP, STORE_STATUS, StructuredLoop, Unit, VALUE,
+    ADDRESS, Emitter, LHS, REMAINING, RHS, RIP, STORE_STATUS, StructuredLoop, Unit, VALUE,
+    memory::SpanCache,
 };
 use crate::x86::context::Segment;
 use crate::x86::instruction::{
     Address, AddressBase, Alu, DataOperand, Instruction, Location, Operation, RegisterView,
     VectorInstruction, VectorOperand, Width,
 };
-use wasm_encoder::{BlockType, Instruction as Op, MemArg, ValType};
+use wasm_encoder::{BlockType, Instruction as Op, MemArg};
 
 #[derive(Clone, Copy)]
 pub(super) struct CopyGroup {
@@ -418,7 +419,7 @@ impl Emitter {
         instructions: &[Instruction],
         group: ScalarCopyGroup,
         loop_depth: u32,
-        (read, write): (u32, u32),
+        (read, write): (SpanCache, SpanCache),
     ) {
         self.guard_straight_prefix(
             &instructions[0],
@@ -427,12 +428,12 @@ impl Emitter {
         );
         self.address(group.source, 0);
         self.op(Op::LocalSet(LHS));
-        self.linear_copy_host(LHS, group.width, read);
+        self.flat_copy_span_host(LHS, group.width, read);
         self.op(Op::LocalTee(STORE_STATUS))
             .op(Op::If(BlockType::Empty));
         self.address(group.destination, 0);
         self.op(Op::LocalSet(RHS));
-        self.linear_copy_host(RHS, group.width, write);
+        self.flat_copy_span_host(RHS, group.width, write);
         self.op(Op::I64ExtendI32U)
             .op(Op::LocalTee(ADDRESS))
             .op(Op::I64Const(0))
@@ -443,36 +444,6 @@ impl Emitter {
         self.stores = false;
         self.route(group.end, loop_depth + 3, loop_depth + 4);
         self.op(Op::End).op(Op::End).op(Op::End);
-    }
-
-    fn linear_copy_host(&mut self, address: u32, width: u32, resolve: u32) {
-        use crate::memory::DirectSpan;
-
-        self.op(Op::LocalGet(address))
-            .op(Op::I32Const(width as i32))
-            .op(Op::I32Const(Segment::Ds as i32))
-            .op(Op::Call(resolve))
-            .op(Op::I64ExtendI32U)
-            .op(Op::LocalTee(RESULT))
-            .op(Op::I32WrapI64)
-            .op(Op::If(BlockType::Result(ValType::I32)))
-            .op(Op::LocalGet(address))
-            .op(Op::LocalGet(RESULT))
-            .op(Op::I32WrapI64)
-            .op(Op::I64Load(memory(
-                std::mem::offset_of!(DirectSpan, base) as u64
-            )))
-            .op(Op::I64Sub)
-            .op(Op::I32WrapI64)
-            .op(Op::LocalGet(RESULT))
-            .op(Op::I32WrapI64)
-            .op(Op::I32Load(memory(
-                std::mem::offset_of!(DirectSpan, host) as u64
-            )))
-            .op(Op::I32Add)
-            .op(Op::Else)
-            .op(Op::I32Const(0))
-            .op(Op::End);
     }
 
     pub(super) fn emit_finite_scalar_copy(

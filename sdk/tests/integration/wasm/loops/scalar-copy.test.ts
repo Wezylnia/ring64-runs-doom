@@ -120,6 +120,15 @@ test('flat scalar copy groups preserve MOVSD/MOVQ upper lanes and partial retire
   data.set(seed, 3);
   data.set(seed, 67);
   const permissions = { read: true, write: true, execute: false };
+  const codeMap = {
+    base: PC,
+    length: code.length,
+    backing: 'code',
+    offset: 0,
+    permissions: { ...permissions, write: false, execute: true },
+  };
+  const sourceMap = { base: PC + 0x1000n, length: 4096, backing: 'data', offset: 0, permissions };
+  const targetMap = { ...sourceMap, base: PC + 0x2000n };
   const cpu = await createCpu({
     compiler,
     context: snapshot('protected'),
@@ -131,30 +140,22 @@ test('flat scalar copy groups preserve MOVSD/MOVQ upper lanes and partial retire
         { id: 'code', bytes: code },
         { id: 'data', bytes: data },
       ],
-      mappings: [
-        {
-          base: PC,
-          length: code.length,
-          backing: 'code',
-          offset: 0,
-          permissions: { ...permissions, write: false, execute: true },
-        },
-        { base: PC + 0x1000n, length: 4096, backing: 'data', offset: 0, permissions },
-        { base: PC + 0x2000n, length: 4096, backing: 'data', offset: 0, permissions },
-      ],
+      mappings: [codeMap, sourceMap, targetMap],
     },
   });
   const imports = proto.artifactImports;
-  let accepted = 0;
+  const probes = { read_span: 0, write_span: 0 };
   proto.artifactImports = function (observed) {
     const env = imports.call(this, observed);
-    const write = env.write_span;
-    if (typeof write === 'function') {
-      env.write_span = (addr: bigint, width: number, segment: number) => {
-        const result = write(addr, width, segment);
-        if (width === 18 && result) accepted++;
-        return result;
-      };
+    for (const helper of ['read_span', 'write_span'] as const) {
+      const span = env[helper];
+      if (typeof span === 'function') {
+        env[helper] = (address: bigint, width: number, segment: number) => {
+          const result = span(address, width, segment);
+          if (width === 18 && result) probes[helper]++;
+          return result;
+        };
+      }
     }
     return env;
   };
@@ -167,12 +168,30 @@ test('flat scalar copy groups preserve MOVSD/MOVQ upper lanes and partial retire
     assert.equal(run.state.registers[0], value & 0xffffn);
     assert.equal(cpu.readXmmState()[0], value);
     assert.deepEqual(cpu.readMemory(target, 18), expected);
-    assert.equal(accepted, 1);
+    assert.deepEqual(probes, { read_span: 1, write_span: 1 });
+    cpu.setState(initial(PC, { 0: 0xffffffffn, 6: target, 7: source }));
+    const warm = await cpu.run({ budget: 20n, stop });
+    assert.equal(warm.resources.compilations, 0);
+    assert.equal(warm.retired, 8n);
+    assert.deepEqual(cpu.readMemory(target, 18), expected);
+    assert.deepEqual(probes, { read_span: 1, write_span: 1 });
     cpu.setState(initial(PC, { 0: 0xffffffffn, 6: target + 64n, 7: source + 64n }));
     const partial = await cpu.run({ budget: 3n, stop });
     assert.equal(partial.reason, 'budget');
     assert.equal(partial.retired, 3n);
     assert.deepEqual(cpu.readMemory(target + 72n, 8), new Uint8Array(8));
+
+    cpu.setMappings([
+      codeMap,
+      sourceMap,
+      { ...targetMap, permissions: { ...permissions, write: false } },
+    ]);
+    cpu.setState(initial(PC, { 0: 0xffffffffn, 6: target, 7: source }));
+    const denied = await cpu.run({ budget: 20n, stop });
+    assert.equal(denied.reason, 'data-fault');
+    assert.equal(denied.retired, 1n);
+    assert.equal(denied.state.rip, PC + 4n);
+    assert.deepEqual(cpu.readMemory(target, 18), expected);
   } finally {
     proto.artifactImports = imports;
     cpu.dispose();
