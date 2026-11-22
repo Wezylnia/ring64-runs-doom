@@ -754,6 +754,14 @@ fn paged_loop_read<const WIDTH: u32, const CAPTURE_SLOT: bool>(address: u64) -> 
                     },
                 );
             }
+            if WIDTH == 1 {
+                return core.translation_cache.read_byte_then_fetch(
+                    paging,
+                    request,
+                    &state.protection_keys,
+                    read,
+                );
+            }
             core.translation_cache.data_then_fetch::<false, _>(
                 paging,
                 request,

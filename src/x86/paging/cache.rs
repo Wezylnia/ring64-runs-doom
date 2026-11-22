@@ -120,6 +120,8 @@ pub struct Cache {
     guarded_candidates: RefCell<guarded_candidates::Candidates>,
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
     last_dword_write: Cell<Option<NonZeroU8>>,
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    last_byte_read: Cell<Option<NonZeroU8>>,
 }
 
 impl Default for Cache {
@@ -145,6 +147,8 @@ impl Cache {
             guarded_candidates: RefCell::default(),
             #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
             last_dword_write: Cell::new(None),
+            #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+            last_byte_read: Cell::new(None),
         }
     }
 
@@ -308,7 +312,30 @@ impl Cache {
         slot: Option<usize>,
         access: impl FnOnce(usize, Translation) -> Option<T>,
     ) -> Option<T> {
-        self.data_with_slot_then_fetch::<WRITE, 1, T>(state, request, keys, slot, access)
+        self.data_with_slot_then_fetch::<WRITE, 1, T>(state, request, keys, slot, None, access)
+    }
+
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    #[inline]
+    pub(crate) fn read_byte_then_fetch<T>(
+        &self,
+        state: &State,
+        request: Request,
+        keys: &ProtectionKeys,
+        access: impl FnOnce(u64) -> Option<T>,
+    ) -> Option<T> {
+        let slot = self
+            .last_byte_read
+            .get()
+            .map(|slot| usize::from(slot.get() - 1));
+        self.data_with_slot_then_fetch::<false, 1, T>(
+            state,
+            request,
+            keys,
+            slot,
+            Some(&self.last_byte_read),
+            |_, translation| access(translation.physical),
+        )
     }
 
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
@@ -329,6 +356,7 @@ impl Cache {
             request,
             keys,
             slot,
+            Some(&self.last_dword_write),
             |_, translation| access(translation.physical),
         )
     }
@@ -341,6 +369,7 @@ impl Cache {
         request: Request,
         keys: &ProtectionKeys,
         slot: Option<usize>,
+        remember: Option<&Cell<Option<NonZeroU8>>>,
         access: impl FnOnce(usize, Translation) -> Option<T>,
     ) -> Option<T> {
         let mut entries = self.entries.borrow_mut();
@@ -374,10 +403,10 @@ impl Cache {
             entries.touch(data);
             entries.touch(fetch);
         }
-        if WRITE && WIDTH == 4 && !entries.slots[data].unwrap().global {
+        if let Some(remember) = remember.filter(|_| !entries.slots[data].unwrap().global) {
             const { assert!(CAPACITY < u8::MAX as usize) };
             // Cache an index only. Each use matches the live occupant anew.
-            self.last_dword_write.set(NonZeroU8::new(data as u8 + 1));
+            remember.set(NonZeroU8::new(data as u8 + 1));
         }
         Some(value)
     }

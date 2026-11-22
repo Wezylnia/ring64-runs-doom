@@ -113,6 +113,68 @@ fn guarded_byte_store_slot_keeps_write_authority_and_fetch_recency() {
 
 #[cfg(not(feature = "parallel"))]
 #[test]
+fn guarded_byte_read_memo_rechecks_the_live_slot_and_access_class() {
+    let (mut image, mut first, read) = fixture();
+    first.cr4 |= 1 << 17;
+    first.cr3 = 0x1001;
+    let second = State {
+        cr3: 0x5002,
+        ..first
+    };
+    image.physical_write(0x4010, 8, 0xc027).unwrap();
+    image.physical_write(0x8010, 8, 0xd027).unwrap();
+    let fetch = Request {
+        linear: 0x2000,
+        access: Access::Execute,
+        ..read
+    };
+    let cache = Cache::with_capacity(2);
+    let fill = |image: &Image, state, request| {
+        let translation = walk::peek(image, state, request, &Keys::ZERO).unwrap();
+        cache.fill(state, request, translation);
+    };
+    fill(&image, &first, read);
+    fill(&image, &first, fetch);
+    assert_eq!(
+        cache.read_byte_then_fetch(&first, read, &Keys::ZERO, Some),
+        Some(0xa234)
+    );
+    let slot = cache.last_byte_read.get().unwrap();
+
+    // A different PCID can replace the memo's occupant with the same address.
+    fill(&image, &second, read);
+    assert_eq!(
+        cache.read_byte_then_fetch(&first, read, &Keys::ZERO, Some),
+        None
+    );
+    fill(&image, &second, fetch);
+    assert_eq!(
+        cache.read_byte_then_fetch(&second, read, &Keys::ZERO, Some),
+        Some(0xb234)
+    );
+    assert_eq!(cache.last_byte_read.get(), Some(slot));
+
+    cache.invalidate_pcid(second.pcid());
+    image.physical_write(0x8008, 8, 0xb063).unwrap();
+    let supervisor_read = Request {
+        class: AccessClass::operand(0, false),
+        ..read
+    };
+    fill(&image, &second, supervisor_read);
+    fill(&image, &second, fetch);
+    assert_eq!(cache.last_byte_read.get(), Some(slot));
+    let before = cache.entries.borrow().clock;
+    assert_eq!(
+        cache.read_byte_then_fetch(&second, read, &Keys::ZERO, |_| {
+            panic!("A retained supervisor translation cannot satisfy the same user read")
+        }),
+        None::<()>
+    );
+    assert_eq!(cache.entries.borrow().clock, before);
+}
+
+#[cfg(not(feature = "parallel"))]
+#[test]
 fn guarded_dword_store_memo_rechecks_evicted_and_replaced_slots() {
     let (mut image, mut first, read) = fixture();
     first.cr4 |= 1 << 17;
