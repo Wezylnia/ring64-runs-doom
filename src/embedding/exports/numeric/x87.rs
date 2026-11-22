@@ -88,16 +88,19 @@ pub extern "C" fn core_x87(
 ) -> i32 {
     #[cfg(not(feature = "parallel"))]
     if segment == x87::REGISTER_PAIR_SEGMENT {
-        if flags != 0 {
-            return -1;
-        }
-        return core_x87_register_pair(operation, offset, instruction_pc, rax);
+        return core_x87_register_pair(operation, offset, instruction_pc, rax, flags);
     }
     core_x87_impl::<false, false>(operation, offset, segment, instruction_pc, flags, rax)
 }
 
 #[cfg(not(feature = "parallel"))]
-fn core_x87_register_pair(first: u32, second: u64, first_pc: u64, second_pc: u64) -> i32 {
+fn core_x87_register_pair(
+    first: u32,
+    second: u64,
+    first_pc: u64,
+    second_pc: u64,
+    flags: u64,
+) -> i32 {
     let Ok(second) = u32::try_from(second) else {
         return -1;
     };
@@ -108,22 +111,30 @@ fn core_x87_register_pair(first: u32, second: u64, first_pc: u64, second_pc: u64
         let Some(second) = bridge.x87_operations.get(second) else {
             return -1;
         };
-        if !x87::register_load_arithmetic(first, second) {
+        let compare = x87::register_exchange_compare(first, second);
+        if !compare && (flags != 0 || !x87::register_load_arithmetic(first, second)) {
             return -1;
         }
         let core = bridge.core.as_mut().unwrap();
-        if core.paging.is_some()
-            || !unsafe { (*core.state.get()).x87.can_load_register(first.index) }
-        {
+        let state = unsafe { &(*core.state.get()).x87 };
+        let can_start = if compare {
+            state.can_exchange_register(first.index)
+        } else {
+            state.can_load_register(first.index)
+        };
+        if core.paging.is_some() || !can_start {
             return -1;
         }
-        // A valid register FLD cannot raise a new exception. Both original
+        // An admitted register move cannot raise a new exception. Both original
         // numeric operations execute, including the second's exception response.
         clear_x87_diagnostics(core);
-        let state = unsafe { &mut (*core.state.get()).x87 };
-        for (operation, pc) in [(first, first_pc), (second, second_pc)] {
-            x87::eval(state, operation, 0, 0);
-            x87_environment(&core.context, state, operation, pc, None);
+        let run = unsafe { &mut *core.state.get() };
+        x87::eval(&mut run.x87, first, 0, 0);
+        x87_environment(&core.context, &mut run.x87, first, first_pc, None);
+        let effect = x87::eval(&mut run.x87, second, 0, flags);
+        x87_environment(&core.context, &mut run.x87, second, second_pc, None);
+        if compare {
+            run.flags = effect.flags;
         }
         0
     })

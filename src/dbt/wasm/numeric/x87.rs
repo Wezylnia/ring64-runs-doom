@@ -11,7 +11,7 @@ use super::{REMAINING, RIP};
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 use crate::x86::{
     instruction::{Instruction, Operation},
-    x87::{Op, REGISTER_PAIR_SEGMENT, register_load_arithmetic},
+    x87::{Op, REGISTER_PAIR_SEGMENT, register_exchange_compare, register_load_arithmetic},
 };
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 use wasm_encoder::BlockType;
@@ -24,7 +24,7 @@ pub(super) fn register_pair(first: Instruction, second: Instruction) -> Option<(
     (first.next_pc == second.pc
         && a.address.is_none()
         && b.address.is_none()
-        && register_load_arithmetic(a.op, b.op))
+        && (register_load_arithmetic(a.op, b.op) || register_exchange_compare(a.op, b.op)))
     .then_some((a.op, b.op))
 }
 
@@ -62,12 +62,19 @@ impl Emitter {
         self.op(Wasm::I32Const(a.encode() as i32))
             .op(Wasm::I64Const(i64::from(b.encode())))
             .op(Wasm::I32Const(REGISTER_PAIR_SEGMENT as i32))
-            .op(Wasm::I64Const(first.pc as i64))
-            .op(Wasm::I64Const(0))
-            .op(Wasm::I64Const(second.pc as i64))
+            .op(Wasm::I64Const(first.pc as i64));
+        if b.writes_flags() {
+            self.full_flags();
+        } else {
+            self.op(Wasm::I64Const(0));
+        }
+        self.op(Wasm::I64Const(second.pc as i64))
             .op(Wasm::Call(helper))
             .op(Wasm::I32Eqz)
             .op(Wasm::If(BlockType::Empty));
+        if b.writes_flags() {
+            self.reload_x87_flags();
+        }
         self.op(Wasm::I64Const(second.next_pc as i64))
             .op(Wasm::LocalSet(RIP));
         self.retire_instructions(2);
@@ -117,15 +124,7 @@ impl Emitter {
         .op(Wasm::I32Eqz)
         .op(Wasm::BrIf(exit_depth));
         if operation.writes_flags() {
-            self.op(Wasm::LocalGet(0))
-                .op(Wasm::I64Load(MemArg {
-                    offset: offset_of!(RunState, flags) as u64,
-                    align: 3,
-                    memory_index: 0,
-                }))
-                .op(Wasm::I64Const(0x8d7))
-                .op(Wasm::I64And)
-                .op(Wasm::LocalSet(FLAGS));
+            self.reload_x87_flags();
         }
         if writes_ax {
             self.op(Wasm::LocalGet(0))
@@ -141,5 +140,17 @@ impl Emitter {
                 .op(Wasm::LocalSet(STORE_STATUS));
             self.stores = true;
         }
+    }
+
+    fn reload_x87_flags(&mut self) {
+        self.op(Wasm::LocalGet(0))
+            .op(Wasm::I64Load(MemArg {
+                offset: offset_of!(RunState, flags) as u64,
+                align: 3,
+                memory_index: 0,
+            }))
+            .op(Wasm::I64Const(0x8d7))
+            .op(Wasm::I64And)
+            .op(Wasm::LocalSet(FLAGS));
     }
 }

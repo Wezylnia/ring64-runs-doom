@@ -154,6 +154,74 @@ fn x87_register_pairs_keep_numeric_and_environment_effects_or_refuse_before_eith
     }
 }
 
+#[cfg(not(feature = "parallel"))]
+#[test]
+fn x87_exchange_compare_pair_preserves_live_integer_flags_and_numeric_exceptions() {
+    use crate::x86::x87::REGISTER_PAIR_SEGMENT;
+
+    initialize(0x1000, &[0xf4]);
+    let exchange = Op {
+        index: 1,
+        ..operation(Kind::Exchange, Format::Register, 0x1c9)
+    };
+    let compare = Op {
+        index: 1,
+        pop: 1,
+        ..operation(Kind::CompareUnorderedFlags, Format::Register, 0x7e9)
+    };
+    let flags = 0xcd7;
+    let projection = || {
+        BRIDGE.with_borrow(|bridge| unsafe {
+            let run = &*bridge.core.as_ref().unwrap().state.get();
+            (run.x87, run.flags)
+        })
+    };
+    let pair = || {
+        x87::core_x87(
+            exchange.encode(),
+            u64::from(compare.encode()),
+            REGISTER_PAIR_SEGMENT,
+            0x1000,
+            flags,
+            0x1002,
+        )
+    };
+    let mut ordinary = X87State {
+        tag_word: 0xfff0,
+        data_pointer: 0x5000,
+        opcode: 0x123,
+        ..X87State::default()
+    };
+    ordinary.set_raw(0, 0x3fff_8000_0000_0000_0000);
+    ordinary.set_raw(1, 0x4000_8000_0000_0000_0000);
+    let mut invalid = X87State {
+        control_word: 0x37e,
+        ..ordinary
+    };
+    invalid.set_raw(1, 0x7fff_8000_0000_0000_0001);
+    invalid.set_tag(1, 2);
+    for prior in [ordinary, invalid] {
+        install(prior);
+        assert_eq!(invoke(exchange, 0, 0x1000, 0, 0), 0);
+        assert_eq!(invoke(compare, 0, 0x1002, flags, 0), 0);
+        let expected = projection();
+        assert_eq!(expected.0.instruction_pointer, 0x1002);
+        if prior == invalid {
+            assert_eq!(expected.0.pending(), 1);
+            assert_eq!(expected.0.opcode, compare.encoding);
+        }
+        install(prior);
+        assert_eq!(pair(), 0);
+        assert_eq!(projection(), expected);
+    }
+
+    ordinary.set_tag(1, 3);
+    install(ordinary);
+    let before = projection();
+    assert_eq!(pair(), -1);
+    assert_eq!(projection(), before);
+}
+
 #[test]
 fn x87_malformed_private_operations_reject_before_state_or_diagnostic_changes() {
     initialize(0x1000, &[0xf4]);

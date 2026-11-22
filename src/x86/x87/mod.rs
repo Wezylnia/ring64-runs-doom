@@ -173,11 +173,23 @@ pub(crate) fn register_load_arithmetic(first: Op, second: Op) -> bool {
 }
 
 #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+pub(crate) fn register_exchange_compare(first: Op, second: Op) -> bool {
+    first.kind == Kind::Exchange
+        && first.format == Format::Register
+        && second.format == Format::Register
+        && second.writes_flags()
+}
+
+#[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
 impl State {
     pub(crate) fn can_load_register(&self, index: u8) -> bool {
         self.pending() == 0
             && self.tag(self.physical(index)) != 3
             && self.tag((self.top() + 7) & 7) == 3
+    }
+
+    pub(crate) fn can_exchange_register(&self, index: u8) -> bool {
+        self.pending() == 0 && self.tag(self.top()) != 3 && self.tag(self.physical(index)) != 3
     }
 
     pub(crate) fn store_register_pop(&mut self, index: u8) -> bool {

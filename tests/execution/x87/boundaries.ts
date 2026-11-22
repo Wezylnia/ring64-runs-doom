@@ -74,6 +74,46 @@ export function boundaryScenarios(compiler: WebAssembly.Module): Scenario[] {
       },
     },
     {
+      name: 'x87 exchange and compare preserve an intermediate stop and direct compare entry',
+      async run() {
+        // FXCH ST(1); FUCOMI ST, ST(1).
+        await using(compiler, 'd9c9dbe9', LONG, async (cpu) => {
+          const two = raw(0x4000);
+          const before = input(0x1000n, {}, 0xcd7n);
+          const original = stack({ 0: ONE, 1: two }, 0, 0x37f, 0x200);
+          const exchanged = clone(original);
+          slot(exchanged, 0, two);
+          slot(exchanged, 1, ONE);
+          exchanged.statusWord = 0;
+
+          cpu.setState(before);
+          seed(cpu, original);
+          const stopped = await cpu.run({ budget: 2n, stop: 0x1002n });
+          outcome(stopped, 'stop', 2n, 1n, 2n, 0n, changed(before, 0x1002n));
+          x87(cpu, environment(exchanged, 0x1000n));
+          noFault(stopped);
+
+          cpu.setState(before);
+          seed(cpu, original);
+          const completed = await cpu.run({ budget: 2n });
+          outcome(completed, 'budget', 2n, 2n, 2n, 0n, changed(before, 0x1004n, {}, 0x402n));
+          x87(cpu, environment(exchanged, 0x1002n));
+          other(cpu);
+          noFault(completed);
+
+          cpu.setState(changed(before, 0x1002n));
+          seed(cpu, original);
+          const entered = await cpu.run({ budget: 1n });
+          outcome(entered, 'budget', 1n, 1n, 1n, 0n, changed(before, 0x1004n, {}, 0x403n));
+          const compared = environment(original, 0x1002n);
+          compared.statusWord = 0;
+          x87(cpu, compared);
+          other(cpu);
+          noFault(entered);
+        });
+      },
+    },
+    {
       name: 'x87 pending detection follows decode legality and precedes waiting operands while FN stores retain their own failures',
       async run() {
         for (const [code, reason, width] of [
