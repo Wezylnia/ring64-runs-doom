@@ -377,3 +377,108 @@ test('fixed stack slots preserve the spill and compare flags when the following 
     cpu.dispose();
   }
 });
+
+test('sampled stack stores preserve failed PUSH and POP restart state', async () => {
+  const head = 0x31000n;
+  const low = 0x70000n;
+  const stack = low + 4n;
+  const code = hex('8b0424894424046a105b4975f3f4');
+  // MOV EAX,[ESP]; MOV [ESP+4],EAX; PUSH 16; POP EBX; DEC ECX; JNE head
+  const stop = head + 13n;
+  const push = head + 7n;
+  const pop = head + 9n;
+  const permissions = { read: true, write: true, execute: false };
+  const codeMap = {
+    base: head,
+    backing: 'code',
+    offset: 0,
+    length: code.length,
+    permissions: { read: true, write: false, execute: true },
+  };
+  const whole = { base: low, backing: 'stack', offset: 0, length: 12, permissions };
+  const high = { ...whole, base: stack, offset: 4, length: 8 };
+  const writeOnly = {
+    ...whole,
+    length: 4,
+    permissions: { ...permissions, read: false },
+  };
+  const compile = Core.prototype.compile;
+  Core.prototype.compile = function (pc, limits, points, route) {
+    if (pc < head || pc >= stop || route) return compile.call(this, pc, limits, points, route);
+    return compile.call(
+      this,
+      pc,
+      limits,
+      [head, head + 3n, push, pop, head + 10n, head + 11n],
+      true,
+    );
+  };
+  const cpu = await createCpu({
+    compiler,
+    limits: LIMITS,
+    entry: head,
+    context: protectedSnapshot(),
+    memory: {
+      backings: [
+        { id: 'code', bytes: code },
+        { id: 'stack', bytes: hex('000000007856341200000000') },
+      ],
+      mappings: [codeMap, whole],
+    },
+    memoryLimits: { maxBackings: 2, maxMappings: 3, maxBackingBytes: code.length + 12 },
+  });
+  try {
+    const input = initial(head, { 0: 0n, 1: 1n, 3: 0n, 4: stack });
+    cpu.setState(input);
+    const ready = await cpu.run({ budget: 24n, stop });
+    assert.equal(ready.reason, 'stop');
+    assert.equal(ready.retired, 6n);
+    assert.equal(ready.state.registers[3], 16n);
+    assert.equal(ready.state.registers[4], stack);
+    memory(cpu, low, '100000007856341278563412');
+
+    cpu.setMappings([codeMap, high]);
+    cpu.setState(input);
+    const deniedPush = await cpu.run({ budget: 24n, stop });
+    assert.equal(deniedPush.reason, 'data-fault');
+    assert.equal(deniedPush.retired, 2n);
+    assert.equal(deniedPush.state.rip, push);
+    assert.equal(deniedPush.state.registers[4], stack);
+    fault(deniedPush, {
+      instructionPc: push,
+      address: low,
+      width: 4,
+      access: 'write',
+      cause: 'unmapped',
+      failingAddress: low,
+      segment: 'ss',
+    });
+
+    cpu.setMappings([codeMap, writeOnly, high]);
+    const deniedPop = await cpu.run({ budget: 24n, stop });
+    assert.equal(deniedPop.reason, 'data-fault');
+    assert.equal(deniedPop.retired, 1n);
+    assert.equal(deniedPop.state.rip, pop);
+    assert.equal(deniedPop.state.registers[3], 0n);
+    assert.equal(deniedPop.state.registers[4], low);
+    fault(deniedPop, {
+      instructionPc: pop,
+      address: low,
+      width: 4,
+      access: 'read',
+      cause: 'permission',
+      failingAddress: low,
+      segment: 'ss',
+    });
+
+    cpu.setMappings([codeMap, whole]);
+    const resumed = await cpu.run({ budget: 24n, stop });
+    assert.equal(resumed.reason, 'stop');
+    assert.equal(resumed.retired, 3n);
+    assert.deepEqual(resumed.state, ready.state);
+    memory(cpu, low, '100000007856341278563412');
+  } finally {
+    cpu.dispose();
+    Core.prototype.compile = compile;
+  }
+});

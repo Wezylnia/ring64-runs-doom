@@ -1582,12 +1582,19 @@ impl Emitter {
 
     pub(super) fn store_result(&mut self, width: Width, exit_depth: u32) {
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-        if self.linear_call_spans
-            && matches!(
-                self.current_operation,
-                crate::x86::instruction::Operation::Push { .. }
-                    | crate::x86::instruction::Operation::Call { .. }
-            )
+        let stack_store = match self.current_operation {
+            crate::x86::instruction::Operation::Push { .. } => {
+                self.linear_call_spans
+                    || (self.sampled_region
+                        && !self.paged
+                        && width == Width::W32
+                        && self.context.stack_width() == Width::W32)
+            }
+            crate::x86::instruction::Operation::Call { .. } => self.linear_call_spans,
+            _ => false,
+        };
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if stack_store
             && self.direct_access(
                 DirectOperand::ScalarStore(width),
                 exit_depth,
