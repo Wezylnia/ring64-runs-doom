@@ -1,5 +1,7 @@
 use std::cell::RefCell;
 
+#[cfg(not(feature = "parallel"))]
+use super::cache::RetainedSpan;
 use super::{
     State,
     cache::Cache,
@@ -102,6 +104,15 @@ impl<'a> Memory<'a> {
                 Err(failure) => return Err(AccessFailure::Paging(failure)),
             }
         }
+        self.walk_translation(image, request)
+    }
+
+    #[inline(always)]
+    fn walk_translation(
+        &self,
+        image: &mut Image,
+        request: Request,
+    ) -> Result<walk::Translation, AccessFailure> {
         walk::walk(image, self.paging, request, self.keys).map_err(|failure| {
             if let Some(cache) = self.cache {
                 cache.fault(self.paging, failure);
@@ -143,7 +154,7 @@ impl<'a> Memory<'a> {
         false
     }
 
-    fn prepare<const MMIO: bool>(
+    fn prepare<const MMIO: bool, const FIRST_LOOKUP_MISSED: bool>(
         &self,
         (address, width): (u64, u32),
         access: Access,
@@ -186,6 +197,8 @@ impl<'a> Memory<'a> {
             };
             let translation = if self.paging.cr0 & (1 << 31) == 0 {
                 None
+            } else if FIRST_LOOKUP_MISSED && offset == 0 {
+                Some(self.walk_translation(storage.image, request)?)
             } else {
                 Some(self.translate(storage.image, request)?)
             };
@@ -283,7 +296,7 @@ impl<'a> Memory<'a> {
         class: AccessClass,
         intent: Intent,
     ) -> Result<Prepared, AccessFailure> {
-        self.prepare::<false>(
+        self.prepare::<false, false>(
             (address, width),
             access,
             rmw,
@@ -301,7 +314,7 @@ impl<'a> Memory<'a> {
         width: u32,
     ) -> Result<crate::memory::MmioOperand, AccessFailure> {
         let mut device = None;
-        let prepared = self.prepare::<true>(
+        let prepared = self.prepare::<true, false>(
             (address, width),
             Access::Read,
             false,
@@ -325,7 +338,7 @@ impl<'a> Memory<'a> {
         value: u64,
     ) -> Result<crate::memory::MmioOperand, AccessFailure> {
         let mut device = None;
-        let prepared = self.prepare::<true>(
+        let prepared = self.prepare::<true, false>(
             (address, width),
             Access::Write,
             false,
@@ -390,7 +403,19 @@ impl<'a> Memory<'a> {
                 access: Access::Read,
                 class,
             };
-            if let Some(physical) = cache.touch_read_span(self.paging, request, self.keys, width) {
+            #[cfg(feature = "parallel")]
+            let physical = cache.touch_read_span(self.paging, request, self.keys, width);
+            #[cfg(not(feature = "parallel"))]
+            let physical = match cache.touch_read_span(self.paging, request, self.keys, width) {
+                RetainedSpan::Hit(physical) => Some(physical),
+                RetainedSpan::Miss => {
+                    // The private CPU cache cannot change before preparation begins.
+                    self.read_after_retained_miss(address, width, class, intent, &mut bytes)?;
+                    return Ok(bytes);
+                }
+                RetainedSpan::Refused => None,
+            };
+            if let Some(physical) = physical {
                 // As in prepare, a valid TLB hit is touched before physical admission.
                 self.storage
                     .borrow()
@@ -407,6 +432,29 @@ impl<'a> Memory<'a> {
         let prepared = self.prepare_aligned(address, width, Access::Read, false, class, intent)?;
         self.read_prepared(&prepared, &mut bytes);
         Ok(bytes)
+    }
+
+    #[cfg(not(feature = "parallel"))]
+    #[inline(never)]
+    fn read_after_retained_miss(
+        &self,
+        address: u64,
+        width: u32,
+        class: AccessClass,
+        intent: Intent,
+        bytes: &mut [u8; 16],
+    ) -> Result<(), AccessFailure> {
+        let prepared = self.prepare::<false, true>(
+            (address, width),
+            Access::Read,
+            false,
+            class,
+            intent,
+            #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+            None,
+        )?;
+        self.read_prepared(&prepared, bytes);
+        Ok(())
     }
 
     fn read_fields_at(

@@ -114,6 +114,24 @@ fn retained_read_reports_the_original_physical_mapping_fault() {
 }
 
 #[test]
+fn cold_split_read_waits_for_both_pages_before_filling() {
+    let (mut image, state) = fixture(0, true, false);
+    let cache = Cache::default();
+    let mut work = AccessState::default();
+    let memory = Memory::new(&mut image, &state, 3, 0, &mut work, &Keys::ZERO).with_cache(&cache);
+    assert_eq!(
+        memory.read_vector(0x1ffc, 8),
+        Err(protection_fault(0x2000, Access::Read, 4))
+    );
+    let first = Request {
+        linear: 0x1ffc,
+        access: Access::Read,
+        class: AccessClass::User,
+    };
+    assert!(cache.observe(&state, first, &Keys::ZERO).unwrap().is_none());
+}
+
+#[test]
 fn supervisor_protection_smap_denies_supervisor_operand_data() {
     let (mut image, mut state) = fixture(0, true, false);
     state.cr4 |= 1 << 21;

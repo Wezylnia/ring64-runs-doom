@@ -90,20 +90,28 @@ fn read_span_touches_only_the_authorized_whole_operand() {
     let translation = walk::walk(&mut image, &state, request, &ProtectionKeys::ZERO).unwrap();
     cache.fill(&state, request, translation);
     let clock = cache.entries.borrow().clock;
+    #[cfg(feature = "parallel")]
+    let hit = Some(0xa234);
+    #[cfg(not(feature = "parallel"))]
+    let hit = RetainedSpan::Hit(0xa234);
     assert_eq!(
         cache.touch_read_span(&state, request, &ProtectionKeys::ZERO, 16),
-        Some(0xa234)
+        hit
     );
     assert_eq!(cache.entries.borrow().clock, clock + 1);
-    for linear in [0x1fff, 0x2000] {
+    #[cfg(feature = "parallel")]
+    let (refused, missed) = (None, None);
+    #[cfg(not(feature = "parallel"))]
+    let (refused, missed) = (RetainedSpan::Refused, RetainedSpan::Miss);
+    for (linear, expected) in [(0x1fff, &refused), (0x2000, &missed)] {
         assert_eq!(
-            cache.touch_read_span(
+            &cache.touch_read_span(
                 &state,
                 Request { linear, ..request },
                 &ProtectionKeys::ZERO,
                 2
             ),
-            None
+            expected
         );
         assert_eq!(cache.entries.borrow().clock, clock + 1);
         assert!(!cache.take_changed());
@@ -115,7 +123,7 @@ fn read_span_touches_only_the_authorized_whole_operand() {
     };
     assert_eq!(
         cache.touch_read_span(&state, supervisor, &ProtectionKeys::ZERO, 4),
-        None
+        refused
     );
     assert_eq!(cache.entries.borrow().clock, clock + 1);
     assert!(!cache.take_changed());

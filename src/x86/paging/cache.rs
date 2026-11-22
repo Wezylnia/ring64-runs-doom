@@ -33,6 +33,14 @@ struct Entries {
     hint: Option<usize>,
 }
 
+#[cfg(not(feature = "parallel"))]
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum RetainedSpan {
+    Hit(u64),
+    Miss,
+    Refused,
+}
+
 impl Entries {
     fn find(&self, state: &State, request: Request) -> Option<usize> {
         let matches = |entry: &Entry| {
@@ -184,6 +192,7 @@ impl Cache {
         true
     }
 
+    #[cfg(feature = "parallel")]
     pub(super) fn touch_read_span(
         &self,
         state: &State,
@@ -196,6 +205,30 @@ impl Cache {
             entries.retained_data_span::<false>(state, request, keys, width)?;
         entries.touch(index);
         Some(translation.physical)
+    }
+
+    #[cfg(not(feature = "parallel"))]
+    #[inline(never)]
+    pub(super) fn touch_read_span(
+        &self,
+        state: &State,
+        request: Request,
+        keys: &ProtectionKeys,
+        width: u32,
+    ) -> RetainedSpan {
+        debug_assert_eq!(request.access, Access::Read);
+        let mut entries = self.entries.borrow_mut();
+        let Some(index) = entries.find(state, request) else {
+            return RetainedSpan::Miss;
+        };
+        let translation = entries.slots[index].unwrap().translation.at(request.linear);
+        if translation.remaining < u64::from(width)
+            || translation.rights.authorize(state, request, keys).is_err()
+        {
+            return RetainedSpan::Refused;
+        }
+        entries.touch(index);
+        RetainedSpan::Hit(translation.physical)
     }
 
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
