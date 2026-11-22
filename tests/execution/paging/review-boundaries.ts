@@ -632,14 +632,14 @@ export function pagingBoundaryReviewScenarios(compiler: WebAssembly.Module): Sce
           Reflect.set(core, 'artifactImports', (observed: boolean) => {
             const env = imports.call(core, observed);
             const ready = env.paged_loop_split_read_ready;
-            const read = env.paged_loop_read_block;
+            const read = env.paged_loop_block_host;
             if (typeof ready === 'function' && typeof read === 'function') {
               env.paged_loop_split_read_ready = (address: bigint, width: number) => {
                 const result = ready(address, width);
                 if (address === source && width === 16 && result === 1) splitReady = true;
                 return result;
               };
-              env.paged_loop_read_block = (address: bigint) => {
+              env.paged_loop_block_host = (address: bigint) => {
                 const result = read(address);
                 if (splitReady && result !== 0) retainedAfterSplit = true;
                 if (splitReady && result === 0) refused.push(address);

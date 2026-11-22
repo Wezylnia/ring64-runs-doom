@@ -1296,6 +1296,8 @@ export class Core {
         env.paged_loop_split_read_ready = this.#exports.core_paged_loop_split_read_ready;
       if (this.#exports.core_paged_loop_read_block)
         env.paged_loop_read_block = this.#exports.core_paged_loop_read_block;
+      if (this.#exports.core_paged_loop_block_host)
+        env.paged_loop_block_host = this.#exports.core_paged_loop_block_host;
       if (this.#exports.core_paged_loop_write_ready)
         env.paged_loop_write_ready = this.#exports.core_paged_loop_write_ready;
       if (this.#exports.core_paged_loop_read_byte)

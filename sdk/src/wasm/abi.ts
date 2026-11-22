@@ -145,6 +145,7 @@ export type CoreExports = WebAssembly.Exports & {
   core_paged_loop_read_ready?(address: bigint, width: number): number;
   core_paged_loop_split_read_ready?(address: bigint, width: number): number;
   core_paged_loop_read_block?(address: bigint): number;
+  core_paged_loop_block_host?(address: bigint): number;
   core_paged_loop_write_ready?(address: bigint, width: number): number;
   core_paged_loop_read_byte?(address: bigint): bigint;
   core_paged_loop_read_byte_for_store?(address: bigint): bigint;

@@ -1141,7 +1141,7 @@ fn emit_body(
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let paged_loop_read_block = paged_loop_read_block_type.map(|index| {
         let name = if paged_split_vectors {
-            "paged_loop_read_block"
+            "paged_loop_block_host"
         } else {
             "paged_loop_read_span"
         };

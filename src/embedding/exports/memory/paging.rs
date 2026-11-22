@@ -701,14 +701,14 @@ fn paged_loop_read<const WIDTH: u32, const CAPTURE_SLOT: bool>(address: u64) -> 
 #[unsafe(no_mangle)]
 #[inline(never)]
 pub extern "C" fn core_paged_loop_read_span(address: u64, bytes: u32, segment: u32) -> u32 {
-    paged_loop_read_span::<false>(address, bytes, segment)
+    paged_loop_read_span::<false, false>(address, bytes, segment)
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 #[unsafe(no_mangle)]
 #[inline(never)]
 pub extern "C" fn core_paged_loop_read_span_pages(address: u64, bytes: u32, segment: u32) -> u32 {
-    paged_loop_read_span::<true>(address, bytes, segment)
+    paged_loop_read_span::<true, false>(address, bytes, segment)
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -779,7 +779,23 @@ pub extern "C" fn core_paged_loop_read_block(address: u64) -> u32 {
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-fn paged_loop_read_span<const MULTI_PAGE: bool>(address: u64, bytes: u32, segment: u32) -> u32 {
+#[unsafe(no_mangle)]
+pub extern "C" fn core_paged_loop_block_host(address: u64) -> u32 {
+    let segment = Segment::Ds as u32;
+    let host = paged_loop_read_span::<false, true>(address, 16, segment);
+    if host != 0 || address & 0xfff <= 0xff0 {
+        host
+    } else {
+        paged_loop_read_span::<true, true>(address, 16, segment)
+    }
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+fn paged_loop_read_span<const MULTI_PAGE: bool, const HOST_POINTER: bool>(
+    address: u64,
+    bytes: u32,
+    segment: u32,
+) -> u32 {
     if segment != Segment::Ds as u32
         || bytes == 0
         || crate::memory::check_span(address, bytes, Access::Read).is_err()
@@ -825,6 +841,10 @@ fn paged_loop_read_span<const MULTI_PAGE: bool>(address: u64, bytes: u32, segmen
         let Some(host) = host else {
             return 0;
         };
+        if HOST_POINTER {
+            // The guarded MOVUPS consumes this pointer immediately.
+            return host;
+        }
         core.direct_span = crate::memory::DirectSpan {
             base: address,
             host,
