@@ -269,11 +269,19 @@ impl Emitter {
         if !self.guarded_paged_lap {
             return false;
         }
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        let guarded_stack_preamble = self.paged_preamble.zip(self.structured_loop).is_some_and(
+            |((preamble, _, _), (body, _))| preamble.stack_reads && preamble.body.head == body.head,
+        );
+        #[cfg(any(feature = "parallel", not(target_arch = "wasm32")))]
+        let guarded_stack_preamble = false;
         let read = match (width, address.segment) {
             (Width::W8, Segment::Ds) => self.paged_loop_read_byte,
             (Width::W32, Segment::Ds) => self.paged_loop_read_dword,
-            // This import requires a live flat writable SS in the graph guard.
-            (Width::W32, Segment::Ss) if self.paged_loop_write_dword.is_some() => {
+            // The graph or separate preamble guard proved a live flat SS.
+            (Width::W32, Segment::Ss)
+                if self.paged_loop_write_dword.is_some() || guarded_stack_preamble =>
+            {
                 self.paged_loop_read_dword
             }
             _ => None,
@@ -406,7 +414,18 @@ impl Emitter {
         let preamble = self
             .paged_preamble
             .zip(self.structured_loop)
-            .is_some_and(|((preamble, _, _), (body, _))| preamble.body.head == body.head);
+            .filter(|((preamble, _, _), (body, _))| preamble.body.head == body.head)
+            .map(|(preamble, _)| preamble);
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if let Some((preamble, handoff, _)) = preamble
+            && self.current_index == preamble.body.head
+        {
+            // Re-enter the original head once. A refused first operand
+            // would otherwise retry the same clone without retiring.
+            self.op(Op::I32Const(2)).op(Op::LocalSet(handoff));
+        }
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        let preamble = preamble.is_some();
         #[cfg(any(feature = "parallel", not(target_arch = "wasm32")))]
         let preamble = false;
         // A refused preamble read has its own checked successor path. It

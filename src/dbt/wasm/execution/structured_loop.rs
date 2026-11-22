@@ -54,6 +54,7 @@ pub(super) struct StructuredLoop {
 pub(super) struct PagedPreamble {
     pub(super) body: StructuredLoop,
     pub(super) inner_head: u32,
+    pub(super) stack_reads: bool,
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -223,13 +224,15 @@ impl StructuredLoop {
     pub(super) fn paged_preamble(self, unit: &super::Unit) -> Option<PagedPreamble> {
         // Bridge one finite preamble to an existing rotated, read-only inner
         // placement. A general nested graph is outside this proof.
-        if !unit.context.is_long64()
-            || !self.paged_dword_window
-            || !self.forward_edges()
-            || self.earlier == self.head
-        {
+        if !self.paged_dword_window || !self.forward_edges() || self.earlier == self.head {
             return None;
         }
+        use crate::memory::Access;
+        let long64 = unit.context.is_long64();
+        if !long64 && !unit.context.flat_paged_write32() {
+            return None;
+        }
+        let address_size = (!long64).then_some(Width::W32);
         let instructions = &unit.instructions;
         let tail = self.earlier.checked_sub(1)? as usize;
         let exit = instructions.get(self.tail as usize + 1)?;
@@ -248,35 +251,58 @@ impl StructuredLoop {
         {
             return None;
         }
+        // A 32-bit preamble can have a spilled loop index. Let the checked
+        // store finish and revalidate the owner before admitting its suffix.
+        let head = if long64 {
+            head
+        } else {
+            let store = head
+                + instructions[head..tail].iter().rposition(|instruction| {
+                    paged_stack_dword(instruction.operation) == Some(Access::Write)
+                })?;
+            if instructions[store].next_pc != instructions[store + 1].pc {
+                return None;
+            }
+            store + 1
+        };
         let prefix = &instructions[head..=tail];
         if prefix.windows(2).any(|pair| pair[0].next_pc != pair[1].pc) {
             return None;
         }
         let mut reads = 0;
+        let mut stack_reads = false;
         for instruction in &prefix[..prefix.len() - 1] {
             match instruction.operation {
                 Operation::Load { .. }
-                    if paged_read_width(instruction.operation, None) == Some(Width::W32) =>
+                    if paged_read_width(instruction.operation, address_size)
+                        == Some(Width::W32) =>
                 {
                     reads += 1;
                 }
+                operation if !long64 && paged_stack_dword(operation) == Some(Access::Read) => {
+                    stack_reads = true;
+                }
                 Operation::Jcc { target, .. }
-                    if crate::memory::canonical48(target)
-                        && (target == header
-                            || !(header..=instructions[tail].pc).contains(&target))
+                    if (if long64 {
+                        crate::memory::canonical48(target)
+                    } else {
+                        target <= unit.context.code_limit()
+                    }) && (target == header
+                        || !(prefix[0].pc..=instructions[tail].pc).contains(&target))
                         && target != inner_pc => {}
                 operation if inside_register_body(operation) => {}
                 _ => return None,
             }
         }
-        if reads != 1 {
+        if reads != 1 || !long64 && !stack_reads {
             return None;
         }
+        let first_pc = prefix[0].pc;
         let full_span = instructions[self.tail as usize]
             .next_pc
-            .checked_sub(header)?;
+            .checked_sub(first_pc)?;
         let full_span = u32::try_from(full_span).ok()?;
-        if !unit.context.single_page_code_span(header, full_span) {
+        if !unit.context.single_page_code_span(first_pc, full_span) {
             return None;
         }
         let mut body = Self::forward((
@@ -292,6 +318,7 @@ impl StructuredLoop {
         Some(PagedPreamble {
             body,
             inner_head: self.head,
+            stack_reads,
         })
     }
 
@@ -1142,8 +1169,10 @@ impl Emitter {
         body: StructuredLoop,
         loop_depth: u32,
         (handoff, inherited): (u32, u32),
+        stack_guard: Option<u32>,
     ) {
         let (guard, attempts) = self.paged_loop_guard.expect("paged preamble guard");
+        let guard = stack_guard.unwrap_or(guard);
         if self.paged_preamble_latch {
             self.op(Op::LocalGet(handoff))
                 .op(Op::I32Const(CONTINUE_PAGED_PREAMBLE))

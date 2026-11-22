@@ -784,6 +784,10 @@ fn emit_body(
             [ValType::I32],
         )
     });
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let paged_preamble = loop_body
+        .filter(|_| optional.paged_preamble && !mmio && paged_loop_guard_type.is_some())
+        .and_then(|body| body.paged_preamble(unit));
     #[cfg(not(feature = "parallel"))]
     let [paged_read_byte, paged_read_dword] =
         loop_body.map_or([false; 2], |body| body.paged_read_widths(unit));
@@ -1082,6 +1086,11 @@ fn emit_body(
         };
         import_function(name, index)
     });
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let paged_preamble_stack_guard = paged_preamble
+        .filter(|body| body.stack_reads)
+        .and(paged_loop_guard_type)
+        .map(|index| import_function("paged_write_loop_guard32", index));
     let paged_loop_read_byte = paged_loop_read_type
         .filter(|_| paged_read_byte)
         .map(|index| import_function("paged_loop_read_byte", index));
@@ -1564,18 +1573,15 @@ fn emit_body(
         (guard, attempts)
     });
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    let paged_preamble = if optional.paged_preamble && !mmio && paged_loop_guard.is_some() {
-        loop_body
-            .and_then(|body| body.paged_preamble(unit))
-            .map(|body| {
-                let handoff = next_local;
-                locals.push((2, ValType::I32));
-                next_local += 2;
-                (body, handoff, handoff + 1)
-            })
-    } else {
-        None
-    };
+    let paged_preamble = paged_preamble.map(|body| {
+        let handoff = next_local;
+        locals.push((2, ValType::I32));
+        next_local += 2;
+        (body, handoff, handoff + 1)
+    });
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let paged_preamble_latch = optional.paged_preamble_latch
+        && paged_preamble.is_none_or(|(preamble, _, _)| !preamble.stack_reads);
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let paged_read_span = paged_read_span.map(|(proof, resolve)| {
         let bias = next_local;
@@ -1744,7 +1750,7 @@ fn emit_body(
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_preamble,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-        paged_preamble_latch: optional.paged_preamble_latch,
+        paged_preamble_latch,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_read_rearm,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -1890,6 +1896,7 @@ fn emit_body(
                 preamble.body,
                 loop_depth,
                 (handoff, inherited),
+                paged_preamble_stack_guard,
             );
         }
         let head = loop_body.filter(|body| body.head == index as u32);
@@ -2082,8 +2089,7 @@ fn emit_body(
         );
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    if bytes.len() > max_artifact_bytes && paged_preamble.is_some() && optional.paged_preamble_latch
-    {
+    if bytes.len() > max_artifact_bytes && paged_preamble.is_some() && paged_preamble_latch {
         return emit_body(
             unit,
             observed,
