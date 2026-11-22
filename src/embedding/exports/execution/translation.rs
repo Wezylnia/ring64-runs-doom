@@ -49,6 +49,14 @@ impl Core {
         admitted
     }
 
+    #[cfg(not(feature = "parallel"))]
+    pub(super) fn revalidate_active_owner(&mut self) -> bool {
+        !self.image.active_changed()
+            && self
+                .active_owner
+                .is_some_and(|owner| self.activate_owner(owner))
+    }
+
     pub(super) fn context_changed(&mut self) {
         self.cancel_pending(false);
     }

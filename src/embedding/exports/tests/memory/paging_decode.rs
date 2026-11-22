@@ -166,8 +166,8 @@ fn activate_single_instruction() -> u64 {
 #[test]
 fn reached_long64_instruction_requires_a_live_tlb_hit() {
     let expected = fixture("long64", true, true);
-    let owner = activate_single_instruction();
-    let check_miss = |guard_after_fetch| {
+    activate_single_instruction();
+    let check_miss = || {
         BRIDGE.with_borrow(|bridge| {
             assert_eq!(
                 bridge.core.as_ref().unwrap().warm_paged_instruction(PC),
@@ -179,16 +179,13 @@ fn reached_long64_instruction_requires_a_live_tlb_hit() {
         assert_eq!(physical_counts::take(), [0; 6]);
         assert_eq!(paging::core_paged_debug_begin(PC, RF, 0), 0);
         assert_eq!(physical_counts::take(), [4, 32, 0, 0, 0, 0]);
-        assert_eq!(
-            paging::core_paged_loop_guard(PC, 3, 2, 0),
-            guard_after_fetch
-        );
+        assert_eq!(paging::core_paged_loop_guard(PC, 3, 2, 0), 1);
         for (bytes, flags, shadow) in [(3, RF, 0), (3, 0x102, 0), (3, 2, 1), (4097, 2, 0)] {
             assert_eq!(paging::core_paged_loop_guard(PC, bytes, flags, shadow), 2);
         }
         assert_eq!(physical_counts::take(), [0; 6]);
     };
-    check_miss(1);
+    check_miss();
     BRIDGE.with_borrow_mut(|bridge| {
         let core = bridge.core.as_mut().unwrap();
         let exact = core.paged_decode(PC).unwrap();
@@ -204,9 +201,52 @@ fn reached_long64_instruction_requires_a_live_tlb_hit() {
         assert_eq!(unsafe { (*core.state.get()).flags }, RF);
         core.translation_cache.clear();
     });
-    check_miss(0);
-    assert_eq!(translation::core_activate(owner), 1);
+    check_miss();
+}
+
+#[cfg(not(feature = "parallel"))]
+#[test]
+fn paged_loop_revalidation_rejects_the_same_instruction_on_a_new_physical_page() {
+    fixture("long64", true, true);
+    BRIDGE.with_borrow_mut(|bridge| {
+        bridge
+            .core
+            .as_mut()
+            .unwrap()
+            .image
+            .physical_write_bytes(0x8000, &[0x66, 0x89, 0xc0])
+            .unwrap();
+    });
+    let owner = activate_single_instruction();
+    assert_eq!(paging::core_paged_debug_begin(PC, RF, 0), 0);
     assert_eq!(paging::core_paged_loop_guard(PC, 3, 2, 0), 1);
+    BRIDGE.with_borrow_mut(|bridge| {
+        let core = bridge.core.as_mut().unwrap();
+        use crate::x86::paging::walk::{AccessClass, Request};
+        let state = core.paging.as_ref().unwrap();
+        let request = Request {
+            linear: PC,
+            access: Access::Execute,
+            class: AccessClass::operand(core.context.cpl(), false),
+        };
+        let mut retained = core
+            .translation_cache
+            .observe(state, request, &crate::x86::protection_keys::State::ZERO)
+            .unwrap()
+            .unwrap();
+        // Replacing only the retained view isolates the binding check from
+        // the code owner's physical page-table write subscription.
+        retained.physical_base = 0x8000;
+        retained.physical = 0x8000;
+        retained.cache_id = None;
+        core.translation_cache.clear();
+        core.translation_cache.fill(state, request, retained);
+        assert!(!core.image.active_changed());
+    });
+    assert_eq!(paging::core_paged_debug_begin(PC, RF, 0), 0);
+    assert_eq!(paging::core_paged_loop_guard(PC, 3, 2, 0), 0);
+    assert_eq!(translation::core_validity(owner), 1);
+    assert_eq!(translation::core_activate(owner), 0);
 }
 
 #[cfg(not(feature = "parallel"))]

@@ -4,6 +4,34 @@ use crate::x86::protection_keys::State as Keys;
 
 impl Core {
     #[cfg(not(feature = "parallel"))]
+    #[cold]
+    #[inline(never)]
+    fn recover_paged_loop_fetch(&mut self, pc: u64) -> bool {
+        let Some(paging) = self.paging.as_ref() else {
+            return false;
+        };
+        let Ok(linear) = self
+            .context
+            .translate(pc, 1, Segment::Cs, Access::Execute, false)
+        else {
+            return false;
+        };
+        self.translation_cache
+            .observe(
+                paging,
+                paging::walk::Request {
+                    linear,
+                    access: Access::Execute,
+                    class: paging::walk::AccessClass::operand(self.context.cpl(), false),
+                },
+                &Keys::ZERO,
+            )
+            .is_ok_and(|entry| entry.is_some())
+            && self.revalidate_active_owner()
+            && self.warm_paged_instruction(pc).is_some()
+    }
+
+    #[cfg(not(feature = "parallel"))]
     pub(super) fn warm_paged_instruction(
         &self,
         pc: u64,
@@ -341,7 +369,9 @@ fn paged_loop_guard<const FLAT_DATA32: bool, const SSE: bool>(
         {
             return 2;
         }
-        if core.warm_paged_instruction(pc).is_none() {
+        // A data TLB replacement can revoke the active owner's admission
+        // while its executable translation and bytes remain current.
+        if core.warm_paged_instruction(pc).is_none() && !core.recover_paged_loop_fetch(pc) {
             return 0;
         }
         // The active owner covers every loop byte. A retained executable page
