@@ -1324,6 +1324,33 @@ impl Emitter {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn emit_flat_integer_group(
+        &mut self,
+        instructions: &[Instruction],
+        loop_depth: u32,
+    ) {
+        use super::{RIP, control::InstructionRetirement};
+
+        let first = &instructions[0];
+        let last = instructions.last().unwrap();
+        let count = instructions.len() as u32;
+        self.guard_straight_prefix(first, last, count);
+        self.loop_gates_prechecked = true;
+        self.instruction_retirement = InstructionRetirement::DeferredCommit;
+        let loop_depth = loop_depth + 1;
+        for instruction in instructions {
+            self.emit_instruction(*instruction, None, loop_depth, None, None, false);
+        }
+        self.loop_gates_prechecked = false;
+        self.instruction_retirement = InstructionRetirement::One;
+        self.op(Op::I64Const(last.next_pc as i64))
+            .op(Op::LocalSet(RIP));
+        self.retire_instructions(count);
+        self.route(last.next_pc, loop_depth, loop_depth + 1);
+        self.op(Op::End);
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     pub(super) fn guard_straight_prefix(
         &mut self,
         first: &Instruction,

@@ -20,6 +20,41 @@ use wasm_encoder::{
     ImportSection, Instruction as Op, MemoryType, Module, Section, TypeSection, ValType,
 };
 
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+fn register_prefix_operation(operation: Operation) -> bool {
+    super::structured_loop::inside_register_body(operation)
+        || matches!(
+            operation,
+            Operation::Extend {
+                src: Location::Register(_),
+                ..
+            }
+        )
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+fn flat_integer_groups(unit: &Unit, structured: Option<StructuredLoop>) -> Vec<Option<usize>> {
+    let instructions = &unit.instructions;
+    let mut groups = vec![None; instructions.len()];
+    let mut first = 0;
+    while first < instructions.len() {
+        let mut end = first;
+        while let Some(instruction) = instructions.get(end)
+            && end - first < 8
+            && (end == first || instructions[end - 1].next_pc == instruction.pc)
+            && register_prefix_operation(instruction.operation)
+            && structured.is_none_or(|body| body.order().position(end as u32).is_none())
+        {
+            end += 1;
+        }
+        if end - first >= 3 {
+            groups[first] = Some(end);
+        }
+        first = end.max(first + 1);
+    }
+    groups
+}
+
 // A clone can touch the executable leaf once when every admitted instruction
 // stays on that leaf and can neither access memory nor change the controls.
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -46,16 +81,6 @@ fn paged_register_prefixes(
             }
         }
     }
-    let is_register_only = |instruction: &Instruction| {
-        super::structured_loop::inside_register_body(instruction.operation)
-            || matches!(
-                instruction.operation,
-                Operation::Extend {
-                    src: Location::Register(_),
-                    ..
-                }
-            )
-    };
     let terminal_branch = |instruction: &Instruction, has_read: bool, wide_read: bool| {
         long64
             && matches!(
@@ -82,7 +107,7 @@ fn paged_register_prefixes(
                 .into_iter()
                 .flatten()
                 .any(|body| body.order().position(end as u32).is_some())
-            && (is_register_only(instruction)
+            && (register_prefix_operation(instruction.operation)
                 || (if has_read {
                     has_wide_read || end - first >= 2
                 } else {
@@ -539,6 +564,8 @@ fn emit_placement_with_copy(
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_register_prefixes: true,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        flat_integer_groups: !flat_trace,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_quiet_completion: true,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_quiet_fetch: true,
@@ -672,6 +699,8 @@ struct OptionalLowering {
     x87_register_pairs: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_register_prefixes: bool,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    flat_integer_groups: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_quiet_completion: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -1868,6 +1897,10 @@ fn emit_body(
                 if !matches!(target, crate::x86::instruction::Operand::Immediate(_)))
         });
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let flat_integer_groups = (optional.flat_integer_groups && unit.sampled && linear_call_spans)
+        .then(|| flat_integer_groups(unit, loop_body))
+        .filter(|groups| groups.iter().any(Option::is_some));
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let mut span_import = |name| {
         let signature = add_function_type(
             &mut types,
@@ -2812,6 +2845,13 @@ fn emit_body(
         }
         let loop_depth = count - index as u32;
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if let Some(end) = flat_integer_groups
+            .as_ref()
+            .and_then(|groups| groups[index])
+        {
+            emitter.emit_flat_integer_group(&unit.instructions[index..end], loop_depth);
+        }
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         let additional =
             additional_copy.filter(|(body, _, _, _)| body.order().position(index as u32).is_some());
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -3085,6 +3125,21 @@ fn emit_body(
     }
     let code_start = bytes.len();
     code.append_to(&mut bytes);
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    if bytes.len() > max_artifact_bytes && flat_integer_groups.is_some() {
+        return emit_body(
+            unit,
+            observed,
+            (paged, mmio),
+            loop_body,
+            _guard_reads,
+            OptionalLowering {
+                flat_integer_groups: false,
+                ..optional
+            },
+            max_artifact_bytes,
+        );
+    }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if bytes.len() > max_artifact_bytes && indexed_dword_prefixes {
         return emit_body(
