@@ -880,16 +880,24 @@ impl Emitter {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) fn load_retained_flat_reads(&mut self, spans: [Option<SpanCache>; 2]) {
+    pub(super) fn load_retained_flat_spans(
+        &mut self,
+        reads: [Option<SpanCache>; 2],
+        data_write: Option<SpanCache>,
+    ) {
         use crate::embedding::layout::StateStorage;
         use crate::memory::DirectSpan;
         use std::mem::{offset_of, size_of};
 
-        for (index, cache) in spans.into_iter().enumerate() {
+        let read_offset = offset_of!(StateStorage, flat_reads);
+        for (slot, cache) in [
+            (read_offset, reads[0]),
+            (read_offset + size_of::<DirectSpan>(), reads[1]),
+            (offset_of!(StateStorage, flat_data_write), data_write),
+        ] {
             let Some(cache) = cache else {
                 continue;
             };
-            let slot = offset_of!(StateStorage, flat_reads) + index * size_of::<DirectSpan>();
             let field = |offset, align| MemArg {
                 offset: (slot + offset) as u64,
                 align,

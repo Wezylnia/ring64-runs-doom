@@ -286,6 +286,8 @@ pub(crate) struct StateStorage {
     run: std::cell::UnsafeCell<RunState>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     pub(crate) flat_reads: [crate::memory::DirectSpan; 2],
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(crate) flat_data_write: crate::memory::DirectSpan,
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
@@ -295,6 +297,8 @@ impl StateStorage {
             run: std::cell::UnsafeCell::new(run),
             #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
             flat_reads: Default::default(),
+            #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+            flat_data_write: Default::default(),
         }
     }
 

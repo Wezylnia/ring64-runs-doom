@@ -110,6 +110,7 @@ impl Core {
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         {
             self.state.flat_reads = Default::default();
+            self.state.flat_data_write = Default::default();
         }
         self.translation_cache.clear();
         self.paging_work.clear();
@@ -121,6 +122,7 @@ impl Core {
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         {
             self.state.flat_reads = Default::default();
+            self.state.flat_data_write = Default::default();
         }
         self.paging_work.clear();
         if self.paging.is_some() {
@@ -318,6 +320,11 @@ pub(super) fn compile_artifact(
                     Ok(owner) => owner,
                     Err(_) => return RESOURCE,
                 };
+                #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+                if !artifact.read_dependencies.is_empty() {
+                    // Execute aliases are already excluded when admitting a write span.
+                    core.state.flat_data_write = Default::default();
+                }
                 if !core.translation_owners.register(owner, &core.context, observed, core.context_version) {
                     core.image.release(owner);
                     return RESOURCE;

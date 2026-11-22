@@ -146,6 +146,98 @@ test('loop stores use private writable spans and fall back for faults and transl
   }
 });
 
+test('a retained flat vector write span follows remaps and executable aliases', async () => {
+  const head = 0x31000n;
+  const data = 0x49000n;
+  // MOVDQU [EBX],XMM0; JMP head. The extra code bytes make an entire alias writable.
+  const code = hex('f30f7f03ebfa' + '90'.repeat(10));
+  const codeMap = {
+    base: head,
+    backing: 'code',
+    offset: 0,
+    length: code.length,
+    permissions: { read: true, write: false, execute: true },
+  };
+  const dataMap = {
+    base: data,
+    backing: 'data',
+    offset: 0,
+    length: 16,
+    permissions: { read: true, write: true, execute: false },
+  };
+  const cpu = await createCpu({
+    compiler,
+    entry: head,
+    limits: LIMITS,
+    context: protectedSnapshot(),
+    memory: {
+      backings: [
+        { id: 'code', bytes: code },
+        { id: 'data', bytes: new Uint8Array(16) },
+        { id: 'read-only', bytes: new Uint8Array(16).fill(0xaa) },
+      ],
+      mappings: [codeMap, dataMap],
+    },
+    memoryLimits: { maxBackings: 3, maxMappings: 2, maxBackingBytes: code.length + 32 },
+  });
+  const prototype = Core.prototype as unknown as {
+    artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
+  };
+  const imports = prototype.artifactImports;
+  let probes = 0;
+  prototype.artifactImports = function (observed) {
+    const env = imports.call(this, observed);
+    const write = env.write_span;
+    if (typeof write === 'function') {
+      env.write_span = (address: bigint, width: number, segment: number) => {
+        probes++;
+        return write(address, width, segment);
+      };
+    }
+    return env;
+  };
+  try {
+    const start = initial(head, { 3: data });
+    cpu.setState(start);
+    cpu.setXmmState([0x11223344n, ...Array<bigint>(15).fill(0n)]);
+    const first = await cpu.run({ budget: 2n });
+    assert.equal(first.retired, 2n);
+    assert.equal(probes, 1);
+    const owner = cpu.inspectTranslations()[0]!.owner;
+
+    cpu.setState(start);
+    cpu.setXmmState([0x55667788n, ...Array<bigint>(15).fill(0n)]);
+    const warm = await cpu.run({ budget: 2n });
+    assert.equal(warm.resources.compilations, 0);
+    assert.equal(warm.retired, 2n);
+    assert.equal(probes, 1);
+    assert.deepEqual(cpu.readMemory(data, 4), hex('88776655'));
+
+    cpu.setMappings([
+      codeMap,
+      { ...dataMap, backing: 'read-only', permissions: { ...dataMap.permissions, write: false } },
+    ]);
+    cpu.removeBacking('data');
+    cpu.setState(start);
+    const denied = await cpu.run({ budget: 2n });
+    assert.equal(denied.reason, 'data-fault');
+    assert.equal(denied.retired, 0n);
+    assert.equal(probes, 2);
+    assert.deepEqual(cpu.readMemory(data, 16), new Uint8Array(16).fill(0xaa));
+
+    cpu.setMappings([codeMap, { ...dataMap, backing: 'code' }]);
+    cpu.setState(start);
+    const alias = await cpu.run({ budget: 1n });
+    assert.equal(alias.retired, 1n);
+    assert.equal(probes, 3);
+    assert.deepEqual(cpu.readMemory(head, 4), hex('88776655'));
+    assert.ok(cpu.inspectTranslations().every((row) => row.owner !== owner));
+  } finally {
+    prototype.artifactImports = imports;
+    cpu.dispose();
+  }
+});
+
 test('a loop store crossing its cached span admits the entire operand before publishing it', async () => {
   const head = 0x31000n;
   const data = 0x49000n;

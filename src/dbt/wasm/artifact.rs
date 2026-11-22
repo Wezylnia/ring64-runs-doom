@@ -2552,7 +2552,10 @@ fn emit_body(
         && unit.context.mode() == crate::x86::context::Mode::Protected
         && unit.context.code32()
     {
-        emitter.load_retained_flat_reads([read_span, stack_read_span]);
+        emitter.load_retained_flat_spans(
+            [read_span, stack_read_span],
+            write_caches[0].filter(|_| cyclic_vector_store),
+        );
     }
     emitter.op(Op::Block(BlockType::Empty));
     emitter.gates(0);
