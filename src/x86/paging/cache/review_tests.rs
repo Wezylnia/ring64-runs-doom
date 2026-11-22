@@ -51,6 +51,59 @@ fn fixture() -> (Image, State, Request) {
     )
 }
 
+#[cfg(not(feature = "parallel"))]
+#[test]
+fn guarded_dword_candidates_revalidate_removals_and_later_ordinary_fills() {
+    let (mut image, mut origin, request) = fixture();
+    origin.cr4 |= (1 << 7) | (1 << 17);
+    origin.cr3 = 0x1001;
+    let local = State {
+        cr3: 0x5002,
+        ..origin
+    };
+    image.physical_write(0x4008, 8, 0xa127).unwrap();
+    image.physical_write(0x4010, 8, 0xc027).unwrap();
+    let cache = Cache::with_capacity(2);
+    let check = |state: &State, request: Request, expected| {
+        let mut entries = cache.entries.borrow_mut();
+        entries.hint = None;
+        let mut candidates = cache.guarded_candidates.borrow_mut();
+        let found = candidates.find(&entries, state, request);
+        assert_eq!(found, entries.find(state, request));
+        assert_eq!(
+            found.map(|index| entries.slots[index]
+                .unwrap()
+                .translation
+                .at(request.linear)
+                .physical),
+            expected,
+        );
+    };
+    let fill = |state, request| {
+        cache.fill(
+            state,
+            request,
+            walk::peek(&image, state, request, &Keys::ZERO).unwrap(),
+        );
+    };
+    fill(&origin, request);
+    fill(&local, request);
+    check(&local, request, Some(0xb234));
+    check(&origin, request, Some(0xa234));
+    cache.invalidate_pcid(local.pcid());
+    check(&local, request, Some(0xa234));
+    let adjacent = Request {
+        linear: 0x2344,
+        ..request
+    };
+    fill(&origin, adjacent);
+    check(&origin, adjacent, Some(0xc344));
+    check(&local, adjacent, None);
+    cache.clear();
+    check(&origin, adjacent, None);
+    check(&local, request, None);
+}
+
 #[test]
 fn stale_global_denial_evicts_originating_other_pcid_before_fresh_root_retry() {
     let (mut image, mut origin, user) = fixture();

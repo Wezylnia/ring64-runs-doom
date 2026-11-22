@@ -9,6 +9,9 @@ use crate::x86::protection_keys::State as ProtectionKeys;
 
 const CAPACITY: usize = 64;
 
+#[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+mod guarded_candidates;
+
 #[cfg(test)]
 mod review_tests;
 
@@ -111,6 +114,8 @@ impl Entries {
 pub struct Cache {
     entries: RefCell<Entries>,
     changed: Cell<bool>,
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    guarded_candidates: RefCell<guarded_candidates::Candidates>,
 }
 
 impl Default for Cache {
@@ -132,6 +137,8 @@ impl Cache {
                 hint: None,
             }),
             changed: Cell::new(false),
+            #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+            guarded_candidates: RefCell::default(),
         }
     }
 
@@ -303,7 +310,11 @@ impl Cache {
         let fetch = entries
             .hint
             .filter(|&index| entries.slots[index].is_some())?;
-        let Some(data) = entries.find(state, request) else {
+        let found = self
+            .guarded_candidates
+            .borrow_mut()
+            .find(&entries, state, request);
+        let Some(data) = found else {
             drop(entries);
             return self.fill_dword_miss_then_fetch(image, state, request, fetch, peek);
         };
@@ -362,7 +373,11 @@ impl Cache {
         // newest entry. Commit the same fill and next fetch as checked execution.
         let installed = self.fill(state, request, translation);
         debug_assert!(installed.cache_id.is_some());
-        self.entries.borrow_mut().touch(fetch);
+        let mut entries = self.entries.borrow_mut();
+        self.guarded_candidates
+            .borrow_mut()
+            .observe_fill(&entries, entries.hint.unwrap());
+        entries.touch(fetch);
         Some(value)
     }
 
