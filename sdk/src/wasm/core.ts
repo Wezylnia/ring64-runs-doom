@@ -238,6 +238,10 @@ export interface UnitMetadata {
   byteLength: number;
 }
 
+export interface CompiledUnitMetadata extends UnitMetadata {
+  hasIndirectCall?: boolean;
+}
+
 export function backingKey(name: string): string {
   // JSON's Unicode strings cannot carry lone UTF-16 surrogates into Rust.
   let key = '';
@@ -1156,11 +1160,20 @@ export class Core {
     return this.isPaged && typeof this.#exports.core_compile_with_paged_entries === 'function';
   }
 
+  get supportsLinearRegionCompilation(): boolean {
+    return (
+      !this.isPaged &&
+      !this.mmio &&
+      typeof this.#exports.core_compile_with_linear_entries === 'function' &&
+      this.#exports.core_supports_linear_entries?.() === 1
+    );
+  }
+
   compile(
     pc: bigint,
     limits: CompileLimits,
     seeds?: readonly bigint[],
-  ): { bytes: Uint8Array<ArrayBuffer>; metadata: UnitMetadata } | undefined {
+  ): { bytes: Uint8Array<ArrayBuffer>; metadata: CompiledUnitMetadata } | undefined {
     let compile = this.#exports.core_compile;
     if (this.isPaged && this.#exports.core_paged_loop_write_block) {
       compile = this.#exports.core_compile_with_paged_vector_copy ?? compile;
@@ -1168,7 +1181,9 @@ export class Core {
         compile = this.#exports.core_compile_with_paged_copy_spans ?? compile;
     }
     if (seeds?.length) {
-      const seeded = this.#exports.core_compile_with_paged_entries;
+      const seeded = this.isPaged
+        ? this.#exports.core_compile_with_paged_entries
+        : this.#exports.core_compile_with_linear_entries;
       if (!seeded) return undefined;
       const length = seeds.length * 8;
       const pointer = this.#exports.core_input(length) >>> 0;
@@ -1185,7 +1200,10 @@ export class Core {
     if (this.reason(status) === 'resource-limit') return undefined;
     if (status !== 0) throw new Error('translator returned an unexpected result');
     const metadata = this.info<
-      Omit<UnitMetadata, 'entries' | 'byteLength' | 'owner' | 'dependencies' | 'contextVersion'> & {
+      Omit<
+        CompiledUnitMetadata,
+        'entries' | 'byteLength' | 'owner' | 'dependencies' | 'contextVersion'
+      > & {
         entries: string[];
         owner: string;
         contextVersion: string;

@@ -21,6 +21,61 @@ function segmentFault(result: RunResult, expected: SegmentFault): void {
 export function boundaryScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [
     {
+      name: 'flat regions admit returning branches after a different preamble owner',
+      async run() {
+        const head = 0x1000n;
+        const loop = head + 0x20n;
+        const handler = head + 0x80n;
+        const table = 0x2000n;
+        const stack = 0x3040n;
+        // MOV EAX,loop; JMP EAX; loop: MOV ECX,640; MOV EAX,[EDI];
+        // CALL EAX; DEC ECX; JNZ again; NOP. Handler: ADD EBX,1; RET.
+        const code =
+          'b820100000ffe0'.padEnd(0x40, '82') +
+          'b9800200008b07ffd04975f990'.padEnd(0xc0, '82') +
+          '83c301c3';
+        await using(
+          compiler,
+          code,
+          context(),
+          async (cpu) => {
+            const start = input(head, { 3: 0n, 4: stack, 7: table }, 2n);
+            const execute = async (value: bigint) => {
+              cpu.setState(start);
+              const result = await cpu.run({ stop: loop + 12n, budget: 4000n });
+              equal(result.reason, 'stop', 'the caller reaches the same stop');
+              equal(result.retired, 3843n, 'the exact guest instruction count');
+              equal(result.state.registers[3], value, 'the active handler executed');
+              equal(result.state.registers[4], stack, 'the stack returns to its starting address');
+              return result.resources.dispatches;
+            };
+            check((await execute(640n)) <= 550, 'admission reduces the cold dispatch loop');
+            check((await execute(640n)) <= 4, 'the cached region absorbs returns on the warm run');
+            check(
+              cpu
+                .inspectTranslations()
+                .every((owner) => owner.instructionCount <= LIMITS.maxInstructions),
+              'the region fits the existing instruction cap',
+            );
+
+            cpu.writeMemory(handler + 2n, Uint8Array.of(3));
+            await execute(1920n);
+            cpu.setState({ ...start, flags: 0x102n });
+            const stepped = await cpu.run({ stop: loop + 12n, budget: 4000n });
+            equal(stepped.reason, 'debug-exception', 'the observed unit still single-steps');
+            equal(stepped.retired, 1n, 'only the initial MOV retires under TF');
+          },
+          {
+            codeWrite: true,
+            data: [
+              { base: table, bytes: '80100000' },
+              { base: 0x3000n, bytes: '00'.repeat(64) },
+            ],
+          },
+        );
+      },
+    },
+    {
       name: 'flat stack RMW requires both cached permissions and the full segment span',
       async run() {
         // MOV EAX,[ESP]; MOV [ESP+4],EAX; INC DWORD [ESP+8]; DEC ECX; JNZ head; NOP.

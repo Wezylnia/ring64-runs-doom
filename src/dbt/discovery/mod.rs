@@ -50,7 +50,13 @@ pub(super) fn discover_with_entry_seeds(
     seeds: &[u64],
 ) -> Result<Unit, CompileError> {
     let mut pending = VecDeque::from([entry]);
-    let mut seeds_to_visit = seeds.iter().copied();
+    // Linear traces record already executed paths. Start all those entries
+    // before exploring less frequently taken successors under the same cap.
+    let linear_region = paging.is_none() && !seeds.is_empty();
+    if linear_region {
+        pending.extend(seeds);
+    }
+    let mut seeds_to_visit = seeds.iter().copied().filter(|_| !linear_region);
     let mut visited = BTreeSet::new();
     let mut instructions = BTreeMap::new();
     let mut source = BTreeSet::new();
@@ -62,7 +68,7 @@ pub(super) fn discover_with_entry_seeds(
         if instructions.len() >= limits.max_instructions as usize {
             break;
         }
-        if !visited.insert(pc) {
+        if linear_region && pc >> 12 != entry >> 12 || !visited.insert(pc) {
             continue;
         }
         let mut fetched = Vec::new();
@@ -121,6 +127,13 @@ pub(super) fn discover_with_entry_seeds(
             continue;
         };
         let length = u64::from(instruction.encoded_len());
+        if linear_region
+            && pc
+                .checked_add(length - 1)
+                .is_none_or(|last| last >> 12 != entry >> 12)
+        {
+            continue;
+        }
         let bytes: Vec<_> = (0..length).map(|offset| pc.wrapping_add(offset)).collect();
         let additional = bytes
             .iter()

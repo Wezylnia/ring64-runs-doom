@@ -36,8 +36,8 @@ import {
   type PageFault,
   type PhysicalMemoryFault,
 } from '../wasm/core.js';
-import { RegionTrace } from './regions.js';
-import { Translations, type InstalledEntry } from './translations.js';
+import { LinearRegionTrace, RegionTrace } from './regions.js';
+import { Translations, type Artifact, type InstalledEntry } from './translations.js';
 import {
   captureState,
   captureXmmState,
@@ -747,7 +747,7 @@ export class Cpu {
   }
 
   async #tryRegion(
-    region: RegionTrace,
+    region: RegionTrace | LinearRegionTrace,
     resources: Pick<RunResult['resources'], 'compilations' | 'generatedBytes'>,
     timings: RunResult['timings'],
   ): Promise<void> {
@@ -761,7 +761,7 @@ export class Cpu {
       resources.compilations >= this.#limits.maxTranslationsPerRun ||
       cache.cachedArtifacts >= this.#limits.maxCachedArtifacts ||
       maxArtifactBytes <= 0 ||
-      engine.boundaryObserved() !== region.root.boundaryObserved ||
+      engine.boundaryObserved() !== region.boundaryObserved ||
       engine.hasQueuedInterrupts()
     )
       return;
@@ -782,12 +782,22 @@ export class Cpu {
       const began = performance.now();
       const module = await WebAssembly.compile(output.bytes);
       timings.browserCompileMs += performance.now() - began;
-      const ready = this.#cache.installCompiled(engine, module, output.metadata, timings);
+      const preferred = region instanceof LinearRegionTrace ? new Set([selected.entry]) : undefined;
+      const ready = this.#cache.installCompiled(
+        engine,
+        module,
+        output.metadata,
+        timings,
+        preferred,
+      );
       installed = ready !== undefined && ready !== 'resource-limit';
     } finally {
       if (!installed) engine.release(output.metadata.owner);
     }
   }
+
+  readonly #sampledLinearOwners = new WeakSet<Artifact>();
+  #hasLinearCallOwner = false;
 
   async run(options: RunOptions): Promise<RunResult> {
     const run = this[BEGIN_RUN](options);
@@ -831,9 +841,18 @@ export class Cpu {
         servicingEvent = eventKind === 'pending' || eventKind === 'pending-interrupt';
       }
       let dispatchedPc: bigint | undefined;
-      let canSampleRegion =
+      const pagedRegionsSupported =
         deliveryBudget === undefined && !queuedInterrupts && engine.supportsRegionCompilation;
       let region: RegionTrace | undefined;
+      const linearRegionsSupported =
+        deliveryBudget === undefined && !queuedInterrupts && engine.supportsLinearRegionCompilation;
+      let sampling = pagedRegionsSupported
+        ? 'paged'
+        : linearRegionsSupported && this.#hasLinearCallOwner
+          ? 'linear'
+          : undefined;
+      let linearRegion: LinearRegionTrace | undefined;
+      let saturatedDispatches = 0;
       execution: for (;;) {
         if (eventKind === 'shutdown' && (deliveryBudget === undefined || !engine.shutdownCanWake()))
           return finish('shutdown');
@@ -930,6 +949,14 @@ export class Cpu {
           const output = engine.compile(pc, this.#limits);
           timings.translationMs += performance.now() - at;
           if (!output) return finish('resource-limit');
+          if (
+            linearRegionsSupported &&
+            !this.#hasLinearCallOwner &&
+            output.metadata.hasIndirectCall
+          ) {
+            this.#hasLinearCallOwner = true;
+            sampling = 'linear';
+          }
           resources.generatedBytes += output.bytes.length;
           if (!this.#cache.canFit(output.bytes.length)) {
             engine.release(output.metadata.owner);
@@ -1032,15 +1059,30 @@ export class Cpu {
         this.pruneTranslations();
         resources.dispatches++;
         dispatchedPc = current.rip;
-        if (canSampleRegion) {
+        if (sampling) {
           if (eventKind !== 'ready') {
-            canSampleRegion = false;
-          } else {
+            sampling = undefined;
+          } else if (sampling === 'paged') {
             const metadata = entry.artifact.metadata;
             region ??= new RegionTrace(pc, metadata);
             if (region.sample(pc, current.rip, entry)) {
-              canSampleRegion = false;
+              sampling = undefined;
               await this.#tryRegion(region, resources, timings);
+            }
+          } else if (resources.dispatches >= 16) {
+            if (boundaryObserved || this.#sampledLinearOwners.has(entry.artifact)) {
+              sampling = undefined;
+            } else if (entry.artifact.metadata.instructionCount >= this.#limits.maxInstructions) {
+              // A run of full owners cannot supply a complete child under this cap.
+              if (++saturatedDispatches === 16) sampling = undefined;
+            } else {
+              saturatedDispatches = 0;
+              linearRegion ??= new LinearRegionTrace();
+              if (linearRegion.sample(pc, current.rip, entry)) {
+                sampling = undefined;
+                linearRegion.checked(this.#sampledLinearOwners);
+                await this.#tryRegion(linearRegion, resources, timings);
+              }
             }
           }
         }

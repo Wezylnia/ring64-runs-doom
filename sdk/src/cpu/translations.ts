@@ -1,9 +1,9 @@
 import type { GeneratedRun } from '../wasm/abi.js';
-import type { Core, UnitMetadata } from '../wasm/core.js';
+import type { CompiledUnitMetadata, Core, UnitMetadata } from '../wasm/core.js';
 
 export interface Artifact {
   run: GeneratedRun;
-  metadata: UnitMetadata;
+  metadata: CompiledUnitMetadata;
 }
 
 export interface InstalledEntry {
@@ -23,6 +23,7 @@ export class Translations {
   readonly #entries = new Map<bigint, readonly InstalledEntry[]>();
   readonly #observedEntries = new Map<bigint, readonly InstalledEntry[]>();
   readonly #artifacts = new Map<Artifact, Recency>();
+  readonly #preferred = new WeakMap<Artifact, ReadonlySet<bigint>>();
   #oldest: Recency | undefined;
   #newest: Recency | undefined;
   #bytes = 0;
@@ -77,8 +78,9 @@ export class Translations {
   installCompiled(
     core: Core,
     module: WebAssembly.Module,
-    metadata: UnitMetadata,
+    metadata: CompiledUnitMetadata,
     timings: { instantiationMs: number },
+    preferred?: ReadonlySet<bigint>,
   ): Artifact | 'resource-limit' | undefined {
     if (
       core.contextVersion() !== metadata.contextVersion ||
@@ -94,10 +96,10 @@ export class Translations {
     };
     timings.instantiationMs += performance.now() - began;
     if (!core.publish(metadata.owner)) return undefined;
-    return this.install(artifact) ? artifact : 'resource-limit';
+    return this.install(artifact, preferred) ? artifact : 'resource-limit';
   }
 
-  install(artifact: Artifact): boolean {
+  install(artifact: Artifact, preferred?: ReadonlySet<bigint>): boolean {
     if (!this.canFit(artifact.metadata.byteLength)) return false;
     if (this.#artifacts.has(artifact)) return true;
     while (
@@ -112,9 +114,22 @@ export class Translations {
     this.#artifacts.set(artifact, recency);
     this.#append(recency);
     this.#bytes += artifact.metadata.byteLength;
+    if (preferred) this.#preferred.set(artifact, preferred);
     const entries = artifact.metadata.boundaryObserved ? this.#observedEntries : this.#entries;
     artifact.metadata.entries.forEach((pc, index) => {
-      entries.set(pc, [Object.freeze({ artifact, index }), ...(entries.get(pc) ?? EMPTY)]);
+      const installed = Object.freeze({ artifact, index });
+      const previous = entries.get(pc) ?? EMPTY;
+      if (preferred?.has(pc)) {
+        entries.set(pc, [installed, ...previous]);
+      } else if (preferred) {
+        entries.set(pc, [...previous, installed]);
+      } else {
+        const preferredCount = previous.findIndex(
+          (entry) => !this.#preferred.get(entry.artifact)?.has(pc),
+        );
+        const split = preferredCount === -1 ? previous.length : preferredCount;
+        entries.set(pc, [...previous.slice(0, split), installed, ...previous.slice(split)]);
+      }
     });
     return true;
   }
@@ -124,11 +139,15 @@ export class Translations {
   }
 
   inspect(): UnitMetadata[] {
-    return Array.from(this.#ordered(), (artifact) => ({
-      ...artifact.metadata,
-      entries: [...artifact.metadata.entries],
-      dependencies: artifact.metadata.dependencies.map((range) => ({ ...range })),
-    }));
+    return Array.from(this.#ordered(), (artifact) => {
+      const metadata = {
+        ...artifact.metadata,
+        entries: [...artifact.metadata.entries],
+        dependencies: artifact.metadata.dependencies.map((range) => ({ ...range })),
+      };
+      delete metadata.hasIndirectCall;
+      return metadata;
+    });
   }
 
   remove(artifact: Artifact): void {

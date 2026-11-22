@@ -186,6 +186,55 @@ pub extern "C" fn core_compile_with_paged_entries(
     max_source_bytes: u32,
     max_artifact_bytes: u32,
 ) -> i32 {
+    compile_with_entries(
+        pc,
+        max_instructions,
+        max_source_bytes,
+        max_artifact_bytes,
+        true,
+    )
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[unsafe(no_mangle)]
+pub extern "C" fn core_supports_linear_entries() -> i32 {
+    BRIDGE.with_borrow(|bridge| {
+        let core = bridge.core.as_ref().unwrap();
+        i32::from(
+            core.paging.is_none()
+                && core.context.mode() == crate::x86::context::Mode::Protected
+                && core.context.nonwrapping_code32_fetch(0, 1) == Some(0)
+                && !core.image.has_mmio()
+                && !core.io_present,
+        )
+    })
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[unsafe(no_mangle)]
+pub extern "C" fn core_compile_with_linear_entries(
+    pc: u64,
+    max_instructions: u32,
+    max_source_bytes: u32,
+    max_artifact_bytes: u32,
+) -> i32 {
+    compile_with_entries(
+        pc,
+        max_instructions,
+        max_source_bytes,
+        max_artifact_bytes,
+        false,
+    )
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+fn compile_with_entries(
+    pc: u64,
+    max_instructions: u32,
+    max_source_bytes: u32,
+    max_artifact_bytes: u32,
+    paged: bool,
+) -> i32 {
     let Some((seeds, count)) = BRIDGE.with_borrow(|bridge| {
         let mut seeds = [0; 8];
         let count = bridge.input.len() / 8;
@@ -198,6 +247,9 @@ pub extern "C" fn core_compile_with_paged_entries(
         if seeds[..count].iter().any(|target| target >> 12 != pc >> 12) {
             return None;
         }
+        if bridge.core.as_ref()?.paging.is_some() != paged {
+            return None;
+        }
         Some((seeds, count))
     }) else {
         return RESOURCE;
@@ -207,8 +259,8 @@ pub extern "C" fn core_compile_with_paged_entries(
         max_instructions,
         max_source_bytes,
         max_artifact_bytes,
-        true,
-        true,
+        paged,
+        paged,
         &seeds[..count],
     )
 }
@@ -229,16 +281,28 @@ fn compile_artifact(
         core.reconcile_translation_changes();
         let observed = core.boundary_observed();
         #[cfg(not(feature = "parallel"))]
-        if !entry_seeds.is_empty()
-            && (!core.context.is_long64()
-                || !core.paging.is_some_and(|state| state.cr0 & (1 << 31) != 0)
-                || core.image.has_mmio() || core.io_present)
-        {
-            return RESOURCE;
+        if !entry_seeds.is_empty() {
+            let supported = if let Some(state) = core.paging {
+                core.context.is_long64() && state.cr0 & (1 << 31) != 0
+            } else {
+                core.context.mode() == crate::x86::context::Mode::Protected
+                    && core.context.nonwrapping_code32_fetch(pc, 1) == Some(pc)
+                    && !observed
+            };
+            if !supported || core.image.has_mmio() || core.io_present {
+                return RESOURCE;
+            }
         }
         let profile = dbt::CompileProfile { observed, paged_vector_copy, paged_copy_spans, entry_seeds };
         match dbt::compile_with_paging_cache(&core.image, &core.context, core.paging.as_ref(), &core.translation_cache, pc, limits, profile) {
             Ok(artifact) => {
+                use crate::x86::instruction::{Operand, Operation};
+                let has_indirect_call = cfg!(not(feature = "parallel"))
+                    && core.paging.is_none()
+                    && !observed
+                    && artifact.instructions.iter().any(|instruction| {
+                        matches!(instruction.operation, Operation::Call { target, .. } if !matches!(target, Operand::Immediate(_)))
+                    });
                 let owner = match core.image.register_dependencies(
                     artifact.source_ranges.iter().map(|range| (range.start, range.length)),
                     artifact.read_dependencies.iter().map(|range| (range.start, range.length)),
@@ -261,6 +325,7 @@ fn compile_artifact(
                     "owner": format!("0x{owner:x}"),
                     "contextVersion": format!("0x{:x}",core.context_version),
                     "boundaryObserved": observed,
+                    "hasIndirectCall": has_indirect_call,
                     "dependencies": artifact.source_ranges.iter().map(|range| serde_json::json!({
                         "start": format!("0x{:x}", range.start), "length": range.length,
                     })).collect::<Vec<_>>(),
