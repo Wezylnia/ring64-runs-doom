@@ -230,6 +230,16 @@ impl Emitter {
     fn vector_load_offset(&mut self, bytes: u8, aligned: bool, exit_depth: u32) {
         let helper = self.vector_load.expect("vector load import");
         let segment = self.segment as i32;
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        let rearm = if bytes == 4 && !aligned {
+            self.checked_paged_read_rearm(Width::W32)
+        } else {
+            None
+        };
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if rearm.is_some() {
+            self.op(Op::LocalTee(ADDRESS));
+        }
         self.op(Op::I32Const(i32::from(bytes)))
             .op(Op::I32Const(segment))
             .op(Op::I32Const(if aligned { 16 } else { 1 }))
@@ -238,8 +248,12 @@ impl Emitter {
             .op(Op::I32Eqz)
             .op(Op::If(BlockType::Empty));
         self.vector_failure(exit_depth + 1);
-        self.op(Op::End)
-            .op(Op::LocalGet(STORE_STATUS))
+        self.op(Op::End);
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if let Some(ready) = rearm {
+            self.rearm_paged_read(Width::W32, ready);
+        }
+        self.op(Op::LocalGet(STORE_STATUS))
             .op(Op::V128Load(memory(0)));
     }
 

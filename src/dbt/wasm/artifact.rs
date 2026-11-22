@@ -775,12 +775,14 @@ fn emit_body(
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let paged_read_rearm_type = loop_body
         .filter(|body| {
+            let dword_replay = paged_read_dword
+                && (body.forward_edges() || body.paged_sse() && body.paged_read_span.is_some());
             optional.paged_read_rearm
                 && !mmio
                 && !paged_write_byte
                 && !paged_write_dword
                 && body.paged_fetch_bytes.is_some()
-                && ((paged_read_dword && body.forward_edges()) || paged_dense_bytes)
+                && (dword_replay || paged_dense_bytes)
         })
         .map(|body| {
             (

@@ -747,27 +747,36 @@ impl Emitter {
         self.memory_failure(exit_depth + 1);
         self.op(Op::End);
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-        if !for_write
-            && !self.guarded_paged_lap
+        if !for_write && let Some(ready) = self.checked_paged_read_rearm(width) {
+            self.rearm_paged_read(width, ready);
+        }
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn checked_paged_read_rearm(&self, width: Width) -> Option<u32> {
+        let (ready, order) = self.paged_read_rearm?;
+        (!self.guarded_paged_lap
             && self.segment == Segment::Ds
             && matches!(width, Width::W8 | Width::W32)
-            && let Some((ready, order)) = self.paged_read_rearm
-            && order.position(self.current_index).is_some()
-        {
-            let (_, attempts) = self.paged_loop_guard.expect("paged loop guard");
-            self.op(Op::LocalGet(attempts))
-                .op(Op::I32Const(PAGED_READ_REPLAY))
-                .op(Op::I32Eq)
-                .op(Op::If(BlockType::Empty))
-                .op(Op::I32Const(PAGED_READ_COOLDOWN))
-                .op(Op::I32Const(2));
-            self.linear_address();
-            self.op(Op::I32Const(i32::from(width.bytes())))
-                .op(Op::Call(ready))
-                .op(Op::Select)
-                .op(Op::LocalSet(attempts))
-                .op(Op::End);
-        }
+            && order.position(self.current_index).is_some())
+        .then_some(ready)
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn rearm_paged_read(&mut self, width: Width, ready: u32) {
+        let (_, attempts) = self.paged_loop_guard.expect("paged loop guard");
+        self.op(Op::LocalGet(attempts))
+            .op(Op::I32Const(PAGED_READ_REPLAY))
+            .op(Op::I32Eq)
+            .op(Op::If(BlockType::Empty))
+            .op(Op::I32Const(PAGED_READ_COOLDOWN))
+            .op(Op::I32Const(2));
+        self.linear_address();
+        self.op(Op::I32Const(i32::from(width.bytes())))
+            .op(Op::Call(ready))
+            .op(Op::Select)
+            .op(Op::LocalSet(attempts))
+            .op(Op::End);
     }
 
     pub(super) fn store_result(&mut self, width: Width, exit_depth: u32) {

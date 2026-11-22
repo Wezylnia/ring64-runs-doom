@@ -19,6 +19,35 @@ const dataPages = [
 export function pagingScalarF32LoopScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [
     {
+      name: 'paged F32 replay preserves a completed MOVSS before a faulting MULSS',
+      async run() {
+        const code = 'f30f10049ff30f59049ef30f58c848ffc34839cb75ea';
+        const payload = new Uint8Array(4096);
+        payload.set(little([...Array<bigint>(9).fill(0x3f800000n), 0x40400000n], 4));
+        payload.set(little(Array<bigint>(9).fill(0x40000000n), 4), 4096 - 36);
+        await usingPaged(
+          compiler,
+          {
+            code,
+            words: [[0x4008n, 0xa007n]],
+            spans: [{ physical: 0xa000n, bytes: payload }],
+          },
+          async (cpu) => {
+            cpu.setState(initial(PC, { 1: 16n, 3: 0n, 6: unmapped - 36n, 7: data }, 2n));
+            const result = await cpu.run({ stop: PC + 22n, budget: 120n });
+            equal(result.reason, 'page-fault', 'the second stream reaches the absent leaf');
+            equal(result.retired, 55n, 'nine complete laps and the next MOVSS retire');
+            equal(result.state.rip, PC + 5n, 'the faulting MULSS remains unstarted');
+            equal(result.state.registers[3], 9n, 'the faulting lap never increments the index');
+            equal(cpu.readXmmState()[0], 0x40400000n, 'only the preceding MOVSS updates XMM0');
+            equal(cpu.readXmmState()[1], 0x41900000n, 'the earlier nine sums retire once');
+            equal(cpu.readMxcsr(), 0x1f80, 'the absent operand leaves MXCSR unchanged');
+            equal(cpu.readPagingState().cr2, unmapped, 'CR2 records the second stream address');
+          },
+        );
+      },
+    },
+    {
       name: 'paged scalar F32 loop preserves NaN, rounding status, and checked numeric exceptions',
       async run() {
         for (const test of [
