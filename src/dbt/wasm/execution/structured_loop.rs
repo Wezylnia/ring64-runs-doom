@@ -1632,23 +1632,28 @@ impl Emitter {
         #[cfg(not(all(not(feature = "parallel"), target_arch = "wasm32")))]
         let outlined_float = false;
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-        let proved_integer_lap = {
+        let proved_lap = {
             let head = instructions[body.head as usize].pc;
             let valid_head = if self.context.is_long64() {
                 crate::memory::canonical48(head)
             } else {
                 head <= self.context.code_limit()
             };
-            body.kind == LoopKind::IntegerReads
-                && self.loop_gates_prechecked
-                && self.proved_reads.is_some()
-                && !self.observed
-                && !self.paged
+            self.loop_gates_prechecked
                 && valid_head
+                && match body.kind {
+                    // The ordinary clone excludes observers and executes only
+                    // register operations until its single valid backedge.
+                    LoopKind::Registers => !self.observed || self.guarded_paged_lap,
+                    LoopKind::IntegerReads => {
+                        self.proved_reads.is_some() && !self.observed && !self.paged
+                    }
+                    _ => false,
+                }
         };
         #[cfg(not(all(not(feature = "parallel"), target_arch = "wasm32")))]
-        let proved_integer_lap = false;
-        let commit_lap = outlined_float || proved_integer_lap;
+        let proved_lap = false;
+        let commit_lap = outlined_float || proved_lap;
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         let paged_sse_write = body.paged_sse_write();
         #[cfg(not(all(not(feature = "parallel"), target_arch = "wasm32")))]
@@ -1770,8 +1775,8 @@ impl Emitter {
                 self.omit_result_status = true;
             }
             self.instruction_retirement = if commit_lap && self.current_index == body.tail {
-                // The guard funded the complete lap. Integer reads cannot
-                // fault here, and numeric rejection publishes its own prefix.
+                // The guard funded the complete lap. Register operations and
+                // proved reads cannot fault, and numeric rejection publishes its prefix.
                 InstructionRetirement::AfterPrefix(position)
             } else if commit_lap {
                 InstructionRetirement::DeferredCommit
