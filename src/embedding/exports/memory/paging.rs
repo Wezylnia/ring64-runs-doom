@@ -577,7 +577,7 @@ fn paged_loop_guard<const FLAT_DATA32: bool, const SSE: bool, const FLAT_WRITE32
         }
         // A data TLB replacement can revoke the active owner's admission
         // while its executable translation and bytes remain current.
-        let warm_guard = !SSE && core.warm_guarded_code_page(pc, false);
+        let warm_guard = core.warm_guarded_code_page(pc, false);
         if !warm_guard
             && core.warm_paged_instruction(pc).is_none()
             && core.recover_paged_fetch(pc).is_none()
@@ -594,6 +594,7 @@ fn paged_loop_guard<const FLAT_DATA32: bool, const SSE: bool, const FLAT_WRITE32
         }
         #[cfg(target_arch = "wasm32")]
         if newest_fetch
+            && !SSE
             && warm_guard
             && core.paged_region_trace.is_none()
             && !core.image.active_changed()
