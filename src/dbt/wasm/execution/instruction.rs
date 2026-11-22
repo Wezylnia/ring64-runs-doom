@@ -37,17 +37,18 @@ pub(super) fn indexed_scalar_write(operation: Operation, sampled: bool) -> bool 
     use crate::x86::context::Segment;
     use crate::x86::instruction::{Operand, Width};
 
-    matches!(
-        operation,
-        Operation::Store { address, .. } if matches!(address.segment, Segment::Ds | Segment::Ss)
-    ) || sampled
-        && matches!(
-            operation,
-            Operation::Push {
-                src: Operand::Register(_) | Operand::Immediate(_),
-                width: Width::W64,
-            }
-        )
+    match operation {
+        Operation::Store { address, .. } => matches!(address.segment, Segment::Ds | Segment::Ss),
+        Operation::Call {
+            target: Operand::Register(_) | Operand::Immediate(_),
+            width: Width::W64,
+        } => true,
+        Operation::Push {
+            src: Operand::Register(_) | Operand::Immediate(_),
+            width: Width::W64,
+        } => sampled,
+        _ => false,
+    }
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]

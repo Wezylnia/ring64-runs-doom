@@ -1559,7 +1559,7 @@ impl Emitter {
         }
         let bytes = i32::from(width.bytes());
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-        let bytes = if self.paged
+        let store_width = if self.paged
             && self.context.is_long64()
             && self.segment == Segment::Ss
             && width == Width::W64
@@ -1571,7 +1571,9 @@ impl Emitter {
         } else {
             bytes
         };
-        self.op(Op::I32Const(bytes)).op(Op::LocalGet(RESULT));
+        #[cfg(any(feature = "parallel", not(target_arch = "wasm32")))]
+        let store_width = bytes;
+        self.op(Op::I32Const(store_width)).op(Op::LocalGet(RESULT));
         if !self.context.is_long64() {
             self.op(Op::I32Const(self.segment as i32));
         }
