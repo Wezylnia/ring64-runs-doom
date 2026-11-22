@@ -394,6 +394,15 @@ impl Emitter {
         self.op(Op::If(BlockType::Empty));
         self.restore_preceding_read_state();
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if self.paged_preamble_latch
+            && let Some((_, handoff, inherited)) = self.paged_preamble
+        {
+            self.op(Op::I32Const(0))
+                .op(Op::LocalSet(handoff))
+                .op(Op::I32Const(0))
+                .op(Op::LocalSet(inherited));
+        }
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         let preamble = self
             .paged_preamble
             .zip(self.structured_loop)

@@ -317,6 +317,21 @@ impl Emitter {
                     } else if index == body.head {
                         self.op(Op::I32Const(2)).op(Op::LocalSet(handoff));
                     }
+                } else if self.paged_preamble_latch
+                    && self.guarded_paged_lap
+                    && let Some((preamble, handoff, inherited)) = self.paged_preamble
+                    && body.head == preamble.inner_head
+                    && index == preamble.body.head
+                {
+                    // A direct edge from the guarded inner clone can reuse
+                    // the full prefix+inner source proof it inherited. The
+                    // ordinary JMP/checked paths never produce this handoff.
+                    self.op(Op::LocalGet(inherited))
+                        .op(Op::I32Const(
+                            super::structured_loop::CONTINUE_PAGED_PREAMBLE,
+                        ))
+                        .op(Op::I32Mul)
+                        .op(Op::LocalSet(handoff));
                 }
                 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
                 let finite_preamble = preamble.is_some();

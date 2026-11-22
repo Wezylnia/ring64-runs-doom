@@ -314,6 +314,8 @@ fn emit_placement(
         paged_read_diamond: true,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_preamble: true,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        paged_preamble_latch: true,
     };
     let (bytes, extra_spans) = emit_body(
         unit,
@@ -406,6 +408,8 @@ struct OptionalLowering {
     paged_read_diamond: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_preamble: bool,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    paged_preamble_latch: bool,
 }
 
 fn emit_body(
@@ -1740,6 +1744,8 @@ fn emit_body(
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_preamble,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        paged_preamble_latch: optional.paged_preamble_latch,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_read_rearm,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_read_span,
@@ -1876,10 +1882,15 @@ fn emit_body(
         }
         let loop_depth = count - index as u32;
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-        if let Some((preamble, handoff, _)) =
+        if let Some((preamble, handoff, inherited)) =
             paged_preamble.filter(|(preamble, _, _)| preamble.body.head == index as u32)
         {
-            emitter.emit_guarded_preamble(&unit.instructions, preamble.body, loop_depth, handoff);
+            emitter.emit_guarded_preamble(
+                &unit.instructions,
+                preamble.body,
+                loop_depth,
+                (handoff, inherited),
+            );
         }
         let head = loop_body.filter(|body| body.head == index as u32);
         if let Some((body, guard)) = head
@@ -2059,6 +2070,22 @@ fn emit_body(
             _guard_reads,
             OptionalLowering {
                 paged_f32_split_pair: false,
+                ..optional
+            },
+            max_artifact_bytes,
+        );
+    }
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    if bytes.len() > max_artifact_bytes && paged_preamble.is_some() && optional.paged_preamble_latch
+    {
+        return emit_body(
+            unit,
+            observed,
+            (paged, mmio),
+            loop_body,
+            _guard_reads,
+            OptionalLowering {
+                paged_preamble_latch: false,
                 ..optional
             },
             max_artifact_bytes,

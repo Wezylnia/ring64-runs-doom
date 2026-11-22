@@ -56,6 +56,9 @@ pub(super) struct PagedPreamble {
     pub(super) inner_head: u32,
 }
 
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+pub(super) const CONTINUE_PAGED_PREAMBLE: i32 = 3;
+
 impl StructuredLoop {
     pub(super) fn dword_writes(self, unit: &super::Unit) -> u16 {
         if !self.project_dwords || self.kind != LoopKind::Registers || unit.context.is_long64() {
@@ -1134,9 +1137,15 @@ impl Emitter {
         instructions: &[Instruction],
         body: StructuredLoop,
         loop_depth: u32,
-        handoff: u32,
+        (handoff, inherited): (u32, u32),
     ) {
         let (guard, attempts) = self.paged_loop_guard.expect("paged preamble guard");
+        if self.paged_preamble_latch {
+            self.op(Op::LocalGet(handoff))
+                .op(Op::I32Const(CONTINUE_PAGED_PREAMBLE))
+                .op(Op::I32Eq)
+                .op(Op::LocalSet(inherited));
+        }
         // Two marks a backward exit that must visit the original outer entry.
         self.op(Op::LocalGet(handoff))
             .op(Op::I32Const(2))
@@ -1153,13 +1162,21 @@ impl Emitter {
             .op(Op::I64Const(i64::from(body.max_lap_len)))
             .op(Op::I64GeU)
             .op(Op::I32And)
-            .op(Op::If(BlockType::Empty))
-            .op(Op::I64Const(instructions[body.head as usize].pc as i64))
+            .op(Op::If(BlockType::Empty));
+        if self.paged_preamble_latch {
+            self.op(Op::LocalGet(inherited))
+                .op(Op::If(BlockType::Result(wasm_encoder::ValType::I32)))
+                .op(Op::I32Const(1))
+                .op(Op::Else);
+        }
+        self.op(Op::I64Const(instructions[body.head as usize].pc as i64))
             .op(Op::I32Const(body.paged_fetch_bytes.unwrap() as i32));
         self.system_bits();
-        self.op(Op::LocalGet(super::SHADOW))
-            .op(Op::Call(guard))
-            .op(Op::I32Const(1))
+        self.op(Op::LocalGet(super::SHADOW)).op(Op::Call(guard));
+        if self.paged_preamble_latch {
+            self.op(Op::End);
+        }
+        self.op(Op::I32Const(1))
             .op(Op::I32Eq)
             .op(Op::If(BlockType::Empty));
         let window = self.paged_dword_window.take();
