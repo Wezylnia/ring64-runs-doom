@@ -55,6 +55,42 @@ fn limits() -> Limits {
     }
 }
 
+#[cfg(not(feature = "parallel"))]
+#[test]
+fn sampled_entries_keep_priority_inside_the_page_and_discovery_caps() {
+    let code = image(&vec![0x90; 0x1001]);
+    let points = [0x2000, 0x1008, 0x1003, 0x1004];
+    for limits in [
+        Limits {
+            max_instructions: 2,
+            ..limits()
+        },
+        Limits {
+            max_source_bytes: 2,
+            ..limits()
+        },
+    ] {
+        let unit = discover_with_entries(
+            &code,
+            &ExecutionContext::default(),
+            None,
+            None,
+            0x1000,
+            limits,
+            (EntrySelection::Sampled(&points), false),
+        )
+        .unwrap();
+        assert_eq!(
+            unit.instructions
+                .iter()
+                .map(|instruction| instruction.pc)
+                .collect::<Vec<_>>(),
+            [0x1000, 0x1008]
+        );
+        assert_eq!(unit.source_bytes, 2);
+    }
+}
+
 #[test]
 fn calls_discover_static_continuations_without_guessing_dynamic_targets() {
     let direct = image(&[

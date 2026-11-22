@@ -80,6 +80,9 @@ mod numeric;
 mod numeric_controls;
 #[path = "exports/numeric/numeric_image/mod.rs"]
 mod numeric_image;
+#[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+#[path = "exports/execution/paged_region.rs"]
+mod paged_region;
 #[path = "exports/memory/paging.rs"]
 mod paging;
 #[path = "exports/system/processor.rs"]
@@ -133,6 +136,8 @@ struct Core {
     paging_work: crate::x86::paging::access::AccessState,
     translation_cache: crate::x86::paging::cache::Cache,
     active_owner: Option<u64>,
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    paged_region_trace: Option<Box<paged_region::Trace>>,
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
     guarded_walk: RefCell<Option<paging::GuardedWalk>>,
     paging_failure: Option<crate::x86::paging::walk::Failure>,
@@ -218,6 +223,8 @@ impl Bridge {
             paging_work: Default::default(),
             translation_cache: Default::default(),
             active_owner: None,
+            #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+            paged_region_trace: None,
             #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
             guarded_walk: Default::default(),
             paging_failure: None,

@@ -22,7 +22,13 @@ pub(crate) struct CompileProfile<'a> {
     pub observed: bool,
     pub paged_vector_copy: bool,
     pub paged_copy_spans: bool,
-    pub entry_seeds: &'a [u64],
+    pub entries: EntrySelection<'a>,
+}
+
+pub(crate) enum EntrySelection<'a> {
+    Discover(&'a [u64]),
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    Sampled(&'a [u64]),
 }
 
 #[derive(Debug)]
@@ -94,7 +100,7 @@ pub fn compile_with_paging(
             observed,
             paged_vector_copy: false,
             paged_copy_spans: false,
-            entry_seeds: &[],
+            entries: EntrySelection::Discover(&[]),
         },
     )
 }
@@ -125,16 +131,16 @@ fn compile_profile(
         observed,
         paged_vector_copy: _paged_vector_copy,
         paged_copy_spans: _paged_copy_spans,
-        entry_seeds,
+        entries,
     } = profile;
-    let unit = discovery::discover_with_entry_seeds(
+    let unit = discovery::discover_with_entries(
         image,
         context,
         paging,
         cache,
         entry,
         limits,
-        (entry_seeds, observed),
+        (entries, observed),
     )?;
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
     let emit = if image.has_mmio() {

@@ -144,7 +144,7 @@ pub extern "C" fn core_compile(
         max_artifact_bytes,
         false,
         false,
-        &[],
+        dbt::EntrySelection::Discover(&[]),
     )
 }
 
@@ -163,7 +163,7 @@ pub extern "C" fn core_compile_with_paged_vector_copy(
         max_artifact_bytes,
         true,
         false,
-        &[],
+        dbt::EntrySelection::Discover(&[]),
     )
 }
 
@@ -182,7 +182,7 @@ pub extern "C" fn core_compile_with_paged_copy_spans(
         max_artifact_bytes,
         true,
         true,
-        &[],
+        dbt::EntrySelection::Discover(&[]),
     )
 }
 
@@ -269,18 +269,18 @@ fn compile_with_entries(
         max_artifact_bytes,
         paged,
         paged,
-        &seeds[..count],
+        dbt::EntrySelection::Discover(&seeds[..count]),
     )
 }
 
-fn compile_artifact(
+pub(super) fn compile_artifact(
     pc: u64,
     max_instructions: u32,
     max_source_bytes: u32,
     max_artifact_bytes: u32,
     paged_vector_copy: bool,
     paged_copy_spans: bool,
-    entry_seeds: &[u64],
+    entries: dbt::EntrySelection<'_>,
 ) -> i32 {
     BRIDGE.with_borrow_mut(|bridge| {
         bridge.output.clear();
@@ -289,7 +289,7 @@ fn compile_artifact(
         core.reconcile_translation_changes();
         let observed = core.boundary_observed();
         #[cfg(not(feature = "parallel"))]
-        if !entry_seeds.is_empty() {
+        if !matches!(entries, dbt::EntrySelection::Discover([])) {
             let supported = if let Some(state) = core.paging {
                 core.context.is_long64() && state.cr0 & (1 << 31) != 0
             } else {
@@ -301,7 +301,7 @@ fn compile_artifact(
                 return RESOURCE;
             }
         }
-        let profile = dbt::CompileProfile { observed, paged_vector_copy, paged_copy_spans, entry_seeds };
+        let profile = dbt::CompileProfile { observed, paged_vector_copy, paged_copy_spans, entries };
         match dbt::compile_with_paging_cache(&core.image, &core.context, core.paging.as_ref(), &core.translation_cache, pc, limits, profile) {
             Ok(artifact) => {
                 use crate::x86::instruction::{Operand, Operation};

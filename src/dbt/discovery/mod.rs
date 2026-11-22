@@ -12,7 +12,7 @@ use crate::x86::{
     instruction::{Operand, Operation},
 };
 
-use super::{CompileError, Limits, SourceRange, unit::Unit};
+use super::{CompileError, EntrySelection, Limits, SourceRange, unit::Unit};
 
 #[cfg(test)]
 pub(crate) fn discover(image: &Image, entry: u64, limits: Limits) -> Result<Unit, CompileError> {
@@ -38,31 +38,45 @@ pub(crate) fn discover_with_profile(
     entry: u64,
     limits: Limits,
 ) -> Result<Unit, CompileError> {
-    discover_with_entry_seeds(image, context, paging, cache, entry, limits, (&[], false))
+    discover_with_entries(
+        image,
+        context,
+        paging,
+        cache,
+        entry,
+        limits,
+        (EntrySelection::Discover(&[]), false),
+    )
 }
 
-pub(super) fn discover_with_entry_seeds(
+pub(super) fn discover_with_entries(
     image: &Image,
     context: &ExecutionContext,
     paging: Option<&crate::x86::paging::State>,
     cache: Option<&crate::x86::paging::cache::Cache>,
     entry: u64,
     limits: Limits,
-    (seeds, _observed): (&[u64], bool),
+    (entries, _observed): (EntrySelection<'_>, bool),
 ) -> Result<Unit, CompileError> {
+    let (seeds, sampled) = match entries {
+        EntrySelection::Discover(seeds) => (seeds, false),
+        #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+        EntrySelection::Sampled(starts) => (starts, true),
+    };
     let mut pending = VecDeque::from([entry]);
     // Linear traces record already executed paths. Start all those entries
     // before exploring less frequently taken successors under the same cap.
     let linear_region = paging.is_none() && !seeds.is_empty();
-    if linear_region {
+    if linear_region || sampled {
         pending.extend(seeds);
     }
-    let mut seeds_to_visit = seeds.iter().copied().filter(|_| !linear_region);
+    let mut seeds_to_visit = seeds.iter().copied().filter(|_| !linear_region && !sampled);
     let paged_region = paging.is_some() && !seeds.is_empty() && context.is_long64();
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
     let prefer_local = !_observed
         && !image.has_mmio()
         && paging.is_none()
+        && !sampled
         && seeds.is_empty()
         && context.mode() == crate::x86::context::Mode::Protected
         && context.nonwrapping_code32_fetch(0, 1) == Some(0);
@@ -102,7 +116,7 @@ pub(super) fn discover_with_entry_seeds(
         if instructions.len() >= limits.max_instructions as usize {
             break;
         }
-        if linear_region && pc >> 12 != entry >> 12 || !visited.insert(pc) {
+        if (linear_region || sampled) && pc >> 12 != entry >> 12 || !visited.insert(pc) {
             continue;
         }
         let mut fetched = Vec::new();
@@ -161,7 +175,7 @@ pub(super) fn discover_with_entry_seeds(
             continue;
         };
         let length = u64::from(instruction.encoded_len());
-        if linear_region
+        if (linear_region || sampled)
             && pc
                 .checked_add(length - 1)
                 .is_none_or(|last| last >> 12 != entry >> 12)
@@ -182,6 +196,12 @@ pub(super) fn discover_with_entry_seeds(
             // Both the image and the effective translation view are immutable during discovery.
             let previous = fetch_pages.entry(page.linear).or_insert(page);
             debug_assert_eq!(*previous, page);
+        }
+        if sampled {
+            // The sampled instructions already compete for the same limits.
+            // An uncovered successor remains a normal dispatcher exit.
+            instructions.insert(pc, instruction);
+            continue;
         }
         match instruction.operation {
             Operation::Jump { target } => {
