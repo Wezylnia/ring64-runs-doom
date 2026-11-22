@@ -112,23 +112,33 @@ fn core_x87_register_pair(
             return -1;
         };
         let compare = x87::register_exchange_compare(first, second);
-        if !compare && (flags != 0 || !x87::register_load_arithmetic(first, second)) {
+        let pop = x87::register_store_pop(first) && x87::register_store_pop(second);
+        if !compare && (flags != 0 || !(pop || x87::register_load_arithmetic(first, second))) {
             return -1;
         }
         let core = bridge.core.as_mut().unwrap();
         let state = unsafe { &(*core.state.get()).x87 };
         let can_start = if compare {
             state.can_exchange_register(first.index)
+        } else if pop {
+            state.can_store_register_pop_pair(first.index)
         } else {
             state.can_load_register(first.index)
         };
         if core.paging.is_some() || !can_start {
             return -1;
         }
-        // An admitted register move cannot raise a new exception. Both original
-        // numeric operations execute, including the second's exception response.
         clear_x87_diagnostics(core);
         let run = unsafe { &mut *core.state.get() };
+        if pop {
+            run.x87.store_register_pop(first.index);
+            run.x87.store_register_pop(second.index);
+            // Neither admitted pop raises an exception. Only the final FIP survives.
+            x87_environment(&core.context, &mut run.x87, second, second_pc, None);
+            return 0;
+        }
+        // An admitted register move cannot raise a new exception. The second
+        // numeric operation still produces its original exception response.
         x87::eval(&mut run.x87, first, 0, 0);
         x87_environment(&core.context, &mut run.x87, first, first_pc, None);
         let effect = x87::eval(&mut run.x87, second, 0, flags);
@@ -174,12 +184,7 @@ fn core_x87_impl<const OBSERVED: bool, const PAGED: bool>(
             return core.pending_x87_reason();
         }
         #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
-        if !OBSERVED
-            && !PAGED
-            && operation.kind == x87::Kind::Store
-            && operation.format == x87::Format::Register
-            && operation.pop == 1
-        {
+        if !OBSERVED && !PAGED && x87::register_store_pop(operation) {
             let state = unsafe { &mut (*core.state.get()).x87 };
             if state.store_register_pop(operation.index) {
                 x87_environment(&core.context, state, operation, instruction_pc, None);

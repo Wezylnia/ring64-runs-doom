@@ -181,7 +181,18 @@ pub(crate) fn register_exchange_compare(first: Op, second: Op) -> bool {
 }
 
 #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+pub(crate) fn register_store_pop(op: Op) -> bool {
+    op.kind == Kind::Store && op.format == Format::Register && op.pop == 1
+}
+
+#[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
 impl State {
+    pub(crate) fn can_store_register_pop_pair(&self, first: u8) -> bool {
+        let top = self.top();
+        // A store to ST(1) fills the second pop's source before TOP advances.
+        self.pending() == 0 && self.tag(top) != 3 && (first == 1 || self.tag((top + 1) & 7) != 3)
+    }
+
     pub(crate) fn can_load_register(&self, index: u8) -> bool {
         self.pending() == 0
             && self.tag(self.physical(index)) != 3

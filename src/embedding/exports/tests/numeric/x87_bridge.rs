@@ -156,6 +156,96 @@ fn x87_register_pairs_keep_numeric_and_environment_effects_or_refuse_before_eith
 
 #[cfg(not(feature = "parallel"))]
 #[test]
+fn x87_register_pop_pair_matches_two_checked_writes_or_refuses_intact() {
+    use crate::x86::x87::REGISTER_PAIR_SEGMENT;
+
+    initialize(0x1000, &[0xf4]);
+    let pop = |index| Op {
+        index,
+        pop: 1,
+        ..operation(Kind::Store, Format::Register, 0x5d8 + u16::from(index))
+    };
+    let flags = 0xcd7;
+    let pair = |first: Op, second: Op| {
+        x87::core_x87(
+            first.encode(),
+            u64::from(second.encode()),
+            REGISTER_PAIR_SEGMENT,
+            0x1000,
+            0,
+            0x1002,
+        )
+    };
+    let projection = || {
+        BRIDGE.with_borrow(|bridge| unsafe {
+            let run = &*bridge.core.as_ref().unwrap().state.get();
+            (run.x87, run.flags)
+        })
+    };
+    BRIDGE.with_borrow_mut(|bridge| unsafe {
+        (*bridge.core.as_mut().unwrap().state.get()).flags = flags;
+    });
+    for top in 0u16..8 {
+        for first in 0..8 {
+            for second in 0..8 {
+                for (source, next, control_word, status) in [
+                    (2, 0, 0x37f, 0x4720),
+                    (2, 3, 0x37f, 0x4720),
+                    (3, 0, 0x37f, 0x4720),
+                    (2, 0, 0x37e, 0x8081),
+                ] {
+                    let mut prior = X87State {
+                        control_word,
+                        status_word: (top << 11) | status,
+                        opcode: 0x123,
+                        instruction_pointer: 0xdead,
+                        data_pointer: 0x4000,
+                        ..X87State::default()
+                    };
+                    let top = usize::from(top);
+                    let next_top = (top + 1) & 7;
+                    prior.set_raw(top, 0x7fff_8000_0000_0000_0001);
+                    prior.set_tag(top, source);
+                    prior.set_raw(next_top, 0x8000_0000_0000_0000_0000);
+                    prior.set_tag(next_top, next);
+                    let first_op = pop(first);
+                    let second_op = pop(second);
+                    if prior.pending() == 0 && source != 3 && (next != 3 || first == 1) {
+                        install(prior);
+                        for (op, pc) in [(first_op, 0x1000), (second_op, 0x1002)] {
+                            assert_eq!(
+                                x87::core_x87_observed(
+                                    op.encode(),
+                                    0,
+                                    Segment::Cs as u32,
+                                    pc,
+                                    0,
+                                    0
+                                ),
+                                0,
+                            );
+                        }
+                        let expected = projection();
+                        assert_eq!(expected.0.instruction_pointer, 0x1002);
+                        install(prior);
+                        assert_eq!(pair(first_op, second_op), 0);
+                        assert_eq!(projection(), expected);
+                    } else {
+                        install(prior);
+                        assert_eq!(core_load(0x7000, 8), 0);
+                        let diagnostic = metadata(DATA);
+                        assert_eq!(pair(first_op, second_op), -1);
+                        assert_eq!(projection(), (prior, flags));
+                        assert_eq!(metadata(DATA), diagnostic);
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(not(feature = "parallel"))]
+#[test]
 fn x87_exchange_compare_pair_preserves_live_integer_flags_and_numeric_exceptions() {
     use crate::x86::x87::REGISTER_PAIR_SEGMENT;
 

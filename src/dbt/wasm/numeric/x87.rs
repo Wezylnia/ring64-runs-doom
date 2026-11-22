@@ -11,7 +11,10 @@ use super::{REMAINING, RIP};
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 use crate::x86::{
     instruction::{Instruction, Operation},
-    x87::{Op, REGISTER_PAIR_SEGMENT, register_exchange_compare, register_load_arithmetic},
+    x87::{
+        Op, REGISTER_PAIR_SEGMENT, register_exchange_compare, register_load_arithmetic,
+        register_store_pop,
+    },
 };
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 use wasm_encoder::BlockType;
@@ -24,7 +27,9 @@ pub(super) fn register_pair(first: Instruction, second: Instruction) -> Option<(
     (first.next_pc == second.pc
         && a.address.is_none()
         && b.address.is_none()
-        && (register_load_arithmetic(a.op, b.op) || register_exchange_compare(a.op, b.op)))
+        && (register_load_arithmetic(a.op, b.op)
+            || register_exchange_compare(a.op, b.op)
+            || (register_store_pop(a.op) && register_store_pop(b.op))))
     .then_some((a.op, b.op))
 }
 

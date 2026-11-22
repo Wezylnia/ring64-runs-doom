@@ -7,6 +7,7 @@ import {
   raw,
   stack,
   slot,
+  pop,
   clone,
   environment,
   seed,
@@ -108,6 +109,67 @@ export function boundaryScenarios(compiler: WebAssembly.Module): Scenario[] {
           const compared = environment(original, 0x1002n);
           compared.statusWord = 0;
           x87(cpu, compared);
+          other(cpu);
+          noFault(entered);
+        });
+      },
+    },
+    {
+      name: 'x87 register pops preserve an intermediate stop, budget, and direct second entry',
+      async run() {
+        // FSTP ST(1); FSTP ST(2). The first store fills an empty next TOP.
+        await using(compiler, 'ddd9ddda', LONG, async (cpu) => {
+          const special = raw(0x7fff, 0xc000000000000001n);
+          const before = input(0x1000n, {}, 0xcd7n);
+          const original = stack({ 0: special }, 7, 0x37f, 0x200);
+          const intermediate = environment(original, 0x1000n);
+          intermediate.statusWord &= ~0x200;
+          slot(intermediate, 0, special);
+          pop(intermediate);
+          const final = environment(intermediate, 0x1002n);
+          slot(final, 2, special);
+          pop(final);
+
+          for (const [run, reason, retired, state] of [
+            [{ budget: 1n }, 'budget', 1n, intermediate],
+            [{ budget: 2n, stop: 0x1002n }, 'stop', 1n, intermediate],
+            [{ budget: 2n }, 'budget', 2n, final],
+          ] as const) {
+            cpu.setState(before);
+            seed(cpu, original);
+            const result = await cpu.run(run);
+            outcome(
+              result,
+              reason,
+              run.budget,
+              retired,
+              run.budget,
+              0n,
+              changed(before, 0x1000n + 2n * retired),
+            );
+            x87(cpu, state);
+            other(cpu);
+            noFault(result);
+          }
+
+          const trace = changed(before, 0x1000n, {}, 0xdd7n);
+          cpu.setState(trace);
+          seed(cpu, original);
+          const stepped = await cpu.run({ budget: 2n });
+          outcome(stepped, 'debug-exception', 2n, 1n, 2n, 0n, changed(trace, 0x1002n));
+          equal(stepped.debugException?.cause, 'single-step', 'TF provenance');
+          x87(cpu, intermediate);
+          other(cpu);
+
+          cpu.setState(changed(before, 0x1002n));
+          seed(cpu, original);
+          const entered = await cpu.run({ budget: 1n });
+          outcome(entered, 'budget', 1n, 1n, 1n, 0n, changed(before, 0x1004n));
+          const direct = environment(original, 0x1002n);
+          direct.statusWord &= ~0x200;
+          slot(direct, 1, special);
+          pop(direct);
+          x87(cpu, direct);
           other(cpu);
           noFault(entered);
         });
