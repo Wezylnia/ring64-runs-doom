@@ -40,6 +40,7 @@ pub(super) struct StructuredLoop {
     kind: LoopKind,
     project_dwords: bool,
     pub(super) paged_fetch_bytes: Option<u32>,
+    pub(super) paged_stack_writes: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     pub(super) paged_read_span: Option<super::read_loop::ReadLoop>,
 }
@@ -239,33 +240,61 @@ impl StructuredLoop {
                     || !unit
                         .instructions
                         .iter()
-                        .any(|i| paged_byte_store(i.operation))
+                        .any(|i| paged_byte_store(i.operation, None))
                 {
                     return None;
                 }
                 super::loop_cfg::select_paged_write_graph(&unit.instructions, |body| {
                     body.iter().any(|i| read(i.operation))
-                        && body.iter().any(|i| paged_byte_store(i.operation))
+                        && body.iter().any(|i| paged_byte_store(i.operation, None))
                         && body.iter().all(|i| {
                             inside_paged_read_graph(i.operation)
-                                || paged_byte_store(i.operation)
-                                || matches!(
-                                    i.operation,
-                                    Operation::Cmov {
-                                        src: Location::Register(_),
-                                        ..
-                                    } | Operation::Extend {
-                                        src: Location::Register(_),
-                                        signed: false,
-                                        ..
-                                    }
-                                )
+                                || paged_byte_store(i.operation, None)
+                                || paged_write_graph_register(i.operation)
                         })
                 })
                 .map(Self::forward)
-            })?
+            })
+            .or_else(|| Self::select_paged_stack_writes(unit))?
             .without_dword_projection()
             .within_paged_fetch(unit)
+    }
+
+    #[cfg(not(feature = "parallel"))]
+    fn select_paged_stack_writes(unit: &super::Unit) -> Option<Self> {
+        use crate::memory::Access;
+
+        let addr32 = Some(Width::W32);
+        let byte_store = |op| paged_byte_store(op, addr32);
+        if !unit.context.flat_paged_write32()
+            || !unit
+                .instructions
+                .iter()
+                .any(|i| paged_stack_dword(i.operation) == Some(Access::Write))
+        {
+            return None;
+        }
+        let graph = super::loop_cfg::select_paged_write_graph(&unit.instructions, |body| {
+            body.iter().any(|i| byte_store(i.operation))
+                && body
+                    .iter()
+                    .any(|i| paged_stack_dword(i.operation) == Some(Access::Write))
+                && body.iter().all(|i| match i.operation {
+                    Operation::Jump { target } | Operation::Jcc { target, .. } => {
+                        target <= unit.context.code_limit()
+                    }
+                    op => {
+                        inside_register_body(op)
+                            || paged_write_graph_register(op)
+                            || paged_read_width(op, addr32).is_some()
+                            || byte_store(op)
+                            || paged_stack_dword(op).is_some()
+                    }
+                })
+        })?;
+        let mut body = Self::forward(graph);
+        body.paged_stack_writes = true;
+        Some(body)
     }
 
     #[cfg(not(feature = "parallel"))]
@@ -276,7 +305,13 @@ impl StructuredLoop {
         let mut widths = [false; 2];
         if self.paged_fetch_bytes.is_some() {
             for instruction in &unit.instructions[self.earlier as usize..self.tail as usize] {
-                match paged_read_width(instruction.operation, None) {
+                let width = paged_read_width(instruction.operation, None).or_else(|| {
+                    (self.paged_stack_writes
+                        && paged_stack_dword(instruction.operation)
+                            == Some(crate::memory::Access::Read))
+                    .then_some(Width::W32)
+                });
+                match width {
                     Some(Width::W8) => widths[0] = true,
                     Some(Width::W32) => widths[1] = true,
                     _ => {}
@@ -288,12 +323,12 @@ impl StructuredLoop {
 
     #[cfg(not(feature = "parallel"))]
     pub(super) fn has_paged_byte_store(self, unit: &super::Unit) -> bool {
-        unit.context.is_long64()
+        (unit.context.is_long64() || self.paged_stack_writes)
             && self.paged_fetch_bytes.is_some()
             && self.natural_forward_loop()
             && unit.instructions[self.head as usize..self.tail as usize]
                 .iter()
-                .any(|instruction| paged_byte_store(instruction.operation))
+                .any(|instruction| paged_byte_store(instruction.operation, None))
     }
 
     #[cfg(not(feature = "parallel"))]
@@ -464,6 +499,7 @@ impl StructuredLoop {
             kind: LoopKind::ForwardEdges,
             project_dwords: true,
             paged_fetch_bytes: None,
+            paged_stack_writes: false,
             #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
             paged_read_span: None,
         }
@@ -527,6 +563,7 @@ impl StructuredLoop {
                         kind,
                         project_dwords: true,
                         paged_fetch_bytes: None,
+                        paged_stack_writes: false,
                         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
                         paged_read_span: None,
                     });
@@ -603,15 +640,64 @@ fn inside_paged_read_graph(operation: Operation) -> bool {
 }
 
 #[cfg(not(feature = "parallel"))]
-fn paged_byte_store(operation: Operation) -> bool {
+fn paged_byte_store(operation: Operation, address_size: Option<Width>) -> bool {
     matches!(
         operation,
         Operation::Store {
             width: Width::W8,
             address: Address {
                 segment: crate::x86::context::Segment::Ds,
+                size,
                 ..
             },
+            ..
+        } if address_size.is_none_or(|required| required == size)
+    )
+}
+
+#[cfg(not(feature = "parallel"))]
+fn paged_stack_dword(operation: Operation) -> Option<crate::memory::Access> {
+    use crate::{
+        memory::Access,
+        x86::{context::Segment, instruction::AddressBase},
+    };
+
+    let (address, access) = match operation {
+        Operation::Load {
+            width: Width::W32,
+            address,
+            ..
+        }
+        | Operation::MemoryAlu {
+            kind: Alu::Cmp,
+            width: Width::W32,
+            address,
+            ..
+        } => (address, Access::Read),
+        Operation::Store {
+            width: Width::W32,
+            address,
+            ..
+        } => (address, Access::Write),
+        _ => return None,
+    };
+    (address.segment == Segment::Ss
+        && address.size == Width::W32
+        && address.base == AddressBase::Register(4)
+        && address.index.is_none())
+    .then_some(access)
+}
+
+#[cfg(not(feature = "parallel"))]
+fn paged_write_graph_register(operation: Operation) -> bool {
+    matches!(
+        operation,
+        Operation::Cmov {
+            src: Location::Register(_),
+            ..
+        } | Operation::Extend {
+            src: Location::Register(_),
+            signed: false,
             ..
         }
     )

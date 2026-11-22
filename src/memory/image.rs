@@ -401,14 +401,18 @@ impl Image {
     }
 
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
-    pub(crate) fn physical_direct_write_byte(&mut self, address: u64, value: u8) -> Option<()> {
+    pub(crate) fn physical_direct_write<const WIDTH: usize>(
+        &mut self,
+        address: u64,
+        value: [u8; WIDTH],
+    ) -> Option<()> {
         if !self.physical {
             return None;
         }
-        let (mapping, relative) = self.writable_direct_mapping(address, 1)?;
+        let (mapping, relative) = self.writable_direct_mapping(address, WIDTH as u32)?;
         let backing = mapping.backing;
         let index = mapping.offset as usize + relative as usize;
-        self.backings[backing].bytes[index] = value;
+        self.backings[backing].bytes[index..index + WIDTH].copy_from_slice(&value);
         Some(())
     }
 

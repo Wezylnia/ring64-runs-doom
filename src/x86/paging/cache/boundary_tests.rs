@@ -239,7 +239,14 @@ fn current_pcid_non_global_precedes_global_and_targeted_eviction_keeps_global() 
 #[cfg(not(feature = "parallel"))]
 #[test]
 fn guarded_store_requires_dirty_ready_writable_retention_before_aging() {
-    for (leaf, admit) in [(0xa027, false), (0xa065, false), (0xa067, true)] {
+    for (leaf, width, admit) in [
+        (0xa027, 1, false),
+        (0xa065, 1, false),
+        (0xa067, 1, true),
+        (0xa027, 4, false),
+        (0xa065, 4, false),
+        (0xa067, 4, true),
+    ] {
         let (mut image, state, data) = fixture();
         image.physical_write(0x4008, 8, leaf).unwrap();
         image.physical_write(0x4010, 8, 0xb067).unwrap();
@@ -261,7 +268,7 @@ fn guarded_store_requires_dirty_ready_writable_retention_before_aging() {
             &state,
             store,
             &ProtectionKeys::ZERO,
-            1,
+            width,
             false,
             |pa| {
                 assert!(admit, "unproven stores leave their payload untouched");

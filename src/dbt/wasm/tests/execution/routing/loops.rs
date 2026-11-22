@@ -546,6 +546,112 @@ fn paged_scalar_f32_loop_uses_a_distinct_guard_and_has_checked_fallback() {
     }
 }
 
+#[cfg(not(feature = "parallel"))]
+#[test]
+fn paged_stack_spills_require_flat_segments_and_32_bit_effective_addresses() {
+    use crate::x86::{
+        context::{Mode, Segment, SegmentType},
+        instruction::{Operation, Width},
+    };
+
+    let code = [
+        0x8b, 0x44, 0x24, 4, // mov eax,[esp+4]
+        0x3b, 0x44, 0x24, 8, // cmp eax,[esp+8]
+        0x76, 1,    // jbe spill
+        0x40, // inc eax
+        0x89, 0x44, 0x24, 4, // spill: mov [esp+4],eax
+        0x0f, 0xb6, 0x17, // movzx edx,[edi]
+        0x01, 0xc2, // add edx,eax
+        0x88, 0x16, // mov [esi],dl
+        0x46, 0x47, 0x49, // inc esi; inc edi; dec ecx
+        0x75, 0xe5, // jne head
+    ];
+    let mut context = ExecutionContext::default();
+    context.set_mode_and_cpl(Mode::Protected, 0);
+    let mut cs = context.segment(Segment::Cs);
+    cs.default32 = true;
+    let mut cs_attributes = context.attributes(Segment::Cs);
+    cs_attributes.long = false;
+    context.set_segment(Segment::Cs, 8, cs, cs_attributes);
+    let image = crate::memory::Image::new(0x1000, code.to_vec(), 0x8000, vec![0; 8]).unwrap();
+    let artifact = crate::dbt::compile_with_context(
+        &image,
+        &context,
+        0x1000,
+        crate::dbt::Limits {
+            max_instructions: 64,
+            max_source_bytes: 256,
+            max_artifact_bytes: 65536,
+        },
+    )
+    .unwrap();
+    let mut body = Unit {
+        context,
+        ..unit(artifact.instructions)
+    };
+    let guarded = emit_profile(&body, true, true, usize::MAX);
+    let capped = emit_profile(&body, true, true, guarded.len() - 1);
+    let unpaged = emit_profile(&body, true, false, usize::MAX);
+    let old_ss = body.context.segment(Segment::Ss);
+    let ss_attributes = body.context.attributes(Segment::Ss);
+    let mut cases = vec![(guarded, true), (capped, false), (unpaged, false)];
+    for ss in [
+        crate::x86::context::LoadedSegment {
+            base: 0x1000,
+            ..old_ss
+        },
+        crate::x86::context::LoadedSegment {
+            limit: 0xffff,
+            ..old_ss
+        },
+        crate::x86::context::LoadedSegment {
+            kind: SegmentType::ExpandDownReadWrite,
+            ..old_ss
+        },
+    ] {
+        body.context
+            .set_segment(Segment::Ss, 0x10, ss, ss_attributes);
+        cases.push((emit_profile(&body, true, true, usize::MAX), false));
+    }
+    body.context
+        .set_segment(Segment::Ss, 0x10, old_ss, ss_attributes);
+    let old_ds = body.context.segment(Segment::Ds);
+    let ds_attributes = body.context.attributes(Segment::Ds);
+    let mut ro_ds = old_ds;
+    ro_ds.kind = SegmentType::ReadOnly;
+    body.context
+        .set_segment(Segment::Ds, 0x18, ro_ds, ds_attributes);
+    cases.push((emit_profile(&body, true, true, usize::MAX), false));
+    body.context
+        .set_segment(Segment::Ds, 0x18, old_ds, ds_attributes);
+    if let Operation::Load { address, .. } = &mut body.instructions[0].operation {
+        address.size = Width::W16;
+    } else {
+        unreachable!("the first instruction loads the stack slot");
+    }
+    cases.push((emit_profile(&body, true, true, usize::MAX), false));
+    for (bytes, accepted) in cases {
+        wasmparser::Validator::new().validate_all(&bytes).unwrap();
+        let imports: Vec<_> = wasmparser::Parser::new(0)
+            .parse_all(&bytes)
+            .filter_map(|payload| match payload.unwrap() {
+                wasmparser::Payload::ImportSection(reader) => Some(reader),
+                _ => None,
+            })
+            .flat_map(|reader| reader.into_imports().map(|import| import.unwrap().name))
+            .collect();
+        for name in [
+            "paged_write_loop_guard32",
+            "paged_loop_read_dword",
+            "paged_loop_read_byte",
+            "paged_loop_write_byte",
+            "paged_loop_write_dword",
+        ] {
+            assert_eq!(imports.contains(&name), accepted, "{name}");
+        }
+    }
+}
+
 #[test]
 fn register_loop_keeps_carry_live_through_zero_count_and_partial_writers() {
     let code = [

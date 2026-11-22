@@ -188,6 +188,7 @@ struct Emitter {
     paged_loop_read_byte: Option<u32>,
     paged_loop_read_dword: Option<u32>,
     paged_loop_write_byte: Option<u32>,
+    paged_loop_write_dword: Option<u32>,
     register_upper_dwords: [Option<u32>; 16],
     narrow_gprs: bool,
     omit_result_status: bool,

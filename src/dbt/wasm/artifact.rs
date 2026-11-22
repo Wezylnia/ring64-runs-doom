@@ -722,11 +722,12 @@ fn emit_body(
     let paged_loop_read_type = (paged_read_byte || paged_read_dword)
         .then(|| add_function_type(&mut types, [ValType::I64], [ValType::I64]));
     #[cfg(not(feature = "parallel"))]
-    let paged_loop_write_byte_type = loop_body
-        .is_some_and(|body| body.has_paged_byte_store(unit))
-        .then(|| add_function_type(&mut types, [ValType::I64, ValType::I32], [ValType::I32]));
+    let paged_write_byte = loop_body.is_some_and(|body| body.has_paged_byte_store(unit));
     #[cfg(feature = "parallel")]
-    let paged_loop_write_byte_type: Option<u32> = None;
+    let paged_write_byte = false;
+    let paged_write_dword = loop_body.is_some_and(|body| body.paged_stack_writes);
+    let paged_loop_write_type = (paged_write_byte || paged_write_dword)
+        .then(|| add_function_type(&mut types, [ValType::I64, ValType::I32], [ValType::I32]));
     let debug_begin_type = observed.then(|| {
         add_function_type(
             &mut types,
@@ -933,7 +934,9 @@ fn emit_body(
         if loop_body.is_some_and(StructuredLoop::paged_sse) {
             return import_function("paged_sse_loop_guard", index);
         }
-        let name = if !unit.context.is_long64() && (paged_read_byte || paged_read_dword) {
+        let name = if paged_write_dword {
+            "paged_write_loop_guard32"
+        } else if !unit.context.is_long64() && (paged_read_byte || paged_read_dword) {
             "paged_read_loop_guard32"
         } else {
             "paged_loop_guard"
@@ -946,8 +949,12 @@ fn emit_body(
     let paged_loop_read_dword = paged_loop_read_type
         .filter(|_| paged_read_dword)
         .map(|index| import_function("paged_loop_read_dword", index));
-    let paged_loop_write_byte =
-        paged_loop_write_byte_type.map(|index| import_function("paged_loop_write_byte", index));
+    let paged_loop_write_byte = paged_loop_write_type
+        .filter(|_| paged_write_byte)
+        .map(|index| import_function("paged_loop_write_byte", index));
+    let paged_loop_write_dword = paged_loop_write_type
+        .filter(|_| paged_write_dword)
+        .map(|index| import_function("paged_loop_write_dword", index));
     let debug_begin = debug_begin_type.map(|index| import_function("debug_begin", index));
     let debug_step = debug_type.map(|index| import_function("debug_finish", index));
     let external_step = external_step_type.map(|index| import_function("external_step", index));
@@ -1471,6 +1478,7 @@ fn emit_body(
         paged_loop_read_byte,
         paged_loop_read_dword,
         paged_loop_write_byte,
+        paged_loop_write_dword,
         register_upper_dwords,
         narrow_gprs,
         omit_result_status: false,

@@ -94,21 +94,44 @@ fn direct_physical_byte_store_requires_plain_writable_ram() {
     let data = mapping(HOLE, 1, 4, rw);
     let alias = mapping(HOLE + 0x1000, 5, 1, all());
     let mut image = physical((0..8).collect(), vec![data.clone(), alias]);
-    assert_eq!(image.physical_direct_write_byte(HOLE + 1, 0xaa), None);
+    assert_eq!(image.physical_direct_write(HOLE + 1, [0xaa]), None);
     assert_eq!(image.physical_read(HOLE + 1, 1), Ok(2));
 
     image.set_mappings(vec![data.clone()]).unwrap();
-    assert_eq!(image.physical_direct_write_byte(HOLE + 1, 0xaa), Some(()));
+    assert_eq!(image.physical_direct_write(HOLE + 1, [0xaa]), Some(()));
     assert_eq!(image.physical_read(HOLE + 1, 1), Ok(0xaa));
-    assert_eq!(image.physical_direct_write_byte(HOLE + 4, 0xbb), None);
+    assert_eq!(image.physical_direct_write(HOLE + 4, [0xbb]), None);
 
     let denied = MappingInput {
         permissions: Permissions { write: false, ..rw },
         ..data
     };
     image.set_mappings(vec![denied]).unwrap();
-    assert_eq!(image.physical_direct_write_byte(HOLE + 1, 0xbb), None);
+    assert_eq!(image.physical_direct_write(HOLE + 1, [0xbb]), None);
     assert_eq!(image.physical_read(HOLE + 1, 1), Ok(0xaa));
+}
+
+#[cfg(not(feature = "parallel"))]
+#[test]
+fn direct_physical_dword_store_preserves_mapping_and_dependency_boundaries() {
+    let rw = Permissions {
+        execute: false,
+        ..all()
+    };
+    let data = mapping(HOLE, 0, 4, rw);
+    let next = mapping(HOLE + 4, 4, 4, rw);
+    let value = 0xaabb_ccddu32.to_le_bytes();
+    let mut image = physical((0..8).collect(), vec![data.clone(), next.clone()]);
+    assert_eq!(image.physical_direct_write(HOLE + 2, value), None);
+    assert_eq!(image.physical_read(HOLE, 8), Ok(0x0706_0504_0302_0100));
+
+    let owner = image.register_dependencies([], [(HOLE + 4, 4)]).unwrap();
+    assert_eq!(image.physical_direct_write(HOLE, value), None);
+    assert!(image.owner_valid(owner));
+    assert_eq!(image.physical_read(HOLE, 4), Ok(0x0302_0100));
+    image.release(owner);
+    assert_eq!(image.physical_direct_write(HOLE, value), Some(()));
+    assert_eq!(image.physical_read(HOLE, 4), Ok(0xaabb_ccdd));
 }
 
 #[test]

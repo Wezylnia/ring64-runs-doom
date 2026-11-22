@@ -365,6 +365,15 @@ impl ExecutionContext {
             && self.translate(0, 1, Segment::Ds, Access::Read, false).ok() == Some(0)
     }
 
+    #[cfg(not(feature = "parallel"))]
+    pub(crate) fn flat_paged_write32(&self) -> bool {
+        self.flat_paged_data32()
+            && self.translate(0, 1, Segment::Ds, Access::Write, false).ok() == Some(0)
+            && self.segment_base(Segment::Ss) == 0
+            && self.segment(Segment::Ss).limit == u32::MAX
+            && self.translate(0, 1, Segment::Ss, Access::Write, true).ok() == Some(0)
+    }
+
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
     pub(crate) fn flat_paged_read_span32(&self, start: u64, bytes: u32) -> bool {
         bytes != 0

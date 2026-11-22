@@ -1276,6 +1276,8 @@ export class Core {
         env.paged_read_loop_guard32 = this.#exports.core_paged_read_loop_guard32;
       if (this.#exports.core_paged_sse_loop_guard)
         env.paged_sse_loop_guard = this.#exports.core_paged_sse_loop_guard;
+      if (this.#exports.core_paged_write_loop_guard32)
+        env.paged_write_loop_guard32 = this.#exports.core_paged_write_loop_guard32;
       if (this.#exports.core_paged_loop_read_dword)
         env.paged_loop_read_dword = this.#exports.core_paged_loop_read_dword;
       if (this.#exports.core_paged_loop_read_byte)
@@ -1284,6 +1286,8 @@ export class Core {
         env.paged_loop_read_span = this.#exports.core_paged_loop_read_span;
       if (this.#exports.core_paged_loop_write_byte)
         env.paged_loop_write_byte = this.#exports.core_paged_loop_write_byte;
+      if (this.#exports.core_paged_loop_write_dword)
+        env.paged_loop_write_dword = this.#exports.core_paged_loop_write_dword;
       if (this.#exports.core_write_segment_base)
         env.write_segment_base = this.#exports.core_write_segment_base;
       for (const [name, key] of Object.entries({

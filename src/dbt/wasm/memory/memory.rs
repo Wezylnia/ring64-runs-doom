@@ -665,10 +665,13 @@ impl Emitter {
         next_pc: u64,
         exit_depth: u32,
     ) {
+        let paged_write = match (width, address.segment) {
+            (Width::W8, Segment::Ds) => self.paged_loop_write_byte,
+            (Width::W32, Segment::Ss) => self.paged_loop_write_dword,
+            _ => None,
+        };
         if self.guarded_paged_lap
-            && width == Width::W8
-            && address.segment == Segment::Ds
-            && let Some(write) = self.paged_loop_write_byte
+            && let Some(write) = paged_write
         {
             self.address(address, next_pc);
             self.data_operand(src, width);

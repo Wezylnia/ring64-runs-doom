@@ -318,7 +318,7 @@ impl Core {
 #[cfg(not(feature = "parallel"))]
 #[unsafe(no_mangle)]
 pub extern "C" fn core_paged_loop_guard(pc: u64, bytes: u32, flags: u64, shadow: u32) -> i32 {
-    paged_loop_guard::<false, false>(pc, bytes, flags, shadow)
+    paged_loop_guard::<false, false, false>(pc, bytes, flags, shadow)
 }
 
 #[cfg(not(feature = "parallel"))]
@@ -329,17 +329,28 @@ pub extern "C" fn core_paged_read_loop_guard32(
     flags: u64,
     shadow: u32,
 ) -> i32 {
-    paged_loop_guard::<true, false>(pc, bytes, flags, shadow)
+    paged_loop_guard::<true, false, false>(pc, bytes, flags, shadow)
 }
 
 #[cfg(not(feature = "parallel"))]
 #[unsafe(no_mangle)]
 pub extern "C" fn core_paged_sse_loop_guard(pc: u64, bytes: u32, flags: u64, shadow: u32) -> i32 {
-    paged_loop_guard::<false, true>(pc, bytes, flags, shadow)
+    paged_loop_guard::<false, true, false>(pc, bytes, flags, shadow)
 }
 
 #[cfg(not(feature = "parallel"))]
-fn paged_loop_guard<const FLAT_DATA32: bool, const SSE: bool>(
+#[unsafe(no_mangle)]
+pub extern "C" fn core_paged_write_loop_guard32(
+    pc: u64,
+    bytes: u32,
+    flags: u64,
+    shadow: u32,
+) -> i32 {
+    paged_loop_guard::<false, false, true>(pc, bytes, flags, shadow)
+}
+
+#[cfg(not(feature = "parallel"))]
+fn paged_loop_guard<const FLAT_DATA32: bool, const SSE: bool, const FLAT_WRITE32: bool>(
     pc: u64,
     bytes: u32,
     flags: u64,
@@ -360,6 +371,7 @@ fn paged_loop_guard<const FLAT_DATA32: bool, const SSE: bool>(
             && (!core.numeric_admission_unrestricted()
                 || state.mxcsr & MXCSR_EXCEPTION_MASKS != MXCSR_EXCEPTION_MASKS))
             || (FLAT_DATA32 && !core.context.flat_paged_data32())
+            || (FLAT_WRITE32 && !core.context.flat_paged_write32())
             || !core.context.single_page_code_span(pc, bytes)
             || state.event.kind != 0
             || state.interrupts != Default::default()
@@ -479,7 +491,18 @@ pub extern "C" fn core_paged_loop_read_span(address: u64, bytes: u32, segment: u
 #[cfg(not(feature = "parallel"))]
 #[unsafe(no_mangle)]
 pub extern "C" fn core_paged_loop_write_byte(address: u64, value: u32) -> i32 {
-    if !crate::memory::canonical48(address) {
+    paged_loop_write(address, [value as u8])
+}
+
+#[cfg(not(feature = "parallel"))]
+#[unsafe(no_mangle)]
+pub extern "C" fn core_paged_loop_write_dword(address: u64, value: u32) -> i32 {
+    paged_loop_write(address, value.to_le_bytes())
+}
+
+#[cfg(not(feature = "parallel"))]
+fn paged_loop_write<const WIDTH: usize>(address: u64, value: [u8; WIDTH]) -> i32 {
+    if address & (WIDTH as u64 - 1) != 0 || !crate::memory::canonical48(address) {
         return 0;
     }
     let written = BRIDGE.with_borrow_mut(|bridge| {
@@ -498,9 +521,9 @@ pub extern "C" fn core_paged_loop_write_byte(address: u64, value: u32) -> i32 {
             paging,
             request,
             &state.protection_keys,
-            1,
+            WIDTH as u32,
             false,
-            |physical| core.image.physical_direct_write_byte(physical, value as u8),
+            |physical| core.image.physical_direct_write(physical, value),
         )
     });
     i32::from(written.is_some())

@@ -14,8 +14,144 @@ import {
   type Scenario,
 } from './fixture.js';
 
+// MOV EAX,[ESP+4]; CMP EAX,[ESP+8]; JBE spill; INC EAX; MOV [ESP+4],EAX;
+// MOVZX EDX,[EDI]; ADD EDX,EAX; MOV [ESI],DL; INC ESI; INC EDI; DEC ECX; JNZ head.
+const PAGED_STACK_SPILL_LOOP = '8b4424043b442408760140894424040fb61701c2881646474975e5';
+
 export function pagingBoundaryReviewScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [
+    {
+      name: 'paged 32-bit stack spills preserve dirty, segment, and partial budget boundaries',
+      async run() {
+        const head = 0x400000n;
+        const data = 0x401000n;
+        const spill = 0x402004n;
+        const dest = 0x403000n;
+        for (const layout of ['flat', 'read-only-pte', 'nonflat', 'expand-down'] as const) {
+          const execution = context('compatibility');
+          if (layout === 'nonflat') execution.segments.ss.base = 0x400000n;
+          if (layout === 'expand-down') {
+            execution.segments.ss.limit = 0x402000;
+            execution.segments.ss.type = 'expand-down-read-write';
+          }
+          const leaf = layout === 'read-only-pte' ? 0xb025n : 0xb027n;
+          await usingPaged(
+            compiler,
+            {
+              code: PAGED_STACK_SPILL_LOOP,
+              context: execution,
+              bank: { ...BANK, cr0: BANK.cr0 | 0x10000n },
+              words: [
+                [0x4008n, 0xa027n],
+                [0x4010n, leaf],
+                [0x4018n, 0xc067n],
+              ],
+              spans: [
+                { physical: 0xa000n, bytes: Uint8Array.of(0xff, 2, 3) },
+                { physical: 0xb004n, bytes: little([0xffn, 0n], 4) },
+                { physical: 0xc000n, bytes: new Uint8Array(8) },
+              ],
+            },
+            async (cpu) => {
+              const start = initial(
+                head,
+                {
+                  0: 0n,
+                  1: 3n,
+                  2: 0n,
+                  4: spill - 4n - execution.segments.ss.base,
+                  6: dest,
+                  7: data,
+                },
+                2n,
+              );
+              cpu.setState(start);
+              const warm = await cpu.run({ budget: 1n });
+              equal(warm.state.registers[0], 0xffn, layout);
+              equal(word(cpu, 0x4010n), leaf, 'the preceding read leaves D clear');
+              cpu.setState(start);
+              const prefix = await cpu.run({ budget: 16n });
+              equal(prefix.state.rip, head + 11n, 'continues at the original dword spill');
+              if (layout === 'read-only-pte') {
+                equal(prefix.reason, 'page-fault', layout);
+                equal(prefix.retired, 4n, 'read and increment are the full committed prefix');
+                equal(prefix.pageFault?.address, spill, 'the checked SS write faults at the spill');
+                equal(prefix.state.registers[0], 0x100n, 'increment commits before the fault');
+                equal(word(cpu, 0x4010n), leaf, 'the refused store leaves D clear');
+                equal(word(cpu, 0xb004n), 0xffn, 'the refused store leaves the slot intact');
+                equal(cpu.readPhysicalMemory(0xc000n, 1)[0], 0, 'later writes do not run');
+                return;
+              }
+              equal(prefix.reason, 'budget', layout);
+              equal(prefix.retired, 16n, 'one lap and exactly four more instructions');
+              equal(prefix.state.registers[0], 0x101n, 'the next dword has been computed');
+              equal(word(cpu, 0x4010n), 0xb067n, 'checked retry commits the guest dirty bit');
+              equal(word(cpu, 0xb004n), 0x100n, 'only the first lap wrote the slot');
+              same([...cpu.readPhysicalMemory(0xc000n, 3)], [0xff, 0, 0], 'one byte committed');
+              const end = await cpu.run({ budget: 40n, stop: head + 27n });
+              equal(end.reason, 'stop', layout);
+              equal(end.retired, 20n, 'resume completes exactly the unpaid instructions');
+              equal(end.state.flags, 0x46n, 'the final decrement supplies flags');
+              equal(word(cpu, 0xb004n), 0x102n, 'the dword is little endian and not replayed');
+              same([...cpu.readPhysicalMemory(0xc000n, 3)], [0xff, 3, 5], 'all bytes committed');
+              if (layout === 'flat') {
+                cpu.setState(start);
+                const retained = await cpu.run({ budget: 40n, stop: head + 27n });
+                equal(retained.reason, 'stop', 'dirty-ready retained spill');
+                equal(retained.retired, 36n, 'three more full laps retire');
+                equal(word(cpu, 0xb004n), 0x105n, 'the retained stores reach the stack backing');
+                same([...cpu.readPhysicalMemory(0xc000n, 3)], [2, 6, 8], 'retained DS byte output');
+              }
+            },
+          );
+        }
+      },
+    },
+    {
+      name: 'paged 32-bit dword spill through an executable alias republishes the next opcode',
+      async run() {
+        const head = 0x400000n;
+        await usingPaged(
+          compiler,
+          {
+            code: PAGED_STACK_SPILL_LOOP,
+            context: context('compatibility'),
+            words: [
+              [0x4008n, 0xa067n],
+              [0x4010n, 0x9067n],
+              [0x4018n, 0xc067n],
+            ],
+            spans: [
+              { physical: 0xa000n, bytes: Uint8Array.of(0xff) },
+              { physical: 0xc000n, bytes: new Uint8Array(8) },
+            ],
+          },
+          async (cpu) => {
+            // The spill replaces DEC ECX at code offset 24 with DEC EDX through SS.
+            const start = initial(
+              head,
+              { 0: 0n, 1: 3n, 2: 0n, 4: 0x402014n, 6: 0x403000n, 7: 0x401000n },
+              2n,
+            );
+            cpu.setState(start);
+            equal((await cpu.run({ budget: 1n })).reason, 'budget', 'warm the alias translation');
+            cpu.setState(start);
+            const result = await cpu.run({ budget: 12n });
+            equal(result.reason, 'budget', 'a complete lap reaches its successor');
+            equal(result.retired, 12n, 'the source-changing instruction retires once');
+            equal(result.state.rip, head, 'the replaced decrement feeds JNZ');
+            equal(result.state.registers[1], 3n, 'the original DEC ECX does not execute');
+            equal(result.state.registers[2], 0x82e57648n, 'the newly decoded DEC EDX executes');
+            equal(result.state.flags, 0x86n, 'new decrement flags are visible');
+            same(
+              [...cpu.readPhysicalMemory(0x9018n, 4)],
+              [0x4a, 0x75, 0xe5, 0x82],
+              'modified code',
+            );
+          },
+        );
+      },
+    },
     {
       name: 'paged byte store loops commit ordinary bytes and replay a refused write precisely',
       async run() {
