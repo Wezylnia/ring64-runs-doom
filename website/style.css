@@ -457,7 +457,10 @@ sup.ink-note-mark {
   justify-self: center;
   font-family: var(--font-print);
   font-size: 1.0625rem;
-  color: var(--ink);
+}
+
+.signature a {
+  color: var(--brick);
 }
 
 .source {
