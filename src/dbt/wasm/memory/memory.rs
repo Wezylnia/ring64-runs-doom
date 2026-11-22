@@ -48,6 +48,7 @@ pub(super) struct PagedDwordReadPair {
     pub(super) second: u32,
     pub(super) resolve: u32,
     pub(super) host: u32,
+    pub(super) resolver_mode: u32,
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -458,8 +459,12 @@ impl Emitter {
                 .op(Op::If(BlockType::Result(ValType::I32)))
                 .op(Op::LocalGet(ADDRESS))
                 .op(Op::I32Const(8))
-                .op(Op::I32Const(Segment::Ds as i32))
+                .op(Op::LocalGet(pair.resolver_mode))
                 .op(Op::Call(pair.resolve))
+                .op(Op::I32Const(
+                    crate::embedding::layout::PAGED_PAIR_CONTINUE as i32,
+                ))
+                .op(Op::LocalSet(pair.resolver_mode))
                 .op(Op::Else)
                 .op(Op::I32Const(0))
                 .op(Op::End)

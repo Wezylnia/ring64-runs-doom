@@ -809,11 +809,16 @@ fn paged_loop_read<const WIDTH: u32, const CAPTURE_SLOT: bool>(address: u64) -> 
 #[unsafe(no_mangle)]
 #[inline(never)]
 pub extern "C" fn core_paged_loop_read_span(address: u64, bytes: u32, segment: u32) -> u32 {
+    use crate::embedding::layout::{PAGED_PAIR_CONTINUE, PAGED_PAIR_START};
+
     if segment == Segment::Ds as u32 {
         return paged_loop_read_span::<false, false, false>(address, bytes, segment);
     }
     if segment == crate::embedding::layout::paging::PREFIX_DWORD_READ_SEGMENT && bytes == 4 {
         return paged_loop_read_span::<false, false, true>(address, 4, Segment::Ds as u32);
+    }
+    if bytes == 8 && matches!(segment, PAGED_PAIR_START | PAGED_PAIR_CONTINUE) {
+        return paged_loop_read_paired_dwords(address, segment == PAGED_PAIR_CONTINUE);
     }
     0
 }
@@ -1212,6 +1217,85 @@ fn paged_loop_read_span<
             base: address,
             host,
             length: bytes,
+        };
+        &raw const core.direct_span as u32
+    })
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[derive(Clone, Copy)]
+pub(super) struct GuardedDwordPair {
+    address: u64,
+    binding: (usize, u64),
+    host: u32,
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[inline(never)]
+fn paged_loop_read_paired_dwords(address: u64, continuing: bool) -> u32 {
+    const BYTES: u32 = 8;
+    BRIDGE.with_borrow_mut(|bridge| {
+        let core = bridge.core.as_mut().unwrap();
+        let Some(paging) = core.paging.as_ref() else {
+            return 0;
+        };
+        // The emitting clone starts fresh after every guard or replay.
+        // A live slot keeps the previously authorized mapping and extent.
+        let host = if continuing
+            && let Some(pair) = core.guarded_dword_pair
+            && pair.address == address
+            && core
+                .translation_cache
+                .retouch_guarded_read_binding(pair.binding, address)
+                .is_some()
+        {
+            pair.host
+        } else {
+            core.guarded_dword_pair = None;
+            if !core.context.is_long64()
+                || crate::memory::check_span(address, BYTES, Access::Read).is_err()
+            {
+                return 0;
+            }
+            let state = unsafe { &*core.state.get() };
+            let request = paging::walk::Request {
+                linear: address,
+                access: Access::Read,
+                class: paging::walk::AccessClass::operand(
+                    core.context.cpl(),
+                    state.flags & crate::x86::flags::AC != 0,
+                ),
+            };
+            let Some((binding, host)) = core
+                .translation_cache
+                .data_translation_then_fetch::<false, _>(
+                    paging,
+                    request,
+                    &state.protection_keys,
+                    BYTES,
+                    true,
+                    |slot, translation| {
+                        Some((
+                            translation.cache_id.map(|id| (slot, id)),
+                            core.image
+                                .physical_direct_read_pointer(translation.physical, BYTES)?,
+                        ))
+                    },
+                )
+            else {
+                return 0;
+            };
+            core.guarded_dword_pair = binding.map(|binding| GuardedDwordPair {
+                address,
+                binding,
+                host,
+            });
+            host
+        };
+        core.direct_span = crate::memory::DirectSpan {
+            base: address,
+            host,
+            length: BYTES,
         };
         &raw const core.direct_span as u32
     })

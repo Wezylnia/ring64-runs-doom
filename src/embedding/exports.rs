@@ -122,6 +122,8 @@ struct Core {
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     direct_span: crate::memory::DirectSpan,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    guarded_dword_pair: Option<paging::GuardedDwordPair>,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     indexed_dword_write: crate::memory::IndexedDwordWrite,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     indexed_write_memo: crate::x86::paging::cache::IndexedWriteMemo,
@@ -204,6 +206,8 @@ impl Bridge {
             image,
             #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
             direct_span: Default::default(),
+            #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+            guarded_dword_pair: None,
             #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
             indexed_dword_write: Default::default(),
             #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]

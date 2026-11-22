@@ -1820,6 +1820,13 @@ impl Emitter {
                 .op(Op::LocalSet(group.record));
         }
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if let Some(pair) = self.paged_dword_read_pair {
+            self.op(Op::I32Const(
+                crate::embedding::layout::PAGED_PAIR_START as i32,
+            ))
+            .op(Op::LocalSet(pair.resolver_mode));
+        }
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         if let Some(window) = self.paged_copy_window {
             self.op(Op::I64Const(0)).op(Op::LocalSet(window.limit));
         }

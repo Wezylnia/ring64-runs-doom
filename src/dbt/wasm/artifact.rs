@@ -2160,13 +2160,14 @@ fn emit_body(
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let paged_dword_read_pair = paged_dword_read_pair.map(|(first, second, resolve)| {
         let host = next_local;
-        locals.push((1, ValType::I32));
-        next_local += 1;
+        locals.push((2, ValType::I32));
+        next_local += 2;
         memory::PagedDwordReadPair {
             first,
             second,
             resolve,
             host,
+            resolver_mode: host + 1,
         }
     });
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]

@@ -492,7 +492,16 @@ impl Cache {
 
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
     pub(crate) fn retouch_guarded_read_window(&self, linear: u64) -> Option<()> {
-        let (slot, id) = self.guarded_read_window.get()?;
+        self.retouch_guarded_read_binding(self.guarded_read_window.get()?, linear)
+    }
+
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    #[inline(always)]
+    pub(crate) fn retouch_guarded_read_binding(
+        &self,
+        (slot, id): (usize, u64),
+        linear: u64,
+    ) -> Option<()> {
         let mut entries = self.entries.borrow_mut();
         let entry = entries.slots[slot].as_ref()?;
         if entry.translation.cache_id != Some(id) || !entry.translation.contains(linear) {

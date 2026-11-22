@@ -76,3 +76,62 @@ test('an indexed write loop bypasses grouping on a large data leaf', async () =>
     prototype.artifactImports = imports;
   }
 });
+
+test('paired dword reads keep live aliases and retire before a split-page fault', async () => {
+  // DEC ECX; JZ end; ADD EAX,[RBX]; ADD R12D,[RBX+4]; MOV EDI,[RBX+4];
+  // TEST EDI,EDI; JZ head; MOV [RSI],EAX; JMP head.
+  const code = 'ffc974110303440363048b7b0485ff74ef8906ebeb';
+  const data = PC + 0x1000n;
+  const ram = new Uint8Array(4096);
+  const words = new DataView(ram.buffer);
+  words.setUint32(0, 1, true);
+  words.setUint32(4, 7, true);
+  words.setUint32(4092, 9, true);
+  const prototype = Core.prototype as unknown as {
+    artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
+  };
+  const imports = prototype.artifactImports;
+  let reused = 0;
+  prototype.artifactImports = function (observed) {
+    const env = imports.call(this, observed);
+    const readSpan = env.paged_loop_read_span;
+    if (typeof readSpan === 'function') {
+      env.paged_loop_read_span = (address: bigint, bytes: number, segment: number) => {
+        const result = readSpan(address, bytes, segment);
+        if (address === data && bytes === 8 && segment === 7 && result !== 0) reused++;
+        return result;
+      };
+    }
+    return env;
+  };
+  try {
+    await usingPaged(
+      compiler,
+      {
+        code,
+        words: [[0x4008n, 0xa067n]],
+        spans: [{ physical: 0xa000n, bytes: ram }],
+      },
+      async (cpu) => {
+        const stop = PC + BigInt(code.length / 2);
+        cpu.setState(initial(PC, { 0: 1n, 1: 17n, 3: data, 6: data, 7: 1n, 12: 0n }));
+        const full = await cpu.run({ stop, budget: 200n });
+        assert.equal(full.reason, 'stop');
+        assert.equal(full.retired, 146n);
+        assert.equal(full.state.registers[0], 65536n);
+        assert.equal(full.state.registers[12], 112n);
+        assert.deepEqual(cpu.readPhysicalMemory(0xa000n, 4), Uint8Array.of(0, 0, 1, 0));
+        assert.ok(reused > 0, 'the paired span reused a live aliased source');
+
+        cpu.setState(initial(PC, { 0: 1n, 1: 17n, 3: data + 4092n, 6: data, 7: 1n }));
+        const split = await cpu.run({ stop, budget: 200n });
+        assert.equal(split.reason, 'page-fault');
+        assert.equal(split.retired, 3n);
+        assert.equal(split.state.rip, PC + 6n);
+        assert.equal(split.state.registers[0], 10n);
+      },
+    );
+  } finally {
+    prototype.artifactImports = imports;
+  }
+});
