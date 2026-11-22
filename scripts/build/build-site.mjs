@@ -57,6 +57,7 @@ try {
   const exampleNames = [
     'add.ts',
     'add.c',
+    'parallel.ts',
     'api/run-cpu.ts',
     'api/run-to.ts',
     'api/copy-guest-bytes.ts',

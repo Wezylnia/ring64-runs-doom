@@ -61,8 +61,8 @@
               </button>
             </div>
             <p>
-              save <a href="./examples/add.ts" download>add.ts</a> and run <code>node add.ts</code>.
-              it prints <code>42n</code> from <code>rax</code>.
+              download <a href="./examples/add.ts" download>add.ts</a> and run
+              <code>node add.ts</code>. it prints <code>42n</code> from <code>rax</code>.
             </p>
             <details id="quickstart-source">
               <summary>view add.ts</summary>
@@ -116,9 +116,11 @@ cp node_modules/ring64/ring64.wasm public/</code></pre>
           <section id="your-code" class="docs-topic" aria-labelledby="binaries-title">
             <h1 id="binaries-title" tabindex="-1">run a binary</h1>
             <p>
-              pass a <code>Uint8Array</code> of raw instruction bytes as <code>code.bytes</code> and
-              choose a load address in <code>code.base</code>. if you have an elf or pe file, load
-              its sections and set up the guest state in your app.
+              pass raw x86 instructions as a <code>Uint8Array</code> in <code>code.bytes</code>. set
+              <code>code.base</code> to the guest address where execution starts.
+            </p>
+            <p>
+              for an elf or pe file, your app maps its sections and sets up the initial guest state.
             </p>
             <details>
               <summary>example · load a c function</summary>
@@ -155,8 +157,11 @@ llvm-objcopy -O binary --only-section=.text add.o add.bin</code></pre>
               <p>
                 <a href="./examples/add-c.ts" download>add-c.ts</a> passes arguments in
                 <code>rdi</code> and <code>rsi</code> and places a return address on the guest
-                stack. follow the <a href="#browser-setup">browser steps</a> with this file and put
-                <code>add.bin</code> beside the bundle. it prints <code>42n</code>.
+                stack.
+              </p>
+              <p>
+                follow the <a href="#browser-setup">browser steps</a> with <code>add-c.ts</code> and
+                put <code>add.bin</code> beside the bundle. it prints <code>42n</code>.
               </p>
             </details>
           </section>
@@ -168,14 +173,38 @@ llvm-objcopy -O binary --only-section=.text add.o add.bin</code></pre>
           >
             <h1 id="parallel-example-title" tabindex="-1">parallel example</h1>
             <p>
-              use <code>createMachine</code> from <code>ring64/parallel</code> to run vcpus on
-              separate workers with shared guest memory.
+              use <code>createMachine</code> from <code>ring64/parallel</code> to run the same
+              x86-64 addition on two vcpus with different inputs. each vcpu runs in its own worker.
+              both share guest memory.
             </p>
             <p>
-              <a href="./examples/parallel.ts" download>parallel.ts</a> runs the same addition on
-              two vcpus with different inputs. run <code>node parallel.ts</code> to get
-              <code>[42n, 12n]</code>. see
-              <a href="#parallel">machine options and browser requirements</a>.
+              download <a href="./examples/parallel.ts" download>parallel.ts</a> and run
+              <code>node parallel.ts</code>. it prints <code>[42n, 12n]</code>.
+            </p>
+            <details>
+              <summary>view parallel.ts</summary>
+              <div class="docs-example">
+                <div class="docs-example-bar">
+                  <span>parallel.ts</span>
+                  <button
+                    type="button"
+                    data-copy-code="parallel-source"
+                    aria-label="copy parallel.ts"
+                    hidden
+                  >
+                    copy
+                  </button>
+                </div>
+                <pre><code id="parallel-source"><!-- example:parallel.ts --></code></pre>
+              </div>
+              <p>
+                if node reports an unknown <code>.ts</code> extension, use
+                <code>node --experimental-strip-types parallel.ts</code>.
+              </p>
+            </details>
+            <p>
+              for a browser, see the
+              <a href="#parallel">parallel worker and isolation requirements</a>.
             </p>
           </section>
 
