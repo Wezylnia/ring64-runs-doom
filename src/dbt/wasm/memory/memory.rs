@@ -1595,6 +1595,8 @@ impl Emitter {
             // A checked RMW consumes its prepared write before filling the slot.
             self.op(Op::LocalTee(ADDRESS));
         }
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        self.require_checked_store_finish();
         let bytes = i32::from(width.bytes());
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         let store_width = if self.paged

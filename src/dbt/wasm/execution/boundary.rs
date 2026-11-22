@@ -65,6 +65,39 @@ impl Emitter {
         }
     }
 
+    fn can_complete_paged_write_quietly(&self, operation: Operation) -> bool {
+        #[cfg(any(feature = "parallel", not(target_arch = "wasm32")))]
+        {
+            let _ = operation;
+            false
+        }
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        {
+            self.paged_quiet_completion
+                && self.context.is_long64()
+                && !self.sampled_region
+                && self.uses_indexed_scalar_write(operation)
+                && match operation {
+                    Operation::Call { .. } => true,
+                    Operation::Store { .. } => {
+                        self.proved_stack.is_none()
+                            && self.paged_prefix_store.is_none()
+                            && self.paged_read_rearm.is_none()
+                    }
+                    _ => false,
+                }
+        }
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn require_checked_store_finish(&mut self) {
+        if self.can_complete_paged_write_quietly(self.current_operation) {
+            // Only a direct write can keep begin's quiet completion proof.
+            let result = self.boundary_result.unwrap();
+            self.op(Op::I32Const(0)).op(Op::LocalSet(result));
+        }
+    }
+
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     pub(super) fn paged_return_uses_read_result(&self) -> bool {
         self.paged_quiet_completion
@@ -193,10 +226,11 @@ impl Emitter {
             return;
         }
         use crate::embedding::layout::debug::CONTINUE_ACTIVE;
-        let quiet_completion = self.can_complete_paged_quietly(operation);
+        let quiet_registers = self.can_complete_paged_quietly(operation);
+        let quiet_completion = quiet_registers || self.can_complete_paged_write_quietly(operation);
         let page = self.current_pc & !4095;
         let retained = self.quiet_fetch_page.filter(|_| {
-            quiet_completion && next_pc > self.current_pc && (next_pc - 1) & !4095 == page
+            quiet_registers && next_pc > self.current_pc && (next_pc - 1) & !4095 == page
         });
         let tag = (page | 1) as i64;
         if let Some(local) = retained {
@@ -223,7 +257,9 @@ impl Emitter {
                 crate::embedding::layout::debug::PAGED_QUIET_COMPLETION as i32,
             ))
             .op(Op::I32Or);
-        } else if self.paged
+        }
+        #[cfg(not(feature = "parallel"))]
+        if self.paged
             && self.context.is_long64()
             && matches!(
                 operation,
@@ -326,7 +362,9 @@ impl Emitter {
         }
         let incoming = self.incoming_shadow.unwrap();
         let result = self.boundary_result.unwrap();
-        let quiet_completion = completed && self.can_complete_paged_quietly(self.current_operation);
+        let quiet_completion = completed
+            && (self.can_complete_paged_quietly(self.current_operation)
+                || self.can_complete_paged_write_quietly(self.current_operation));
         if quiet_completion {
             self.op(Op::LocalGet(result))
                 .op(Op::I32Const(

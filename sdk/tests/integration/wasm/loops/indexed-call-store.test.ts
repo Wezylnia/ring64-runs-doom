@@ -90,6 +90,7 @@ test('near calls reuse the indexed stack write and replay observed faults', asyn
   const imports = prototype.artifactImports;
   const compile = Core.prototype.compile;
   let checked = 0;
+  let callFinishes = 0;
   Core.prototype.compile = function (pc, limits, seeds, regionPoints) {
     if (pc === PC && !seeds?.length) return compile.call(this, pc, limits, [target, resume], false);
     return compile.call(this, pc, limits, seeds, regionPoints);
@@ -101,6 +102,13 @@ test('near calls reuse the indexed stack write and replay observed faults', asyn
       env.store = (address: bigint, width: number, value: bigint) => {
         checked++;
         return store(address, width, value);
+      };
+    }
+    const finish = env.debug_finish;
+    if (typeof finish === 'function') {
+      env.debug_finish = (pc: bigint, ...args: unknown[]) => {
+        if (pc === PC) callFinishes++;
+        return finish(pc, ...args);
       };
     }
     return env;
@@ -134,12 +142,16 @@ test('near calls reuse the indexed stack write and replay observed faults', asyn
         assert.equal(word(cpu, 0x4008n) & 0x60n, 0x60n);
         const warmed = checked;
         assert.ok(warmed > 0, 'the cold call checks its stack store');
+        assert.ok(callFinishes > 0, 'the cold call finishes through the checked boundary');
+        callFinishes = 0;
         await call(0xa000n);
         assert.equal(checked, warmed, 'the warm call stores through the retained page');
+        assert.equal(callFinishes, 0, 'a warm direct stack write keeps the quiet boundary');
 
         cpu.writePhysicalMemory(0x4008n, little([0xb003n]));
         await call(0xb000n);
         assert.ok(checked > warmed, 'a remap requires checked admission');
+        assert.equal(callFinishes, 1, 'a checked stack write still finishes through the boundary');
         cpu.writePhysicalMemory(0xa000n, little([0x1234n]));
 
         cpu.writePhysicalMemory(0x4008n, little([0xa001n]));
@@ -178,7 +190,17 @@ test('near calls reuse the indexed stack write and replay observed faults', asyn
 
         await call(0xb000n);
         await call(0xb000n);
+        cpu.setState(initial(PC, { 0: target, 4: rsp }, 0x102n));
+        callFinishes = 0;
+        const stepped = await cpu.run({ stop: resume, budget: 10n });
+        assert.equal(stepped.reason, 'debug-exception');
+        assert.equal(stepped.debugException?.cause, 'single-step');
+        assert.equal(stepped.retired, 1n);
+        assert.equal(stepped.state.rip, target);
+        assert.equal(callFinishes, 1);
+
         cpu.setDebugState({ addresses: [stack, 0n, 0n, 0n], dr6: 0n, dr7: 0x10401n });
+        callFinishes = 0;
         const watch = await run();
         assert.equal(watch.reason, 'debug-exception');
         assert.equal(watch.debugException?.cause, 'data-breakpoint');
@@ -186,6 +208,7 @@ test('near calls reuse the indexed stack write and replay observed faults', asyn
         assert.equal(watch.state.rip, target);
         assert.equal(watch.state.registers[4], stack);
         assert.equal(word(cpu, 0xb000n), resume);
+        assert.equal(callFinishes, 1);
       },
     );
   } finally {
