@@ -196,6 +196,32 @@ export function pagingBoundaryReviewScenarios(compiler: WebAssembly.Module): Sce
               equal(word(cpu, 0x4010n), 0xb067n, 'the first checked write set the dirty bit');
             }
 
+            const untouched = output + 16n;
+            cpu.setState(start(input, untouched));
+            const stopped = await cpu.run({ budget: 40n, stop: head + 9n });
+            equal(stopped.reason, 'stop', 'the taken edge stops at the canonical store label');
+            equal(stopped.retired, 3n, 'the selected branch skips the increment');
+            equal(cpu.readPhysicalMemory(0xb010n, 1)[0], 0, 'the stopped store is unstarted');
+            const resumed = await cpu.run({ budget: 1n });
+            equal(resumed.reason, 'budget', 'direct reentry retires exactly the store');
+            equal(resumed.retired, 1n, 'the prior branch does not replay');
+            equal(resumed.state.rip, head + 11n, 'the store commits its true successor');
+            equal(cpu.readPhysicalMemory(0xb010n, 1)[0], 0x20, 'the reentered store commits once');
+
+            cpu.setState(start(input, untouched));
+            const partial = await cpu.run({ budget: 10n });
+            equal(partial.reason, 'budget', 'the next lap runs only its funded prefix');
+            equal(partial.retired, 10n, 'the clone and checked prefix share the budget');
+            equal(partial.state.rip, head + 5n, 'partial replay reaches the second branch');
+            equal(partial.state.registers[0], 0x44n, 'the next source byte was loaded');
+            equal(partial.state.registers[1], 3n, 'the second latch is unstarted');
+
+            cpu.setState({ ...start(input, untouched), flags: 0x102n });
+            const stepped = await cpu.run({ budget: 40n });
+            equal(stepped.reason, 'debug-exception', 'TF takes the checked entry at a warm head');
+            equal(stepped.retired, 1n, 'single-step sees the first source load only');
+            equal(stepped.state.rip, head + 3n, 'single-step resumes at the comparison');
+
             // Retain the read-only translation before trying the guarded store.
             cpu.setState(start(0x403000n, output + 8n, 1n));
             equal((await cpu.run({ budget: 12n, stop: head + 21n })).reason, 'stop', 'warm read');

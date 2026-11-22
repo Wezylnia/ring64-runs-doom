@@ -978,7 +978,7 @@ impl Emitter {
         self.op(Op::End).op(Op::End);
     }
 
-    fn emit_guarded_paged_loop(
+    pub(super) fn emit_guarded_paged_loop(
         &mut self,
         instructions: &[Instruction],
         body: StructuredLoop,

@@ -486,6 +486,8 @@ fn paged_natural_write_graph_imports_only_the_admitted_ds_byte_store() {
         }
     }
     let guarded = emit_profile(&ds, true, true, usize::MAX);
+    // Canonical checked entries serve both direct entry and guarded replay.
+    assert_eq!(wasm_loop_count(&guarded), 2);
     let capped = emit_profile(&ds, true, true, guarded.len() - 1);
     let unpaged = emit_profile(&ds, true, false, usize::MAX);
     let split_page = emit_profile(&split_page, true, true, usize::MAX);

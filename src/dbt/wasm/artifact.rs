@@ -1596,7 +1596,14 @@ fn emit_body(
             emitter.parallel_memo_address = false;
         }
         let loop_depth = count - index as u32;
-        if let Some(loop_body) = loop_body.filter(|body| body.head == index as u32) {
+        let head = loop_body.filter(|body| body.head == index as u32);
+        if let Some((body, guard)) = head
+            .filter(|body| body.natural_forward_loop())
+            .zip(paged_loop_guard)
+        {
+            // The checked forward graph already follows the canonical entry labels.
+            emitter.emit_guarded_paged_loop(&unit.instructions, body, loop_depth, guard);
+        } else if let Some(loop_body) = head {
             if !observed && loop_body.precheck_gates_without_read_proof() {
                 // Partial laps and in-loop stops use the original entry labels.
                 emitter.exclude_loop_stop(&unit.instructions, loop_body);
