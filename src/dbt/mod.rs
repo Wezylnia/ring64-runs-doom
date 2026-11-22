@@ -127,19 +127,15 @@ fn compile_profile(
         paged_copy_spans: _paged_copy_spans,
         entry_seeds,
     } = profile;
-    let unit = if entry_seeds.is_empty() {
-        discovery::discover_with_profile(image, context, paging, cache, entry, limits)?
-    } else {
-        discovery::discover_with_entry_seeds(
-            image,
-            context,
-            paging,
-            cache,
-            entry,
-            limits,
-            entry_seeds,
-        )?
-    };
+    let unit = discovery::discover_with_entry_seeds(
+        image,
+        context,
+        paging,
+        cache,
+        entry,
+        limits,
+        (entry_seeds, observed),
+    )?;
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
     let emit = if image.has_mmio() {
         wasm::emit_mmio_profile

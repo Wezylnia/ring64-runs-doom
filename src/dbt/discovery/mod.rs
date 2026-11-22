@@ -29,6 +29,7 @@ pub(crate) fn discover_with_context(
     discover_with_profile(image, context, None, None, entry, limits)
 }
 
+#[cfg(test)]
 pub(crate) fn discover_with_profile(
     image: &Image,
     context: &ExecutionContext,
@@ -37,7 +38,7 @@ pub(crate) fn discover_with_profile(
     entry: u64,
     limits: Limits,
 ) -> Result<Unit, CompileError> {
-    discover_with_entry_seeds(image, context, paging, cache, entry, limits, &[])
+    discover_with_entry_seeds(image, context, paging, cache, entry, limits, (&[], false))
 }
 
 pub(super) fn discover_with_entry_seeds(
@@ -47,7 +48,7 @@ pub(super) fn discover_with_entry_seeds(
     cache: Option<&crate::x86::paging::cache::Cache>,
     entry: u64,
     limits: Limits,
-    seeds: &[u64],
+    (seeds, _observed): (&[u64], bool),
 ) -> Result<Unit, CompileError> {
     let mut pending = VecDeque::from([entry]);
     // Linear traces record already executed paths. Start all those entries
@@ -58,6 +59,33 @@ pub(super) fn discover_with_entry_seeds(
     }
     let mut seeds_to_visit = seeds.iter().copied().filter(|_| !linear_region);
     let paged_region = paging.is_some() && !seeds.is_empty() && context.is_long64();
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    let prefer_local = !_observed
+        && !image.has_mmio()
+        && paging.is_none()
+        && seeds.is_empty()
+        && context.mode() == crate::x86::context::Mode::Protected
+        && context.nonwrapping_code32_fetch(0, 1) == Some(0);
+    #[cfg(any(feature = "parallel", not(any(target_arch = "wasm32", test))))]
+    let prefer_local = false;
+    let deferred_distance = u64::from(limits.max_source_bytes.div_ceil(2));
+    let enqueue_next =
+        |pending: &mut VecDeque<u64>, visited: &BTreeSet<u64>, pc: u64, next: u64| {
+            // Preserve nearby alternative arms. When queued work is far away,
+            // complete the current path before spending its source budget there.
+            if prefer_local
+                && pc >> 12 == next >> 12
+                && pending.iter().any(|queued| {
+                    pc.abs_diff(*queued) >= deferred_distance
+                        && pc >> 12 == queued >> 12
+                        && !visited.contains(queued)
+                })
+            {
+                pending.push_front(next);
+            } else {
+                pending.push_back(next);
+            }
+        };
     let mut loop_exits = VecDeque::new();
     let mut visited = BTreeSet::new();
     let mut instructions = BTreeMap::new();
@@ -158,7 +186,7 @@ pub(super) fn discover_with_entry_seeds(
         match instruction.operation {
             Operation::Jump { target } => {
                 if !context.is_long64() || canonical48(target) {
-                    pending.push_back(target);
+                    enqueue_next(&mut pending, &visited, pc, target);
                 }
             }
             Operation::Jcc { target, .. } | Operation::CountBranch { target, .. } => {
@@ -166,7 +194,7 @@ pub(super) fn discover_with_entry_seeds(
                     // Fit the observed targets before the fallthrough of their root loop.
                     loop_exits.push_back(instruction.next_pc);
                 } else {
-                    pending.push_back(instruction.next_pc);
+                    enqueue_next(&mut pending, &visited, pc, instruction.next_pc);
                 }
                 if !context.is_long64() || canonical48(target) {
                     pending.push_back(target);
@@ -192,7 +220,7 @@ pub(super) fn discover_with_entry_seeds(
                     pending.push_back(instruction.next_pc);
                 }
             }
-            _ => pending.push_back(instruction.next_pc),
+            _ => enqueue_next(&mut pending, &visited, pc, instruction.next_pc),
         }
         instructions.insert(pc, instruction);
     }
