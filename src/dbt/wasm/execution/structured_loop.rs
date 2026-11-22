@@ -1811,17 +1811,44 @@ impl Emitter {
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         if let Some((proof, resolve, bias)) = self.paged_read_span {
             if body.paged_sse() {
+                use super::read_loop::F32PairFit;
+                if let Some(floor) = self.paged_f32_prefix_floor {
+                    self.op(Op::I64Const(i64::from(body.max_lap_len)))
+                        .op(Op::LocalSet(floor));
+                }
                 self.guard_paged_f32_read_loop(proof, resolve, bias);
                 if let Some((resolve, last, split)) = self.paged_f32_read_pair {
                     self.op(Op::If(BlockType::Result(wasm_encoder::ValType::I32)))
                         .op(Op::I32Const(1))
                         .op(Op::Else);
-                    self.guard_paged_f32_pair(proof, resolve, last, bias, None);
+                    self.guard_paged_f32_pair(proof, resolve, last, bias, F32PairFit::Complete);
                     if let Some(split) = split {
                         self.op(Op::If(BlockType::Result(wasm_encoder::ValType::I32)))
                             .op(Op::I32Const(1))
                             .op(Op::Else);
-                        self.guard_paged_f32_pair(proof, split, last, bias, Some(body.max_lap_len));
+                        self.guard_paged_f32_pair(
+                            proof,
+                            split,
+                            last,
+                            bias,
+                            F32PairFit::Split(body.max_lap_len),
+                        );
+                        if let Some(floor) = self.paged_f32_prefix_floor {
+                            self.op(Op::If(BlockType::Result(wasm_encoder::ValType::I32)))
+                                .op(Op::I32Const(1))
+                                .op(Op::Else);
+                            self.guard_paged_f32_pair(
+                                proof,
+                                resolve,
+                                last,
+                                bias,
+                                F32PairFit::Prefix {
+                                    lap_len: body.max_lap_len,
+                                    floor,
+                                },
+                            );
+                            self.op(Op::End);
+                        }
                         self.op(Op::End);
                     }
                     self.op(Op::End);
@@ -2065,6 +2092,12 @@ impl Emitter {
         if self.loop_gates_prechecked && !precheck_entry {
             // Leave the guarded clone before a partial lap.
             let minimum = Op::I64Const(i64::from(body.max_lap_len));
+            #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+            let minimum = if self.paged_proved_f32_reads.is_some() {
+                self.paged_f32_prefix_floor.map_or(minimum, Op::LocalGet)
+            } else {
+                minimum
+            };
             #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
             let minimum = self
                 .parallel_vector_span

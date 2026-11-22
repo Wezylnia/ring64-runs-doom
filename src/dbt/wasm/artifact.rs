@@ -1946,6 +1946,15 @@ fn emit_body(
         (proof, resolve, bias)
     });
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let paged_f32_prefix_floor = paged_f32_read_pair
+        .and_then(|(_, _, split)| split)
+        .map(|_| {
+            let floor = next_local;
+            locals.push((1, ValType::I64));
+            next_local += 1;
+            floor
+        });
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let paged_vector_rearm = paged_vector_window.is_some()
         && optional.paged_vector_rearm
         && paged_read_rearm.is_some()
@@ -2149,6 +2158,8 @@ fn emit_body(
         paged_proved_f32_reads: None,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_f32_read_pair,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        paged_f32_prefix_floor,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         proved_read_retry: proved_reads.map(|(_, _, _, _, retry)| retry),
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]

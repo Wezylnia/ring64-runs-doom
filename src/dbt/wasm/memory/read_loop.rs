@@ -8,6 +8,13 @@ use crate::x86::{
 };
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+pub(super) enum F32PairFit {
+    Complete,
+    Split(u32),
+    Prefix { lap_len: u32, floor: u32 },
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 #[derive(Clone, Copy)]
 pub(super) struct IndexedReadWindow {
     pub(super) address: Address,
@@ -867,14 +874,14 @@ impl Emitter {
         resolve: u32,
         last: u32,
         first_bias: u32,
-        funded_lap: Option<u32>,
+        fit: F32PairFit,
     ) {
         let addresses = [RESULT, RHS];
         let order = [1 - last, last];
         self.op(Op::Block(BlockType::Result(ValType::I32)))
             .op(Op::I32Const(0));
         self.guard_read_trip_count(proof);
-        if let Some(lap_len) = funded_lap {
+        if let F32PairFit::Split(lap_len) | F32PairFit::Prefix { lap_len, .. } = fit {
             self.guard_read_lap_budget(proof, lap_len);
         }
         for (slot, (stream, address)) in proof.streams.into_iter().zip(addresses).enumerate() {
@@ -885,6 +892,9 @@ impl Emitter {
                 .op(Op::LocalGet(VALUE))
                 .op(Op::I32WrapI64)
                 .op(Op::LocalSet(first_bias + slot as u32));
+        }
+        if let F32PairFit::Prefix { lap_len, floor } = fit {
+            self.limit_paged_f32_prefix(addresses, first_bias, lap_len, floor);
         }
         for slot in order {
             self.op(Op::LocalGet(addresses[slot as usize]))
@@ -916,6 +926,58 @@ impl Emitter {
                 .op(Op::LocalSet(first_bias + slot));
         }
         self.op(Op::Drop).op(Op::I32Const(1)).op(Op::End);
+    }
+
+    fn limit_paged_f32_prefix(
+        &mut self,
+        addresses: [u32; 2],
+        first_bias: u32,
+        lap_len: u32,
+        floor: u32,
+    ) {
+        let [first, last] = [LHS, VALUE];
+        for (address, offset) in addresses.into_iter().zip([first, last]) {
+            self.op(Op::LocalGet(address))
+                .op(Op::I64Const(4095))
+                .op(Op::I64And)
+                .op(Op::LocalSet(offset));
+        }
+        // Both dense streams advance 16 bytes per lap. Stop before the
+        // earliest page boundary, with any split lap left to checked code.
+        self.op(Op::I64Const(4096))
+            .op(Op::LocalGet(first))
+            .op(Op::LocalGet(last))
+            .op(Op::LocalGet(first))
+            .op(Op::LocalGet(last))
+            .op(Op::I64GtU)
+            .op(Op::Select)
+            .op(Op::I64Sub)
+            .op(Op::I64Const(!15))
+            .op(Op::I64And)
+            .op(Op::LocalTee(VALUE))
+            .op(Op::I64Eqz)
+            .op(Op::BrIf(0))
+            .op(Op::LocalGet(VALUE))
+            .op(Op::LocalGet(first_bias))
+            .op(Op::I64ExtendI32U)
+            .op(Op::I64GeU)
+            .op(Op::BrIf(0));
+        self.op(Op::LocalGet(VALUE))
+            .op(Op::I32WrapI64)
+            .op(Op::LocalTee(first_bias))
+            .op(Op::LocalSet(first_bias + 1));
+        // The full trip count was funded. Reuse the clone's budget check to
+        // hand the unproved tail back before its first operand access.
+        self.op(Op::LocalGet(REMAINING))
+            .op(Op::LocalGet(VALUE))
+            .op(Op::I64Const(4))
+            .op(Op::I64ShrU)
+            .op(Op::I64Const(1))
+            .op(Op::I64Sub)
+            .op(Op::I64Const(i64::from(lap_len)))
+            .op(Op::I64Mul)
+            .op(Op::I64Sub)
+            .op(Op::LocalSet(floor));
     }
 
     fn guard_read_span(

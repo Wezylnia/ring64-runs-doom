@@ -152,6 +152,8 @@ struct Emitter {
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_f32_read_pair: Option<(u32, u32, Option<u32>)>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    paged_f32_prefix_floor: Option<u32>,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     proved_read_retry: Option<(u32, u32)>, // tail ordinal and one-shot retry local
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     zero_upper_xmm: u16,

@@ -376,6 +376,36 @@ export function pagingScalarF32LoopScenarios(compiler: WebAssembly.Module): Scen
       },
     },
     {
+      name: 'paged dense F32 publishes a funded prefix before a split lap faults',
+      async run() {
+        const code =
+          '8b178b16f30f101c9ff30f10549f04f30f591c9ef30f59549e04f30f58d9' +
+          'f30f10649f08f30f59649e08f30f58d3f30f104c9f0cf30f594c9e0c' +
+          'f30f58e2f30f58cc4883c3044839cb75b9';
+        const dwords = [0x3f800000n, 0x3f800000n, 0x3f800000n, 0x3f800000n, 0x40400000n];
+        const page = new Uint8Array(4096);
+        page.set(little(dwords, 4), 4096 - 20);
+        page.set(little(Array<bigint>(8).fill(0x40000000n), 4));
+        await usingPaged(
+          compiler,
+          { code, words: dataPages, spans: [{ physical: 0xa000n, bytes: page }] },
+          async (cpu) => {
+            cpu.setState(initial(PC, { 1: 8n, 3: 0n, 6: data, 7: unmapped - 20n }, 2n));
+            const result = await cpu.run({ budget: 32n, stop: PC + BigInt(code.length / 2) });
+            equal(result.reason, 'page-fault', 'second MOVSS reaches the cold absent leaf');
+            equal(result.retired, 18n, 'preloads, one full lap, and one MOVSS');
+            equal(result.state.rip, PC + 9n, 'second MOVSS remains unstarted');
+            equal(result.state.registers[3], 4n, 'the checked tail does not advance the index');
+            equal(cpu.readXmmState()[1], 0x41000000n, 'the completed lap sums to 8');
+            equal(cpu.readXmmState()[2], 0x40800000n, 'the unstarted MOVSS preserves prefix 4');
+            equal(cpu.readXmmState()[3], 0x40400000n, 'the completed tail MOVSS loads 3');
+            equal(cpu.readMxcsr(), 0x1f80, 'exact arithmetic preserves MXCSR');
+            equal(cpu.readPagingState().cr2, unmapped, 'the checked operand publishes CR2');
+          },
+        );
+      },
+    },
+    {
       name: 'paged dyadic scalar F32 preserves zero signs, mixed data, and exact boundaries',
       async run() {
         // Warm both streams. Four scalar products form left-to-right prefixes;
