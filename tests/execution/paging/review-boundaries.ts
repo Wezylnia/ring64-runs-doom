@@ -610,6 +610,105 @@ export function pagingBoundaryReviewScenarios(compiler: WebAssembly.Module): Sce
       },
     },
     {
+      name: 'paged Long64 scalar writes rearm checked reads and writes before a partial lap',
+      async run() {
+        const head = 0x400000n;
+        const output = 0x403fd0n;
+        // MOVZX EAX,[RDI]; ADD R8D,[RSI]; LEA RDI,[RDI+1]; DEC ECX; JZ done;
+        // TEST EAX,EAX; JZ head; MOV [RDX],R8D; LEA RDX,[RDX+4]; JMP head; done: NOP.
+        const code = '0fb607440306488d7f01ffc9740d85c074ee448902488d5204ebe590';
+        const input = new Uint8Array(40).fill(1);
+        input[0] = 0;
+        const routes: string[] = [];
+        const create = Core.create;
+        Core.create = async (...args) => {
+          const core = await create(...args);
+          const imports = Reflect.get(core, 'artifactImports') as (
+            observed: boolean,
+          ) => Record<string, WebAssembly.ImportValue>;
+          Reflect.set(core, 'artifactImports', (observed: boolean) => {
+            const env = imports.call(core, observed);
+            for (const name of [
+              'paged_loop_read_ready',
+              'paged_loop_read_dword',
+              'paged_loop_write_ready',
+              'paged_loop_write_dword',
+            ]) {
+              const helper = env[name];
+              if (typeof helper !== 'function') continue;
+              env[name] = (...args: (bigint | number)[]) => {
+                const result = helper(...args);
+                if (name === 'paged_loop_read_dword' ? result !== -1n : result === 1)
+                  routes.push(name);
+                return result;
+              };
+            }
+            return env;
+          });
+          return core;
+        };
+        try {
+          await usingPaged(
+            compiler,
+            {
+              code,
+              words: [
+                [0x4008n, 0xa007n],
+                [0x4010n, 0xb007n],
+                [0x4018n, 0xc007n],
+                [0x4020n, 0xd007n],
+              ],
+              spans: [
+                { physical: 0xa000n, bytes: input },
+                { physical: 0xb000n, bytes: little([3n], 4) },
+                { physical: 0xc000n, bytes: new Uint8Array(8192) },
+              ],
+            },
+            async (cpu) => {
+              const start = initial(
+                head,
+                { 1: 40n, 2: output, 6: 0x402000n, 7: 0x401000n, 8: 0n },
+                2n,
+              );
+              cpu.setState(start);
+              equal(
+                (await cpu.run({ budget: 1n })).reason,
+                'budget',
+                'warm only fetch and byte input',
+              );
+
+              cpu.setState(start);
+              const result = await cpu.run({ budget: 254n });
+              const readReady = routes.indexOf('paged_loop_read_ready');
+              const firstWrite = routes.indexOf('paged_loop_write_dword');
+              const writeReady = routes.lastIndexOf('paged_loop_write_ready');
+              check(
+                readReady >= 0 && routes.indexOf('paged_loop_read_dword') > readReady,
+                'the cold coefficient retries through the checked ADD, then uses retained reads',
+              );
+              check(
+                firstWrite >= 0 &&
+                  firstWrite < writeReady &&
+                  routes.lastIndexOf('paged_loop_write_dword') > writeReady,
+                'guarded stores succeed on both sides of the checked page transition',
+              );
+              equal(result.reason, 'budget', 'the last lap stops before its store');
+              equal(result.retired, 254n, 'one zero lap, 24 writing laps, and the final prefix');
+              equal(result.state.rip, head + 0x12n, 'the last store remains unstarted');
+              equal(result.state.registers[8], 78n, 'the final dword addition has retired');
+              same(
+                [...cpu.readPhysicalMemory(0xcfd0n, 100)],
+                [...little([...Array.from({ length: 24 }, (_, i) => BigInt(6 + 3 * i)), 0n], 4)],
+                'both backedges preserve the exact stores and untouched successor',
+              );
+            },
+          );
+        } finally {
+          Core.create = create;
+        }
+      },
+    },
+    {
       name: 'paged packed SSE re-enters after a checked split and preserves a later split fault',
       async run() {
         const head = 0x400000n;

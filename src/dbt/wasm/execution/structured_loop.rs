@@ -30,6 +30,8 @@ enum LoopKind {
     PagedScalarF32,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     PagedSseWrite,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    PagedScalarWrites,
     ForwardEdges,
 }
 
@@ -196,7 +198,7 @@ impl StructuredLoop {
         match self.kind {
             LoopKind::ForwardEdges => true,
             #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-            LoopKind::PagedSseWrite => true,
+            LoopKind::PagedSseWrite | LoopKind::PagedScalarWrites => true,
             _ => false,
         }
     }
@@ -455,6 +457,11 @@ impl StructuredLoop {
         let mut widths = [false; 2];
         if self.paged_fetch_bytes.is_some() {
             for instruction in &unit.instructions[self.earlier as usize..self.tail as usize] {
+                #[cfg(target_arch = "wasm32")]
+                if self.paged_scalar_writes() && paged_register_dword_read(instruction.operation) {
+                    widths[1] = true;
+                    continue;
+                }
                 let width = paged_read_width(instruction.operation, None).or_else(|| {
                     (self.paged_stack_writes
                         && paged_stack_dword(instruction.operation)
@@ -661,6 +668,50 @@ impl StructuredLoop {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn select_paged_scalar_writes(unit: &super::Unit) -> Option<Self> {
+        use crate::x86::context::Segment;
+
+        let store = |operation| {
+            matches!(
+                operation,
+                Operation::Store {
+                    width: Width::W32,
+                    address: Address {
+                        segment: Segment::Ds,
+                        ..
+                    },
+                    ..
+                }
+            )
+        };
+        if !unit.context.is_long64() || !unit.instructions.iter().any(|i| store(i.operation)) {
+            return None;
+        }
+        let graph = super::loop_cfg::select_paged_scalar_write_graph(&unit.instructions, |body| {
+            body.iter().any(|i| store(i.operation))
+                && body.iter().all(|i| match i.operation {
+                    Operation::Jcc { target, .. } | Operation::Jump { target } => {
+                        crate::memory::canonical48(target)
+                    }
+                    op => {
+                        inside_register_body(op)
+                            || paged_read_width(op, None).is_some()
+                            || paged_register_dword_read(op)
+                            || store(op)
+                    }
+                })
+        })?;
+        let mut body = Self::forward(graph).without_dword_projection();
+        body.kind = LoopKind::PagedScalarWrites;
+        body.within_paged_fetch(unit)
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn paged_scalar_writes(self) -> bool {
+        self.kind == LoopKind::PagedScalarWrites
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     pub(super) fn has_single_paged_vector_load(self, unit: &super::Unit) -> bool {
         use crate::x86::instruction::VectorOperand;
 
@@ -864,7 +915,9 @@ impl StructuredLoop {
             }
             LoopKind::ForwardEdges => unreachable!("forward edges use graph admission"),
             #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-            LoopKind::PagedSseWrite => unreachable!("paged SSE writes use graph admission"),
+            LoopKind::PagedSseWrite | LoopKind::PagedScalarWrites => {
+                unreachable!("paged writes use graph admission")
+            }
         };
         Self::select_straight_body(instructions, kind, inside, |body| match kind {
             LoopKind::Registers => true,
@@ -884,7 +937,9 @@ impl StructuredLoop {
             }
             LoopKind::ForwardEdges => unreachable!("forward edges use graph admission"),
             #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-            LoopKind::PagedSseWrite => unreachable!("paged SSE writes use graph admission"),
+            LoopKind::PagedSseWrite | LoopKind::PagedScalarWrites => {
+                unreachable!("paged writes use graph admission")
+            }
         })
     }
 
@@ -991,6 +1046,24 @@ fn inside_paged_read_graph(operation: Operation) -> bool {
     inside_register_body(operation)
         || paged_read_width(operation, None).is_some()
         || matches!(operation, Operation::Jump { .. } | Operation::Jcc { .. })
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+fn paged_register_dword_read(operation: Operation) -> bool {
+    use crate::x86::{context::Segment, instruction::MemoryAluOperands};
+
+    matches!(
+        operation,
+        Operation::MemoryAlu {
+            operands: MemoryAluOperands::RegisterFirst(_),
+            width: Width::W32,
+            address: Address {
+                segment: Segment::Ds,
+                ..
+            },
+            ..
+        }
+    )
 }
 
 #[cfg(not(feature = "parallel"))]

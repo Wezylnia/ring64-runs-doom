@@ -968,7 +968,12 @@ impl Emitter {
             (Width::W8, Segment::Ds) => self.paged_loop_write_byte,
             (Width::W32, Segment::Ss) => self.paged_loop_write_dword,
             #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-            (Width::W32, Segment::Ds) if self.paged_loop_read_block.is_some() => {
+            (Width::W32, Segment::Ds)
+                if self.paged_loop_read_block.is_some()
+                    || self
+                        .structured_loop
+                        .is_some_and(|(body, _)| body.paged_scalar_writes()) =>
+            {
                 self.paged_loop_write_dword
             }
             _ => None,

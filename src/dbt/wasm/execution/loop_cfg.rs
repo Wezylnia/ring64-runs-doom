@@ -44,6 +44,8 @@ enum Layout {
     NaturalReadShifts,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     TwoBackedges,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    ScalarTwoBackedges,
 }
 
 pub(super) fn select(instructions: &[Instruction]) -> Option<(LoopOrder, u32)> {
@@ -81,6 +83,14 @@ pub(super) fn select_paged_sse_write_graph(
     admit: impl Fn(&[Instruction]) -> bool,
 ) -> Option<(LoopOrder, u32)> {
     select_layout_filtered(instructions, Layout::TwoBackedges, 64, admit)
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+pub(super) fn select_paged_scalar_write_graph(
+    instructions: &[Instruction],
+    admit: impl Fn(&[Instruction]) -> bool,
+) -> Option<(LoopOrder, u32)> {
+    select_layout_filtered(instructions, Layout::ScalarTwoBackedges, 64, admit)
 }
 
 pub(super) fn select_natural_read_shifts(instructions: &[Instruction]) -> Option<(LoopOrder, u32)> {
@@ -761,7 +771,7 @@ fn iteration_bound(instructions: &[Instruction], order: LoopOrder, layout: Layou
     }
     let (cost, repeats, head_via_prefix) = costs[0];
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    if layout == Layout::TwoBackedges {
+    if matches!(layout, Layout::TwoBackedges | Layout::ScalarTwoBackedges) {
         let branches_back = |operation| branch_target(operation) == Some(first_pc);
         let bypass = source[..source.len() - 1]
             .iter()
@@ -797,6 +807,22 @@ fn reads_memory(operation: Operation) -> bool {
 }
 
 fn inside_body(operation: Operation, layout: Layout) -> bool {
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    if layout == Layout::ScalarTwoBackedges
+        && matches!(
+            operation,
+            Operation::Shift {
+                dst: Location::Register(_),
+                ..
+            } | Operation::MemoryAlu {
+                operands: crate::x86::instruction::MemoryAluOperands::RegisterFirst(_),
+                width: Width::W32,
+                ..
+            }
+        )
+    {
+        return true;
+    }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if layout == Layout::TwoBackedges
         && matches!(operation, Operation::Vector(_) | Operation::Float(_))
