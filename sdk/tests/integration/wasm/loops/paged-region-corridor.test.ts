@@ -270,3 +270,51 @@ test('flat region taps preserve the run budget and obey the artifact cache cap',
     Core.prototype.instantiatePagedRegionTrace = instantiate;
   }
 });
+
+test('legacy paged entries route a same-page indirect branch within one owner', async () => {
+  const target = PC + 16n;
+  const ram = new Uint8Array(0xa000);
+  const tables = new DataView(ram.buffer);
+  tables.setUint32(0x1004, 0x2003, true);
+  tables.setUint32(0x2000, 0x9003, true);
+  ram.set([0xff, 0xe0], 0x9000); // JMP EAX
+  ram.set([0x41, 0xf4], 0x9010); // INC ECX; HLT
+  const cpu = await createCpu({
+    compiler,
+    memoryModel: 'physical',
+    context: protectedSnapshot(),
+    paging: { cr0: 0x80000033n, cr2: 0n, cr3: 0x1000n, cr4: 0x618n, efer: 0n },
+    entry: PC,
+    limits: LIMITS,
+    memory: {
+      backings: [{ id: 'ram', bytes: ram }],
+      mappings: [
+        {
+          backing: 'ram',
+          base: 0n,
+          offset: 0,
+          length: ram.length,
+          permissions: { read: true, write: true, execute: true },
+        },
+      ],
+    },
+    memoryLimits: { maxBackings: 1, maxMappings: 1, maxBackingBytes: ram.length },
+  });
+  const compile = Core.prototype.compile;
+  Core.prototype.compile = function (pc, limits, seeds, regionPoints) {
+    if (pc === PC && !seeds?.length) return compile.call(this, pc, limits, [target]);
+    return compile.call(this, pc, limits, seeds, regionPoints);
+  };
+  try {
+    cpu.setState(initial(PC, { 0: target, 1: 5n }));
+    const result = await cpu.run({ stop: target + 1n, budget: 8n });
+    assert.equal(result.reason, 'stop');
+    assert.equal(result.retired, 2n);
+    assert.equal(result.state.registers[1], 6n);
+    assert.equal(result.resources.nativeEntries, 1);
+    assert.equal(result.resources.dispatches, 0);
+  } finally {
+    Core.prototype.compile = compile;
+    cpu.dispose();
+  }
+});

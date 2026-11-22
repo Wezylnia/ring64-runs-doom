@@ -311,7 +311,10 @@ pub(super) fn compile_artifact(
         #[cfg(not(feature = "parallel"))]
         if !matches!(entries, dbt::EntrySelection::Discover([])) {
             let supported = if let Some(state) = core.paging {
-                core.context.is_long64() && state.cr0 & (1 << 31) != 0
+                state.cr0 & (1 << 31) != 0
+                    && (core.context.is_long64()
+                        || core.context.mode() == crate::x86::context::Mode::Protected
+                            && core.context.nonwrapping_code32_fetch(pc, 1) == Some(pc))
             } else {
                 core.context.mode() == crate::x86::context::Mode::Protected
                     && core.context.nonwrapping_code32_fetch(pc, 1) == Some(pc)
