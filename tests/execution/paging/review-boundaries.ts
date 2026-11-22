@@ -134,6 +134,113 @@ export function pagingBoundaryReviewScenarios(compiler: WebAssembly.Module): Sce
       },
     },
     {
+      name: 'cold straight paged dword reads reenter only after successful checked replay',
+      async run() {
+        const head = 0x400000n;
+        const data = 0x401000n;
+        // Four MOV EAX,[RDI+RAX*4]; DEC ECX; JNZ head; HLT.
+        const code = '8b04878b04878b04878b0487ffc975f0f4';
+        const calls = { refused: 0, ready: 0, guarded: 0 };
+        const create = Core.create;
+        Core.create = async (...args) => {
+          const core = await create(...args);
+          const imports = Reflect.get(core, 'artifactImports') as (
+            observed: boolean,
+          ) => Record<string, WebAssembly.ImportValue>;
+          Reflect.set(core, 'artifactImports', (observed: boolean) => {
+            const env = imports.call(core, observed);
+            const read = env.paged_loop_walk_dword;
+            const ready = env.paged_loop_read_ready;
+            if (typeof read === 'function') {
+              env.paged_loop_walk_dword = (address: bigint) => {
+                const result = read(address);
+                if (result === -1n) calls.refused++;
+                else calls.guarded++;
+                return result;
+              };
+            }
+            if (typeof ready === 'function') {
+              env.paged_loop_read_ready = (address: bigint, width: number) => {
+                const result = ready(address, width);
+                if (result === 1) calls.ready++;
+                return result;
+              };
+            }
+            return env;
+          });
+          return core;
+        };
+        try {
+          for (const mode of ['cold', 'absent', 'denied', 'stop', 'single-step'] as const) {
+            Object.assign(calls, { refused: 0, ready: 0, guarded: 0 });
+            await usingPaged(
+              compiler,
+              {
+                code,
+                words: [[0x4008n, mode === 'absent' ? 0n : 0xa007n]],
+                spans: [
+                  {
+                    physical: 0xa000n,
+                    bytes: little([1n, 2n, 3n, 0n], 4),
+                    read: mode !== 'denied',
+                  },
+                ],
+              },
+              async (cpu) => {
+                cpu.setState(
+                  initial(head, { 0: 0n, 1: 24n, 7: data }, mode === 'single-step' ? 0x102n : 2n),
+                );
+                const stop = head + (mode === 'stop' ? 3n : 16n);
+                const result = await cpu.run({ stop, budget: 200n });
+                if (mode === 'cold') {
+                  equal(calls.refused, 1, 'the first unaccessed leaf uses exact replay');
+                  equal(calls.ready, 1, 'a successful checked read enables the cooldown');
+                  check(calls.guarded > 0, 'later dword reads re-enter the guard in the same run');
+                  equal(result.reason, 'stop', mode);
+                  equal(result.state.rip, stop, mode);
+                  equal(result.retired, 144n, mode);
+                  equal(result.state.registers[0], 0n, 'complete pointer-chain laps');
+                } else {
+                  equal(calls.ready, 0, mode + ' does not publish re-entry');
+                  equal(calls.guarded, 0, mode + ' does not run a guarded read');
+                  if (mode === 'absent' || mode === 'denied') {
+                    equal(
+                      result.reason,
+                      mode === 'absent' ? 'page-fault' : 'physical-memory-fault',
+                      mode,
+                    );
+                    equal(result.state.rip, head, mode);
+                    equal(result.retired, 0n, mode);
+                    equal(result.state.registers[0], 0n, 'the failing MOV is unstarted');
+                    if (mode === 'absent')
+                      equal(cpu.readPagingState().cr2, data, 'original guest address');
+                    else
+                      equal(
+                        result.physicalMemoryFault?.phase,
+                        'final-access',
+                        'original backing refusal',
+                      );
+                  } else {
+                    equal(result.reason, mode === 'stop' ? 'stop' : 'debug-exception', mode);
+                    equal(result.state.rip, head + 3n, mode);
+                    equal(result.retired, 1n, mode);
+                    equal(result.state.registers[0], 1n, 'exact first read result');
+                  }
+                }
+                equal(
+                  word(cpu, 0x4008n),
+                  mode === 'absent' ? 0n : 0xa027n,
+                  'ordinary read A/D semantics',
+                );
+              },
+            );
+          }
+        } finally {
+          Core.create = create;
+        }
+      },
+    },
+    {
       name: 'paged scalar replay qualifies only a successful ordinary checked read',
       async run() {
         const head = 0x400000n;

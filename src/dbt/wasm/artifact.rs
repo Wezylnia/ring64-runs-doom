@@ -865,7 +865,9 @@ fn emit_body(
     let paged_read_rearm_type = loop_body
         .filter(|body| {
             let dword_replay = paged_read_dword
-                && (body.forward_edges() || body.paged_sse() && body.paged_read_span.is_some());
+                && (body.forward_edges()
+                    || body.paged_sse() && body.paged_read_span.is_some()
+                    || !paged_read_byte && body.can_walk_paged_dword(unit));
             let read_only_replay =
                 !paged_write_byte && !paged_write_dword && (dword_replay || paged_dense_bytes);
             let writable_byte_replay = paged_write_byte && paged_read_byte;
