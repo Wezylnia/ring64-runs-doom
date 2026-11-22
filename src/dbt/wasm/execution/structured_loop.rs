@@ -1243,7 +1243,7 @@ impl Emitter {
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         let diamond = self
             .read_loop_diamond
-            .filter(|_| self.loop_gates_prechecked);
+            .filter(|_| self.loop_gates_prechecked && (!self.paged || self.guarded_paged_lap));
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         let precheck_entry = diamond.is_some();
         #[cfg(any(feature = "parallel", not(target_arch = "wasm32")))]

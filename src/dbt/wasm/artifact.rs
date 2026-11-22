@@ -289,6 +289,8 @@ fn emit_placement(
         paged_dense_read_span: true,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_read_rearm: true,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        paged_read_diamond: true,
     };
     let (bytes, extra_spans) = emit_body(
         unit,
@@ -370,6 +372,8 @@ struct OptionalLowering {
     paged_dense_read_span: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_read_rearm: bool,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    paged_read_diamond: bool,
 }
 
 fn emit_body(
@@ -1263,12 +1267,22 @@ fn emit_body(
     let write_caches = write_segments.map(|used| write_span.filter(|_| used).map(&mut span_cache));
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let read_loop_diamond = loop_body.and_then(|body| {
-        if !matches!(_guard_reads, GuardedReads::Outlined { diamond: true, .. })
-            || !body.forward_edges()
-        {
+        let enabled = if paged {
+            optional.paged_read_diamond
+                && !mmio
+                // The shape has one dword read. Keep the existing scalar
+                // placement in reserve when the window tier exceeds its cap.
+                && body.paged_dword_window
+                && paged_read_dword
+                && !paged_write_byte
+                && !paged_write_dword
+        } else {
+            matches!(_guard_reads, GuardedReads::Outlined { diamond: true, .. })
+        };
+        if !enabled || !body.forward_edges() {
             return None;
         }
-        loop_cfg::ReadLoopDiamond::recognize(&unit.instructions, body.order(), &unit.context)
+        loop_cfg::ReadLoopDiamond::recognize(&unit.instructions, body.order(), &unit.context, paged)
     });
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let proved_stack = loop_body.and_then(|body| {
@@ -1882,6 +1896,21 @@ fn emit_body(
     }
     let code_start = bytes.len();
     code.append_to(&mut bytes);
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    if bytes.len() > max_artifact_bytes && paged && read_loop_diamond.is_some() {
+        return emit_body(
+            unit,
+            observed,
+            (paged, mmio),
+            loop_body,
+            _guard_reads,
+            OptionalLowering {
+                paged_read_diamond: false,
+                ..optional
+            },
+            max_artifact_bytes,
+        );
+    }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if bytes.len() > max_artifact_bytes && paged_read_rearm.is_some() {
         return emit_body(

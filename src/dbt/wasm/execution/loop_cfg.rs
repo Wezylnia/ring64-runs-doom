@@ -250,11 +250,24 @@ impl ReadLoopDiamond {
         instructions: &[Instruction],
         order: LoopOrder,
         context: &ExecutionContext,
+        paged: bool,
     ) -> Option<Self> {
         use crate::x86::{context::Mode, instruction::DataOperand};
-        if context.mode() != Mode::Protected || !context.code32() || order.earlier == order.head {
+        let supported_context = if paged {
+            context.is_long64() || context.flat_paged_data32()
+        } else {
+            context.mode() == Mode::Protected && context.code32()
+        };
+        if !supported_context || order.earlier == order.head {
             return None;
         }
+        let valid_target = |target| {
+            if paged && context.is_long64() {
+                canonical48(target)
+            } else {
+                target <= context.code_limit()
+            }
+        };
         let [replace, taken_cmp, taken_latch]: [Instruction; 3] = instructions
             [order.earlier as usize..order.head as usize]
             .try_into()
@@ -282,7 +295,7 @@ impl ReadLoopDiamond {
             return None;
         };
         if target != replace.pc
-            || target > context.code_limit()
+            || !valid_target(target)
             || !matches!(condition, Condition::Below | Condition::AboveOrEqual)
         {
             return None;
@@ -334,21 +347,22 @@ impl ReadLoopDiamond {
         };
         let loop_pcs = instructions[order.earlier as usize].pc..=other_latch.pc;
         if taken_latch.next_pc != head
-            || head > context.code_limit()
+            || !valid_target(head)
             || other_latch.operation
                 != (Operation::Jcc {
                     condition: Condition::Below,
                     target: head,
                 })
-            || target > context.code_limit()
+            || !valid_target(target)
+            || (paged && !valid_target(other_latch.next_pc))
             || loop_pcs.contains(&target)
             || loop_pcs.contains(&other_latch.next_pc)
         {
             return None;
         }
         // LoopOrder already proves contiguous instructions and the lap budget.
-        // All three taken targets now have a valid code-segment offset as
-        // head and the selector target are decoded instructions in this unit.
+        // The three taken targets are valid. The head and selector target
+        // are decoded instructions in this unit.
         // The next funded lap replaces all status before its first read.
         // A carry consumer or a partially flag-writing shift cannot prove that.
         let first_effect = instructions[order.head as usize..read as usize]

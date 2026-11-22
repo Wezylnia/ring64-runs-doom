@@ -504,12 +504,14 @@ export function pagingBoundaryReviewScenarios(compiler: WebAssembly.Module): Sce
             equal(taken.retired, 9n, 'the exiting prefix retires its compare and branch');
             equal(taken.state.rip, takenExit, 'stop precedes fetching the unmapped exit');
             equal(taken.state.registers[7], 0n, 'the exiting prefix commits the empty interval');
+            equal(taken.state.flags & 0x8d7n, 0x46n, 'the exiting compare publishes ZF');
 
             cpu.setState(start(0x401000n, 2n));
             const partial = await cpu.run({ budget: 10n });
             equal(partial.reason, 'budget', 'a shorter first lap leaves one checked instruction');
             equal(partial.retired, 10n, 'the complete upper path and next MOV retire');
             equal(partial.state.rip, head + 2n, 'the checked entry stops before the next SUB');
+            equal(partial.state.flags & 0x8d7n, 0x93n, 'the first latch flags survive checked MOV');
 
             cpu.setState(start(0x401000n, 2n));
             const stopped = await cpu.run({ budget: 32n, stop: prefix });
@@ -649,12 +651,14 @@ export function pagingBoundaryReviewScenarios(compiler: WebAssembly.Module): Sce
             equal(taken.reason, 'stop', 'the rotated prefix can take the outside edge');
             equal(taken.retired, 9n, 'the exiting prefix retires');
             equal(taken.state.rip, outside, 'stop wins before the next fetch');
+            equal(taken.state.flags & 0x8d7n, 0x46n, 'the exiting compare publishes ZF');
 
             cpu.setState(start(0x401000n, 2n));
             const partial = await cpu.run({ budget: 10n });
             equal(partial.reason, 'budget', 'a short upper path leaves one checked instruction');
             equal(partial.retired, 10n, 'the complete upper path and next MOV retire');
             equal(partial.state.rip, head + 2n, 'resume before the second SUB');
+            equal(partial.state.flags & 0x8d7n, 0x93n, 'the first latch flags survive checked MOV');
 
             cpu.setState(start(0x401000n, 2n));
             const stopped = await cpu.run({ budget: 32n, stop: prefix });
