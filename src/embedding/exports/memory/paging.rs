@@ -720,6 +720,11 @@ fn paged_loop_read<const WIDTH: u32, const CAPTURE_SLOT: bool>(address: u64) -> 
                 class,
             };
             let read = |physical| {
+                if WIDTH == 1
+                    && let Some(value) = core.image.physical_read_mapped_byte(physical)
+                {
+                    return Some(u32::from(value));
+                }
                 if WIDTH == 4
                     && let Some(value) = core.image.physical_read_mapped_dword(physical)
                 {
