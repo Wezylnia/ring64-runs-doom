@@ -1017,7 +1017,19 @@ fn emit_body(
         .map(|index| import_function("paged_loop_read_byte", index));
     let paged_loop_read_dword = paged_loop_read_type
         .filter(|_| paged_read_dword)
-        .map(|index| import_function("paged_loop_read_dword", index));
+        .map(|index| {
+            #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+            if !mmio
+                && !paged_read_byte
+                && loop_body.is_some_and(|body| body.can_walk_paged_dword(unit))
+            {
+                // Keep the old artifact size and its size-limit fallbacks.
+                const _: () =
+                    assert!("paged_loop_walk_dword".len() == "paged_loop_read_dword".len());
+                return import_function("paged_loop_walk_dword", index);
+            }
+            import_function("paged_loop_read_dword", index)
+        });
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let paged_read_rearm = paged_read_rearm_type
         .map(|(index, order)| (import_function("paged_loop_read_ready", index), order));

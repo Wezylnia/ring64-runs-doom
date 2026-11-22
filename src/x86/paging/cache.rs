@@ -286,6 +286,96 @@ impl Cache {
     }
 
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    pub(crate) fn read_dword_then_fetch(
+        &self,
+        image: &crate::memory::Image,
+        state: &State,
+        request: Request,
+        keys: &ProtectionKeys,
+        active_source: impl FnOnce() -> bool,
+    ) -> Option<u32> {
+        debug_assert_eq!(request.access, Access::Read);
+        debug_assert_eq!(request.linear & 3, 0);
+        if state.cr0 & (1 << 31) == 0 {
+            return None;
+        }
+        let mut entries = self.entries.borrow_mut();
+        let fetch = entries
+            .hint
+            .filter(|&index| entries.slots[index].is_some())?;
+        let Some(data) = entries.find(state, request) else {
+            drop(entries);
+            return self.fill_dword_miss_then_fetch(
+                image,
+                state,
+                request,
+                keys,
+                fetch,
+                active_source,
+            );
+        };
+        let translation = entries.slots[data].unwrap().translation.at(request.linear);
+        if translation.remaining < 4 || translation.rights.authorize(state, request, keys).is_err()
+        {
+            return None;
+        }
+        let value = image.physical_read(translation.physical, 4).ok()?;
+        if data != fetch && entries.slots[data].as_ref().unwrap().used != entries.clock - 1 {
+            entries.touch(data);
+            entries.touch(fetch);
+        }
+        Some(value as u32)
+    }
+
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    #[inline(never)]
+    fn fill_dword_miss_then_fetch(
+        &self,
+        image: &crate::memory::Image,
+        state: &State,
+        request: Request,
+        keys: &ProtectionKeys,
+        fetch: usize,
+        active_source: impl FnOnce() -> bool,
+    ) -> Option<u32> {
+        let entries = self.entries.borrow();
+        // This private caller runs only in the admitted read-only loop.
+        // Its last touch is the retained fetch for the entire code page.
+        let code = entries.slots[fetch].as_ref()?;
+        if entries.capacity < 2
+            || entries.exhausted
+            || entries.next_id == u64::MAX
+            || code.used != entries.clock
+            || code.translation.span != 4096
+            || code.family != family(state)
+            || !code.global && code.pcid != state.pcid()
+            || !active_source()
+        {
+            return None;
+        }
+        let (translation, value) = image.probe_physical_read(|image| {
+            let translation = super::walk::peek(image, state, request, keys).ok()?;
+            if !translation.accessed
+                || translation.span != 4096
+                || translation.remaining < 4
+                || translation.global && state.cr4 & (1 << 7) != 0
+                || overlaps(code.translation, translation)
+            {
+                return None;
+            }
+            let value = image.physical_read_local_dword(translation.physical)?;
+            Some((translation, value))
+        })?;
+        drop(entries);
+        // A nonoverlapping fill with at least two slots cannot evict the
+        // newest entry. Commit the same fill and next fetch as checked execution.
+        let installed = self.fill(state, request, translation);
+        debug_assert!(installed.cache_id.is_some());
+        self.entries.borrow_mut().touch(fetch);
+        Some(value)
+    }
+
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
     pub(crate) fn read_pair_then_fetch<T>(
         &self,
         state: &State,

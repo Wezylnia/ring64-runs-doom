@@ -260,6 +260,11 @@ impl Image {
         self.validity.active_invalid
     }
 
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    pub(crate) fn source_is_active(&self, owner: u64) -> bool {
+        self.validity.active == Some(owner) && !self.validity.active_invalid
+    }
+
     /// Stop the active generated body while retaining published source subscriptions.
     #[cfg(any(target_arch = "wasm32", test))]
     pub(crate) fn fence_active(&mut self) {

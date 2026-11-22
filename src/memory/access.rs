@@ -20,6 +20,30 @@ impl Image {
         Ok(self.scalar_after_preflight(address, width, first))
     }
 
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    pub(crate) fn probe_physical_read<T>(
+        &self,
+        probe: impl FnOnce(&Self) -> Option<T>,
+    ) -> Option<T> {
+        let last = self.last_mapping.get();
+        let previous = self.previous_mapping.get();
+        let result = probe(self);
+        if result.is_none() {
+            self.last_mapping.set(last);
+            self.previous_mapping.set(previous);
+        }
+        result
+    }
+
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    pub(crate) fn physical_read_local_dword(&self, address: u64) -> Option<u32> {
+        let first = self
+            .preflight::<true>(address, 4, Access::Read, false, true)
+            .ok()?;
+        (u128::from(address) + 4 <= self.mappings[first].end())
+            .then(|| self.scalar_after_preflight(address, 4, first) as u32)
+    }
+
     pub fn physical_read_for_write(&self, address: u64, width: u32) -> Result<u64, Fault> {
         assert!(
             matches!(width, 1 | 2 | 4 | 8),

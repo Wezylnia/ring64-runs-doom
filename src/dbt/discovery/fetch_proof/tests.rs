@@ -77,6 +77,69 @@ const USER_EXEC: Request = Request {
     class: AccessClass::User,
 };
 
+#[cfg(not(feature = "parallel"))]
+#[test]
+fn guarded_dword_walk_import_requires_a_small_executable_leaf_and_keeps_the_cap_fallback() {
+    use crate::{dbt::wasm::emit_profile, x86::context::ExecutionContext};
+
+    let mut image = ram();
+    let state = State {
+        cr3: 0x1000,
+        ..State::default()
+    };
+    let cache = Cache::default();
+    let pc = 0x8000;
+    let code = [
+        0x8b, 0x07, 0x8b, 0x4f, 4, 0x8b, 0x57, 8, 0x8b, 0x1e, 0x83, 0xed, 1, 0x75, 0xf1,
+    ];
+    image.physical_write_bytes(pc, &code).unwrap();
+    for (address, word) in [
+        (0x1000, 0x2007),
+        (0x2000, 0x3007),
+        (0x3000, 0x4007),
+        (0x4040, 0x8007),
+    ] {
+        image.physical_write(address, 8, word).unwrap();
+    }
+    let discover = |image: &Image| {
+        discover_with_profile(
+            image,
+            &ExecutionContext::default(),
+            Some(&state),
+            Some(&cache),
+            pc,
+            Limits {
+                max_instructions: 32,
+                max_source_bytes: code.len() as u32,
+                max_artifact_bytes: 65536,
+            },
+        )
+        .unwrap()
+    };
+    let small = discover(&image);
+    image.physical_write(0x3000, 8, 0x87).unwrap();
+    let mut wide = discover(&image);
+    assert!(small.fetch_proof.leaf_is_4k(pc));
+    assert!(!wide.fetch_proof.leaf_is_4k(pc));
+    assert_eq!(small.instructions, wide.instructions);
+
+    let with_wide_proof = emit_profile(&wide, true, true, usize::MAX);
+    let tight_cap = with_wide_proof.len() - 1;
+    let wide_tight = emit_profile(&wide, true, true, tight_cap);
+    wide.fetch_proof = Default::default();
+    assert_eq!(emit_profile(&wide, true, true, usize::MAX), with_wide_proof);
+    assert_eq!(emit_profile(&wide, true, true, tight_cap), wide_tight);
+    assert_eq!(emit_profile(&small, true, true, tight_cap), wide_tight);
+    let mut with_small_proof = emit_profile(&small, true, true, usize::MAX);
+    let walk = b"paged_loop_walk_dword";
+    let start = with_small_proof
+        .windows(walk.len())
+        .position(|part| part == walk)
+        .unwrap();
+    with_small_proof[start..start + walk.len()].copy_from_slice(b"paged_loop_read_dword");
+    assert_eq!(with_small_proof, with_wide_proof);
+}
+
 #[test]
 fn binding_preserves_linear_page_correspondence_and_every_accepted_walk() {
     let (mut image, state, cache) = legacy();

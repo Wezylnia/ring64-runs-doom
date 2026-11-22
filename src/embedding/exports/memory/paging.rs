@@ -403,6 +403,40 @@ pub extern "C" fn core_paged_loop_read_dword(address: u64) -> u64 {
     paged_loop_read::<4>(address)
 }
 
+#[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+#[unsafe(no_mangle)]
+pub extern "C" fn core_paged_loop_walk_dword(address: u64) -> u64 {
+    if address & 3 != 0 || !crate::memory::canonical48(address) {
+        return u64::MAX;
+    }
+    BRIDGE.with_borrow(|bridge| {
+        let read = || {
+            let core = bridge.core.as_ref().unwrap();
+            let paging = core.paging.as_ref()?;
+            let state = unsafe { &*core.state.get() };
+            let request = paging::walk::Request {
+                linear: address,
+                access: Access::Read,
+                class: paging::walk::AccessClass::operand(
+                    core.context.cpl(),
+                    state.flags & crate::x86::flags::AC != 0,
+                ),
+            };
+            core.translation_cache.read_dword_then_fetch(
+                &core.image,
+                paging,
+                request,
+                &state.protection_keys,
+                || {
+                    core.active_owner
+                        .is_some_and(|owner| core.image.source_is_active(owner))
+                },
+            )
+        };
+        read().map_or(u64::MAX, u64::from)
+    })
+}
+
 #[cfg(not(feature = "parallel"))]
 #[unsafe(no_mangle)]
 pub extern "C" fn core_paged_loop_read_byte(address: u64) -> u64 {

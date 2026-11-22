@@ -10,6 +10,8 @@ pub(super) struct FetchPage {
     physical: u64,
     entries: [u64; 4],
     entry_count: u8,
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    leaf_is_4k: bool,
     pub entry_width: u32,
 }
 
@@ -27,6 +29,8 @@ impl FetchPage {
             physical: translated.physical & PAGE_MASK,
             entries,
             entry_count: path.len() as u8,
+            #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+            leaf_is_4k: translated.span == 4096,
             entry_width: translated.entry_width,
         });
     }
@@ -44,6 +48,13 @@ pub(crate) struct FetchProof {
 
 #[cfg(any(target_arch = "wasm32", test))]
 impl FetchProof {
+    #[cfg(not(feature = "parallel"))]
+    pub(crate) fn leaf_is_4k(&self, linear: u64) -> bool {
+        self.pages
+            .binary_search_by_key(&(linear & PAGE_MASK), |page| page.linear)
+            .is_ok_and(|index| self.pages[index].leaf_is_4k)
+    }
+
     #[cfg(not(feature = "parallel"))]
     pub(crate) fn physical_span(&self, linear: u64, length: u32) -> Option<u64> {
         let offset = linear & !PAGE_MASK;

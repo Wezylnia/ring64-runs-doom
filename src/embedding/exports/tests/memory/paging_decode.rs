@@ -217,6 +217,37 @@ fn reached_long64_instruction_requires_a_live_tlb_hit() {
 
 #[cfg(not(feature = "parallel"))]
 #[test]
+fn guarded_dword_walk_requires_the_active_source_and_keeps_flags_on_refusal() {
+    fixture("long64", true, true);
+    BRIDGE.with_borrow_mut(|bridge| {
+        let image = &mut bridge.core.as_mut().unwrap().image;
+        image.physical_write(0x4010, 8, 0x8027).unwrap();
+        image.physical_write(0x4018, 8, 0x8027).unwrap();
+        image.physical_write(0x8000, 4, 0xaabbccdd).unwrap();
+    });
+    activate_single_instruction();
+    assert_eq!(paging::core_paged_debug_begin(PC, RF, 0), 0);
+    assert_eq!(paging::core_paged_loop_guard(PC, 3, 2, 0), 1);
+    assert_eq!(paging::core_paged_loop_walk_dword(0x2000), 0xaabbccdd);
+    BRIDGE.with_borrow_mut(|bridge| {
+        let core = bridge.core.as_mut().unwrap();
+        assert_eq!(core.paging.unwrap().cr2, 0xdead);
+        assert_eq!(unsafe { (*core.state.get()).flags }, RF);
+        core.image.physical_write(0x9000, 1, 0x90).unwrap();
+        assert!(core.image.active_changed());
+    });
+    physical_counts::take();
+    assert_eq!(paging::core_paged_loop_walk_dword(0x3000), u64::MAX);
+    assert_eq!(physical_counts::take(), [0; 6]);
+    BRIDGE.with_borrow(|bridge| {
+        let core = bridge.core.as_ref().unwrap();
+        assert_eq!(core.paging.unwrap().cr2, 0xdead);
+        assert_eq!(unsafe { (*core.state.get()).flags }, RF);
+    });
+}
+
+#[cfg(not(feature = "parallel"))]
+#[test]
 fn paged_loop_revalidation_rejects_the_same_instruction_on_a_new_physical_page() {
     fixture("long64", true, true);
     BRIDGE.with_borrow_mut(|bridge| {

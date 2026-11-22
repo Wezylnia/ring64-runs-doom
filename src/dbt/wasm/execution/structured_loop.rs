@@ -183,6 +183,23 @@ impl StructuredLoop {
         self.kind == LoopKind::ForwardEdges
     }
 
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    pub(super) fn can_walk_paged_dword(self, unit: &super::Unit) -> bool {
+        if self.kind != LoopKind::PagedReads {
+            return false;
+        }
+        let Some(bytes) = self.paged_fetch_bytes else {
+            return false;
+        };
+        let pc = unit.instructions[self.earlier as usize].pc;
+        let linear = if unit.context.is_long64() {
+            Some(pc)
+        } else {
+            unit.context.nonwrapping_code32_fetch(pc, bytes)
+        };
+        linear.is_some_and(|address| unit.fetch_proof.leaf_is_4k(address))
+    }
+
     pub(super) fn natural_forward_loop(self) -> bool {
         self.forward_edges() && self.earlier == self.head
     }
