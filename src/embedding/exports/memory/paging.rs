@@ -964,14 +964,14 @@ pub extern "C" fn core_paged_loop_copy_window(source: u64, destination: u64, wid
     let valid = if scalar {
         (2..=32).contains(&width)
     } else {
-        (32..=64).contains(&width) && width.is_multiple_of(16)
+        (16..=64).contains(&width) && width.is_multiple_of(16)
     };
     if !valid {
         return 0;
     }
     let page_remaining = |address: u64| 4096 - (address & 4095);
     let split = page_remaining(source).min(page_remaining(destination)) < u64::from(width);
-    if scalar && split
+    if (scalar || width == 16) && split
         || check_span(source, width, Access::Read).is_err()
         || check_span(destination, width, Access::Write).is_err()
     {

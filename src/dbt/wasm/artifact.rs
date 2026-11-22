@@ -2607,7 +2607,7 @@ fn emit_body(
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         if let Some((head, group)) = copy_prefix.filter(|(head, _)| *head == index) {
             emitter.emit_finite_copy_prefix(
-                &unit.instructions[head..head + 4],
+                &unit.instructions[head..head + group.prefix_guard_count()],
                 group,
                 loop_depth,
                 copy_prefix_guard.expect("copy prefix guard"),

@@ -221,28 +221,37 @@ impl CopyGroup {
         if !unit.context.is_long64() {
             return None;
         }
-        unit.instructions
-            .windows(4)
-            .enumerate()
-            .find_map(|(head, instructions)| {
-                let group = Self::recognize(instructions)?;
-                let start = instructions[0].pc;
-                let length = u32::try_from(group.end.checked_sub(start)?).ok()?;
-                if instructions
-                    .windows(2)
-                    .any(|pair| pair[0].next_pc != pair[1].pc)
-                    || unit.fetch_proof.physical_span(start, length).is_none()
-                    || loops.into_iter().flatten().any(|body| {
-                        (head..head + 4).any(|index| body.order().position(index as u32).is_some())
-                    })
-                {
-                    return None;
-                }
-                Some((head, group))
-            })
+        [2, 1].into_iter().find_map(|minimum_pairs| {
+            let guard_count = if minimum_pairs == 1 { 3 } else { 4 };
+            unit.instructions
+                .windows(guard_count)
+                .enumerate()
+                .find_map(|(head, instructions)| {
+                    let group = Self::recognize_with_minimum_pairs(instructions, minimum_pairs)?;
+                    let start = instructions[0].pc;
+                    let end = instructions[guard_count - 1].next_pc;
+                    let length = u32::try_from(end.checked_sub(start)?).ok()?;
+                    if instructions
+                        .windows(2)
+                        .any(|pair| pair[0].next_pc != pair[1].pc)
+                        || unit.fetch_proof.physical_span(start, length).is_none()
+                        || loops.into_iter().flatten().any(|body| {
+                            (head..head + guard_count)
+                                .any(|index| body.order().position(index as u32).is_some())
+                        })
+                    {
+                        return None;
+                    }
+                    Some((head, group))
+                })
+        })
     }
 
     pub(super) fn recognize(lap: &[Instruction]) -> Option<Self> {
+        Self::recognize_with_minimum_pairs(lap, 2)
+    }
+
+    fn recognize_with_minimum_pairs(lap: &[Instruction], minimum_pairs: u32) -> Option<Self> {
         fn vector_move(instruction: Instruction, writing: bool) -> Option<(Address, u8)> {
             let Operation::Vector(VectorInstruction::Move {
                 operand: VectorOperand::Memory(address),
@@ -307,7 +316,7 @@ impl CopyGroup {
             pairs += 1;
         }
         let instructions = (pairs * 2) as usize + first_store - 1;
-        if pairs < 2
+        if pairs < minimum_pairs
             || lap[instructions..]
                 .iter()
                 .any(|i| matches!(i.operation, Operation::Vector(_)))
@@ -326,6 +335,16 @@ impl CopyGroup {
 
     pub(super) fn instruction_count(self) -> u32 {
         self.width / 8 + if self.adjustment.is_some() { 2 } else { 0 }
+    }
+
+    pub(super) fn prefix_guard_count(self) -> usize {
+        // Admission advances fetch recency past the store. Keep the successor
+        // inside the guard for a single pair without retiring it here.
+        if self.width == 16 {
+            3
+        } else {
+            self.instruction_count() as usize
+        }
     }
 }
 
@@ -493,7 +512,14 @@ impl Emitter {
         guard: u32,
         resolve: u32,
     ) {
-        self.guard_straight_paged_prefix(&instructions[0], &instructions[3], 4, guard, None);
+        let count = instructions.len();
+        self.guard_straight_paged_prefix(
+            &instructions[0],
+            &instructions[count - 1],
+            count as u32,
+            guard,
+            None,
+        );
         self.address(group.source, 0);
         self.op(Op::LocalSet(LHS));
         self.address(group.destination, 0);
