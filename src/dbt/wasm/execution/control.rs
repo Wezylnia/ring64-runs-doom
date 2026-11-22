@@ -10,6 +10,8 @@ pub(super) enum InstructionRetirement {
     One,
     Deferred,
     DeferredCommit,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    FlatPrefix(u32),
     AfterPrefix(u32),
 }
 
@@ -299,6 +301,8 @@ impl Emitter {
             InstructionRetirement::One => Some(1),
             InstructionRetirement::Deferred => None,
             InstructionRetirement::DeferredCommit => return,
+            #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+            InstructionRetirement::FlatPrefix(_) => return,
             InstructionRetirement::AfterPrefix(count) => Some(count + 1),
         };
         if self.loop_gates_prechecked
@@ -314,8 +318,17 @@ impl Emitter {
     }
 
     pub(super) fn retire_before_read_fault(&mut self) {
-        if let InstructionRetirement::AfterPrefix(count) = self.instruction_retirement {
-            self.retire_instructions(count);
+        match self.instruction_retirement {
+            InstructionRetirement::AfterPrefix(count) => self.retire_instructions(count),
+            #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+            InstructionRetirement::FlatPrefix(count) => {
+                self.op(Op::I64Const(self.current_pc as i64))
+                    .op(Op::LocalSet(RIP));
+                if count != 0 {
+                    self.retire_instructions(count);
+                }
+            }
+            _ => {}
         }
     }
 

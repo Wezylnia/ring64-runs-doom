@@ -34,17 +34,57 @@ fn register_prefix_operation(operation: Operation) -> bool {
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 fn flat_integer_groups(unit: &Unit, structured: Option<StructuredLoop>) -> Vec<Option<usize>> {
+    use crate::x86::instruction::Width;
+
     let instructions = &unit.instructions;
     let mut groups = vec![None; instructions.len()];
     let mut first = 0;
     while first < instructions.len() {
         let mut end = first;
         while let Some(instruction) = instructions.get(end)
-            && end - first < 8
+            && end - first < 20
             && (end == first || instructions[end - 1].next_pc == instruction.pc)
-            && register_prefix_operation(instruction.operation)
             && structured.is_none_or(|body| body.order().position(end as u32).is_none())
         {
+            let operation = instruction.operation;
+            if let Operation::Jcc { target, .. } = operation {
+                // A failing target must see the ordinary Jcc retirement boundary.
+                if end > first && target <= unit.context.code_limit() {
+                    end += 1;
+                }
+                break;
+            }
+            let operand_read = match operation {
+                Operation::MemoryAlu { kind, operands, .. } => {
+                    !kind.writes_result() || matches!(operands, MemoryAluOperands::RegisterFirst(_))
+                }
+                Operation::Load { .. }
+                | Operation::Extend {
+                    src: Location::Memory(_),
+                    ..
+                }
+                | Operation::Imul {
+                    src: Location::Memory(_),
+                    width: Width::W32,
+                    ..
+                }
+                | Operation::Pop {
+                    width: Width::W32, ..
+                } => true,
+                _ => false,
+            };
+            if !register_prefix_operation(operation)
+                && !operand_read
+                && !matches!(
+                    operation,
+                    Operation::Cmov {
+                        src: Location::Register(_),
+                        ..
+                    }
+                )
+            {
+                break;
+            }
             end += 1;
         }
         if end - first >= 3 {

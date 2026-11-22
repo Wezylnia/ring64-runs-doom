@@ -1336,17 +1336,25 @@ impl Emitter {
         let count = instructions.len() as u32;
         self.guard_straight_prefix(first, last, count);
         self.loop_gates_prechecked = true;
-        self.instruction_retirement = InstructionRetirement::DeferredCommit;
         let loop_depth = loop_depth + 1;
-        for instruction in instructions {
-            self.emit_instruction(*instruction, None, loop_depth, None, None, false);
+        let branch = matches!(last.operation, Operation::Jcc { .. });
+        for (index, instruction) in instructions.iter().enumerate() {
+            let terminal = branch && index + 1 == instructions.len();
+            self.instruction_retirement = if terminal {
+                InstructionRetirement::AfterPrefix(index as u32)
+            } else {
+                InstructionRetirement::FlatPrefix(index as u32)
+            };
+            self.emit_instruction(*instruction, None, loop_depth, None, None, terminal);
         }
         self.loop_gates_prechecked = false;
         self.instruction_retirement = InstructionRetirement::One;
-        self.op(Op::I64Const(last.next_pc as i64))
-            .op(Op::LocalSet(RIP));
-        self.retire_instructions(count);
-        self.route(last.next_pc, loop_depth, loop_depth + 1);
+        if !branch {
+            self.op(Op::I64Const(last.next_pc as i64))
+                .op(Op::LocalSet(RIP));
+            self.retire_instructions(count);
+            self.route(last.next_pc, loop_depth, loop_depth + 1);
+        }
         self.op(Op::End);
     }
 
