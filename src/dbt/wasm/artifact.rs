@@ -2504,7 +2504,10 @@ fn emit_body(
             && paged
             && observed
             && !mmio
-            && unit.context.is_long64(),
+            && (unit.context.is_long64()
+                || (unit.context.mode() == crate::x86::context::Mode::Protected
+                    && unit.context.code_limit() == u64::from(u32::MAX)
+                    && unit.context.nonwrapping_code32_fetch(0, 1) == Some(0))),
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         sampled_region: unit.sampled,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]

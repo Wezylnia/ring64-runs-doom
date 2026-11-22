@@ -29,7 +29,7 @@ impl Emitter {
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         {
             self.paged_quiet_completion
-                && self.sampled_region
+                && (self.sampled_region || !self.context.is_long64())
                 && !self.guarded_paged_lap
                 && match operation {
                     Operation::Jump { target } | Operation::Jcc { target, .. } => {

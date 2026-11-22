@@ -1880,7 +1880,18 @@ pub extern "C" fn core_paged_debug_begin(pc: u64, flags: u64, shadow: u32) -> i3
             .or_else(|| core.recover_paged_fetch(pc))
         {
             core.reconcile_translation_changes();
-            return core.instruction_admission(instruction.operation, pc, true);
+            let result = core.instruction_admission(instruction.operation, pc, true);
+            if quiet_completion
+                && !core.context.is_long64()
+                && result == 0
+                && core.paged_region_trace.is_none()
+                && flags & crate::x86::flags::TF == 0
+                && shadow != 2
+                && core.debug_completion_quiet()
+            {
+                return crate::embedding::layout::debug::CONTINUE_ACTIVE;
+            }
+            return result;
         }
         match core.paged_decode(pc) {
             Ok(instruction) if !core.image.active_changed() => {
