@@ -615,7 +615,7 @@ fn nan(a: u128, b: u128) -> Option<Result> {
     })
 }
 #[inline]
-fn exact_pc64_difference(kind: Kind, a: u128, b: u128, cw: u16, extra: u16) -> Option<u128> {
+fn normal_pc64_addition(kind: Kind, a: u128, b: u128, cw: u16, extra: u16) -> Option<Result> {
     if extra != 0
         || !matches!(kind, Kind::Add | Kind::Sub | Kind::SubReverse)
         || precision(cw) != 64
@@ -624,36 +624,87 @@ fn exact_pc64_difference(kind: Kind, a: u128, b: u128, cw: u16, extra: u16) -> O
     }
     let a_exp_sign = (a >> 64) as u16;
     let b_exp_sign = (b >> 64) as u16;
-    let signs_differ = (a_exp_sign ^ b_exp_sign) >> 15 != 0;
-    let exponent = a_exp_sign & 0x7fff;
+    let a_exp = a_exp_sign & 0x7fff;
+    let b_exp = b_exp_sign & 0x7fff;
     let a_sig = a as u64;
     let b_sig = b as u64;
-    if signs_differ != (kind == Kind::Add)
-        || (a_exp_sign ^ b_exp_sign) & 0x7fff != 0
-        || exponent == 0
-        || exponent == 0x7fff
-        || (a_sig & b_sig) >> 63 == 0
+    if a_exp == 0 || b_exp == 0 || a_exp == 0x7fff || b_exp == 0x7fff || (a_sig & b_sig) >> 63 == 0
     {
         return None;
     }
-    if a_sig == b_sig {
-        return Some(if rc(cw) == 1 { SIGN } else { 0 });
+    let signs_differ = (a_exp_sign ^ b_exp_sign) >> 15 != 0;
+    let subtract = signs_differ == (kind == Kind::Add);
+    let a_negative = (a_exp_sign >> 15 != 0) ^ (kind == Kind::SubReverse);
+    if subtract && a_exp == b_exp {
+        if a_sig == b_sig {
+            return Some(Result::raw(if rc(cw) == 1 { SIGN } else { 0 }));
+        }
+        let difference = a_sig.abs_diff(b_sig);
+        let shift = difference.leading_zeros() as u16;
+        if a_exp <= shift {
+            return None;
+        }
+        let negative = a_negative ^ (a_sig < b_sig);
+        let exponent_sign = (u16::from(negative) << 15) | (a_exp - shift);
+        return Some(Result::raw(
+            (u128::from(exponent_sign) << 64) | u128::from(difference << shift),
+        ));
     }
-    let a_larger = a_sig > b_sig;
-    let difference = a_sig.abs_diff(b_sig);
-    let shift = difference.leading_zeros() as u16;
-    if exponent <= shift {
+
+    let (exponent, left, right, gap, negative) = if a_exp >= b_exp {
+        (a_exp, a_sig, b_sig, a_exp - b_exp, a_negative)
+    } else {
+        (b_exp, b_sig, a_sig, b_exp - a_exp, a_negative ^ subtract)
+    };
+    let left = u128::from(left) << 3;
+    let right = align_addend(right, u32::from(gap));
+    let value = if subtract { left - right } else { left + right };
+    // The aligned result has at most 68 bits. Round with its low four bits.
+    let high = (value >> 64) as u64;
+    let low = value as u64;
+    let (significand, exponent, inexact, up) = if high == 0 {
+        let shift = low.leading_zeros();
+        (
+            low << shift,
+            i32::from(exponent) - 3 - shift as i32,
+            false,
+            false,
+        )
+    } else {
+        let shift = u64::BITS - high.leading_zeros();
+        let truncated = (high << (64 - shift)) | (low >> shift);
+        let discarded = low & ((1 << shift) - 1);
+        let halfway = 1 << (shift - 1);
+        let inexact = discarded != 0;
+        let up = inexact
+            && match rc(cw) {
+                0 => discarded > halfway || discarded == halfway && truncated & 1 != 0,
+                1 => negative,
+                2 => !negative,
+                _ => false,
+            };
+        let (rounded, carry) = truncated.overflowing_add(u64::from(up));
+        (
+            rounded | (u64::from(carry) << 63),
+            i32::from(exponent) + shift as i32 - 3 + i32::from(carry),
+            inexact,
+            up,
+        )
+    };
+    if !(1..0x7fff).contains(&exponent) {
         return None;
     }
-    // Equal exponents with opposite effective signs produce an exact u64 difference.
-    let negative = (a_exp_sign >> 15 != 0) ^ (kind == Kind::SubReverse) ^ !a_larger;
-    let result_exp_sign = (u16::from(negative) << 15) | (exponent - shift);
-    Some((u128::from(result_exp_sign) << 64) | u128::from(difference << shift))
+    let exponent_sign = (u16::from(negative) << 15) | exponent as u16;
+    Some(Result {
+        post: if inexact { 32 } else { 0 },
+        up,
+        ..Result::raw((u128::from(exponent_sign) << 64) | u128::from(significand))
+    })
 }
 
 pub(super) fn binary(kind: Kind, a: u128, b: u128, cw: u16, extra: u16) -> Result {
-    if let Some(value) = exact_pc64_difference(kind, a, b, cw, extra) {
-        return Result::raw(value);
+    if let Some(result) = normal_pc64_addition(kind, a, b, cw, extra) {
+        return result;
     }
     binary_general(kind, a, b, cw, extra)
 }
@@ -662,6 +713,8 @@ pub(super) fn binary(kind: Kind, a: u128, b: u128, cw: u16, extra: u16) -> Resul
 #[test]
 fn exact_pc64_difference_matches_general_binary80_arithmetic() {
     let value = |exponent, significand| (u128::from(exponent) << 64) | u128::from(significand);
+    let difference =
+        |kind, a, b, cw, extra| normal_pc64_addition(kind, a, b, cw, extra).map(|r| r.value);
     let fields = |result: Result| {
         (
             result.value,
@@ -676,21 +729,21 @@ fn exact_pc64_difference_matches_general_binary80_arithmetic() {
     let next = value(0x3fffu16, lo + 1);
     let least_normal = value(1u16, lo);
     assert_eq!(
-        exact_pc64_difference(Kind::Sub, next, one, 0x37f, 0),
+        difference(Kind::Sub, next, one, 0x37f, 0),
         Some(value(0x3fc0u16, lo))
     );
     assert_eq!(
-        exact_pc64_difference(Kind::SubReverse, next, one, 0x37f, 0),
+        difference(Kind::SubReverse, next, one, 0x37f, 0),
         Some(value(0xbfc0u16, lo))
     );
     assert_eq!(
-        exact_pc64_difference(Kind::Add, next, next | SIGN, 0x77f, 0),
+        difference(Kind::Add, next, next | SIGN, 0x77f, 0),
         Some(SIGN)
     );
-    assert_eq!(exact_pc64_difference(Kind::Sub, next, one, 0x27f, 0), None);
-    assert_eq!(exact_pc64_difference(Kind::Sub, next, one, 0x37f, 2), None);
+    assert_eq!(difference(Kind::Sub, next, one, 0x27f, 0), None);
+    assert_eq!(difference(Kind::Sub, next, one, 0x37f, 2), None);
     assert_eq!(
-        exact_pc64_difference(Kind::Sub, least_normal | 1, least_normal, 0x37f, 0),
+        difference(Kind::Sub, least_normal | 1, least_normal, 0x37f, 0),
         None
     );
 
@@ -709,6 +762,87 @@ fn exact_pc64_difference_matches_general_binary80_arithmetic() {
                                     assert_eq!(
                                         fields(binary(kind, a, b, cw, 0)),
                                         expected,
+                                        "{kind:?}, {a:#x}, {b:#x}, {cw:#x}"
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn normal_pc64_addition_matches_general_rounding_across_exponent_gaps() {
+    let value = |exponent, significand| (u128::from(exponent) << 64) | u128::from(significand);
+    let fields = |result: Result| {
+        (
+            result.value,
+            result.pre,
+            result.post,
+            result.up,
+            result.suppress,
+        )
+    };
+    let lo = 1u64 << 63;
+    let one = value(0x3fffu16, lo);
+    let half = value(0x3ffeu16, lo);
+    let pair = (
+        fields(binary(Kind::Add, one, half, 0x37f, 0)),
+        fields(binary_general(Kind::Add, one, half, 0x37f, 0)),
+    );
+    assert_eq!(pair.0, pair.1);
+    assert!(normal_pc64_addition(Kind::Add, one, half, 0x37f, 0).is_some());
+    assert!(normal_pc64_addition(Kind::Add, one, one, 0x37f, 0).is_some());
+    assert!(normal_pc64_addition(Kind::Sub, one, half, 0x37f, 0).is_some());
+    assert!(normal_pc64_addition(Kind::Add, one, half, 0x27f, 0).is_none());
+    assert!(normal_pc64_addition(Kind::Add, one, half, 0x37f, 2).is_none());
+    assert!(
+        normal_pc64_addition(
+            Kind::Add,
+            value(0x7ffeu16, lo),
+            value(0x7ffeu16, lo),
+            0x37f,
+            0
+        )
+        .is_none()
+    );
+    assert!(
+        normal_pc64_addition(Kind::Sub, value(2u16, lo), value(1u16, u64::MAX), 0x37f, 0).is_none()
+    );
+
+    let mut seed = 0xfbc5_4110_5121_90a3u64;
+    let mut next = || {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        seed
+    };
+    for ae in [
+        1u16, 2, 63, 64, 65, 66, 67, 68, 127, 129, 0x3fff, 0x7ffd, 0x7ffe,
+    ] {
+        for gap in [0, 1, 2, 3, 4, 31, 32, 62, 63, 64, 65, 66, 67, 68, 128, 1024] {
+            for (asig, bsig) in [
+                (lo, lo),
+                (lo, u64::MAX),
+                (u64::MAX, lo),
+                (u64::MAX, u64::MAX),
+                (lo | next(), lo | next()),
+                (u64::MAX, lo + 1),
+            ] {
+                let a = value(ae, asig);
+                let b = value(ae.saturating_sub(gap).max(1), bsig);
+                for signs in [(0, 0), (0, SIGN), (SIGN, 0), (SIGN, SIGN)] {
+                    for (a, b) in [(a | signs.0, b | signs.1), (b | signs.1, a | signs.0)] {
+                        for round in 0..4 {
+                            for cw in [0x340 | (round << 10), 0x37f | (round << 10)] {
+                                for kind in [Kind::Add, Kind::Sub, Kind::SubReverse] {
+                                    assert_eq!(
+                                        fields(binary(kind, a, b, cw, 0)),
+                                        fields(binary_general(kind, a, b, cw, 0)),
                                         "{kind:?}, {a:#x}, {b:#x}, {cw:#x}"
                                     );
                                 }
