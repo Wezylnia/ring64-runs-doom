@@ -2361,6 +2361,8 @@ fn emit_body(
             && !mmio
             && unit.context.is_long64(),
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        sampled_region: unit.sampled,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         used_paged_quiet_completion: false,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         read_span: None,

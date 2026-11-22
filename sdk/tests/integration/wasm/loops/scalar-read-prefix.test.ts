@@ -5,7 +5,7 @@ import { snapshot } from '../../../../../tests/execution/far-control/fixture.js'
 import { BANK, PC, initial, usingPaged } from '../../../../../tests/execution/paging/fixture.js';
 import { compiler } from './fixture.js';
 
-test('quiet paged register completion keeps live step and execute breakpoint handling', async () => {
+test('sampled quiet register completion keeps live step and execute breakpoint handling', async () => {
   // ADD RAX,1; INC RAX; HLT. Two ordinary instructions are below the clone floor.
   const code = '4883c00148ffc0f4';
   const stop = PC + 7n;
@@ -13,6 +13,13 @@ test('quiet paged register completion keeps live step and execute breakpoint han
     artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
   };
   const imports = prototype.artifactImports;
+  const compile = Core.prototype.compile;
+  let sampled = false;
+  Core.prototype.compile = function (pc, limits, seeds, regionPoints) {
+    if (sampled && pc === PC && !seeds?.length)
+      return compile.call(this, pc, limits, [PC, PC + 4n, stop], true);
+    return compile.call(this, pc, limits, seeds, regionPoints);
+  };
   let finishes = 0;
   prototype.artifactImports = function (observed) {
     const env = imports.call(this, observed);
@@ -26,35 +33,39 @@ test('quiet paged register completion keeps live step and execute breakpoint han
     return env;
   };
   try {
-    await usingPaged(compiler, { code }, async (cpu) => {
-      const enter = (flags = 2n) => cpu.setState(initial(PC, { 0: 1n }, flags));
-      for (let wave = 0; wave < 3; wave++) {
-        finishes = 0;
+    for (sampled of [false, true]) {
+      await usingPaged(compiler, { code }, async (cpu) => {
+        const enter = (flags = 2n) => cpu.setState(initial(PC, { 0: 1n }, flags));
+        for (let wave = 0; wave < 3; wave++) {
+          finishes = 0;
+          enter();
+          const result = await cpu.run({ stop, budget: 10n });
+          assert.equal(result.reason, 'stop');
+          assert.equal(result.retired, 2n);
+          assert.equal(result.state.registers[0], 3n);
+        }
+        const ordinaryFinishes = sampled ? 0 : 2;
+        assert.equal(finishes, ordinaryFinishes);
+
+        enter(0x102n);
+        const step = await cpu.run({ stop, budget: 10n });
+        assert.equal(step.reason, 'debug-exception');
+        assert.equal(step.retired, 1n);
+        assert.equal(step.state.rip, PC + 4n);
+        assert.equal(finishes, ordinaryFinishes + 1);
+
+        cpu.setDebugState({ addresses: [PC + 4n, 0n, 0n, 0n], dr6: 0n, dr7: 0x401n });
         enter();
-        const result = await cpu.run({ stop, budget: 10n });
-        assert.equal(result.reason, 'stop');
-        assert.equal(result.retired, 2n);
-        assert.equal(result.state.registers[0], 3n);
-      }
-      assert.equal(finishes, 0);
-
-      enter(0x102n);
-      const step = await cpu.run({ stop, budget: 10n });
-      assert.equal(step.reason, 'debug-exception');
-      assert.equal(step.retired, 1n);
-      assert.equal(step.state.rip, PC + 4n);
-      assert.equal(finishes, 1);
-
-      cpu.setDebugState({ addresses: [PC + 4n, 0n, 0n, 0n], dr6: 0n, dr7: 0x401n });
-      enter();
-      const breakpoint = await cpu.run({ stop, budget: 10n });
-      assert.equal(breakpoint.reason, 'debug-exception');
-      assert.equal(breakpoint.retired, 1n);
-      assert.equal(breakpoint.state.rip, PC + 4n);
-      assert.equal(finishes, 2);
-    });
+        const breakpoint = await cpu.run({ stop, budget: 10n });
+        assert.equal(breakpoint.reason, 'debug-exception');
+        assert.equal(breakpoint.retired, 1n);
+        assert.equal(breakpoint.state.rip, PC + 4n);
+        assert.equal(finishes, ordinaryFinishes + 2);
+      });
+    }
   } finally {
     prototype.artifactImports = imports;
+    Core.prototype.compile = compile;
   }
 });
 

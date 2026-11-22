@@ -3,6 +3,8 @@ use crate::x86::{context::ExecutionContext, instruction::Instruction};
 
 pub(crate) struct Unit {
     pub context: ExecutionContext,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub sampled: bool,
     pub instructions: Vec<Instruction>,
     pub block_count: usize,
     pub source_bytes: usize,

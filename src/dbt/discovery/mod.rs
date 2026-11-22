@@ -287,6 +287,8 @@ pub(super) fn discover_with_entries(
     }
     Ok(Unit {
         context: context.clone(),
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        sampled,
         block_count: leaders
             .iter()
             .filter(|pc| instructions.contains_key(pc))

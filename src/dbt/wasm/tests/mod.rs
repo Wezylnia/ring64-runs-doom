@@ -84,6 +84,8 @@ use std::process::{Command, Stdio};
 fn unit(instructions: Vec<Instruction>) -> Unit {
     Unit {
         context: crate::x86::context::ExecutionContext::default(),
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        sampled: false,
         source_bytes: instructions.len(),
         source_ranges: vec![],
         read_dependencies: vec![],

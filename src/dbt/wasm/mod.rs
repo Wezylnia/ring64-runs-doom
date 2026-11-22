@@ -139,6 +139,8 @@ struct Emitter {
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_quiet_completion: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    sampled_region: bool,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     used_paged_quiet_completion: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     read_span: Option<memory::SpanCache>,
