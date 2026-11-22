@@ -517,7 +517,10 @@ impl Cache {
         {
             return None;
         }
-        let value = image.physical_read(translation.physical, 4).ok()?;
+        let value = match image.physical_read_mapped_dword(translation.physical) {
+            Some(value) => value,
+            None => image.physical_read(translation.physical, 4).ok()? as u32,
+        };
         if data != fetch && entries.slots[data].as_ref().unwrap().used != entries.clock - 1 {
             let mut order = self.guarded_order.borrow_mut();
             if order.as_ref().is_some_and(|hint| !hint.matches(&entries)) {
@@ -529,7 +532,7 @@ impl Cache {
                 hint.touch(&entries, data, fetch);
             }
         }
-        Some(value as u32)
+        Some(value)
     }
 
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
@@ -567,7 +570,7 @@ impl Cache {
             {
                 return None;
             }
-            let value = image.physical_read_local_dword(translation.physical)?;
+            let value = image.physical_read_mapped_dword(translation.physical)?;
             Some((translation, value))
         })?;
         let only_4k_leaves = entries.lookup_index.only_4k_leaves();

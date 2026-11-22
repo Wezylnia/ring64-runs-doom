@@ -36,15 +36,6 @@ impl Image {
     }
 
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
-    pub(crate) fn physical_read_local_dword(&self, address: u64) -> Option<u32> {
-        let first = self
-            .preflight::<true>(address, 4, Access::Read, false, true)
-            .ok()?;
-        (u128::from(address) + 4 <= self.mappings[first].end())
-            .then(|| self.scalar_after_preflight(address, 4, first) as u32)
-    }
-
-    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
     #[inline(always)]
     pub(crate) fn physical_read_mapped_byte(&self, address: u64) -> Option<u8> {
         if !self.physical {
@@ -62,20 +53,32 @@ impl Image {
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
     #[inline(always)]
     pub(crate) fn physical_read_mapped_dword(&self, address: u64) -> Option<u32> {
-        if !self.physical || address > super::address::PHYSICAL_ADDRESS_END - 4 {
+        self.physical_read_mapped_array(address)
+            .map(u32::from_le_bytes)
+    }
+
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    #[inline(always)]
+    pub(crate) fn physical_read_mapped_qword(&self, address: u64) -> Option<u64> {
+        self.physical_read_mapped_array(address)
+            .map(u64::from_le_bytes)
+    }
+
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    #[inline(always)]
+    fn physical_read_mapped_array<const N: usize>(&self, address: u64) -> Option<[u8; N]> {
+        if !self.physical || address > super::address::PHYSICAL_ADDRESS_END - N as u64 {
             return None;
         }
         let mapping = &self.mappings[self.locate_index(address)?];
         let relative = address - mapping.base;
-        if !mapping.permissions.read || u64::from(mapping.length) - relative < 4 {
+        if !mapping.permissions.read || u64::from(mapping.length) - relative < N as u64 {
             return None;
         }
         // The validated physical mapping covers every byte of this read.
         let offset = mapping.offset as usize + relative as usize;
         let bytes = &self.backings[mapping.backing].bytes;
-        Some(u32::from_le_bytes(
-            bytes[offset..offset + 4].try_into().unwrap(),
-        ))
+        Some(bytes[offset..offset + N].try_into().unwrap())
     }
 
     pub fn physical_read_for_write(&self, address: u64, width: u32) -> Result<u64, Fault> {

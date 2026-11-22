@@ -320,8 +320,15 @@ impl LeafTable {
         keys: &ProtectionKeys,
     ) -> Result<Translation, Failure> {
         let address = self.table + (request.linear >> 12 & 511) * 8;
-        let entry = read_walk_word(image, address, 8)
-            .map_err(|fault| request.physical_failure(fault, PhysicalPhase::WalkRead))?;
+        let entry = match image.physical_read_mapped_qword(address) {
+            Some(value) => {
+                #[cfg(test)]
+                physical_counts::read(8);
+                value
+            }
+            None => read_walk_word(image, address, 8)
+                .map_err(|fault| request.physical_failure(fault, PhysicalPhase::WalkRead))?,
+        };
         if entry & 1 == 0 {
             return Err(request.page_fault(state, false, false, false));
         }

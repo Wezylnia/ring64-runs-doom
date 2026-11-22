@@ -127,6 +127,74 @@ fn guarded_leaf_table_matches_independent_walks_for_live_leaf_changes() {
     }
 }
 
+#[cfg(not(feature = "parallel"))]
+#[test]
+fn guarded_leaf_word_split_between_physical_mappings_uses_checked_read() {
+    let (_, state) = fixture();
+    let mut bytes = vec![0; 0x5000];
+    for (address, word) in [
+        (0x1000, 0x2027u64),
+        (0x2000, 0x3027),
+        (0x3000, 0x4027),
+        (0x4008, 0xa027),
+        (0x4010, 0xb027),
+    ] {
+        bytes[address..address + 8].copy_from_slice(&word.to_le_bytes());
+    }
+    let split = 0x4014;
+    let before = MappingInput {
+        base: 0,
+        backing: "tables".into(),
+        offset: 0,
+        length: split,
+        permissions: Permissions {
+            read: true,
+            write: false,
+            execute: false,
+        },
+    };
+    let after = MappingInput {
+        base: u64::from(split),
+        offset: split,
+        length: 0x5000 - split,
+        ..before.clone()
+    };
+    let mut image = Image::physical_mapped(
+        vec![("tables".into(), bytes)],
+        vec![before.clone(), after],
+        MemoryLimits {
+            max_backing_bytes: 0x5000,
+            max_backings: 1,
+            max_mappings: 2,
+        },
+    )
+    .unwrap();
+    let request = Request {
+        linear: 0x1234,
+        access: Access::Read,
+        class: AccessClass::User,
+    };
+    let keys = &ProtectionKeys::ZERO;
+    let mut words = UpperWords::default();
+    assert_eq!(
+        words.peek(&image, &state, request, keys).unwrap().physical,
+        0xa234
+    );
+    assert!(words.ia32e.is_some());
+
+    let request = Request {
+        linear: 0x2345,
+        ..request
+    };
+    assert_eq!(
+        words.peek(&image, &state, request, keys).unwrap().physical,
+        0xb345
+    );
+    image.set_mappings(vec![before]).unwrap();
+    let missing = peek(&image, &state, request, keys).unwrap_err();
+    assert_eq!(words.peek(&image, &state, request, keys), Err(missing));
+}
+
 #[test]
 fn literal_nonidentity_walk_peeks_without_accessed_effects() {
     let (image, state) = fixture();
