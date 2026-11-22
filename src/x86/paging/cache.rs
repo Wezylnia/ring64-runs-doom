@@ -178,7 +178,7 @@ pub struct Cache {
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
     guarded_order: RefCell<Option<recency::GuardedOrder>>,
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
-    vector_read_window: Cell<Option<(usize, u64)>>,
+    guarded_read_window: Cell<Option<(usize, u64)>>,
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
     last_dword_write: Cell<Option<NonZeroU8>>,
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
@@ -208,7 +208,7 @@ impl Cache {
             #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
             guarded_order: RefCell::new(None),
             #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
-            vector_read_window: Cell::new(None),
+            guarded_read_window: Cell::new(None),
             #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
             last_dword_write: Cell::new(None),
             #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
@@ -366,13 +366,13 @@ impl Cache {
     }
 
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
-    pub(crate) fn remember_vector_read_window(&self, slot: usize, id: u64) {
-        self.vector_read_window.set(Some((slot, id)));
+    pub(crate) fn remember_guarded_read_window(&self, slot: usize, id: u64) {
+        self.guarded_read_window.set(Some((slot, id)));
     }
 
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
-    pub(crate) fn retouch_vector_read_window(&self, linear: u64) -> Option<()> {
-        let (slot, id) = self.vector_read_window.get()?;
+    pub(crate) fn retouch_guarded_read_window(&self, linear: u64) -> Option<()> {
+        let (slot, id) = self.guarded_read_window.get()?;
         let mut entries = self.entries.borrow_mut();
         let entry = entries.slots[slot].as_ref()?;
         if entry.translation.cache_id != Some(id) || !entry.translation.contains(linear) {

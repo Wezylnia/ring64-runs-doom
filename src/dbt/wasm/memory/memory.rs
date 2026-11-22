@@ -391,6 +391,8 @@ impl Emitter {
         if width == Width::W32
             && address.segment == Segment::Ds
             && let Some(window) = self.paged_dword_window
+            && (self.paged_dword_window_touch.is_none()
+                || address.index.is_some_and(|index| index.scale == 4))
         {
             self.load_windowed_paged_dword(window, read, exit_depth);
             return true;
@@ -508,8 +510,16 @@ impl Emitter {
             .op(Op::I32Const(3))
             .op(Op::I32And)
             .op(Op::I32Eqz)
-            .op(Op::I32And)
-            .op(Op::If(BlockType::Result(wasm_encoder::ValType::I64)))
+            .op(Op::I32And);
+        if let Some(touch) = self.paged_dword_window_touch {
+            self.op(Op::If(BlockType::Result(wasm_encoder::ValType::I32)))
+                .op(Op::LocalGet(ADDRESS))
+                .op(Op::Call(touch))
+                .op(Op::Else)
+                .op(Op::I32Const(0))
+                .op(Op::End);
+        }
+        self.op(Op::If(BlockType::Result(wasm_encoder::ValType::I64)))
             .op(Op::LocalGet(VALUE));
         self.paged_dword_window_load(window.host);
         self.op(Op::Else)

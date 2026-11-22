@@ -997,18 +997,28 @@ impl StructuredLoop {
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     pub(super) fn with_paged_dword_window(mut self, unit: &super::Unit) -> Option<Self> {
-        if !self.forward_edges()
-            || self.paged_fetch_bytes.is_none()
-            || self.has_paged_byte_store(unit)
-        {
+        if !self.forward_edges() || self.paged_fetch_bytes.is_none() {
             return None;
         }
         let mut reads = unit.instructions[self.earlier as usize..self.tail as usize]
             .iter()
             .filter_map(|instruction| paged_read_width(instruction.operation, None));
-        // Repeating the only data touch cannot change its ordering relative to
-        // the retained code page. A miss always re-arms through the cache.
-        if (reads.next(), reads.next()) != (Some(Width::W32), None) {
+        if self.paged_scalar_writes() {
+            let has_indexed_read = unit.instructions[self.earlier as usize..self.tail as usize]
+                .iter()
+                .any(|instruction| {
+                    matches!(instruction.operation, Operation::Load {
+                    width: Width::W32, address, ..
+                } if address.segment == crate::x86::context::Segment::Ds
+                    && address.index.is_some_and(|index| index.scale == 4))
+                });
+            if !unit.context.is_long64() || !has_indexed_read {
+                return None;
+            }
+        } else if self.has_paged_byte_store(unit)
+            || (reads.next(), reads.next()) != (Some(Width::W32), None)
+        {
+            // Only the same isolated data touch can skip retouching the lease.
             return None;
         }
         self.paged_dword_window = true;

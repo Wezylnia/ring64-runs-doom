@@ -81,12 +81,12 @@ fn guarded_vector_read_window_retouch_rejects_a_refilled_slot() {
             |slot, entry| Some((slot, entry.cache_id.unwrap())),
         )
         .unwrap();
-    cache.remember_vector_read_window(window.0, window.1);
+    cache.remember_guarded_read_window(window.0, window.1);
     cache
         .data_then_fetch::<false, _>(&state, other, &Keys::ZERO, 4, true, Some)
         .unwrap();
     let fetch_slot = cache.entries.borrow().hint.unwrap();
-    assert_eq!(cache.retouch_vector_read_window(read.linear), Some(()));
+    assert_eq!(cache.retouch_guarded_read_window(read.linear), Some(()));
     {
         let entries = cache.entries.borrow();
         assert_eq!(entries.hint, Some(fetch_slot));
@@ -94,7 +94,7 @@ fn guarded_vector_read_window_retouch_rejects_a_refilled_slot() {
     }
 
     cache.invalidate_page(state.pcid(), read.linear, false);
-    assert_eq!(cache.retouch_vector_read_window(read.linear), None);
+    assert_eq!(cache.retouch_guarded_read_window(read.linear), None);
     image.physical_write(0x4008, 8, 0xe027).unwrap();
     cache.fill(
         &state,
@@ -103,7 +103,7 @@ fn guarded_vector_read_window_retouch_rejects_a_refilled_slot() {
     );
     cache.lookup(&state, fetch, &Keys::ZERO).unwrap().unwrap();
     let clock = cache.entries.borrow().clock;
-    assert_eq!(cache.retouch_vector_read_window(read.linear), None);
+    assert_eq!(cache.retouch_guarded_read_window(read.linear), None);
     assert_eq!(cache.entries.borrow().clock, clock);
 }
 

@@ -265,6 +265,11 @@ fn emit_paged_profile(
     if max_artifact_bytes >= 256 * 1024
         && let Some(body) = StructuredLoop::select_paged_scalar_writes(unit)
     {
+        if let Some(window) = body.with_paged_dword_window(unit)
+            && let Some(bytes) = placement(window)
+        {
+            return Some(bytes);
+        }
         if let Some(bytes) = placement(body) {
             return Some(bytes);
         }
@@ -1076,7 +1081,7 @@ fn emit_body(
     .then(|| add_function_type(&mut types, [ValType::I64], [ValType::I64]));
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let paged_dword_window_type = loop_body
-        .is_some_and(|body| body.paged_dword_window)
+        .is_some_and(|body| body.paged_dword_window && (!mmio || !body.paged_scalar_writes()))
         .then(|| add_function_type(&mut types, [ValType::I64], [ValType::I32]));
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let paged_dword_read_pair = loop_body
@@ -1474,6 +1479,10 @@ fn emit_body(
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let paged_dword_window =
         paged_dword_window_type.map(|index| import_function("paged_loop_read_dword_window", index));
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let paged_dword_window_touch = paged_dword_window_type
+        .filter(|_| loop_body.is_some_and(StructuredLoop::paged_scalar_writes))
+        .map(|index| import_function("paged_loop_retouch_block_window", index));
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let paged_dword_read_pair =
         paged_dword_read_pair
@@ -2257,6 +2266,8 @@ fn emit_body(
         paged_dense_read_span,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_dword_window,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        paged_dword_window_touch,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_dword_read_pair,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]

@@ -1046,7 +1046,7 @@ fn paged_loop_block_window<const RETOUCH: bool>(address: u64) -> u64 {
                         // locals keep the window inside this guarded lap.
                         if RETOUCH {
                             core.translation_cache
-                                .remember_vector_read_window(slot, translation.cache_id?);
+                                .remember_guarded_read_window(slot, translation.cache_id?);
                         }
                         let host = span.host + offset;
                         Some(u64::from(length) << 32 | u64::from(host))
@@ -1063,7 +1063,7 @@ pub extern "C" fn core_paged_loop_retouch_block_window(address: u64) -> i32 {
         let core = bridge.core.as_ref().unwrap();
         i32::from(
             core.translation_cache
-                .retouch_vector_read_window(address)
+                .retouch_guarded_read_window(address)
                 .is_some(),
         )
     })
@@ -1254,7 +1254,7 @@ pub extern "C" fn core_paged_loop_read_dword_window(address: u64) -> u32 {
                 &state.protection_keys,
                 4,
                 true,
-                |_, translation| {
+                |slot, translation| {
                     let span = core
                         .image
                         .physical_direct_read_span(translation.physical, 4)?;
@@ -1268,6 +1268,8 @@ pub extern "C" fn core_paged_loop_read_dword_window(address: u64) -> u32 {
                     {
                         return None;
                     }
+                    core.translation_cache
+                        .remember_guarded_read_window(slot, translation.cache_id?);
                     Some(DirectSpan {
                         base,
                         length,
