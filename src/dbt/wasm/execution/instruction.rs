@@ -627,7 +627,7 @@ impl Emitter {
             guard,
             incoming.filter(|_| !indexed_wide),
             indexed,
-            indexed_wide || !indexed,
+            self.retouch_prefix_fetch || indexed_wide || !indexed,
         );
         if let Some((read, (register, address, source_width, width))) = read {
             use super::{ADDRESS, STORE_STATUS};
@@ -983,6 +983,8 @@ impl Emitter {
         let table = field(offset_of!(NewestFetch, table), 2);
         let slot = field(offset_of!(NewestFetch, slot), 2);
         let clock = mem(offset_of!(IndexedReadTable, clock), 3);
+        let hint = mem(offset_of!(IndexedReadTable, hint), 2);
+        let ages = mem(offset_of!(IndexedReadTable, ages), 3);
         let debug = offset_of!(RunState, debug);
         self.op(Op::Block(BlockType::Result(ValType::I32)))
             .op(Op::I32Const(0))
@@ -1003,6 +1005,17 @@ impl Emitter {
         self.op(Op::I64Const(tag as i64))
             .op(Op::I64Ne)
             .op(Op::BrIf(0));
+        if indexed_read && self.retouch_prefix_fetch {
+            self.op(Op::LocalGet(0))
+                .op(Op::I32Load(mem(
+                    offset_of!(StateStorage, indexed_paged_reads),
+                    2,
+                )))
+                .op(Op::LocalGet(0))
+                .op(Op::I32Load(table))
+                .op(Op::I32Ne)
+                .op(Op::BrIf(0));
+        }
         self.system_bits();
         self.op(Op::I64Const(0x10100))
             .op(Op::I64And)
@@ -1055,15 +1068,17 @@ impl Emitter {
                 offset_of!(RunState, interrupts) + offset_of!(RawInterruptState, nmi_blocked),
                 2,
             )))
-            .op(Op::BrIf(0))
-            .op(Op::LocalGet(0))
-            .op(Op::I32Load(table))
-            .op(Op::I32Load(mem(offset_of!(IndexedReadTable, hint), 2)))
-            .op(Op::LocalGet(0))
-            .op(Op::I32Load(slot))
-            .op(Op::I32Ne)
-            .op(Op::BrIf(0))
-            .op(Op::LocalGet(0))
+            .op(Op::BrIf(0));
+        if !self.retouch_prefix_fetch {
+            self.op(Op::LocalGet(0))
+                .op(Op::I32Load(table))
+                .op(Op::I32Load(hint))
+                .op(Op::LocalGet(0))
+                .op(Op::I32Load(slot))
+                .op(Op::I32Ne)
+                .op(Op::BrIf(0));
+        }
+        self.op(Op::LocalGet(0))
             .op(Op::I32Load(table))
             .op(Op::LocalGet(0))
             .op(Op::I32Load(slot))
@@ -1086,10 +1101,41 @@ impl Emitter {
             .op(Op::I32Load(table))
             .op(Op::I64Load(clock))
             .op(Op::LocalGet(STORE_STATUS))
-            .op(Op::I64Load(mem(offset_of!(IndexedReadTable, ages), 3)))
-            .op(Op::I64Ne)
-            .op(Op::BrIf(0))
-            .op(Op::LocalGet(0))
+            .op(Op::I64Load(ages))
+            .op(Op::I64Ne);
+        if self.retouch_prefix_fetch {
+            // A CALL or RET can leave a data slot newest without revoking the
+            // checked code identity. Mirror touch_current_fetch before the lap.
+            self.op(Op::LocalGet(0))
+                .op(Op::I32Load(table))
+                .op(Op::I32Load(hint))
+                .op(Op::LocalGet(0))
+                .op(Op::I32Load(slot))
+                .op(Op::I32Ne)
+                .op(Op::I32Or)
+                .op(Op::If(BlockType::Empty))
+                .op(Op::LocalGet(STORE_STATUS))
+                .op(Op::LocalGet(0))
+                .op(Op::I32Load(table))
+                .op(Op::I64Load(clock))
+                .op(Op::I64Const(1))
+                .op(Op::I64Add)
+                .op(Op::I64Store(ages))
+                .op(Op::LocalGet(0))
+                .op(Op::I32Load(table))
+                .op(Op::LocalGet(STORE_STATUS))
+                .op(Op::I64Load(ages))
+                .op(Op::I64Store(clock))
+                .op(Op::LocalGet(0))
+                .op(Op::I32Load(table))
+                .op(Op::LocalGet(0))
+                .op(Op::I32Load(slot))
+                .op(Op::I32Store(hint))
+                .op(Op::End);
+        } else {
+            self.op(Op::BrIf(0));
+        }
+        self.op(Op::LocalGet(0))
             .op(Op::I32Const(crate::x86::context::Segment::Cs as i32))
             .op(Op::I32Store(mem(offset_of!(RunState, fault_segment), 2)))
             .op(Op::I32Const(1))
@@ -1125,7 +1171,7 @@ impl Emitter {
                 .op(Op::Else);
         }
         let newest = check_newest
-            && self.sampled_region
+            && (self.sampled_region || self.retouch_prefix_fetch)
             && self.context.is_long64()
             && self.context.cpl() == 0
             && last.next_pc > first.pc

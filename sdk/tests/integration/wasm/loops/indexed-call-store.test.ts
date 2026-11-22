@@ -11,6 +11,73 @@ import {
 } from '../../../../../tests/execution/paging/fixture.js';
 import { compiler } from './fixture.js';
 
+test('an indexed near call preserves checked handler fetch across stack hits', async () => {
+  // CALL RAX; INC ECX; CMP ECX,4; JB start; HLT; handler resets EDX and adds 3.
+  const target = PC + 16n;
+  const stop = PC + 9n;
+  const rsp = PC + 0x1008n;
+  const prototype = Core.prototype as unknown as {
+    artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
+  };
+  const imports = prototype.artifactImports;
+  const compile = Core.prototype.compile;
+  let handlerGuards = 0;
+  Core.prototype.compile = function (pc, limits, seeds, regionPoints) {
+    if (pc === PC && !seeds?.length) return compile.call(this, pc, limits, [target, stop], false);
+    return compile.call(this, pc, limits, seeds, regionPoints);
+  };
+  prototype.artifactImports = function (observed) {
+    const env = imports.call(this, observed);
+    const guard = env.paged_loop_guard;
+    if (typeof guard === 'function') {
+      env.paged_loop_guard = (pc: bigint, width: number, flags: bigint, shadow: number) => {
+        if (pc === target) handlerGuards++;
+        return guard(pc, width, flags, shadow);
+      };
+    }
+    return env;
+  };
+  try {
+    await usingPaged(
+      compiler,
+      {
+        code: 'ffd0ffc183f90472f7f490909090909031d283c20183c20183c201c3',
+        words: [[0x4008n, 0xa003n]],
+        spans: [{ physical: 0xa000n, bytes: new Uint8Array(4096) }],
+      },
+      async (cpu) => {
+        const enter = () => cpu.setState(initial(PC, { 0: target, 1: 0n, 4: rsp }));
+        for (let wave = 0; wave < 3; wave++) {
+          handlerGuards = 0;
+          enter();
+          const result = await cpu.run({ stop, budget: 40n });
+          assert.equal(result.reason, 'stop');
+          assert.equal(result.retired, 36n);
+          assert.equal(result.state.registers[1], 4n);
+          assert.equal(result.state.registers[2], 3n);
+          assert.equal(result.state.registers[4], rsp);
+        }
+        assert.equal(handlerGuards, 1, 'only the first handler needs checked admission');
+        enter();
+        const inside = await cpu.run({ stop: target + 2n, budget: 40n });
+        assert.equal(inside.reason, 'stop');
+        assert.equal(inside.retired, 2n);
+        assert.equal(inside.state.rip, target + 2n);
+
+        cpu.setDebugState({ addresses: [target, 0n, 0n, 0n], dr6: 0n, dr7: 1n });
+        enter();
+        const watched = await cpu.run({ stop, budget: 40n });
+        assert.equal(watched.reason, 'debug-exception');
+        assert.equal(watched.retired, 1n);
+        assert.equal(watched.state.rip, target);
+      },
+    );
+  } finally {
+    prototype.artifactImports = imports;
+    Core.prototype.compile = compile;
+  }
+});
+
 test('near calls reuse the indexed stack write and replay observed faults', async () => {
   // CALL RAX; HLT; padding; INC RCX; RET.
   const target = PC + 8n;

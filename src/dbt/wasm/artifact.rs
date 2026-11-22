@@ -2519,6 +2519,18 @@ fn emit_body(
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         sampled_region: unit.sampled,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        retouch_prefix_fetch: !unit.sampled
+            && indexed_store_fill.is_some()
+            && unit.instructions.iter().any(|instruction| {
+                matches!(
+                    instruction.operation,
+                    Operation::Call {
+                        width: crate::x86::instruction::Width::W64,
+                        target: crate::x86::instruction::Operand::Register(_),
+                    }
+                )
+            }),
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         used_paged_quiet_completion: false,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         read_span: None,
