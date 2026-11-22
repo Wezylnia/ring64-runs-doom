@@ -89,6 +89,7 @@ impl Core {
     }
 
     #[cfg(not(feature = "parallel"))]
+    #[inline(always)]
     fn warm_guarded_code_page(&self, pc: u64, integer_only: bool) -> bool {
         if self.image.active_changed() || !self.context.is_long64() {
             return false;
@@ -386,8 +387,9 @@ pub extern "C" fn core_paged_access_reason() -> i32 {
 
 impl Core {
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    #[inline(always)]
     fn admit_indexed_paged_reads(&mut self) {
-        let Some(paging) = self.paging else {
+        let Some(paging) = self.paging.as_ref() else {
             self.state.indexed_paged_reads = 0;
             return;
         };

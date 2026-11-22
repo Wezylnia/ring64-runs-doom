@@ -565,6 +565,7 @@ impl Cache {
     }
 
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    #[inline(always)]
     pub(crate) fn touch_current_fetch(
         &self,
         state: &State,
@@ -592,6 +593,18 @@ impl Cache {
             }
             return true;
         }
+        Self::touch_unadmitted_fetch(&mut entries, state, request, physical)
+    }
+
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    #[cold]
+    fn touch_unadmitted_fetch(
+        entries: &mut Entries,
+        state: &State,
+        request: Request,
+        physical: u64,
+    ) -> bool {
+        const PAGE: u64 = 4096;
         let Some(index) = entries.find(state, request) else {
             return false;
         };
