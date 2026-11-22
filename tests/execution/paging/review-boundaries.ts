@@ -57,6 +57,83 @@ export function pagingBoundaryReviewScenarios(compiler: WebAssembly.Module): Sce
       },
     },
     {
+      name: 'paged 32-bit query suffix replays a refused stack read at its head once',
+      async run() {
+        const head = 0x400000n;
+        const data = 0x401000n;
+        const stack = 0x402000n;
+        const unaligned = stack + 1n;
+        // MOV [ESP],EAX; suffix: CMP EAX,[ESP]; MOV EDX,[ESI]; JMP inner;
+        // rotate: CMP EBX,ECX; JAE head;
+        // inner: CMP [EDI],EDX; JAE rotate; INC EBX; CMP EBX,ECX; JB inner; JMP head.
+        const code = '8904243b04248b16eb0439cb73f2391773f84339cb72f7ebe7';
+        let refusals = 0;
+        const create = Core.create;
+        Core.create = async (...args) => {
+          const core = await create(...args);
+          const imports = Reflect.get(core, 'artifactImports') as (
+            observed: boolean,
+          ) => Record<string, WebAssembly.ImportValue>;
+          Reflect.set(core, 'artifactImports', (observed: boolean) => {
+            const env = imports.call(core, observed);
+            const read = env.paged_loop_read_dword;
+            if (typeof read === 'function' && typeof env.paged_write_loop_guard32 === 'function') {
+              env.paged_loop_read_dword = (address: bigint) => {
+                const value = read(address);
+                if (address === unaligned) {
+                  equal(++refusals, 1, 'reject a retry of the same guarded stack operand');
+                  equal(value, -1n, 'the unaligned operand must use the checked path');
+                }
+                return value;
+              };
+            }
+            return env;
+          });
+          return core;
+        };
+        try {
+          await usingPaged(
+            compiler,
+            {
+              code,
+              context: context('compatibility'),
+              words: [
+                [0x4008n, 0xa027n],
+                [0x4010n, 0xb067n],
+              ],
+              spans: [
+                { physical: 0xa000n, bytes: little([0x13579bdfn], 4) },
+                { physical: 0xb000n, bytes: new Uint8Array(8) },
+              ],
+            },
+            async (cpu) => {
+              const stop = head + 14n;
+              const start = (esp: bigint) =>
+                initial(head, { 0: 7n, 2: 0n, 4: esp, 6: data, 7: data }, 2n);
+              cpu.setState(start(stack));
+              equal((await cpu.run({ stop, budget: 16n })).reason, 'stop', 'warm common fetch');
+
+              cpu.setState(start(unaligned));
+              const result = await cpu.run({ stop, budget: 16n });
+              equal(refusals, 1, 'the admitted suffix tries its first operand');
+              equal(result.reason, 'stop', 'checked replay reaches the inner entry');
+              equal(result.retired, 4n, 'the spill, comparison, load and jump retire once each');
+              equal(result.state.rip, stop, 'the original jump target is preserved');
+              equal(result.state.flags, 0x46n, 'the checked comparison sees the written value');
+              equal(result.state.registers[2], 0x13579bdfn, 'the successor load completes');
+              same(
+                [...cpu.readPhysicalMemory(0xb001n, 4)],
+                [7, 0, 0, 0],
+                'the original checked spill completes',
+              );
+            },
+          );
+        } finally {
+          Core.create = create;
+        }
+      },
+    },
+    {
       name: 'paged scalar replay qualifies only a successful ordinary checked read',
       async run() {
         const head = 0x400000n;
