@@ -294,6 +294,8 @@ fn emit_placement(
         inline_f32_sub: true,
         inline_f32_packed: true,
         inline_cmpnleps: true,
+        #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+        parallel_native_add_memo: max_artifact_bytes >= 256 * 1024,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         x87_register_pairs: true,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -395,6 +397,8 @@ struct OptionalLowering {
     inline_f32_sub: bool,
     inline_f32_packed: bool,
     inline_cmpnleps: bool,
+    #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+    parallel_native_add_memo: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     x87_register_pairs: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -1590,6 +1594,20 @@ fn emit_body(
         Vec::new()
     };
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+    let parallel_native_add_memo = if optional.parallel_native_add_memo
+        && !parallel_address_memos.is_empty()
+        && unit.context.is_long64()
+    {
+        parallel::native_add_memo_site(&unit.instructions).map(|site| {
+            let address = next_local;
+            locals.extend([(1, ValType::I64), (1, ValType::I32)]);
+            next_local += 2;
+            (site, address, address + 1)
+        })
+    } else {
+        None
+    };
+    #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     let (parallel_dword_window, parallel_base_byte_window) = {
         let wide = unit.context.is_long64();
         let mut allocate = |resolve, allow_bytes| {
@@ -1807,6 +1825,8 @@ fn emit_body(
         parallel_retry: None,
         #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
         parallel_address_memos,
+        #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+        parallel_native_add_memo,
         #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
         parallel_memo_address: false,
         current_index: 0,
@@ -2143,6 +2163,21 @@ fn emit_body(
     }
     let code_start = bytes.len();
     code.append_to(&mut bytes);
+    #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+    if bytes.len() > max_artifact_bytes && parallel_native_add_memo.is_some() {
+        return emit_body(
+            unit,
+            observed,
+            (paged, mmio),
+            loop_body,
+            _guard_reads,
+            OptionalLowering {
+                parallel_native_add_memo: false,
+                ..optional
+            },
+            max_artifact_bytes,
+        );
+    }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if bytes.len() > max_artifact_bytes && x87_register_pairs {
         return emit_body(

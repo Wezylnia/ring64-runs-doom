@@ -1,5 +1,5 @@
 import { context } from '../modes/fixture.js';
-import { fault, type Scenario } from '../../support/fixture.js';
+import { changed, exit, fault, type Scenario } from '../../support/fixture.js';
 import {
   ENTRY,
   RAM,
@@ -141,6 +141,80 @@ export function parallelMemoryScenarios(
             equal(update.state.rip, ENTRY + 13n, 'exact locked successor');
           }
           same(await words(machine, alias, 1), [9n], 'both locked updates commit to the same lane');
+        });
+      },
+    },
+    {
+      name: 'shared locked ADD loop rechecks a changed effective address',
+      async run() {
+        // LOCK ADD qword [RBX],1; LEA RBX,[RBX+8]; DEC ECX; JNZ entry.
+        const code = hex('f048830301488d5b08ffc975f3');
+        const stop = ENTRY + BigInt(code.length);
+        const options = linearMachine(compiler, code);
+        options.memory.backings[1]!.bytes.set(asBytes(0x123n, 0x20n, 0xffff_ffff_ffff_ffffn));
+        await withMachine(factory, options, async (machine) => {
+          const cpu = machine.cpus[0]!;
+          const before = cpuState(ENTRY, { 1: 3n, 3: RAM });
+          await cpu.setState(before);
+          exit(
+            await cpu.run({ budget: 20n, stop }),
+            'stop',
+            20n,
+            12n,
+            changed(before, stop, { 1: 0n, 3: RAM + 24n }, 0x47n),
+          );
+          same(await words(machine, RAM, 3), [0x124n, 0x21n, 0n], 'one update per lane');
+        });
+      },
+    },
+    {
+      name: 'shared locked ADD loop pauses and resumes after a peer promotes its stripe',
+      async run() {
+        // A: LOCK ADD qword [RBX],1; JMP entry. B waits for two updates, then reads [RBX+5].
+        const code = new Uint8Array(48).fill(0x90);
+        code.set(hex('f048830301ebf9'));
+        code.set(hex('48833b0272fa488b4305'), 32);
+        const lock = ENTRY;
+        const jump = ENTRY + 5n;
+        const peerEntry = ENTRY + 32n;
+        const peerStop = peerEntry + 10n;
+        const budget = 10_000_000_000n;
+        const before = cpuState(lock, { 3: RAM });
+        const flagsAfter = (value: bigint) => {
+          const byte = Number(value & 0xffn);
+          const even = Array.from({ length: 8 }, (_, bit) => (byte >> bit) & 1).reduce(
+            (parity, bit) => parity ^ bit,
+            0,
+          );
+          return 2n | (even ? 0n : 4n) | (value % 16n === 0n ? 16n : 0n);
+        };
+
+        await withMachine(factory, linearMachine(compiler, code), async (machine) => {
+          const [busy, peer] = machine.cpus;
+          await busy!.setState(before);
+          await peer!.setState(cpuState(peerEntry, { 3: RAM }));
+          const background = busy!.run({ budget });
+          const other = await peer!.run({ budget: 2_000_000n, stop: peerStop });
+          done(other, peerStop);
+          equal(other.state.registers[0], 0n, 'split read spans unchanged and upper counter bytes');
+          await busy!.pause();
+
+          const paused = await background;
+          const count = (paused.retired + 1n) / 2n;
+          const rip = paused.retired % 2n === 0n ? lock : jump;
+          equal(count >= 2n, true, 'peer witnessed two updates before promotion');
+          exit(
+            paused,
+            'paused',
+            budget,
+            paused.retired,
+            changed(before, rip, {}, flagsAfter(count)),
+          );
+          same(await words(machine, RAM, 2), [count, 0n], 'exact committed prefix at pause');
+
+          const resumed = await busy!.run({ budget: 2n });
+          exit(resumed, 'budget', 2n, 2n, changed(before, rip, {}, flagsAfter(count + 1n)));
+          same(await words(machine, RAM, 2), [count + 1n, 0n], 'one more update after promotion');
         });
       },
     },

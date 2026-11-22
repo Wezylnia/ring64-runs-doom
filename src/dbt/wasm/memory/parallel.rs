@@ -19,6 +19,37 @@ const LANE: MemArg = MemArg {
     memory_index: 1,
 };
 
+pub(super) fn native_add_memo_site(instructions: &[Instruction]) -> Option<u32> {
+    let mut sites = instructions.iter().enumerate().filter(|(_, instruction)| {
+        instruction.explicit_lock
+            && matches!(instruction.operation, Operation::MemoryAlu {
+                kind: Alu::Add,
+                width: Width::W64,
+                operands: MemoryAluOperands::MemoryFirst(_),
+                address: Address {
+                    base: AddressBase::Register(bank),
+                    index: None,
+                    segment: Segment::Ds,
+                    size: Width::W64,
+                    ..
+                },
+            } if bank != 4)
+    });
+    let (index, site) = sites.next()?;
+    if sites.next().is_some() {
+        return None;
+    }
+    instructions
+        .iter()
+        .any(|instruction| {
+            matches!(instruction.operation,
+                Operation::Jump { target } | Operation::Jcc { target, .. }
+                | Operation::CountBranch { target, .. }
+                if target <= site.pc && site.pc <= instruction.pc)
+        })
+        .then_some(index as u32)
+}
+
 #[derive(Clone, Copy)]
 pub(super) struct Atomic {
     enter: u32,
@@ -329,6 +360,16 @@ impl Emitter {
         } else {
             None
         };
+        self.resolve_shared_address(scalar, width, access, memo);
+    }
+
+    fn resolve_shared_address(
+        &mut self,
+        scalar: Scalar,
+        width: Width,
+        access: i32,
+        memo: Option<(u32, u32)>,
+    ) {
         let segment = self.shared_segment();
         self.linear_address();
         if let Some((address, resolved)) = memo {
@@ -417,7 +458,11 @@ impl Emitter {
         };
         self.address(address, next_pc);
         self.op(Op::LocalSet(ADDRESS));
-        self.shared_address(scalar, width, 2);
+        let memo = self
+            .parallel_native_add_memo
+            .filter(|(site, _, _)| *site == self.current_index)
+            .map(|(_, address, resolved)| (address, resolved));
+        self.resolve_shared_address(scalar, width, 2, memo);
         self.op(Op::LocalGet(scalar.address))
             .op(Op::If(BlockType::Empty));
         self.data_operand(source, width);

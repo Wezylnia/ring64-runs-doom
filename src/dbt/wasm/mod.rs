@@ -178,6 +178,8 @@ struct Emitter {
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     parallel_address_memos: Vec<(u32, u32)>,
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+    parallel_native_add_memo: Option<(u32, u32, u32)>,
+    #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     parallel_memo_address: bool,
     body: Function,
     branch_hints: Vec<wasm_encoder::BranchHint>,
