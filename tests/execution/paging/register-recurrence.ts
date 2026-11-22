@@ -1,4 +1,5 @@
-import { PC, equal, initial, usingPaged, type Scenario } from './fixture.js';
+import { PC, equal, initial, usingPaged, type Cpu, type Scenario } from './fixture.js';
+import { context, using } from '../modes/fixture.js';
 
 export function pagedRegisterRecurrenceScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [
@@ -70,6 +71,34 @@ export function pagedRegisterRecurrenceScenarios(compiler: WebAssembly.Module): 
             equal(stepped.retired, 1n, 'exact single-step retirement');
           });
         }
+      },
+    },
+    {
+      name: '32-bit affine register loops preserve the parked upper dwords',
+      async run() {
+        // MOV EDX,EAX; SHL EDX,9; XOR EAX,EDX; XOR EAX,5F4321h;
+        // ADD ECX,-3; JNZ loop; NOP.
+        const code = '89c2c1e20931d03521435f0083c1fd75ef90';
+        const seed = 0xd3bf62c5;
+        const upper = 0x11223344_00000000n;
+        const check = async (cpu: Cpu) => {
+          cpu.setState(initial(PC, { 0: upper + BigInt(seed), 1: upper + 900n, 2: upper }, 2n));
+          const result = await cpu.run({ stop: PC + 17n, budget: 2000n });
+          let x = seed;
+          let shifted = 0;
+          for (let i = 0; i < 300; i++) {
+            shifted = (x << 9) >>> 0;
+            x = (x ^ shifted ^ 0x5f4321) >>> 0;
+          }
+          equal(result.reason, 'stop', 'the loop reaches the next instruction');
+          equal(result.retired, 1800n, 'the loop retires once per guest instruction');
+          equal(result.state.registers[0], upper | BigInt(x), 'EAX update keeps the upper dword');
+          equal(result.state.registers[1], upper, 'ECX update keeps the upper dword');
+          equal(result.state.registers[2], upper | BigInt(shifted), 'EDX scratch is exact');
+          equal(result.state.flags, 0x57n, 'ADD supplies final flags');
+        };
+        await using(compiler, code, context('protected'), check, { entry: PC });
+        await usingPaged(compiler, { code, context: context('compatibility') }, check);
       },
     },
   ];

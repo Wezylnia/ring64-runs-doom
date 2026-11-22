@@ -1631,7 +1631,9 @@ fn emit_body(
         });
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let linear_recurrence = loop_body
-        .filter(|_| optional.linear_recurrence)
+        .filter(|body| {
+            optional.linear_recurrence && (!observed || body.paged_fetch_bytes.is_some())
+        })
         .and_then(|body| body.linear_recurrence(unit));
     let mut functions = FunctionSection::new();
     functions.function(3);

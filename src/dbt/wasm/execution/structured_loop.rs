@@ -355,9 +355,7 @@ impl StructuredLoop {
         self,
         unit: &super::Unit,
     ) -> Option<super::linear_recurrence::Recurrence> {
-        if self.kind != LoopKind::Registers
-            || self.paged_fetch_bytes.is_none()
-            || !unit.context.is_long64()
+        if self.kind != LoopKind::Registers || !(unit.context.is_long64() || unit.context.code32())
         {
             return None;
         }
@@ -1690,10 +1688,6 @@ impl Emitter {
             .op(Op::LocalSet(REASON));
         self.guarded_paged_lap = true;
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-        if let Some(recurrence) = self.linear_recurrence {
-            self.emit_linear_recurrence(recurrence);
-        }
-        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         if let Some(window) = self.paged_copy_window {
             self.op(Op::I64Const(0)).op(Op::LocalSet(window.limit));
         }
@@ -1792,6 +1786,12 @@ impl Emitter {
         loop_depth: u32,
         write_segment_base: Option<u32>,
     ) {
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if (!self.observed || self.guarded_paged_lap)
+            && let Some(recurrence) = self.linear_recurrence
+        {
+            self.emit_linear_recurrence(recurrence);
+        }
         let current_index = self.current_index;
         for (bank, upper) in self.register_upper_dwords.into_iter().enumerate() {
             if let Some(upper) = upper {

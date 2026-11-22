@@ -160,12 +160,14 @@ impl Emitter {
             .op(Op::LocalGet(VALUE))
             .op(Op::I64LtU)
             .op(Op::Select)
+            .op(Op::LocalTee(LHS))
+            .op(Op::I64Const(64))
+            .op(Op::I64GeU)
+            .op(Op::If(BlockType::Empty))
+            .op(Op::LocalGet(LHS))
             .op(Op::I64Const(1))
             .op(Op::I64Sub)
-            .op(Op::LocalTee(LHS))
-            .op(Op::I64Const(63))
-            .op(Op::I64GeU)
-            .op(Op::If(BlockType::Empty));
+            .op(Op::LocalSet(LHS));
         // Raise the affine map to the skipped lap count. Only the
         // accumulator and loop count are live across laps. One full original
         // lap remains to reconstruct the remaining registers and FLAGS.
@@ -190,9 +192,9 @@ impl Emitter {
                         .op(Op::I32Xor);
                 }
             }
-            self.op(Op::I64ExtendI32U)
-                .op(Op::LocalSet(register))
-                .op(Op::End);
+            self.op(Op::I64ExtendI32U);
+            self.write_register(RegisterView::low(recurrence.bank), Width::W32);
+            self.op(Op::End);
             recurrence.square();
         }
         self.op(Op::LocalGet(RHS))
