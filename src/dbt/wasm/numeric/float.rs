@@ -271,8 +271,14 @@ impl Emitter {
             .op(Op::LocalGet(right))
             .op(Op::I64x2ExtractLane(1))
             .op(Op::Call(helper))
-            .op(Op::LocalTee(REASON))
-            .op(Op::BrIf(exit_depth));
+            .op(Op::LocalTee(REASON));
+        if self.flags_on_read_fault.is_some() {
+            self.op(Op::If(BlockType::Empty));
+            self.restore_preceding_read_state();
+            self.op(Op::Br(exit_depth + 1)).op(Op::End);
+        } else {
+            self.op(Op::BrIf(exit_depth));
+        }
         self.op(Op::LocalGet(0))
             .op(Op::V128Load(super::vector::memory(offset_of!(
                 RunState,

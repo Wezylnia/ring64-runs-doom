@@ -166,6 +166,9 @@ impl Emitter {
     }
 
     pub(super) fn vector_failure(&mut self, exit_depth: u32) {
+        if self.flags_on_read_fault.is_some() {
+            self.restore_preceding_read_state();
+        }
         self.op(Op::Call(
             self.vector_access_reason.expect("vector access reason"),
         ))

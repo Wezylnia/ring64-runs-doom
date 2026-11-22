@@ -1,7 +1,8 @@
 use crate::memory::canonical48;
 use crate::x86::context::ExecutionContext;
 use crate::x86::instruction::{
-    Alu, Condition, Count, Instruction, Location, Operation, Shift, Unary, Width,
+    Alu, Condition, Count, Instruction, Location, Operation, Shift, Unary, VectorInstruction,
+    VectorOperand, Width,
 };
 
 #[derive(Clone, Copy)]
@@ -709,10 +710,56 @@ pub(super) fn compare_predicates(
         }
         let fallthrough_overwrites = next_overwrites(instruction.next_pc);
         let restore_taken = !next_overwrites(target);
-        if restore_taken && (position_at(target).is_some() || !fallthrough_overwrites) {
+        let packed_compare_faults = if !fallthrough_overwrites
+            && flat_test_lap_len.is_some()
+            && matches!(producer.operation, Operation::Alu { .. })
+        {
+            // These vector operations leave the compare operands live. Only
+            // their faults can expose FLAGS before the next full writer.
+            let first = position + 1;
+            let sequence = first..first + 3;
+            (sequence.end < len
+                && sequence.clone().all(|i| {
+                    !explicit_entry[i]
+                        && instructions[order.at((i - 1) as u32) as usize].next_pc
+                            == instructions[order.at(i as u32) as usize].pc
+                })
+                && matches!(
+                    instructions[order.at(first as u32) as usize].operation,
+                    Operation::Vector(VectorInstruction::Move {
+                        operand: VectorOperand::Memory(_),
+                        bytes: 16,
+                        aligned: false,
+                        store: false,
+                        ..
+                    })
+                )
+                && matches!(
+                    instructions[order.at((first + 1) as u32) as usize].operation,
+                    Operation::Float(float)
+                        if super::float::is_cmpnleps(float)
+                            && matches!(float.src, Location::Register(_))
+                )
+                && matches!(
+                    instructions[order.at((first + 2) as u32) as usize].operation,
+                    Operation::Vector(VectorInstruction::Mask { .. })
+                )
+                && next_overwrites(instructions[order.at((first + 2) as u32) as usize].next_pc))
+            .then_some(first)
+        } else {
+            None
+        };
+        if restore_taken
+            && (position_at(target).is_some()
+                || !(fallthrough_overwrites || packed_compare_faults.is_some()))
+        {
             continue;
         }
-        if !fallthrough_overwrites {
+        if let Some(first) = packed_compare_faults {
+            predicates[first..first + 2].fill(CompareAction::RestoreOnLoadFault(
+                ReadFaultFlags::Arithmetic(Alu::Cmp, width),
+            ));
+        } else if !fallthrough_overwrites {
             let Some(load_position) = position_at(instruction.next_pc)
                 .filter(|&i| i == position + 1 && !explicit_entry[i])
             else {
@@ -746,7 +793,16 @@ pub(super) fn compare_predicates(
     for (position, action) in predicates.iter_mut().enumerate() {
         let instruction = instructions[order.at(position as u32) as usize];
         if *action == CompareAction::Ordinary
-            && writes_status(instruction.operation)
+            && (writes_status(instruction.operation)
+                || (flat_test_lap_len.is_some()
+                    && matches!(
+                        instruction.operation,
+                        Operation::Unary {
+                            kind: Unary::Inc | Unary::Dec,
+                            dst: Location::Register(_),
+                            ..
+                        }
+                    )))
             && position_at(instruction.next_pc)
                 .is_some_and(|next| next > position && replaces[next])
         {

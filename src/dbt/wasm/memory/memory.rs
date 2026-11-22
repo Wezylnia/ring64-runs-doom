@@ -217,7 +217,7 @@ impl Emitter {
             }));
     }
 
-    fn restore_preceding_read_state(&mut self) {
+    pub(super) fn restore_preceding_read_state(&mut self) {
         self.retire_before_read_fault();
         match self.flags_on_read_fault {
             Some(super::loop_cfg::ReadFaultFlags::Arithmetic(kind, width)) => {
