@@ -1,6 +1,9 @@
 use crate::x86::{
     context::{ExecutionContext, Segment},
-    instruction::{Address, AddressBase, Alu, Instruction, Location, Operation, Width},
+    instruction::{
+        Address, AddressBase, Alu, Instruction, Location, MemoryAluOperands, Operation, Unary,
+        Width,
+    },
 };
 
 #[derive(Clone, Copy)]
@@ -26,12 +29,12 @@ impl StackSlots {
             }
             let (address, width, write) = match operation {
                 Operation::Load { address, width, .. }
-                | Operation::MemoryAlu {
-                    kind: Alu::Cmp | Alu::Test,
-                    address,
+                | Operation::MemoryAlu { address, width, .. } => (address, width, false),
+                Operation::Unary {
+                    dst: Location::Memory(address),
                     width,
                     ..
-                } => (address, width, false),
+                } => (address, width, true),
                 Operation::Store { address, width, .. }
                 | Operation::NonTemporalStore { address, width, .. } => (address, width, true),
                 _ => continue,
@@ -75,6 +78,17 @@ fn stack_slot(address: Address) -> bool {
         && address.index.is_none()
 }
 
+pub(super) fn unary_slot(operation: Operation) -> Option<Address> {
+    match operation {
+        Operation::Unary {
+            kind: Unary::Inc | Unary::Dec,
+            dst: Location::Memory(address),
+            width: Width::W32,
+        } if stack_slot(address) => Some(address),
+        _ => None,
+    }
+}
+
 fn preserves_stack_pointer(operation: Operation) -> bool {
     match operation {
         Operation::Alu { kind, dst, .. } => !kind.writes_result() || dst.bank != 4,
@@ -91,6 +105,12 @@ fn preserves_stack_pointer(operation: Operation) -> bool {
             dst: Location::Register(dst),
             ..
         } => dst.bank != 4,
+        Operation::MemoryAlu {
+            kind: Alu::Add,
+            operands: MemoryAluOperands::RegisterFirst(dst),
+            ..
+        } => dst.bank != 4,
+        op if unary_slot(op).is_some() => true,
         Operation::Jump { .. }
         | Operation::Jcc { .. }
         | Operation::MemoryAlu {

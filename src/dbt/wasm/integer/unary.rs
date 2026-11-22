@@ -41,11 +41,15 @@ impl Emitter {
         exit_depth: u32,
     ) {
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-        let cached = matches!(dst, Location::Memory(address)
-            if self.load_cached_stack_rmw(address, width, next_pc, exit_depth));
+        let proof = match dst {
+            Location::Memory(address) => self.load_stack_rmw(address, width, next_pc, exit_depth),
+            _ => None,
+        };
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        let direct = proof.is_some();
         #[cfg(any(feature = "parallel", not(target_arch = "wasm32")))]
-        let cached = false;
-        if cached {
+        let direct = false;
+        if direct {
             self.op(Op::LocalGet(VALUE)).op(Op::LocalSet(LHS));
         } else {
             self.read_location(dst, width, next_pc, true, exit_depth);
@@ -77,8 +81,8 @@ impl Emitter {
             }
         }
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-        if cached {
-            self.store_cached_stack_rmw(width, exit_depth);
+        if let Some(proof) = proof {
+            self.store_stack_rmw(proof, width, exit_depth);
         } else {
             self.write_location(dst, width, exit_depth);
         }

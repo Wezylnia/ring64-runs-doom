@@ -41,11 +41,24 @@ impl LoopOrder {
 enum Layout {
     Natural,
     Rotated,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    RotatedStack,
     NaturalReadShifts,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     TwoBackedges,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     ScalarTwoBackedges,
+}
+
+impl Layout {
+    fn rotated(self) -> bool {
+        match self {
+            Self::Rotated => true,
+            #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+            Self::RotatedStack => true,
+            _ => false,
+        }
+    }
 }
 
 pub(super) fn select(instructions: &[Instruction]) -> Option<(LoopOrder, u32)> {
@@ -91,6 +104,14 @@ pub(super) fn select_paged_scalar_write_graph(
     admit: impl Fn(&[Instruction]) -> bool,
 ) -> Option<(LoopOrder, u32)> {
     select_layout_filtered(instructions, Layout::ScalarTwoBackedges, 64, admit)
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+pub(super) fn select_rotated_stack(
+    instructions: &[Instruction],
+    admit: impl Fn(&[Instruction]) -> bool,
+) -> Option<(LoopOrder, u32)> {
+    select_layout_filtered(instructions, Layout::RotatedStack, 64, admit)
 }
 
 pub(super) fn select_natural_read_shifts(instructions: &[Instruction]) -> Option<(LoopOrder, u32)> {
@@ -183,7 +204,7 @@ fn select_layout_filtered(
                 best = Some((order, bound));
             }
         };
-        if layout == Layout::Rotated {
+        if layout.rotated() {
             let mut prefix_targets = instructions[head..tail]
                 .iter()
                 .filter_map(|i| branch_target(i.operation))
@@ -808,6 +829,21 @@ fn reads_memory(operation: Operation) -> bool {
 
 fn inside_body(operation: Operation, layout: Layout) -> bool {
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    if layout == Layout::RotatedStack
+        && (super::stack_slots::unary_slot(operation).is_some()
+            || matches!(
+                operation,
+                Operation::MemoryAlu {
+                    kind: Alu::Add,
+                    operands: crate::x86::instruction::MemoryAluOperands::RegisterFirst(_),
+                    width: Width::W32,
+                    ..
+                }
+            ))
+    {
+        return true;
+    }
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if layout == Layout::ScalarTwoBackedges
         && matches!(
             operation,
@@ -849,7 +885,7 @@ fn inside_body(operation: Operation, layout: Layout) -> bool {
                 dst: Location::Register(_),
                 ..
             }
-    ) || layout == Layout::Rotated
+    ) || layout.rotated()
         && matches!(
             operation,
             Operation::Shift {

@@ -968,10 +968,36 @@ impl StructuredLoop {
             .or_else(|| super::loop_cfg::select(instructions).map(Self::forward))
             .or_else(|| Self::select_body(instructions, LoopKind::Registers));
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-        let existing = existing.or_else(|| Self::select_increment_reads(unit));
+        let existing = existing
+            .or_else(|| Self::select_increment_reads(unit))
+            .or_else(|| Self::select_rotated_stack(unit));
         existing.or_else(|| {
             super::loop_cfg::select_natural_read_shifts(instructions).map(Self::forward)
         })
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    fn select_rotated_stack(unit: &super::Unit) -> Option<Self> {
+        use super::stack_slots::{StackSlots, unary_slot};
+        use crate::x86::context::Segment;
+
+        if unit.context.mode() != Mode::Protected
+            || !unit.context.code32()
+            || unit
+                .context
+                .translate(0, 4, Segment::Ss, crate::memory::Access::Write, true)
+                .ok()
+                != Some(0)
+        {
+            return None;
+        }
+        super::loop_cfg::select_rotated_stack(&unit.instructions, |instructions| {
+            instructions
+                .iter()
+                .any(|instruction| unary_slot(instruction.operation).is_some())
+                && StackSlots::recognize(&unit.context, instructions).is_some()
+        })
+        .map(Self::forward)
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
