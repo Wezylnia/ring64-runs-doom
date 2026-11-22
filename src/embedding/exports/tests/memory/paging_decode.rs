@@ -166,7 +166,7 @@ fn activate_single_instruction() -> u64 {
 #[test]
 fn reached_long64_instruction_requires_a_live_tlb_hit() {
     let expected = fixture("long64", true, true);
-    activate_single_instruction();
+    let owner = activate_single_instruction();
     let check_miss = || {
         BRIDGE.with_borrow(|bridge| {
             assert_eq!(
@@ -191,6 +191,22 @@ fn reached_long64_instruction_requires_a_live_tlb_hit() {
         let exact = core.paged_decode(PC).unwrap();
         assert_mov(0, exact);
         assert_eq!(core.warm_paged_instruction(PC), Some(exact));
+        let state = core.paging.unwrap();
+        assert!(
+            core.translation_owners
+                .guarded_code_start(owner, PC, &state)
+                .is_some()
+        );
+        assert_eq!(
+            core.translation_owners
+                .guarded_code_start(owner, PC + 1, &state),
+            None
+        );
+        assert_eq!(
+            core.translation_owners
+                .guarded_code_start(owner + 1, PC, &state),
+            None
+        );
         assert_eq!(
             core.image
                 .physical_read_bytes(0, expected.len() as u32)

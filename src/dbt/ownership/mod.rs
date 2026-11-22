@@ -31,6 +31,44 @@ impl FetchBinding {
     }
 }
 
+#[cfg(not(feature = "parallel"))]
+#[derive(Debug)]
+struct GuardedCodePage {
+    page: u64,
+    physical_page: u64,
+    starts: [u64; 64],
+}
+
+#[cfg(not(feature = "parallel"))]
+impl GuardedCodePage {
+    fn new(proof: &FetchProof, instructions: &[Instruction]) -> Option<Box<Self>> {
+        let first = instructions.first()?;
+        let page = first.pc & !4095;
+        if instructions.last()?.pc & !4095 != page {
+            return None;
+        }
+        let physical_page = proof.physical_span(first.pc, 1)? & !4095;
+        let mut starts = [0; 64];
+        for instruction in instructions {
+            let offset = (instruction.pc & 4095) as usize;
+            if offset + instruction.encoded_len() as usize <= 4096 {
+                starts[offset / 64] |= 1 << (offset % 64);
+            }
+        }
+        Some(Box::new(Self {
+            page,
+            physical_page,
+            starts,
+        }))
+    }
+
+    fn physical_start(&self, pc: u64) -> Option<u64> {
+        let offset = (pc & 4095) as usize;
+        (pc & !4095 == self.page && self.starts[offset / 64] & (1 << (offset % 64)) != 0)
+            .then_some(self.physical_page + offset as u64)
+    }
+}
+
 #[derive(Debug)]
 struct Assumptions {
     context: ExecutionContext,
@@ -42,6 +80,8 @@ struct Assumptions {
     instructions: Vec<Instruction>,
     #[cfg(not(feature = "parallel"))]
     instruction_hint: Cell<usize>,
+    #[cfg(not(feature = "parallel"))]
+    guarded_page: Option<Box<GuardedCodePage>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -102,6 +142,8 @@ impl Owners {
                 instructions: Vec::new(),
                 #[cfg(not(feature = "parallel"))]
                 instruction_hint: Cell::new(0),
+                #[cfg(not(feature = "parallel"))]
+                guarded_page: None,
             },
         );
         true
@@ -163,6 +205,18 @@ impl Owners {
         Some((instruction, linear, physical))
     }
 
+    #[cfg(not(feature = "parallel"))]
+    pub fn guarded_code_start(&self, owner: u64, pc: u64, state: &paging::State) -> Option<u64> {
+        let (active, record) = self.active_fetch.as_ref()?;
+        if *active != owner
+            || record.admission != Admission::Current
+            || !record.fetch.as_ref()?.same_root(state)
+        {
+            return None;
+        }
+        record.guarded_page.as_ref()?.physical_start(pc)
+    }
+
     pub fn record_paged(
         &mut self,
         owner: u64,
@@ -174,6 +228,10 @@ impl Owners {
             .records
             .get_mut(&owner)
             .expect("registered paged owner");
+        #[cfg(not(feature = "parallel"))]
+        if record.context.is_long64() {
+            record.guarded_page = GuardedCodePage::new(&proof, &instructions);
+        }
         record.fetch = Some(FetchBinding {
             cr3: state.cr3,
             pdpte: state.pdpte,

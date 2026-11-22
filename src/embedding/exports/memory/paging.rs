@@ -34,6 +34,35 @@ impl Core {
     }
 
     #[cfg(not(feature = "parallel"))]
+    fn warm_guarded_code_page(&self, pc: u64) -> bool {
+        if self.image.active_changed() || !self.context.is_long64() {
+            return false;
+        }
+        let Some(state) = self
+            .paging
+            .as_ref()
+            .filter(|state| state.cr0 & (1 << 31) != 0)
+        else {
+            return false;
+        };
+        let Some(physical) = self
+            .active_owner
+            .and_then(|owner| self.translation_owners.guarded_code_start(owner, pc, state))
+        else {
+            return false;
+        };
+        self.translation_cache.touch_current_fetch(
+            state,
+            paging::walk::Request {
+                linear: pc,
+                access: Access::Execute,
+                class: paging::walk::AccessClass::operand(self.context.cpl(), false),
+            },
+            physical,
+        )
+    }
+
+    #[cfg(not(feature = "parallel"))]
     pub(super) fn warm_paged_instruction(
         &self,
         pc: u64,
@@ -458,7 +487,10 @@ fn paged_loop_guard<const FLAT_DATA32: bool, const SSE: bool, const FLAT_WRITE32
         }
         // A data TLB replacement can revoke the active owner's admission
         // while its executable translation and bytes remain current.
-        if core.warm_paged_instruction(pc).is_none() && core.recover_paged_fetch(pc).is_none() {
+        if (SSE || !core.warm_guarded_code_page(pc))
+            && core.warm_paged_instruction(pc).is_none()
+            && core.recover_paged_fetch(pc).is_none()
+        {
             return 0;
         }
         // The active owner covers every loop byte. A retained executable page
