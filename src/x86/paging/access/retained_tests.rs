@@ -1,4 +1,37 @@
 use super::*;
+
+#[cfg(not(feature = "parallel"))]
+#[test]
+fn stack_qword_read_uses_retained_mapping_and_preserves_alignment_priority() {
+    let (mut image, mut state, mut work, cache) = fixture(0x9067, 0);
+    state.cr0 |= 1 << 18;
+    image
+        .physical_write(0x9000, 8, 0xfff0_1122_ee00_3355)
+        .unwrap();
+    let read = |image: &mut Image, work: &mut AccessState, address| {
+        Memory::new(image, &state, 3, 0x40002, work, &Keys::ZERO)
+            .with_cache(&cache)
+            .read_stack_qword(address)
+    };
+    assert_eq!(
+        read(&mut image, &mut work, 0x1000),
+        Ok(0xfff0_1122_ee00_3355)
+    );
+    Image::take_physical_preflight_count();
+    assert_eq!(
+        read(&mut image, &mut work, 0x1000),
+        Ok(0xfff0_1122_ee00_3355)
+    );
+    assert_eq!(Image::take_physical_preflight_count(), 0);
+    assert!(matches!(
+        read(&mut image, &mut work, 0x1001),
+        Err(AccessFailure::AlignmentCheck(_))
+    ));
+    assert!(matches!(
+        read(&mut image, &mut work, 0x1ffc),
+        Err(AccessFailure::Paging(Failure::Page(_)))
+    ));
+}
 use crate::memory::{MappingInput, MemoryLimits, Permissions};
 use crate::x86::paging::walk::{Failure, Request};
 use crate::x86::protection_keys::State as Keys;

@@ -178,6 +178,12 @@ impl Core {
                 .matches(address, width, access)
         };
     }
+    pub(super) fn debug_completion_quiet(&self) -> bool {
+        let state = unsafe { &*self.state.get() };
+        !state.debug.registers.has_enabled_slots()
+            && self.debug_candidate == 0
+            && state.debug.continuation == Default::default()
+    }
     pub(super) fn finish_debug(
         &mut self,
         pc: u64,
@@ -187,15 +193,11 @@ impl Core {
         decision: u32,
     ) -> i32 {
         use crate::x86::debug::{Completion, Deferred, complete};
-        let state = unsafe { &mut *self.state.get() };
-        let raw = state.debug.continuation;
-        if !state.debug.registers.has_enabled_slots()
-            && decision == 0
-            && self.debug_candidate == 0
-            && raw == Default::default()
-        {
+        if decision == 0 && self.debug_completion_quiet() {
             return 0;
         }
+        let state = unsafe { &mut *self.state.get() };
+        let raw = state.debug.continuation;
         let mut deferred = (raw.slots != 0).then_some(Deferred {
             slots: raw.slots as u8,
             origin: raw.origin,

@@ -493,6 +493,8 @@ fn emit_placement_with_copy(
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_register_prefixes: true,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        paged_quiet_completion: true,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         additional_copy: _additional_copy,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         copy_prefix: _copy_prefix,
@@ -617,6 +619,8 @@ struct OptionalLowering {
     x87_register_pairs: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_register_prefixes: bool,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    paged_quiet_completion: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     additional_copy: Option<StructuredLoop>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -2351,6 +2355,14 @@ fn emit_body(
     let mut emitter = Emitter {
         paged,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        paged_quiet_completion: optional.paged_quiet_completion
+            && paged
+            && observed
+            && !mmio
+            && unit.context.is_long64(),
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        used_paged_quiet_completion: false,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         read_span: None,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         stack_read_span: None,
@@ -2849,6 +2861,21 @@ fn emit_body(
     }
     let code_start = bytes.len();
     code.append_to(&mut bytes);
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    if bytes.len() > max_artifact_bytes && emitter.used_paged_quiet_completion {
+        return emit_body(
+            unit,
+            observed,
+            (paged, mmio),
+            loop_body,
+            _guard_reads,
+            OptionalLowering {
+                paged_quiet_completion: false,
+                ..optional
+            },
+            max_artifact_bytes,
+        );
+    }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if bytes.len() > max_artifact_bytes && paged_indexed_write.is_some() {
         return emit_body(

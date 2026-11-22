@@ -1229,6 +1229,38 @@ impl Emitter {
 
     pub(super) fn load_address_slow(&mut self, width: Width, for_write: bool, exit_depth: u32) {
         self.linear_address();
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if !for_write
+            && width == Width::W64
+            && self.segment == Segment::Ss
+            && self.paged_return_uses_read_result()
+        {
+            use crate::embedding::layout::{PAGED_RETURN_QWORD, ReturnRead};
+            self.used_paged_quiet_completion = true;
+            self.op(Op::I32Const(PAGED_RETURN_QWORD as i32))
+                .op(Op::Call(0))
+                .op(Op::LocalTee(VALUE))
+                .op(Op::I32WrapI64)
+                .op(Op::I32Load(MemArg {
+                    offset: std::mem::offset_of!(ReturnRead, status) as u64,
+                    align: 2,
+                    memory_index: 0,
+                }))
+                .op(Op::LocalTee(STORE_STATUS))
+                .op(Op::I32Eqz)
+                .op(Op::If(BlockType::Empty));
+            self.memory_failure(exit_depth + 1);
+            self.op(Op::End)
+                .op(Op::LocalGet(VALUE))
+                .op(Op::I32WrapI64)
+                .op(Op::I64Load(MemArg {
+                    offset: std::mem::offset_of!(ReturnRead, value) as u64,
+                    align: 3,
+                    memory_index: 0,
+                }))
+                .op(Op::LocalSet(VALUE));
+            return;
+        }
         self.op(Op::I32Const(i32::from(width.bytes())));
         if !self.context.is_long64() {
             self.op(Op::I32Const(self.segment as i32));

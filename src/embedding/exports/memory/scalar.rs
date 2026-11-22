@@ -222,7 +222,52 @@ pub extern "C" fn core_paged_load(address: u64, width: u32) -> u64 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn core_paged_load_observed(address: u64, width: u32) -> u64 {
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    if width == crate::embedding::layout::PAGED_RETURN_QWORD {
+        return u64::from(paged_return_read(address));
+    }
     core_load_impl::<true, true>(address, width)
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[inline(never)]
+fn paged_return_read(address: u64) -> u32 {
+    use crate::embedding::layout::{QUIET_RETURN_READ, ReturnRead};
+    BRIDGE.with_borrow_mut(|bridge| {
+        let core = bridge.core.as_mut().unwrap();
+        core.fault = None;
+        core.alignment_check = None;
+        let state = unsafe { &*core.state.get() };
+        let read = crate::x86::paging::access::Memory::new(
+            &mut core.image,
+            core.paging.as_ref().expect("paged helper profile"),
+            core.context.cpl(),
+            state.flags,
+            &mut core.paging_work,
+            &state.protection_keys,
+        )
+        .with_cache(&core.translation_cache)
+        .read_stack_qword(address);
+        core.return_read = match read {
+            Ok(value) => {
+                core.debug_operand(address, 8, Access::Read);
+                // Aliased execution records this retirement in debug_finish.
+                let quiet = core.paged_region_trace.is_none()
+                    && !core.image.active_changed()
+                    && core.debug_completion_quiet();
+                ReturnRead {
+                    value,
+                    status: if quiet { QUIET_RETURN_READ } else { 1 },
+                }
+            }
+            Err(fault) => {
+                core.access_failure(fault);
+                unsafe { (*core.state.get()).fault_segment = Segment::Ds as u32 };
+                ReturnRead::default()
+            }
+        };
+        &raw const core.return_read as u32
+    })
 }
 
 #[unsafe(no_mangle)]

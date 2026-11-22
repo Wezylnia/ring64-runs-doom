@@ -1652,13 +1652,9 @@ pub extern "C" fn core_paged_debug_begin(pc: u64, flags: u64, shadow: u32) -> i3
                 && core.paged_region_trace.is_none()
                 && flags & crate::x86::flags::TF == 0
                 && shadow != 2
+                && core.debug_completion_quiet()
             {
-                let state = unsafe { &*core.state.get() };
-                if !state.debug.registers.has_enabled_slots()
-                    && state.debug.continuation == Default::default()
-                {
-                    return crate::embedding::layout::debug::CONTINUE_ACTIVE;
-                }
+                return crate::embedding::layout::debug::CONTINUE_ACTIVE;
             }
             return 0;
         }

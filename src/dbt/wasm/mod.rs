@@ -137,6 +137,10 @@ const ENTRY_FLAGS: u32 = 36;
 struct Emitter {
     paged: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    paged_quiet_completion: bool,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    used_paged_quiet_completion: bool,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     read_span: Option<memory::SpanCache>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     stack_read_span: Option<memory::SpanCache>,

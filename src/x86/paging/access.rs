@@ -434,6 +434,52 @@ impl<'a> Memory<'a> {
         Ok(bytes)
     }
 
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    pub(crate) fn read_stack_qword(&self, address: u64) -> Result<u64, AccessFailure> {
+        if address & 7 != 0
+            || self.class == AccessClass::ImplicitSupervisor
+            || !crate::memory::canonical48(address)
+            || self.cache.is_none()
+        {
+            return self.read_aligned(address, 8, Intent::Natural(8));
+        }
+        let request = Request {
+            linear: address,
+            access: Access::Read,
+            class: self.class,
+        };
+        match self
+            .cache
+            .unwrap()
+            .touch_read_span(self.paging, request, self.keys, 8)
+        {
+            RetainedSpan::Hit(physical) => {
+                let storage = self.storage.borrow();
+                let image = &storage.image;
+                if let Some(value) = image.physical_read_mapped_qword(physical) {
+                    return Ok(value);
+                }
+                image.physical_read(physical, 8).map_err(|fault| {
+                    AccessFailure::Paging(
+                        request.physical_failure(fault, PhysicalPhase::FinalAccess),
+                    )
+                })
+            }
+            RetainedSpan::Refused => self.read_aligned(address, 8, Intent::Natural(8)),
+            RetainedSpan::Miss => {
+                let mut bytes = [0; 16];
+                self.read_after_retained_miss(
+                    address,
+                    8,
+                    self.class,
+                    Intent::Natural(8),
+                    &mut bytes,
+                )?;
+                Ok(u64::from_le_bytes(bytes[..8].try_into().unwrap()))
+            }
+        }
+    }
+
     #[cfg(not(feature = "parallel"))]
     #[inline(never)]
     fn read_after_retained_miss(

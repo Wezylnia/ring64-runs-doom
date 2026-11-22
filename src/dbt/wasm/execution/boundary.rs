@@ -1,7 +1,9 @@
 use super::{DIRECTION, Emitter, REASON, REPEAT_REMAINING, RIP, SHADOW, SYSTEM};
 use crate::embedding::layout::{DISPATCH, HALTED, RunState};
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+use crate::x86::instruction::Location;
 #[cfg(not(feature = "parallel"))]
-use crate::x86::instruction::{Location, Width};
+use crate::x86::instruction::Width;
 use crate::x86::instruction::{Operation, ProtectionKind, Repeat, SystemFlagsKind};
 use std::mem::offset_of;
 use wasm_encoder::{BlockType, Instruction as Op, MemArg};
@@ -19,15 +21,15 @@ pub(super) fn ss_producer(operation: Operation) -> bool {
 
 impl Emitter {
     fn can_complete_paged_register(&self, operation: Operation) -> bool {
-        #[cfg(feature = "parallel")]
+        #[cfg(any(feature = "parallel", not(target_arch = "wasm32")))]
         {
             let _ = operation;
             false
         }
-        #[cfg(not(feature = "parallel"))]
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         {
-            self.paged
-                && self.context.is_long64()
+            self.paged_quiet_completion
+                && !self.guarded_paged_lap
                 && matches!(
                     operation,
                     Operation::Alu { .. }
@@ -55,6 +57,19 @@ impl Emitter {
                         }
                 )
         }
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn paged_return_uses_read_result(&self) -> bool {
+        self.paged_quiet_completion
+            && !self.guarded_paged_lap
+            && matches!(
+                self.current_operation,
+                Operation::Return {
+                    width: Width::W64,
+                    ..
+                }
+            )
     }
 
     pub(super) fn external_boundary(&mut self, exit_depth: u32) {
@@ -171,6 +186,10 @@ impl Emitter {
         let register_completion = self.can_complete_paged_register(operation);
         #[cfg(not(feature = "parallel"))]
         if register_completion {
+            #[cfg(target_arch = "wasm32")]
+            {
+                self.used_paged_quiet_completion = true;
+            }
             self.op(Op::I32Const(
                 crate::embedding::layout::debug::PAGED_REGISTER_COMPLETION as i32,
             ))
@@ -271,6 +290,26 @@ impl Emitter {
         }
         let ss = if self.ss_producer() { 4 } else { 0 };
         let helper = self.debug_step.expect("debug boundary import");
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        let quiet_return = completed && self.paged_return_uses_read_result();
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if quiet_return {
+            use crate::embedding::layout::{QUIET_RETURN_READ, debug::CONTINUE_ACTIVE};
+            let sampled_tf = self.sampled_tf.unwrap();
+            self.op(Op::LocalGet(super::STORE_STATUS))
+                .op(Op::I32Const(QUIET_RETURN_READ as i32))
+                .op(Op::I32Eq)
+                .op(Op::LocalGet(sampled_tf))
+                .op(Op::I32Eqz)
+                .op(Op::I32And)
+                .op(Op::LocalGet(incoming))
+                .op(Op::I32Const(2))
+                .op(Op::I32Ne)
+                .op(Op::I32And)
+                .op(Op::If(BlockType::Result(wasm_encoder::ValType::I32)))
+                .op(Op::I32Const(CONTINUE_ACTIVE))
+                .op(Op::Else);
+        }
         self.op(Op::I64Const(self.current_pc as i64))
             .op(Op::LocalGet(RIP))
             .op(Op::I32Const(i32::from(completed)));
@@ -284,8 +323,12 @@ impl Emitter {
             .op(Op::I32Or)
             .op(Op::I32Const(ss))
             .op(Op::I32Or)
-            .op(Op::Call(helper))
-            .op(Op::LocalTee(REASON))
+            .op(Op::Call(helper));
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if quiet_return {
+            self.op(Op::End);
+        }
+        self.op(Op::LocalTee(REASON))
             .op(Op::LocalTee(result))
             .op(Op::I32Const(0))
             .op(Op::I32GtS)

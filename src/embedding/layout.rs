@@ -24,6 +24,19 @@ pub(crate) const PAGED_PAIR_WINDOW: u32 = 8;
 // Private width encoding on the existing paged scalar store import.
 #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
 pub(crate) const PAGED_STACK_QWORD: u32 = 40;
+// Private width encoding on the paged scalar load import.
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+pub(crate) const PAGED_RETURN_QWORD: u32 = 40;
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+pub(crate) const QUIET_RETURN_READ: u32 = 2;
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[derive(Default)]
+#[repr(C)]
+pub(crate) struct ReturnRead {
+    pub(crate) value: u64,
+    pub(crate) status: u32,
+}
 
 pub const DISPATCH: i32 = 0;
 pub const BUDGET: i32 = 1;
