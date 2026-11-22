@@ -563,18 +563,25 @@ impl Emitter {
         let incoming = fetch_handoff.and_then(|(local, incoming, _)| incoming.then_some(local));
         let read = paged_prefix_read(*first)
             .map(|operation| (read_import.expect("leading read prefix import"), operation));
-        let indexed = self.indexed_paged_read.filter(|_| {
-            self.sampled_region
-                && incoming.is_none()
-                && read.is_some_and(|(_, (_, _, source_width, _))| source_width.bytes() <= 2)
+        let indexed_dword = self.indexed_dword_prefixes
+            && instructions.iter().copied().any(paged_prefix_dword_read);
+        let indexed_leading = read.is_some_and(|(_, (_, _, width, _))| {
+            if width == crate::x86::instruction::Width::W32 {
+                indexed_dword
+            } else {
+                self.sampled_region && incoming.is_none() && self.indexed_paged_read.is_some()
+            }
         });
+        // A handoff can bypass its guard only directly from a read-only
+        // prefix in this unit. Request the same authority at every real
+        // guard in the chain, including register-only predecessors.
         self.guard_straight_paged_prefix(
             first,
             last,
             instructions.len() as u32,
             guard,
             incoming,
-            indexed.is_some(),
+            indexed_leading || self.indexed_dword_prefixes,
         );
         if let Some((read, (register, address, source_width, width))) = read {
             use super::{ADDRESS, STORE_STATUS};
@@ -587,30 +594,9 @@ impl Emitter {
             };
 
             self.address(address, first.next_pc);
-            if let Some(locals) = indexed {
-                self.op(Op::LocalSet(ADDRESS));
-                self.indexed_read_host(locals, source_width.bytes(), true);
+            if indexed_leading {
+                self.indexed_prefix_operand_host(read, source_width.bytes());
                 self.op(Op::LocalTee(STORE_STATUS))
-                    .op(Op::If(BlockType::Result(ValType::I32)))
-                    .op(Op::LocalGet(STORE_STATUS))
-                    .op(Op::Else)
-                    .op(Op::LocalGet(ADDRESS))
-                    .op(Op::I32Const(i32::from(source_width.bytes())))
-                    .op(Op::I32Const(
-                        crate::embedding::layout::paging::PREFIX_INDEXED_READ_SEGMENT as i32,
-                    ))
-                    .op(Op::Call(read))
-                    .op(Op::LocalTee(STORE_STATUS))
-                    .op(Op::If(BlockType::Result(ValType::I32)))
-                    .op(Op::LocalGet(STORE_STATUS))
-                    .op(Op::I32Load(mem(
-                        std::mem::offset_of!(crate::memory::DirectSpan, host) as u64,
-                    )))
-                    .op(Op::Else)
-                    .op(Op::I32Const(0))
-                    .op(Op::End)
-                    .op(Op::End)
-                    .op(Op::LocalTee(STORE_STATUS))
                     .op(Op::If(BlockType::Empty))
                     .op(Op::LocalGet(STORE_STATUS));
             } else {
@@ -657,7 +643,9 @@ impl Emitter {
         self.paged_prefix_fetch_out =
             fetch_handoff.and_then(|(local, _, outgoing)| outgoing.map(|target| (local, target)));
         for instruction in &instructions[usize::from(read.is_some())..] {
-            self.paged_prefix_read = read_import.filter(|_| paged_prefix_dword_read(*instruction));
+            self.paged_prefix_read = read_import
+                .filter(|_| paged_prefix_dword_read(*instruction))
+                .map(|read| (read, indexed_dword));
             self.paged_prefix_store =
                 write_import.filter(|_| paged_prefix_dword_store(*instruction));
             self.emit_instruction(*instruction, None, loop_depth, None, None, false);
@@ -677,6 +665,41 @@ impl Emitter {
             // the handoff. The checked copy cannot carry that proof forward.
             self.op(Op::I32Const(0)).op(Op::LocalSet(local));
         }
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn indexed_prefix_operand_host(&mut self, read: u32, width: u8) {
+        use super::{ADDRESS, STORE_STATUS};
+        use wasm_encoder::{MemArg, ValType};
+
+        self.op(Op::LocalSet(ADDRESS));
+        self.indexed_read_host(
+            self.indexed_paged_read.expect("indexed prefix locals"),
+            width,
+            true,
+        );
+        self.op(Op::LocalTee(STORE_STATUS))
+            .op(Op::If(BlockType::Result(ValType::I32)))
+            .op(Op::LocalGet(STORE_STATUS))
+            .op(Op::Else)
+            .op(Op::LocalGet(ADDRESS))
+            .op(Op::I32Const(i32::from(width)))
+            .op(Op::I32Const(
+                crate::embedding::layout::paging::PREFIX_INDEXED_READ_SEGMENT as i32,
+            ))
+            .op(Op::Call(read))
+            .op(Op::LocalTee(STORE_STATUS))
+            .op(Op::If(BlockType::Result(ValType::I32)))
+            .op(Op::LocalGet(STORE_STATUS))
+            .op(Op::I32Load(MemArg {
+                offset: std::mem::offset_of!(crate::memory::DirectSpan, host) as u64,
+                align: 0,
+                memory_index: 0,
+            }))
+            .op(Op::Else)
+            .op(Op::I32Const(0))
+            .op(Op::End)
+            .op(Op::End);
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]

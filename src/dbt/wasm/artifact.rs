@@ -525,6 +525,8 @@ fn emit_placement_with_copy(
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         indexed_scalar_read: true,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        indexed_dword_prefixes: true,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         additional_copy: _additional_copy,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         copy_prefix: _copy_prefix,
@@ -656,6 +658,8 @@ struct OptionalLowering {
     paged_quiet_fetch: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     indexed_scalar_read: bool,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    indexed_dword_prefixes: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     additional_copy: Option<StructuredLoop>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -2445,8 +2449,23 @@ fn emit_body(
         [first, first + 1]
     });
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    let indexed_paged_read = (indexed_paging
-        && ((unit.sampled && register_prefix_read.is_some()) || indexed_scalar_scratch.is_some()))
+    let indexed_dword_prefixes = indexed_paging
+        && !unit.sampled
+        && optional.indexed_dword_prefixes
+        && register_prefixes.as_ref().is_some_and(|prefixes| {
+            prefixes.iter().enumerate().any(|(start, end)| {
+                end.is_some_and(|end| {
+                    unit.instructions[start..end]
+                        .iter()
+                        .copied()
+                        .any(super::instruction::paged_prefix_dword_read)
+                })
+            })
+        });
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let indexed_paged_read = (indexed_scalar_scratch.is_some()
+        || indexed_dword_prefixes
+        || indexed_paging && unit.sampled && register_prefix_read.is_some())
     .then(|| {
         let first = super::GPR + locals.iter().map(|(count, _)| count).sum::<u32>();
         locals.push((4, ValType::I32));
@@ -2459,6 +2478,8 @@ fn emit_body(
         indexed_paged_read,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         indexed_scalar_scratch,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        indexed_dword_prefixes,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_quiet_completion: optional.paged_quiet_completion
             && paged
@@ -2974,6 +2995,21 @@ fn emit_body(
     }
     let code_start = bytes.len();
     code.append_to(&mut bytes);
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    if bytes.len() > max_artifact_bytes && indexed_dword_prefixes {
+        return emit_body(
+            unit,
+            observed,
+            (paged, mmio),
+            loop_body,
+            _guard_reads,
+            OptionalLowering {
+                indexed_dword_prefixes: false,
+                ..optional
+            },
+            max_artifact_bytes,
+        );
+    }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if bytes.len() > max_artifact_bytes && indexed_scalar_scratch.is_some() {
         return emit_body(

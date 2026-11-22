@@ -489,6 +489,28 @@ impl Cache {
         };
     }
 
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(crate) fn index_last_guarded_dword_read(&self, address: u64, host: u32) {
+        let Some(memo) = self.last_dword_read.get() else {
+            return;
+        };
+        let page = address & !4095;
+        let Some(delta) = page.checked_sub(memo.span.base) else {
+            return;
+        };
+        let Some(last) = memo.span.length.checked_sub(4096) else {
+            return;
+        };
+        if address - page > 4092
+            || delta > u64::from(last)
+            || u64::from(memo.span.host) + (address - memo.span.base) != u64::from(host)
+            || self.entries.borrow().recency().live_ids[memo.slot] != memo.id
+        {
+            return;
+        }
+        self.remember_indexed_read(memo.slot, page, memo.span.host + delta as u32);
+    }
+
     #[cfg(test)]
     pub(crate) fn with_capacity(capacity: usize) -> Self {
         Self::new(capacity)

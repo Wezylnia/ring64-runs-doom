@@ -291,25 +291,29 @@ impl Emitter {
         exit_depth: u32,
     ) {
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-        if let Some(read) = self.paged_prefix_read {
+        if let Some((read, indexed)) = self.paged_prefix_read {
             debug_assert!(!for_write && width == Width::W32 && address.segment == Segment::Ds);
             self.address(address, next_pc);
-            let check_alignment = self.context.cpl() == 3;
-            if check_alignment {
-                self.op(Op::LocalTee(ADDRESS))
-                    .op(Op::I64Const(3))
-                    .op(Op::I64And)
-                    .op(Op::I64Eqz)
-                    .op(Op::If(BlockType::Result(wasm_encoder::ValType::I32)))
-                    .op(Op::LocalGet(ADDRESS));
-            }
-            self.op(Op::I32Const(4))
-                .op(Op::I32Const(
-                    crate::embedding::layout::paging::PREFIX_DWORD_READ_SEGMENT as i32,
-                ))
-                .op(Op::Call(read));
-            if check_alignment {
-                self.op(Op::Else).op(Op::I32Const(0)).op(Op::End);
+            if indexed {
+                self.indexed_prefix_operand_host(read, 4);
+            } else {
+                let check_alignment = self.context.cpl() == 3;
+                if check_alignment {
+                    self.op(Op::LocalTee(ADDRESS))
+                        .op(Op::I64Const(3))
+                        .op(Op::I64And)
+                        .op(Op::I64Eqz)
+                        .op(Op::If(BlockType::Result(wasm_encoder::ValType::I32)))
+                        .op(Op::LocalGet(ADDRESS));
+                }
+                self.op(Op::I32Const(4))
+                    .op(Op::I32Const(
+                        crate::embedding::layout::paging::PREFIX_DWORD_READ_SEGMENT as i32,
+                    ))
+                    .op(Op::Call(read));
+                if check_alignment {
+                    self.op(Op::Else).op(Op::I32Const(0)).op(Op::End);
+                }
             }
             self.op(Op::LocalTee(STORE_STATUS))
                 .op(Op::I32Eqz)
@@ -317,19 +321,20 @@ impl Emitter {
             // Earlier instructions already retired. Branch to the original
             // label of this read so its fault/observation order stays exact.
             self.route(self.current_pc, exit_depth, exit_depth + 1);
-            self.op(Op::End)
-                .op(Op::LocalGet(STORE_STATUS))
-                .op(Op::I32Load(MemArg {
+            self.op(Op::End).op(Op::LocalGet(STORE_STATUS));
+            if !indexed {
+                self.op(Op::I32Load(MemArg {
                     offset: std::mem::offset_of!(crate::memory::DirectSpan, host) as u64,
                     align: 0,
                     memory_index: 0,
-                }))
-                .op(Op::I64Load32U(MemArg {
-                    offset: 0,
-                    align: 0,
-                    memory_index: 0,
-                }))
-                .op(Op::LocalSet(VALUE));
+                }));
+            }
+            self.op(Op::I64Load32U(MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            }))
+            .op(Op::LocalSet(VALUE));
             return;
         }
         if !for_write && self.load_guarded_paged_value(address, width, next_pc, exit_depth) {

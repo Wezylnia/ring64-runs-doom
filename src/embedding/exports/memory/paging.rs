@@ -873,6 +873,9 @@ pub extern "C" fn core_paged_loop_read_span(address: u64, bytes: u32, segment: u
             Segment::Ds as u32,
         );
     }
+    if segment == PREFIX_INDEXED_READ_SEGMENT && bytes == 4 {
+        return index_guarded_dword_read(address);
+    }
     if bytes == 8 && matches!(segment, PAGED_PAIR_START | PAGED_PAIR_CONTINUE) {
         return paged_loop_read_paired_dwords(address, segment == PAGED_PAIR_CONTINUE);
     }
@@ -880,6 +883,25 @@ pub extern "C" fn core_paged_loop_read_span(address: u64, bytes: u32, segment: u
         return paged_loop_read_pair_window(address);
     }
     0
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[cold]
+#[inline(never)]
+fn index_guarded_dword_read(address: u64) -> u32 {
+    use crate::embedding::layout::paging::PREFIX_DWORD_READ_SEGMENT;
+
+    let result = core_paged_loop_read_span(address, 4, PREFIX_DWORD_READ_SEGMENT);
+    if result != 0 {
+        BRIDGE.with_borrow(|bridge| {
+            let core = bridge.core.as_ref().unwrap();
+            if core.state.indexed_paged_reads != 0 {
+                core.translation_cache
+                    .index_last_guarded_dword_read(address, core.direct_span.host);
+            }
+        });
+    }
+    result
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]

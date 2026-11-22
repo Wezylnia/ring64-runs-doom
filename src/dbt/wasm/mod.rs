@@ -144,6 +144,8 @@ struct Emitter {
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     indexed_scalar_scratch: Option<[u32; 2]>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    indexed_dword_prefixes: bool,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_quiet_completion: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     sampled_region: bool,
@@ -223,7 +225,7 @@ struct Emitter {
     loop_gates_prechecked: bool,
     guarded_paged_lap: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    paged_prefix_read: Option<u32>,
+    paged_prefix_read: Option<(u32, bool)>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_prefix_store: Option<u32>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
