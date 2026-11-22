@@ -5,10 +5,12 @@ import { snapshot } from '../../../../../tests/execution/far-control/fixture.js'
 import { BANK, PC, initial, usingPaged } from '../../../../../tests/execution/paging/fixture.js';
 import { compiler } from './fixture.js';
 
-test('sampled quiet register completion keeps live step and execute breakpoint handling', async () => {
-  // ADD RAX,1; INC RAX; HLT. Two ordinary instructions are below the clone floor.
-  const code = '4883c00148ffc0f4';
-  const stop = PC + 7n;
+test('sampled quiet completion keeps branch, single-step, and execute breakpoint handling', async () => {
+  // ADD RAX,1; JC first increment; JMP second increment; INC RAX; INC RAX; HLT.
+  const code = '4883c0017202eb0348ffc048ffc0f4';
+  const firstIncrement = PC + 8n;
+  const secondIncrement = PC + 11n;
+  const stop = PC + 14n;
   const prototype = Core.prototype as unknown as {
     artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
   };
@@ -17,7 +19,13 @@ test('sampled quiet register completion keeps live step and execute breakpoint h
   let sampled = false;
   Core.prototype.compile = function (pc, limits, seeds, regionPoints) {
     if (sampled && pc === PC && !seeds?.length)
-      return compile.call(this, pc, limits, [PC, PC + 4n, stop], true);
+      return compile.call(
+        this,
+        pc,
+        limits,
+        [PC, PC + 4n, PC + 6n, firstIncrement, secondIncrement, stop],
+        true,
+      );
     return compile.call(this, pc, limits, seeds, regionPoints);
   };
   let finishes = 0;
@@ -35,32 +43,38 @@ test('sampled quiet register completion keeps live step and execute breakpoint h
   try {
     for (sampled of [false, true]) {
       await usingPaged(compiler, { code }, async (cpu) => {
-        const enter = (flags = 2n) => cpu.setState(initial(PC, { 0: 1n }, flags));
+        const enter = (rax = 1n, flags = 2n, rip = PC) =>
+          cpu.setState(initial(rip, { 0: rax }, flags));
         for (let wave = 0; wave < 3; wave++) {
           finishes = 0;
-          enter();
-          const result = await cpu.run({ stop, budget: 10n });
-          assert.equal(result.reason, 'stop');
-          assert.equal(result.retired, 2n);
-          assert.equal(result.state.registers[0], 3n);
+          for (const [rax, expected] of [
+            [1n, 3n],
+            [0xffff_ffff_ffff_ffffn, 2n],
+          ] as const) {
+            enter(rax);
+            const result = await cpu.run({ stop, budget: 10n });
+            assert.equal(result.reason, 'stop');
+            assert.equal(result.retired, 4n);
+            assert.equal(result.state.registers[0], expected);
+          }
         }
-        const ordinaryFinishes = sampled ? 0 : 2;
+        const ordinaryFinishes = sampled ? 0 : 8;
         assert.equal(finishes, ordinaryFinishes);
 
-        enter(0x102n);
+        enter(1n, 0x103n, PC + 4n);
         const step = await cpu.run({ stop, budget: 10n });
         assert.equal(step.reason, 'debug-exception');
         assert.equal(step.retired, 1n);
-        assert.equal(step.state.rip, PC + 4n);
+        assert.equal(step.state.rip, firstIncrement);
         assert.equal(finishes, ordinaryFinishes + 1);
 
-        cpu.setDebugState({ addresses: [PC + 4n, 0n, 0n, 0n], dr6: 0n, dr7: 0x401n });
+        cpu.setDebugState({ addresses: [secondIncrement, 0n, 0n, 0n], dr6: 0n, dr7: 0x401n });
         enter();
         const breakpoint = await cpu.run({ stop, budget: 10n });
         assert.equal(breakpoint.reason, 'debug-exception');
-        assert.equal(breakpoint.retired, 1n);
-        assert.equal(breakpoint.state.rip, PC + 4n);
-        assert.equal(finishes, ordinaryFinishes + 2);
+        assert.equal(breakpoint.retired, 3n);
+        assert.equal(breakpoint.state.rip, secondIncrement);
+        assert.equal(finishes, ordinaryFinishes + 4);
       });
     }
   } finally {

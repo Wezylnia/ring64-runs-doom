@@ -4,7 +4,7 @@ pub const CONTINUE_ACTIVE: i32 = -1;
 #[cfg(not(feature = "parallel"))]
 pub(crate) const PAGED_NEAR_TRANSFER: u32 = 1 << 31;
 #[cfg(not(feature = "parallel"))]
-pub(crate) const PAGED_REGISTER_COMPLETION: u32 = 1 << 30;
+pub(crate) const PAGED_QUIET_COMPLETION: u32 = 1 << 30;
 
 use crate::x86::debug::{Source, State};
 use std::mem::{offset_of, size_of};

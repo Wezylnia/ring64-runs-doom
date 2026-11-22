@@ -20,7 +20,7 @@ pub(super) fn ss_producer(operation: Operation) -> bool {
 }
 
 impl Emitter {
-    fn can_complete_paged_register(&self, operation: Operation) -> bool {
+    fn can_complete_paged_quietly(&self, operation: Operation) -> bool {
         #[cfg(any(feature = "parallel", not(target_arch = "wasm32")))]
         {
             let _ = operation;
@@ -31,32 +31,37 @@ impl Emitter {
             self.paged_quiet_completion
                 && self.sampled_region
                 && !self.guarded_paged_lap
-                && matches!(
-                    operation,
-                    Operation::Alu { .. }
-                        | Operation::Lea { .. }
-                        | Operation::Mov { .. }
-                        | Operation::Shift {
-                            dst: Location::Register(_),
-                            ..
-                        }
-                        | Operation::Unary {
-                            dst: Location::Register(_),
-                            ..
-                        }
-                        | Operation::Extend {
-                            src: Location::Register(_),
-                            ..
-                        }
-                        | Operation::Cmov {
-                            src: Location::Register(_),
-                            ..
-                        }
-                        | Operation::Setcc {
-                            dst: Location::Register(_),
-                            ..
-                        }
-                )
+                && match operation {
+                    Operation::Jump { target } | Operation::Jcc { target, .. } => {
+                        crate::memory::canonical48(target)
+                    }
+                    _ => matches!(
+                        operation,
+                        Operation::Alu { .. }
+                            | Operation::Lea { .. }
+                            | Operation::Mov { .. }
+                            | Operation::Shift {
+                                dst: Location::Register(_),
+                                ..
+                            }
+                            | Operation::Unary {
+                                dst: Location::Register(_),
+                                ..
+                            }
+                            | Operation::Extend {
+                                src: Location::Register(_),
+                                ..
+                            }
+                            | Operation::Cmov {
+                                src: Location::Register(_),
+                                ..
+                            }
+                            | Operation::Setcc {
+                                dst: Location::Register(_),
+                                ..
+                            }
+                    ),
+                }
         }
     }
 
@@ -184,15 +189,15 @@ impl Emitter {
         self.full_flags();
         let debug_begin = self.debug_begin.expect("debug begin import");
         self.op(Op::LocalGet(SHADOW));
-        let register_completion = self.can_complete_paged_register(operation);
+        let quiet_completion = self.can_complete_paged_quietly(operation);
         #[cfg(not(feature = "parallel"))]
-        if register_completion {
+        if quiet_completion {
             #[cfg(target_arch = "wasm32")]
             {
                 self.used_paged_quiet_completion = true;
             }
             self.op(Op::I32Const(
-                crate::embedding::layout::debug::PAGED_REGISTER_COMPLETION as i32,
+                crate::embedding::layout::debug::PAGED_QUIET_COMPLETION as i32,
             ))
             .op(Op::I32Or);
         } else if self.paged
@@ -214,7 +219,7 @@ impl Emitter {
             .op(Op::I32Or);
         }
         self.op(Op::Call(debug_begin));
-        if register_completion {
+        if quiet_completion {
             let result = self.boundary_result.unwrap();
             self.op(Op::LocalTee(REASON))
                 .op(Op::LocalTee(result))
@@ -279,9 +284,8 @@ impl Emitter {
         }
         let incoming = self.incoming_shadow.unwrap();
         let result = self.boundary_result.unwrap();
-        let register_completion =
-            completed && self.can_complete_paged_register(self.current_operation);
-        if register_completion {
+        let quiet_completion = completed && self.can_complete_paged_quietly(self.current_operation);
+        if quiet_completion {
             self.op(Op::LocalGet(result))
                 .op(Op::I32Const(
                     crate::embedding::layout::debug::CONTINUE_ACTIVE,
@@ -345,9 +349,9 @@ impl Emitter {
             .op(Op::I32Const(0))
             .op(Op::LocalSet(SHADOW))
             .op(Op::End)
-            .op(Op::Br(exit_depth + 1 + u32::from(register_completion)))
+            .op(Op::Br(exit_depth + 1 + u32::from(quiet_completion)))
             .op(Op::End);
-        if register_completion {
+        if quiet_completion {
             self.op(Op::End);
         }
         self.op(Op::I32Const(0)).op(Op::LocalSet(REASON));
