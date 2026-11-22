@@ -33,6 +33,6 @@ run('cargo', 'test', '--locked');
 
 npm('run', 'build');
 npm('test');
-npm('run', 'test:browser');
+npm('run', 'test:browser:standalone');
 npm('run', 'test:browser:parallel');
 npm('run', 'test:package');

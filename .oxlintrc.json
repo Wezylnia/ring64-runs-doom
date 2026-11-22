@@ -16,7 +16,7 @@
       "rules": { "eslint/no-undef": "error" }
     },
     {
-      "files": ["scripts/check/browser-check.mjs"],
+      "files": ["scripts/check/standalone-browser-check.mjs"],
       "globals": { "window": "readonly" }
     }
   ]
