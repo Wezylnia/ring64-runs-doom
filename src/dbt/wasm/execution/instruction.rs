@@ -14,6 +14,25 @@ impl Emitter {
         write_segment_base: Option<u32>,
         compare_source: Option<loop_cfg::ConditionSource>,
     ) {
+        self.emit_instruction(
+            instruction,
+            next,
+            loop_depth,
+            write_segment_base,
+            compare_source,
+            true,
+        );
+    }
+
+    fn emit_instruction(
+        &mut self,
+        instruction: Instruction,
+        next: Option<&Instruction>,
+        loop_depth: u32,
+        write_segment_base: Option<u32>,
+        compare_source: Option<loop_cfg::ConditionSource>,
+        route: bool,
+    ) {
         self.current_pc = instruction.pc;
         self.current_operation = instruction.operation;
         self.stores = false;
@@ -404,6 +423,53 @@ impl Emitter {
                 .op(Op::Br(1));
             return;
         }
-        self.route(instruction.next_pc, loop_depth, exit_depth);
+        if route {
+            self.route(instruction.next_pc, loop_depth, exit_depth);
+        }
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn emit_guarded_register_prefix(
+        &mut self,
+        instructions: &[Instruction],
+        loop_depth: u32,
+        guard: u32,
+    ) {
+        use super::{REMAINING, SHADOW};
+        let first = instructions.first().unwrap();
+        let last = instructions.last().unwrap();
+
+        self.op(Op::LocalGet(REMAINING))
+            .op(Op::I64Const(instructions.len() as i64))
+            .op(Op::I64GeU)
+            .op(Op::LocalGet(3))
+            .op(Op::LocalGet(2))
+            .op(Op::I64Const(first.pc as i64))
+            .op(Op::I64GeU)
+            .op(Op::I32And)
+            .op(Op::LocalGet(2))
+            .op(Op::I64Const(last.pc as i64))
+            .op(Op::I64LeU)
+            .op(Op::I32And)
+            .op(Op::I32Eqz)
+            .op(Op::I32And)
+            .op(Op::If(BlockType::Empty));
+        self.op(Op::I64Const(first.pc as i64))
+            .op(Op::I32Const((last.next_pc - first.pc) as i32));
+        self.system_bits();
+        self.op(Op::LocalGet(SHADOW))
+            .op(Op::Call(guard))
+            .op(Op::I32Const(1))
+            .op(Op::I32Eq)
+            .op(Op::If(BlockType::Empty));
+        self.guarded_paged_lap = true;
+        self.loop_gates_prechecked = true;
+        for instruction in instructions {
+            self.emit_instruction(*instruction, None, loop_depth + 2, None, None, false);
+        }
+        self.loop_gates_prechecked = false;
+        self.route(last.next_pc, loop_depth + 2, loop_depth + 3);
+        self.guarded_paged_lap = false;
+        self.op(Op::End).op(Op::End);
     }
 }

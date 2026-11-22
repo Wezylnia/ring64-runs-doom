@@ -1082,7 +1082,7 @@ impl StructuredLoop {
     }
 }
 
-fn inside_register_body(operation: Operation) -> bool {
+pub(super) fn inside_register_body(operation: Operation) -> bool {
     matches!(
         operation,
         Operation::Alu { .. }

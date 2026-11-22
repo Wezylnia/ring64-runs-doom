@@ -24,6 +24,85 @@ const PAGED_BYTE_STORE_LOOP = '0fb6073c407602fec0880648ffc748ffc6ffc975eb';
 export function pagingBoundaryReviewScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [
     {
+      name: 'paged straight register prefixes preserve precise stops, debug, and code replacement',
+      async run() {
+        // MOV EAX,EDI; INC EAX; SHL EAX,1; XOR EAX,5; AND EAX,255;
+        // MOV [RSI],EAX; NOP.
+        const head = 0x400000n;
+        const end = head + 14n;
+        const code = '89f8ffc0d1e083f00525ff000000890690';
+        const guards: number[] = [];
+        const create = Core.create;
+        Core.create = async (...args) => {
+          const core = await create(...args);
+          const imports = Reflect.get(core, 'artifactImports') as (
+            observed: boolean,
+          ) => Record<string, WebAssembly.ImportValue>;
+          Reflect.set(core, 'artifactImports', (observed: boolean) => {
+            const env = imports.call(core, observed);
+            const guard = env.paged_loop_guard;
+            if (typeof guard === 'function') {
+              env.paged_loop_guard = (pc: bigint, size: number, flags: bigint, shadow: number) => {
+                const status = guard(pc, size, flags, shadow);
+                if (pc === head && size === 14) guards.push(status);
+                return status;
+              };
+            }
+            return env;
+          });
+          return core;
+        };
+        try {
+          await usingPaged(compiler, { code }, async (cpu) => {
+            const start = initial(head, { 0: 42n, 6: 0x401000n, 7: 3n }, 2n);
+            cpu.setState(start);
+            const warm = await cpu.run({ stop: end, budget: 6n });
+            equal(warm.reason, 'stop', 'the complete prefix stops at the following store');
+            equal(warm.retired, 5n, 'the full prefix retires');
+            equal(warm.state.registers[0], 13n, 'the register chain commits');
+
+            cpu.setState(start);
+            const interior = await cpu.run({ stop: head + 4n, budget: 6n });
+            equal(interior.reason, 'stop', 'an interior stop wins');
+            equal(interior.retired, 2n, 'only instructions preceding the stop retire');
+            equal(interior.state.registers[0], 4n, 'the shift has not executed');
+
+            cpu.setState(start);
+            const partial = await cpu.run({ budget: 3n });
+            equal(partial.reason, 'budget', 'short budget uses precise retirement');
+            equal(partial.state.rip, head + 6n, 'budget stops at the XOR');
+            equal(partial.state.registers[0], 8n, 'the shift has executed');
+
+            cpu.setState(start);
+            const exact = await cpu.run({ stop: end, budget: 5n });
+            equal(exact.reason, 'budget', 'budget precedes a stop at the successor');
+            equal(exact.state.rip, end, 'the exact budget retires the full prefix');
+
+            cpu.setState(initial(head + 4n, { 0: 41n }, 2n));
+            const interiorEntry = await cpu.run({ stop: end, budget: 6n });
+            equal(interiorEntry.reason, 'stop', 'the interior remains a normal entry');
+            equal(interiorEntry.retired, 3n, 'the interior entry executes its suffix');
+            equal(interiorEntry.state.registers[0], 87n, 'the first two operations stay skipped');
+
+            cpu.setState({ ...start, flags: 0x102n });
+            const stepped = await cpu.run({ stop: end, budget: 6n });
+            equal(stepped.reason, 'debug-exception', 'TF takes one instruction');
+            equal(stepped.retired, 1n, 'TF observes only MOV');
+            equal(stepped.state.rip, head + 2n, 'TF resumes at INC');
+
+            cpu.writePhysicalMemory(0x9003n, Uint8Array.of(0xc8)); // DEC EAX
+            cpu.setState(start);
+            const changed = await cpu.run({ stop: end, budget: 6n });
+            equal(changed.reason, 'stop', 'rewritten code reaches the same stop');
+            equal(changed.state.registers[0], 1n, 'the old INC cannot execute');
+          });
+          same(guards, [1, 1, 2, 1], 'guard admits both live owners and refuses TF');
+        } finally {
+          Core.create = create;
+        }
+      },
+    },
+    {
       name: 'paged dense byte replay preserves the prefix of a faulting lap',
       async run() {
         const head = 0x400000n;
