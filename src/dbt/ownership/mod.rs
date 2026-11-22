@@ -1,3 +1,5 @@
+#[cfg(not(feature = "parallel"))]
+use std::cell::Cell;
 use std::collections::HashMap;
 
 use super::FetchProof;
@@ -38,6 +40,8 @@ struct Assumptions {
     admission: Admission,
     fetch: Option<FetchBinding>,
     instructions: Vec<Instruction>,
+    #[cfg(not(feature = "parallel"))]
+    instruction_hint: Cell<usize>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,6 +78,8 @@ impl Owners {
                 admission: Admission::CheckContext,
                 fetch: None,
                 instructions: Vec::new(),
+                #[cfg(not(feature = "parallel"))]
+                instruction_hint: Cell::new(0),
             },
         );
         true
@@ -105,15 +111,30 @@ impl Owners {
         if record.admission != Admission::Current || !fetch.same_root(state) {
             return None;
         }
-        let index = record
-            .instructions
-            .binary_search_by_key(&pc, |i| i.pc)
-            .ok()?;
+        let last = record.instruction_hint.get();
+        let next = last + 1;
+        let has_pc = |index| {
+            record
+                .instructions
+                .get(index)
+                .is_some_and(|i: &Instruction| i.pc == pc)
+        };
+        let index = if has_pc(next) {
+            next
+        } else if has_pc(last) {
+            last
+        } else {
+            record
+                .instructions
+                .binary_search_by_key(&pc, |i| i.pc)
+                .ok()?
+        };
         let instruction = record.instructions[index];
         let linear = linear_start(instruction)?;
         let physical = fetch
             .proof
             .physical_span(linear, instruction.encoded_len())?;
+        record.instruction_hint.set(index);
         Some((instruction, linear, physical))
     }
 
@@ -134,6 +155,8 @@ impl Owners {
             proof,
         });
         record.instructions = instructions;
+        #[cfg(not(feature = "parallel"))]
+        record.instruction_hint.set(0);
     }
 
     fn matches(record: &Assumptions, context: &ExecutionContext, observed: bool) -> bool {
