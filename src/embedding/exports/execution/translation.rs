@@ -21,6 +21,10 @@ impl Core {
     }
 
     fn activate_owner(&mut self, owner: u64) -> bool {
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        {
+            self.state.newest_fetch.tag = 0;
+        }
         let paged_model = self.paging.is_some();
         if paged_model {
             self.reconcile_translation_changes();
@@ -62,6 +66,10 @@ impl Core {
     }
 
     fn cancel_pending(&mut self, fetch_changed: bool) {
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        {
+            self.state.newest_fetch.tag = 0;
+        }
         // Pending owners are cancelled even when the externally reported epoch saturates.
         self.translation_owners
             .cancel_pending(fetch_changed, |owner| self.image.release(owner));
@@ -69,6 +77,10 @@ impl Core {
     }
 
     pub(super) fn retire_translations(&mut self) {
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        {
+            self.state.newest_fetch.tag = 0;
+        }
         self.image.retire_sources();
         self.translation_owners.clear();
         self.context_version = self.context_version.saturating_add(1);
@@ -89,6 +101,10 @@ impl Core {
     }
 
     pub(super) fn invalidate_runtime_sources(&mut self) {
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        {
+            self.state.newest_fetch.tag = 0;
+        }
         self.image.invalidate_sources();
         self.translation_owners.clear();
         self.active_owner = None;
@@ -392,6 +408,10 @@ pub extern "C" fn core_activate(owner: u64) -> i32 {
 pub extern "C" fn core_release(owner: u64) {
     BRIDGE.with_borrow_mut(|bridge| {
         let core = bridge.core.as_mut().unwrap();
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if core.active_owner == Some(owner) {
+            core.state.newest_fetch.tag = 0;
+        }
         core.translation_owners.release(owner);
         core.image.release(owner);
     });

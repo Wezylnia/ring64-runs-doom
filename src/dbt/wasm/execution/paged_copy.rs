@@ -483,11 +483,10 @@ impl Emitter {
         resolve: u32,
     ) {
         self.guard_straight_paged_prefix(
-            &instructions[0],
-            &instructions[group.instructions - 1],
-            group.instructions as u32,
+            &instructions[..group.instructions],
             guard,
             None,
+            false,
             false,
         );
         self.address(group.source, 0);
@@ -513,15 +512,7 @@ impl Emitter {
         guard: u32,
         resolve: u32,
     ) {
-        let count = instructions.len();
-        self.guard_straight_paged_prefix(
-            &instructions[0],
-            &instructions[count - 1],
-            count as u32,
-            guard,
-            None,
-            false,
-        );
+        self.guard_straight_paged_prefix(instructions, guard, None, false, false);
         self.address(group.source, 0);
         self.op(Op::LocalSet(LHS));
         self.address(group.destination, 0);

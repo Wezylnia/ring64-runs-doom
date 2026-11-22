@@ -543,12 +543,20 @@ fn paged_loop_guard<const FLAT_DATA32: bool, const SSE: bool, const FLAT_WRITE32
     #[cfg(target_arch = "wasm32")]
     let indexed_reads = shadow & crate::embedding::layout::paging::INDEXED_PAGED_READ_GUARD != 0;
     #[cfg(target_arch = "wasm32")]
-    let shadow = shadow & !crate::embedding::layout::paging::INDEXED_PAGED_READ_GUARD;
+    let newest_fetch = shadow & crate::embedding::layout::paging::NEWEST_FETCH_GUARD != 0;
+    #[cfg(target_arch = "wasm32")]
+    let shadow = shadow
+        & !(crate::embedding::layout::paging::INDEXED_PAGED_READ_GUARD
+            | crate::embedding::layout::paging::NEWEST_FETCH_GUARD);
     if flags & (RF | TF) != 0 || shadow != 0 {
         return 2;
     }
     BRIDGE.with_borrow_mut(|bridge| {
         let core = bridge.core.as_mut().unwrap();
+        #[cfg(target_arch = "wasm32")]
+        if newest_fetch {
+            core.state.newest_fetch.tag = 0;
+        }
         let state = unsafe { &*core.state.get() };
         // Retained operand reads advance to their same-page successor fetch.
         // Masked arithmetic cannot fault between the read and that fetch.
@@ -569,7 +577,8 @@ fn paged_loop_guard<const FLAT_DATA32: bool, const SSE: bool, const FLAT_WRITE32
         }
         // A data TLB replacement can revoke the active owner's admission
         // while its executable translation and bytes remain current.
-        if (SSE || !core.warm_guarded_code_page(pc, false))
+        let warm_guard = !SSE && core.warm_guarded_code_page(pc, false);
+        if !warm_guard
             && core.warm_paged_instruction(pc).is_none()
             && core.recover_paged_fetch(pc).is_none()
         {
@@ -582,6 +591,29 @@ fn paged_loop_guard<const FLAT_DATA32: bool, const SSE: bool, const FLAT_WRITE32
         #[cfg(target_arch = "wasm32")]
         if indexed_reads {
             core.admit_indexed_paged_reads();
+        }
+        #[cfg(target_arch = "wasm32")]
+        if newest_fetch
+            && warm_guard
+            && core.paged_region_trace.is_none()
+            && !core.image.active_changed()
+            && core.debug_completion_quiet()
+            && let (Some(owner), Some(paging)) = (core.active_owner, core.paging.as_ref())
+            // Reconciliation can require this owner to validate its fetch again.
+            && core
+                .translation_owners
+                .guarded_code_start(owner, pc, paging, false)
+                .is_some()
+            && let Some((slot, id)) = core.translation_cache.current_fetch_slot(pc)
+        {
+            core.state.newest_fetch = crate::embedding::layout::paging::NewestFetch {
+                tag: (pc & !4095) | 1,
+                id,
+                table: core.translation_cache.indexed_reads_ptr(),
+                source_invalid: core.image.active_source_invalid_ptr(),
+                cache_changed: core.translation_cache.changed_ptr(),
+                slot,
+            };
         }
         1
     })

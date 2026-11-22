@@ -10,6 +10,20 @@ pub(crate) const PREFIX_INDEXED_READ_SEGMENT: u32 = 17;
 pub(crate) const INDEXED_SCALAR_READ: u32 = 1 << 31;
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 pub(crate) const INDEXED_PAGED_READ_GUARD: u32 = 1 << 31;
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+pub(crate) const NEWEST_FETCH_GUARD: u32 = 1 << 30;
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[derive(Default)]
+#[repr(C)]
+pub(crate) struct NewestFetch {
+    pub(crate) tag: u64,
+    pub(crate) id: u64,
+    pub(crate) table: u32,
+    pub(crate) source_invalid: u32,
+    pub(crate) cache_changed: u32,
+    pub(crate) slot: u32,
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[repr(C)]

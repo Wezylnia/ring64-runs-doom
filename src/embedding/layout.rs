@@ -305,6 +305,8 @@ pub(crate) struct StateStorage {
     pub(crate) flat_stack_pointer_read: crate::memory::DirectSpan,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     pub(crate) indexed_paged_reads: u32,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(crate) newest_fetch: paging::NewestFetch,
     // Write apertures use the same live slot IDs as reads, but have their own backing.
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     pub(crate) indexed_paged_writes: [crate::x86::paging::cache::IndexedReadEntry;
@@ -327,6 +329,8 @@ impl StateStorage {
             flat_stack_pointer_read: Default::default(),
             #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
             indexed_paged_reads: 0,
+            #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+            newest_fetch: Default::default(),
             #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
             indexed_paged_writes: [Default::default();
                 crate::x86::paging::cache::INDEXED_READ_ENTRIES],

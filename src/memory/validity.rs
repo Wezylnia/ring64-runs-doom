@@ -260,6 +260,11 @@ impl Image {
         self.validity.active_invalid
     }
 
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(crate) fn active_source_invalid_ptr(&self) -> u32 {
+        (&raw const self.validity.active_invalid) as u32
+    }
+
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
     pub(crate) fn source_is_active(&self, owner: u64) -> bool {
         self.validity.active == Some(owner) && !self.validity.active_invalid

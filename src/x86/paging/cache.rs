@@ -602,6 +602,16 @@ impl Cache {
         true
     }
 
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(crate) fn current_fetch_slot(&self, linear: u64) -> Option<(u32, u64)> {
+        let entries = self.entries.borrow();
+        let fetch = entries.admitted_fetch.as_ref()?;
+        (fetch.linear_base == linear & !4095
+            && entries.hint() == Some(fetch.index)
+            && entries.recency().live_ids[fetch.index] == fetch.id)
+            .then_some((fetch.index as u32, fetch.id))
+    }
+
     #[cfg(feature = "parallel")]
     pub(super) fn touch_read_span(
         &self,
@@ -1639,6 +1649,11 @@ impl Cache {
     }
     pub fn take_changed(&self) -> bool {
         self.changed.replace(false)
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(crate) fn changed_ptr(&self) -> u32 {
+        self.changed.as_ptr() as u32
     }
 
     fn remove(&self, predicate: impl Fn(&Entry) -> bool) {

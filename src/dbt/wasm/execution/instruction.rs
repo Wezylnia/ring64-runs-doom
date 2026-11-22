@@ -600,12 +600,11 @@ impl Emitter {
         // prefix in this unit. Request the same authority at every real
         // guard in the chain, including register-only predecessors.
         self.guard_straight_paged_prefix(
-            first,
-            last,
-            instructions.len() as u32,
+            instructions,
             guard,
             incoming,
             indexed_leading || self.indexed_dword_prefixes,
+            true,
         );
         if let Some((read, (register, address, source_width, width))) = read {
             use super::{ADDRESS, STORE_STATUS};
@@ -918,18 +917,142 @@ impl Emitter {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    fn newest_prefix_fetch(&mut self, pc: u64) {
+        use super::{SHADOW, STORE_STATUS};
+        use crate::embedding::layout::debug::{Continuation, DebugState};
+        use crate::embedding::layout::paging::NewestFetch;
+        use crate::embedding::layout::{RawEventState, RawInterruptState, RunState, StateStorage};
+        use crate::x86::paging::cache::IndexedReadTable;
+        use std::mem::offset_of;
+        use wasm_encoder::{MemArg, ValType};
+
+        let mem = |offset, align| MemArg {
+            offset: offset as u64,
+            align,
+            memory_index: 0,
+        };
+        let field = |offset, align| mem(offset_of!(StateStorage, newest_fetch) + offset, align);
+        let table = field(offset_of!(NewestFetch, table), 2);
+        let slot = field(offset_of!(NewestFetch, slot), 2);
+        let clock = mem(offset_of!(IndexedReadTable, clock), 3);
+        let debug = offset_of!(RunState, debug);
+        self.op(Op::Block(BlockType::Result(ValType::I32)))
+            .op(Op::I32Const(0))
+            .op(Op::Block(BlockType::Empty))
+            .op(Op::LocalGet(0))
+            .op(Op::I64Load(field(offset_of!(NewestFetch, tag), 3)))
+            .op(Op::I64Const(((pc & !4095) | 1) as i64))
+            .op(Op::I64Ne)
+            .op(Op::BrIf(0));
+        self.system_bits();
+        self.op(Op::I64Const(0x10100))
+            .op(Op::I64And)
+            .op(Op::I64Eqz)
+            .op(Op::I32Eqz)
+            .op(Op::LocalGet(SHADOW))
+            .op(Op::I32Or)
+            .op(Op::BrIf(0))
+            .op(Op::LocalGet(0))
+            .op(Op::I32Load(field(
+                offset_of!(NewestFetch, source_invalid),
+                2,
+            )))
+            .op(Op::I32Load8U(mem(0, 0)))
+            .op(Op::BrIf(0))
+            .op(Op::LocalGet(0))
+            .op(Op::I32Load(field(
+                offset_of!(NewestFetch, cache_changed),
+                2,
+            )))
+            .op(Op::I32Load8U(mem(0, 0)))
+            .op(Op::BrIf(0))
+            .op(Op::LocalGet(0))
+            .op(Op::I32Load8U(mem(
+                debug
+                    + offset_of!(DebugState, registers)
+                    + offset_of!(crate::x86::debug::State, dr7),
+                0,
+            )))
+            .op(Op::BrIf(0))
+            .op(Op::LocalGet(0))
+            .op(Op::I32Load(mem(
+                debug + offset_of!(DebugState, continuation) + offset_of!(Continuation, slots),
+                2,
+            )))
+            .op(Op::BrIf(0))
+            .op(Op::LocalGet(0))
+            .op(Op::I32Load(mem(
+                offset_of!(RunState, event) + offset_of!(RawEventState, kind),
+                2,
+            )))
+            .op(Op::BrIf(0))
+            .op(Op::LocalGet(0))
+            .op(Op::I64Load(mem(offset_of!(RunState, interrupts), 2)))
+            .op(Op::I64Eqz)
+            .op(Op::I32Eqz)
+            .op(Op::BrIf(0))
+            .op(Op::LocalGet(0))
+            .op(Op::I32Load(mem(
+                offset_of!(RunState, interrupts) + offset_of!(RawInterruptState, nmi_blocked),
+                2,
+            )))
+            .op(Op::BrIf(0))
+            .op(Op::LocalGet(0))
+            .op(Op::I32Load(table))
+            .op(Op::I32Load(mem(offset_of!(IndexedReadTable, hint), 2)))
+            .op(Op::LocalGet(0))
+            .op(Op::I32Load(slot))
+            .op(Op::I32Ne)
+            .op(Op::BrIf(0))
+            .op(Op::LocalGet(0))
+            .op(Op::I32Load(table))
+            .op(Op::LocalGet(0))
+            .op(Op::I32Load(slot))
+            .op(Op::I32Const(3))
+            .op(Op::I32Shl)
+            .op(Op::I32Add)
+            .op(Op::LocalTee(STORE_STATUS))
+            .op(Op::I64Load(mem(offset_of!(IndexedReadTable, live_ids), 3)))
+            .op(Op::LocalGet(0))
+            .op(Op::I64Load(field(offset_of!(NewestFetch, id), 3)))
+            .op(Op::I64Ne)
+            .op(Op::BrIf(0))
+            .op(Op::LocalGet(0))
+            .op(Op::I32Load(table))
+            .op(Op::I64Load(clock))
+            .op(Op::I64Const(-1))
+            .op(Op::I64Eq)
+            .op(Op::BrIf(0))
+            .op(Op::LocalGet(0))
+            .op(Op::I32Load(table))
+            .op(Op::I64Load(clock))
+            .op(Op::LocalGet(STORE_STATUS))
+            .op(Op::I64Load(mem(offset_of!(IndexedReadTable, ages), 3)))
+            .op(Op::I64Ne)
+            .op(Op::BrIf(0))
+            .op(Op::LocalGet(0))
+            .op(Op::I32Const(crate::x86::context::Segment::Cs as i32))
+            .op(Op::I32Store(mem(offset_of!(RunState, fault_segment), 2)))
+            .op(Op::I32Const(1))
+            .op(Op::Br(1))
+            .op(Op::End)
+            .op(Op::End);
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     pub(super) fn guard_straight_paged_prefix(
         &mut self,
-        first: &Instruction,
-        last: &Instruction,
-        count: u32,
+        instructions: &[Instruction],
         guard: u32,
         handoff: Option<u32>,
         indexed_read: bool,
+        check_newest: bool,
     ) {
         use super::SHADOW;
 
-        self.guard_straight_prefix(first, last, count);
+        let first = &instructions[0];
+        let last = instructions.last().unwrap();
+        self.guard_straight_prefix(first, last, instructions.len() as u32);
         self.clear_quiet_fetch();
         if let Some(local) = handoff {
             let expected = self.current_index as i32 + 1;
@@ -939,6 +1062,19 @@ impl Emitter {
                 .op(Op::I32Const(0))
                 .op(Op::LocalSet(local))
                 .op(Op::If(BlockType::Result(wasm_encoder::ValType::I32)))
+                .op(Op::I32Const(1))
+                .op(Op::Else);
+        }
+        let newest = check_newest
+            && self.sampled_region
+            && self.context.is_long64()
+            && self.context.cpl() == 0
+            && !indexed_read
+            && last.next_pc > first.pc
+            && (last.next_pc - 1) & !4095 == first.pc & !4095;
+        if newest {
+            self.newest_prefix_fetch(first.pc);
+            self.op(Op::If(BlockType::Result(wasm_encoder::ValType::I32)))
                 .op(Op::I32Const(1))
                 .op(Op::Else);
         }
@@ -952,7 +1088,16 @@ impl Emitter {
             ))
             .op(Op::I32Or);
         }
+        if newest {
+            self.op(Op::I32Const(
+                crate::embedding::layout::paging::NEWEST_FETCH_GUARD as i32,
+            ))
+            .op(Op::I32Or);
+        }
         self.op(Op::Call(guard));
+        if newest {
+            self.op(Op::End);
+        }
         if handoff.is_some() {
             self.op(Op::End);
         }
