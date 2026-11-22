@@ -296,5 +296,54 @@ export function pagingScalarF32LoopScenarios(compiler: WebAssembly.Module): Scen
         }
       },
     },
+    {
+      name: 'paged compatibility32 scalar F32 span refuses an address wrapping at 4 GiB',
+      async run() {
+        // The latch is INC EBX, CMP EBX,ECX. Both streams advance by one dword.
+        const code = '8b178b16f30f10049ff30f59049ef30f58c8ffc339cb75ec';
+        for (const wrap of [false, true]) {
+          const right = little([0x40800000n, 0x40a00000n], 4);
+          const payload = new Uint8Array(24);
+          payload.set(little([0x3f800000n, 0x40000000n], 4));
+          payload.set(right, 16);
+          const words = wrap
+            ? ([
+                ...dataPages,
+                [0x2018n, 0x3027n],
+                [0x3ff8n, 0x4027n],
+                [0x4ff8n, 0xa027n],
+                [0x3000n, 0x5027n],
+              ] as const)
+            : dataPages;
+          const spans = wrap
+            ? [
+                { physical: 0x5000n, bytes: little([0xb027n]) },
+                { physical: 0xa000n, bytes: right },
+                { physical: 0xaffcn, bytes: little([0x3f800000n], 4) },
+                { physical: 0xb000n, bytes: little([0x40000000n], 4) },
+              ]
+            : [{ physical: 0xa000n, bytes: payload }];
+          await usingPaged(
+            compiler,
+            { code, context: context('compatibility'), words, spans },
+            async (cpu) => {
+              cpu.setState(
+                initial(
+                  PC,
+                  { 1: 2n, 3: 0n, 6: wrap ? data : data + 16n, 7: wrap ? 0xfffffffcn : data },
+                  2n,
+                ),
+              );
+              const result = await cpu.run({ budget: 24n, stop: PC + 24n });
+              equal(result.reason, 'stop', 'both address sizes complete');
+              equal(result.retired, 14n, 'prelude and two complete laps');
+              equal(result.state.registers[3], 2n, 'both induction steps');
+              equal(cpu.readXmmState()[1], 0x41600000n, 'operands yield 14.0');
+              equal(cpu.readMxcsr(), 0x1f80, 'exact arithmetic');
+            },
+          );
+        }
+      },
+    },
   ];
 }

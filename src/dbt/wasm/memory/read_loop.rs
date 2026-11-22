@@ -164,24 +164,29 @@ impl ReadLoop {
         Self::recognize_body(context, instructions, true)
     }
 
-    #[cfg(any(test, all(not(feature = "parallel"), target_arch = "wasm32")))]
+    #[cfg(all(not(feature = "parallel"), any(test, target_arch = "wasm32")))]
     pub(super) fn recognize_paged_f32(
         context: &ExecutionContext,
         instructions: &[Instruction],
     ) -> Option<Self> {
         use crate::x86::context::Segment;
 
+        let address_size = if context.is_long64() {
+            Width::W64
+        } else if context.flat_paged_data32() {
+            Width::W32
+        } else {
+            return None;
+        };
         let proof = Self::recognize(context, instructions)?;
         let [body @ .., _, _, _] = instructions else {
             return None;
         };
-        if !context.is_long64() || proof.streams[1].is_none() {
-            return None;
-        }
+        proof.streams[1]?;
         for instruction in body {
             if let Some(address) = Self::read_operand(instruction.operation, false)?
                 && (address.segment != Segment::Ds
-                    || address.size != Width::W64
+                    || address.size != address_size
                     || address.index?.scale != 4
                     || address.displacement % 4 != 0)
             {
@@ -599,10 +604,13 @@ impl Emitter {
                 .op(Op::I64Const(1))
                 .op(Op::I64Sub)
                 .op(Op::I64Add)
-                .op(Op::LocalTee(VALUE))
-                .op(Op::LocalGet(ADDRESS))
-                .op(Op::I64LtU)
-                .op(Op::BrIf(0));
+                .op(Op::LocalTee(VALUE));
+            if stream.first.size == Width::W64 {
+                self.op(Op::LocalGet(ADDRESS)).op(Op::I64LtU);
+            } else {
+                self.op(Op::I64Const(i64::from(u32::MAX))).op(Op::I64GtU);
+            }
+            self.op(Op::BrIf(0));
             if slot == 0 {
                 self.op(Op::LocalGet(ADDRESS))
                     .op(Op::LocalSet(RESULT))
@@ -817,6 +825,7 @@ mod tests {
         );
     }
 
+    #[cfg(not(feature = "parallel"))]
     #[test]
     fn paged_f32_read_loop_proves_only_two_aligned_ds_streams() {
         let context = ExecutionContext::default();
@@ -852,6 +861,37 @@ mod tests {
             *operand = VectorOperand::Memory(modified);
             assert!(ReadLoop::recognize_paged_f32(&context, &instructions).is_none());
         }
+    }
+
+    #[cfg(not(feature = "parallel"))]
+    #[test]
+    fn paged_f32_read_loop_requires_flat_32_bit_ds_for_dword_addressing() {
+        use crate::x86::context::Mode;
+
+        let mut context = ExecutionContext::default();
+        context.set_mode_and_cpl(Mode::Protected, 0);
+        let mut cs = context.segment(Segment::Cs);
+        cs.default32 = true;
+        let mut attributes = context.attributes(Segment::Cs);
+        attributes.long = false;
+        context.set_segment(Segment::Cs, 8, cs, attributes);
+        let mut instructions = fixture();
+        for instruction in &mut instructions {
+            match &mut instruction.operation {
+                Operation::Vector(VectorInstruction::Move {
+                    operand: VectorOperand::Memory(address),
+                    ..
+                }) => address.size = Width::W32,
+                Operation::Alu { width, .. } => *width = Width::W32,
+                _ => (),
+            }
+        }
+        let proof = ReadLoop::recognize_paged_f32(&context, &instructions).unwrap();
+        assert_eq!(proof.count_width, Width::W32);
+        let mut ds = context.segment(Segment::Ds);
+        ds.limit = 0xffff;
+        context.set_segment(Segment::Ds, 24, ds, context.attributes(Segment::Ds));
+        assert!(ReadLoop::recognize_paged_f32(&context, &instructions).is_none());
     }
 
     #[test]
