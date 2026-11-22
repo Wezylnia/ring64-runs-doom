@@ -26,6 +26,7 @@ use wasm_encoder::{
 fn paged_register_prefixes(unit: &Unit, loops: [Option<StructuredLoop>; 2]) -> Vec<Option<usize>> {
     let instructions = &unit.instructions;
     let long64 = unit.context.is_long64();
+    let short_register_prefixes = long64 && unit.sampled;
     let maximum = if long64 { 12 } else { 8 };
     let mut targets = vec![false; instructions.len()];
     if long64 {
@@ -75,7 +76,11 @@ fn paged_register_prefixes(unit: &Unit, loops: [Option<StructuredLoop>; 2]) -> V
                 .flatten()
                 .any(|body| body.order().position(end as u32).is_some())
             && (is_register_only(instruction)
-                || (has_read && end - first >= 2 && terminal_branch(instruction))
+                || (if has_read {
+                    end - first >= 2
+                } else {
+                    short_register_prefixes && end > first
+                } && terminal_branch(instruction))
                 || (long64
                     && if end == first {
                         super::instruction::paged_prefix_read(*instruction).is_some()
@@ -110,7 +115,14 @@ fn paged_register_prefixes(unit: &Unit, loops: [Option<StructuredLoop>; 2]) -> V
         {
             end -= 1;
         }
-        if end - first >= if has_branch { 3 } else { 4 } {
+        let minimum = if short_register_prefixes && !has_read {
+            2
+        } else if has_branch {
+            3
+        } else {
+            4
+        };
+        if end - first >= minimum {
             prefixes[first] = Some(end);
         }
         first = end.max(first + 1);

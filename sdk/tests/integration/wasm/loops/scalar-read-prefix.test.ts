@@ -29,8 +29,17 @@ test('sampled quiet completion keeps branch, single-step, and execute breakpoint
     return compile.call(this, pc, limits, seeds, regionPoints);
   };
   let finishes = 0;
+  let shortPrefixes = 0;
   prototype.artifactImports = function (observed) {
     const env = imports.call(this, observed);
+    const guard = env.paged_loop_guard;
+    if (typeof guard === 'function') {
+      env.paged_loop_guard = (pc: bigint, bytes: number, flags: bigint, shadow: number) => {
+        const result = guard(pc, bytes, flags, shadow);
+        if (pc === PC && bytes === 6 && result === 1) shortPrefixes++;
+        return result;
+      };
+    }
     const finish = env.debug_finish;
     if (typeof finish === 'function') {
       env.debug_finish = (...args: unknown[]) => {
@@ -47,6 +56,7 @@ test('sampled quiet completion keeps branch, single-step, and execute breakpoint
           cpu.setState(initial(rip, { 0: rax }, flags));
         for (let wave = 0; wave < 3; wave++) {
           finishes = 0;
+          shortPrefixes = 0;
           for (const [rax, expected] of [
             [1n, 3n],
             [0xffff_ffff_ffff_ffffn, 2n],
@@ -60,6 +70,7 @@ test('sampled quiet completion keeps branch, single-step, and execute breakpoint
         }
         const ordinaryFinishes = sampled ? 0 : 8;
         assert.equal(finishes, ordinaryFinishes);
+        assert.equal(shortPrefixes, sampled ? 2 : 0);
 
         enter(1n, 0x103n, PC + 4n);
         const step = await cpu.run({ stop, budget: 10n });
