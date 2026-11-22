@@ -493,6 +493,19 @@ test('guarded MOVZX prefixes reuse live read translations across entries and rev
           assert.equal(acceptedGuards, beforeGuards + 3);
           assert.equal(readCalls, beforeWarm, 'warm guarded reads bypass the translation helper');
 
+          const beforeLaps = acceptedGuards;
+          const repeated = await cpu.run({ budget: 25n });
+          assert.equal(repeated.reason, 'budget');
+          assert.equal(repeated.retired, 25n);
+          assert.equal(repeated.state.rip, PC);
+          assert.equal(repeated.state.registers[0], initialValue + 4n);
+          assert.equal(
+            acceptedGuards,
+            beforeLaps + 1,
+            'one admission covers same-page indexed laps',
+          );
+          assert.equal(readCalls, beforeWarm);
+
           cpu.writePhysicalMemory(0x4008n, little([0xb003n]));
           await prefix(remappedValue);
           await rewind();

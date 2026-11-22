@@ -693,7 +693,11 @@ impl Emitter {
             guard,
             incoming.filter(|_| !indexed_wide && !indexed_store),
             indexed,
-            if self.retouch_prefix_fetch || indexed_wide || !indexed {
+            if self.retouch_prefix_fetch
+                || indexed_wide
+                || !indexed
+                || self.sampled_region && indexed_leading
+            {
                 PagedPrefixFetch::Retained
             } else {
                 PagedPrefixFetch::Checked
@@ -1096,7 +1100,7 @@ impl Emitter {
                 .op(Op::I32Ne)
                 .op(Op::BrIf(0));
         }
-        if indexed_read && self.retouch_prefix_fetch {
+        if indexed_read && (self.retouch_prefix_fetch || self.sampled_region) {
             self.op(Op::LocalGet(0))
                 .op(Op::I32Load(mem(
                     offset_of!(StateStorage, indexed_paged_reads),
