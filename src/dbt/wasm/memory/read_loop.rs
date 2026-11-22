@@ -201,6 +201,14 @@ impl ReadLoop {
         self.streams[1].is_none()
     }
 
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn last_memory_stream(self, instructions: &[Instruction]) -> Option<u32> {
+        instructions.iter().rev().find_map(|instruction| {
+            let address = Self::read_operand(instruction.operation, self.byte_reads)??;
+            self.stream_for_address(address)
+        })
+    }
+
     fn recognize_body(
         context: &ExecutionContext,
         instructions: &[Instruction],
@@ -672,6 +680,59 @@ impl Emitter {
             self.op(Op::I32WrapI64)
                 .op(Op::I32Add)
                 .op(Op::LocalSet(first_bias + slot as u32));
+        }
+        self.op(Op::Drop).op(Op::I32Const(1)).op(Op::End);
+    }
+
+    pub(super) fn guard_paged_f32_pair(
+        &mut self,
+        proof: ReadLoop,
+        resolve: u32,
+        last: u32,
+        first_bias: u32,
+    ) {
+        let addresses = [RESULT, RHS];
+        let order = [1 - last, last];
+        self.op(Op::Block(BlockType::Result(ValType::I32)))
+            .op(Op::I32Const(0));
+        self.guard_read_trip_count(proof);
+        for (slot, (stream, address)) in proof.streams.into_iter().zip(addresses).enumerate() {
+            let stream = stream.unwrap();
+            self.guard_read_stream_length(proof, stream);
+            self.address(stream.first, 0);
+            self.op(Op::LocalSet(address))
+                .op(Op::LocalGet(VALUE))
+                .op(Op::I32WrapI64)
+                .op(Op::LocalSet(first_bias + slot as u32));
+        }
+        for slot in order {
+            self.op(Op::LocalGet(addresses[slot as usize]))
+                .op(Op::LocalGet(first_bias + slot));
+        }
+        self.op(Op::Call(resolve))
+            .op(Op::LocalTee(VALUE))
+            .op(Op::I64Eqz)
+            .op(Op::BrIf(0));
+        for (word, slot) in order.into_iter().enumerate() {
+            let stream = proof.streams[slot as usize].unwrap();
+            self.op(Op::LocalGet(VALUE));
+            if word != 0 {
+                self.op(Op::I64Const(32)).op(Op::I64ShrU);
+            }
+            self.op(Op::I32WrapI64)
+                .op(Op::LocalGet(addresses[slot as usize]))
+                .op(Op::I32WrapI64)
+                .op(Op::I32Sub);
+            self.address(
+                Address {
+                    index: None,
+                    ..stream.first
+                },
+                0,
+            );
+            self.op(Op::I32WrapI64)
+                .op(Op::I32Add)
+                .op(Op::LocalSet(first_bias + slot));
         }
         self.op(Op::Drop).op(Op::I32Const(1)).op(Op::End);
     }

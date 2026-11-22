@@ -251,6 +251,36 @@ impl Cache {
         Some(value)
     }
 
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    pub(crate) fn read_pair_then_fetch<T>(
+        &self,
+        state: &State,
+        keys: &ProtectionKeys,
+        [(first_request, first_width), (last_request, last_width)]: [(Request, u32); 2],
+        access: impl FnOnce([u64; 2]) -> Option<T>,
+    ) -> Option<T> {
+        let mut entries = self.entries.borrow_mut();
+        let fetch = entries
+            .hint
+            .filter(|&index| entries.slots[index].is_some())?;
+        let (first, first_translation) =
+            entries.retained_data_span::<false>(state, first_request, keys, first_width)?;
+        let (last, last_translation) =
+            entries.retained_data_span::<false>(state, last_request, keys, last_width)?;
+        if entries.slots[first].unwrap().global || entries.slots[last].unwrap().global {
+            return None;
+        }
+        let value = access([first_translation.physical, last_translation.physical])?;
+        // A complete lap repeats these two data translations. Touch them in
+        // the order of their last accesses, with the successor fetch last.
+        for index in [first, last, fetch] {
+            if entries.hint != Some(index) {
+                entries.touch(index);
+            }
+        }
+        Some(value)
+    }
+
     /// Pure retained-view projection: no A/D, fill, eviction or LRU effects.
     pub fn observe(
         &self,

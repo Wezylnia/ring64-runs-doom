@@ -511,3 +511,50 @@ fn lru_clock_renormalization_preserves_actual_order() {
             .is_some()
     );
 }
+
+#[cfg(not(feature = "parallel"))]
+#[test]
+fn paired_data_spans_commit_recency_only_after_both_succeed() {
+    let (mut image, state, first) = fixture();
+    for (address, pte) in [(0x4010, 0xb067), (0x4018, 0xc067), (0x4020, 0xd067)] {
+        image.physical_write(address, 8, pte).unwrap();
+    }
+    let last = Request {
+        linear: 0x2234,
+        ..first
+    };
+    let code = Request {
+        linear: 0x3234,
+        access: Access::Execute,
+        ..first
+    };
+    let extra = Request {
+        linear: 0x4234,
+        ..first
+    };
+    let cache = Cache::with_capacity(3);
+    for request in [last, first, code] {
+        insert(&cache, &mut image, &state, request);
+    }
+    let pair = [(first, 4), (last, 8)];
+    let prior = cache.entries.borrow().clock;
+    assert_eq!(
+        cache.read_pair_then_fetch::<()>(&state, &ProtectionKeys::ZERO, pair, |_| None),
+        None
+    );
+    assert_eq!(cache.entries.borrow().clock, prior);
+    assert_eq!(
+        cache.read_pair_then_fetch(&state, &ProtectionKeys::ZERO, pair, Some),
+        Some([0xa234, 0xb234])
+    );
+    insert(&cache, &mut image, &state, extra);
+    for (request, present) in [(first, false), (last, true), (code, true)] {
+        assert_eq!(
+            cache
+                .observe(&state, request, &ProtectionKeys::ZERO)
+                .unwrap()
+                .is_some(),
+            present
+        );
+    }
+}

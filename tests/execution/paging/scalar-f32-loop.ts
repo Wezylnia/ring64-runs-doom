@@ -191,11 +191,13 @@ export function pagingScalarF32LoopScenarios(compiler: WebAssembly.Module): Scen
           'reversed',
           'split-backing',
           'split-leaf',
+          'split-leaf-partial',
           'unaligned',
           'round-up',
           'partial',
         ] as const) {
           const directed = layout === 'round-up';
+          const splitLeaf = layout === 'split-leaf' || layout === 'split-leaf-partial';
           const left = little(
             directed ? [0x3f800001n] : [0x3f800000n, 0x40000000n, 0x40400000n],
             4,
@@ -205,13 +207,12 @@ export function pagingScalarF32LoopScenarios(compiler: WebAssembly.Module): Scen
             4,
           );
           const first = layout === 'reversed' ? 16n : 0n;
-          const other =
-            layout === 'split-leaf' ? 0x1000n : layout === 'unaligned' ? 17n : 16n - first;
+          const other = splitLeaf ? 0x1000n : layout === 'unaligned' ? 17n : 16n - first;
           const payload = new Uint8Array(32);
           payload.set(left, Number(first));
           payload.set(right, Number(other & 0xfffn));
           const spans =
-            layout === 'split-backing' || layout === 'split-leaf'
+            layout === 'split-backing' || splitLeaf
               ? [
                   { physical: 0xa000n, bytes: left },
                   { physical: 0xa000n + other, bytes: right },
@@ -231,7 +232,7 @@ export function pagingScalarF32LoopScenarios(compiler: WebAssembly.Module): Scen
               );
               cpu.setMxcsr(directed ? 0x5f80 : 0x1f80);
               let prefix = 0n;
-              if (layout === 'partial') {
+              if (layout === 'partial' || layout === 'split-leaf-partial') {
                 const partial = await cpu.run({ budget: 9n, stop: PC + 26n });
                 equal(partial.reason, 'budget', 'one full lap and the next MOVSS');
                 equal(partial.retired, 9n, 'exact partial prefix');

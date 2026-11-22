@@ -491,6 +491,64 @@ pub extern "C" fn core_paged_loop_read_span(address: u64, bytes: u32, segment: u
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 #[unsafe(no_mangle)]
+pub extern "C" fn core_paged_loop_read_pair(
+    first: u64,
+    first_bytes: u32,
+    last: u64,
+    last_bytes: u32,
+) -> u64 {
+    let spans = [(first, first_bytes), (last, last_bytes)];
+    if spans.iter().any(|&(address, bytes)| {
+        address & 3 != 0
+            || bytes < 4
+            || crate::memory::check_span(address, bytes, Access::Read).is_err()
+    }) {
+        return 0;
+    }
+    BRIDGE
+        .with_borrow(|bridge| {
+            let core = bridge.core.as_ref()?;
+            if !core.context.is_long64()
+                && spans
+                    .iter()
+                    .any(|&(address, bytes)| !core.context.flat_paged_read_span32(address, bytes))
+            {
+                return None;
+            }
+            let paging = core.paging.as_ref()?;
+            let state = unsafe { &*core.state.get() };
+            let class = paging::walk::AccessClass::operand(
+                core.context.cpl(),
+                state.flags & crate::x86::flags::AC != 0,
+            );
+            let requests = spans.map(|(linear, bytes)| {
+                (
+                    paging::walk::Request {
+                        linear,
+                        access: Access::Read,
+                        class,
+                    },
+                    bytes,
+                )
+            });
+            core.translation_cache.read_pair_then_fetch(
+                paging,
+                &state.protection_keys,
+                requests,
+                |[first, last]| {
+                    let first = core
+                        .image
+                        .physical_direct_read_pointer(first, first_bytes)?;
+                    let last = core.image.physical_direct_read_pointer(last, last_bytes)?;
+                    Some(u64::from(first) | (u64::from(last) << 32))
+                },
+            )
+        })
+        .unwrap_or(0)
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[unsafe(no_mangle)]
 pub extern "C" fn core_paged_loop_read_dword_window(address: u64) -> u32 {
     use crate::memory::DirectSpan;
 
