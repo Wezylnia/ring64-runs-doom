@@ -322,15 +322,37 @@ fn binary80_full_precision_packs_rounding_carry_and_underflow_promotion() {
     }
 }
 
-fn jam(x: u128, n: u32) -> u128 {
-    if n == 0 {
-        x
-    } else if n >= 128 {
-        u128::from(x != 0)
+fn align_addend(sig: u64, difference: u32) -> u128 {
+    // The addend starts with three low rounding bits. Keep the shifted high
+    // word separate until the exponent difference removes all three bits.
+    if difference < 3 {
+        let left = 3 - difference;
+        (u128::from(sig >> (64 - left)) << 64) | u128::from(sig << left)
+    } else if difference < 67 {
+        let right = difference - 3;
+        u128::from((sig >> right) | u64::from(sig.trailing_zeros() < right))
     } else {
-        (x >> n) | u128::from(x & ((1u128 << n) - 1) != 0)
+        u128::from(sig != 0)
     }
 }
+
+#[cfg(test)]
+#[test]
+fn aligned_addend_matches_wide_shift_and_sticky_bit() {
+    let patterns = [0, u64::MAX, 0x8000_0000_0000_0001, 0xaaaa_aaaa_aaaa_aaaa];
+    for sig in patterns.into_iter().chain((0..64).map(|bit| 1u64 << bit)) {
+        let wide = u128::from(sig) << 3;
+        for difference in 0..=130 {
+            let expected = if difference >= 128 {
+                u128::from(wide != 0)
+            } else {
+                (wide >> difference) | u128::from(wide & ((1u128 << difference) - 1) != 0)
+            };
+            assert_eq!(align_addend(sig, difference), expected);
+        }
+    }
+}
+
 fn add(a: Num, b: Num, round: u16) -> Num {
     if a.sig == 0 && b.sig == 0 {
         return Num {
@@ -357,7 +379,11 @@ fn add(a: Num, b: Num, round: u16) -> Num {
         (a, b, sa, sb, ea, eb)
     };
     let left = sa << 3;
-    let right = jam(sb << 3, (ea - eb) as u32);
+    let right = if ea == eb {
+        sb << 3
+    } else {
+        align_addend(sb as u64, (ea - eb) as u32)
+    };
     let sig = if a.negative == b.negative {
         left + right
     } else {
