@@ -90,7 +90,15 @@ impl Emitter {
 
     pub(super) fn commit_runtime_target(&mut self, exit_depth: u32) {
         self.op(Op::LocalGet(RHS)).op(Op::LocalSet(RIP));
-        self.retire_instructions(1);
+        let count = match self.instruction_retirement {
+            #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+            InstructionRetirement::FlatPrefix {
+                count,
+                terminal: true,
+            } => count + 1,
+            _ => 1,
+        };
+        self.retire_instructions(count);
         if self.finish_instruction(exit_depth) {
             return;
         }

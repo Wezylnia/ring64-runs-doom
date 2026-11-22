@@ -34,7 +34,7 @@ fn register_prefix_operation(operation: Operation) -> bool {
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 fn flat_integer_groups(unit: &Unit, structured: Option<StructuredLoop>) -> Vec<Option<usize>> {
-    use crate::x86::instruction::{Shift, Width};
+    use crate::x86::instruction::{Operand, Shift, Width};
 
     let instructions = &unit.instructions;
     let mut groups = vec![None; instructions.len()];
@@ -50,6 +50,23 @@ fn flat_integer_groups(unit: &Unit, structured: Option<StructuredLoop>) -> Vec<O
             if let Operation::Jcc { target, .. } = operation {
                 // A failing target must see the ordinary Jcc retirement boundary.
                 if end > first && target <= unit.context.code_limit() {
+                    end += 1;
+                }
+                break;
+            }
+            if matches!(
+                operation,
+                Operation::Call {
+                    target: Operand::Register(_) | Operand::Memory(_),
+                    width: Width::W32,
+                } | Operation::Return {
+                    width: Width::W32,
+                    ..
+                }
+            ) {
+                // All decoded near targets pass CS. The stack and indirect target
+                // operands still use the checked memory exits.
+                if end > first && unit.context.code_limit() == u64::from(u32::MAX) {
                     end += 1;
                 }
                 break;

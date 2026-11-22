@@ -1336,7 +1336,10 @@ impl Emitter {
         let count = instructions.len() as u32;
         self.guard_straight_prefix(first, last, count);
         let loop_depth = loop_depth + 1;
-        let branch = matches!(last.operation, Operation::Jcc { .. });
+        let branch = matches!(
+            last.operation,
+            Operation::Jcc { .. } | Operation::Call { .. } | Operation::Return { .. }
+        );
         for (index, instruction) in instructions.iter().enumerate() {
             let terminal = branch && index + 1 == instructions.len();
             // Funding this prefix proves its entry gates, not the surrounding loop's state.

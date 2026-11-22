@@ -69,6 +69,19 @@ test('flat sampled integer groups preserve precise budgets, stops, and interior 
       }
       groupedBytes = cpu.inspectTranslations()[0]!.byteLength;
       assert.ok(!cpu.inspectTranslations()[0]!.entries.includes(head + 17n));
+      for (const [budget, sp, reason, retired, rip, expectedSp] of [
+        [4n, stack + 16n, 'budget', 4n, 15n, stack + 12n],
+        [8n, stack + 16n, 'stop', 4n, 15n, stack + 12n],
+        [8n, stack, 'data-fault', 3n, 9n, stack],
+      ] as const) {
+        cpu.setState(initial(head, { 0: 2n, 3: head + 15n, 4: sp }));
+        const result = await cpu.run({ budget, stop: head + 15n });
+        assert.equal(result.reason, reason);
+        assert.equal(result.retired, retired);
+        assert.equal(result.state.rip, head + rip);
+        assert.equal(result.state.registers[0], 5n);
+        assert.equal(result.state.registers[4], expectedSp);
+      }
       for (const [target, stop, reason, retired, rip, sp] of [
         [15n, head + 11n, 'stop', 2n, 11n, stack + 16n],
         [17n, head + 17n, 'stop', 1n, 17n, stack + 12n],
@@ -204,10 +217,12 @@ test('flat write chains preserve prior effects and exit on a code alias write', 
   const data = 0x40000n;
   const alias = 0x41000n;
   // INC EAX; MOV [ESI],EAX; INC ECX; PUSH EAX; ADD [EDI],EAX; ROL [EDI],1;
-  // INC EAX; CALL EBX; JMP head; RET.
-  const code = hex('40890641500107d10740ffd3ebf2c3');
+  // INC EAX; CALL EBX; JMP head; INC EAX; INC ECX; RET.
+  const code = hex('40890641500107d10740ffd3ebf24041c3');
   const values = hex('00000000010000000000000000000000');
-  const seeds = [0n, 1n, 3n, 4n, 5n, 7n, 9n, 10n, 12n, 14n].map((offset) => head + offset);
+  const seeds = [0n, 1n, 3n, 4n, 5n, 7n, 9n, 10n, 12n, 14n, 15n, 16n].map(
+    (offset) => head + offset,
+  );
   const mapping = (base: bigint, backing: string, length: number, execute: boolean) => ({
     base,
     backing,
@@ -332,7 +347,10 @@ test('flat write chains preserve prior effects and exit on a code alias write', 
       ] as const) {
         cpu.writeMemory(data, values);
         cpu.setState(initial(head, { 0: 2n, 1: 0n, 3: head + 14n, 4: esp, 6: esi, 7: edi }));
-        const result = await cpu.run({ budget, stop: head + stop });
+        const result = await cpu.run({
+          budget,
+          stop: head + (reason === 'data-fault' ? 12n : stop),
+        });
         assert.equal(result.reason, reason);
         assert.equal(result.retired, retired);
         assert.equal(result.state.rip, head + rip);
@@ -342,8 +360,29 @@ test('flat write chains preserve prior effects and exit on a code alias write', 
         assert.deepEqual(cpu.readMemory(data, 16), hex(contents));
       }
 
+      cpu.writeMemory(data, values);
+      cpu.setState(
+        initial(head, { 0: 2n, 1: 0n, 3: head + 14n, 4: data + 16n, 6: data, 7: data + 4n }),
+      );
+      const complete = await cpu.run({ budget: 20n, stop: head + 12n });
+      assert.equal(complete.reason, 'stop');
+      assert.equal(complete.retired, 11n);
+      assert.equal(complete.state.rip, head + 12n);
+      assert.equal(complete.state.registers[0], 5n);
+      assert.equal(complete.state.registers[1], 2n);
+      assert.equal(complete.state.registers[4], data + 12n);
+
+      cpu.setState(initial(head + 14n, { 0: 2n, 1: 0n, 4: data + 16n }));
+      const failedReturn = await cpu.run({ budget: 10n, stop: head + 12n });
+      assert.equal(failedReturn.reason, 'data-fault');
+      assert.equal(failedReturn.retired, 2n);
+      assert.equal(failedReturn.state.rip, head + 16n);
+      assert.equal(failedReturn.state.registers[0], 3n);
+      assert.equal(failedReturn.state.registers[1], 1n);
+      assert.equal(failedReturn.state.registers[4], data + 16n);
+
       cpu.setState(initial(head, { 0: 0x909090f3n, 1: 0n, 4: data + 16n, 6: alias + 3n }));
-      const patched = await cpu.run({ budget: 10n, stop: head + 10n });
+      const patched = await cpu.run({ budget: 10n, stop: head + 12n });
       assert.equal(patched.reason, 'halted');
       assert.equal(patched.retired, 3n);
       assert.equal(patched.state.rip, head + 4n);
