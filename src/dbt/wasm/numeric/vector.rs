@@ -208,6 +208,36 @@ impl Emitter {
             return;
         }
         self.address(address, next_pc);
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if bytes == 16
+            && !aligned
+            && address.segment == crate::x86::context::Segment::Ds
+            && let Some(read) = self.paged_loop_read_block
+        {
+            if self.guarded_paged_lap {
+                self.op(Op::I32Const(16))
+                    .op(Op::I32Const(address.segment as i32))
+                    .op(Op::Call(read))
+                    .op(Op::LocalTee(STORE_STATUS))
+                    .op(Op::I32Eqz);
+                self.retry_guarded_paged_operand(exit_depth, true);
+                self.op(Op::LocalGet(STORE_STATUS))
+                    .op(Op::I32Load(memory(offset_of!(
+                        crate::memory::DirectSpan,
+                        host
+                    ))))
+                    .op(Op::V128Load(memory(0)));
+                return;
+            }
+            if let Some((ready, order)) = self.paged_read_rearm
+                && order.position(self.current_index).is_some()
+            {
+                self.op(Op::LocalTee(ADDRESS));
+                self.vector_load_offset(bytes, aligned, exit_depth);
+                self.rearm_paged_access(bytes, ready);
+                return;
+            }
+        }
         #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
         if bytes == 4 && !aligned {
             if self.parallel_vector_dword(exit_depth) {

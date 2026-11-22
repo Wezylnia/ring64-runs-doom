@@ -446,15 +446,28 @@ pub extern "C" fn core_paged_loop_read_byte(address: u64) -> u64 {
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 #[unsafe(no_mangle)]
 pub extern "C" fn core_paged_loop_read_ready(address: u64, width: u32) -> i32 {
-    if !matches!(width, 1 | 4)
-        || address & u64::from(width - 1) != 0
-        || !crate::memory::canonical48(address)
-    {
+    let supported = match width {
+        1 | 4 => address & u64::from(width - 1) == 0 && crate::memory::canonical48(address),
+        16 => crate::memory::check_span(address, width, Access::Read).is_ok(),
+        _ => false,
+    };
+    i32::from(supported && paged_loop_operand_ready::<false>(address, width))
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[unsafe(no_mangle)]
+pub extern "C" fn core_paged_loop_write_ready(address: u64, width: u32) -> i32 {
+    if width != 4 || address & 3 != 0 || !crate::memory::canonical48(address) {
         return 0;
     }
+    i32::from(paged_loop_operand_ready::<true>(address, width))
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+fn paged_loop_operand_ready<const WRITE: bool>(address: u64, width: u32) -> bool {
     // The checked instruction already performed its architectural access.
     // Project the retained result without doing a second access or aging it.
-    i32::from(BRIDGE.with_borrow(|bridge| {
+    BRIDGE.with_borrow(|bridge| {
         let core = bridge.core.as_ref().unwrap();
         let Some(paging) = core.paging.as_ref() else {
             return false;
@@ -462,7 +475,7 @@ pub extern "C" fn core_paged_loop_read_ready(address: u64, width: u32) -> i32 {
         let state = unsafe { &*core.state.get() };
         let request = paging::walk::Request {
             linear: address,
-            access: Access::Read,
+            access: if WRITE { Access::Write } else { Access::Read },
             class: paging::walk::AccessClass::operand(
                 core.context.cpl(),
                 state.flags & crate::x86::flags::AC != 0,
@@ -472,14 +485,23 @@ pub extern "C" fn core_paged_loop_read_ready(address: u64, width: u32) -> i32 {
             .observe(paging, request, &state.protection_keys)
             .is_ok_and(|entry| {
                 entry.is_some_and(|entry| {
-                    entry.remaining >= u64::from(width)
-                        && core
-                            .image
-                            .physical_direct_read_span(entry.physical, width)
-                            .is_some()
+                    if entry.remaining < u64::from(width) {
+                        return false;
+                    }
+                    if WRITE {
+                        core.image
+                            .physical_direct_write_ready(entry.physical, width)
+                    } else {
+                        // The full vector uses the locally retained span helper.
+                        (width != 16 || !entry.global)
+                            && core
+                                .image
+                                .physical_direct_read_span(entry.physical, width)
+                                .is_some()
+                    }
                 })
             })
-    }))
+    })
 }
 
 #[cfg(not(feature = "parallel"))]

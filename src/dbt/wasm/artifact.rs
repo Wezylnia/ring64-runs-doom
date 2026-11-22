@@ -128,6 +128,20 @@ pub(crate) fn emit_profile(
             return bytes;
         }
     }
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    if paged && let Some(body) = StructuredLoop::select_paged_sse_write(unit) {
+        let bytes = emit_placement(
+            unit,
+            observed,
+            (paged, false),
+            Some(body),
+            false,
+            max_artifact_bytes,
+        );
+        if bytes.len() <= max_artifact_bytes {
+            return bytes;
+        }
+    }
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     if !observed
         && let Some(body) = StructuredLoop::select_shared_float(&unit.instructions)
@@ -762,6 +776,18 @@ fn emit_body(
     let paged_loop_read_type = (paged_read_byte || paged_read_dword)
         .then(|| add_function_type(&mut types, [ValType::I64], [ValType::I64]));
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let paged_sse_write = loop_body.is_some_and(StructuredLoop::paged_sse_write);
+    #[cfg(not(all(not(feature = "parallel"), target_arch = "wasm32")))]
+    let paged_sse_write = false;
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let paged_loop_read_block_type = paged_sse_write.then(|| {
+        add_function_type(
+            &mut types,
+            [ValType::I64, ValType::I32, ValType::I32],
+            [ValType::I32],
+        )
+    });
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let paged_dword_window_type = loop_body
         .is_some_and(|body| body.paged_dword_window)
         .then(|| add_function_type(&mut types, [ValType::I64], [ValType::I32]));
@@ -769,7 +795,8 @@ fn emit_body(
     let paged_write_byte = loop_body.is_some_and(|body| body.has_paged_byte_store(unit));
     #[cfg(feature = "parallel")]
     let paged_write_byte = false;
-    let paged_write_dword = loop_body.is_some_and(|body| body.paged_stack_writes);
+    let paged_write_dword =
+        paged_sse_write || loop_body.is_some_and(|body| body.paged_stack_writes);
     let paged_loop_write_type = (paged_write_byte || paged_write_dword)
         .then(|| add_function_type(&mut types, [ValType::I64, ValType::I32], [ValType::I32]));
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -789,7 +816,7 @@ fn emit_body(
             optional.paged_read_rearm
                 && !mmio
                 && body.paged_fetch_bytes.is_some()
-                && (read_only_replay || writable_byte_replay)
+                && (read_only_replay || writable_byte_replay || paged_sse_write)
         })
         .map(|body| {
             (
@@ -1000,7 +1027,7 @@ fn emit_body(
     let protection_key = protection_key_type.map(|index| import_function("protection_key", index));
     let paged_loop_guard = paged_loop_guard_type.map(|index| {
         #[cfg(not(feature = "parallel"))]
-        if loop_body.is_some_and(StructuredLoop::paged_sse) {
+        if paged_sse_write || loop_body.is_some_and(StructuredLoop::paged_sse) {
             return import_function("paged_sse_loop_guard", index);
         }
         let name = if paged_write_dword {
@@ -1031,8 +1058,15 @@ fn emit_body(
             import_function("paged_loop_read_dword", index)
         });
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let paged_loop_read_block =
+        paged_loop_read_block_type.map(|index| import_function("paged_loop_read_span", index));
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let paged_read_rearm = paged_read_rearm_type
         .map(|(index, order)| (import_function("paged_loop_read_ready", index), order));
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let paged_write_ready = paged_read_rearm_type
+        .filter(|_| paged_sse_write)
+        .map(|(index, _)| import_function("paged_loop_write_ready", index));
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let paged_dword_window =
         paged_dword_window_type.map(|index| import_function("paged_loop_read_dword_window", index));
@@ -1644,6 +1678,10 @@ fn emit_body(
         paged_dword_window,
         paged_loop_read_byte,
         paged_loop_read_dword,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        paged_loop_read_block,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        paged_write_ready,
         paged_loop_write_byte,
         paged_loop_write_dword,
         register_upper_dwords,
@@ -1932,6 +1970,9 @@ fn emit_body(
     }
     let code_start = bytes.len();
     code.append_to(&mut bytes);
+    if bytes.len() > max_artifact_bytes && paged_sse_write {
+        return (bytes, false);
+    }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if bytes.len() > max_artifact_bytes && cyclic_vector_store {
         return emit_body(

@@ -197,6 +197,10 @@ struct Emitter {
     paged_dword_window: Option<memory::PagedDwordWindow>,
     paged_loop_read_byte: Option<u32>,
     paged_loop_read_dword: Option<u32>,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    paged_loop_read_block: Option<u32>,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    paged_write_ready: Option<u32>,
     paged_loop_write_byte: Option<u32>,
     paged_loop_write_dword: Option<u32>,
     register_upper_dwords: [Option<u32>; 16],

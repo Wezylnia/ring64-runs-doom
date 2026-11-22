@@ -378,11 +378,11 @@ impl Emitter {
             }));
     }
 
-    fn retry_guarded_paged_operand(&mut self, exit_depth: u32, _read: bool) {
+    pub(super) fn retry_guarded_paged_operand(&mut self, exit_depth: u32, _replay: bool) {
         let entry = self.current_index as i32;
         let (_, attempts) = self.paged_loop_guard.expect("paged loop guard");
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-        let status = if _read && self.paged_read_rearm.is_some() {
+        let status = if _replay && self.paged_read_rearm.is_some() {
             PAGED_READ_REPLAY
         } else {
             2
@@ -787,6 +787,11 @@ impl Emitter {
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     pub(super) fn rearm_paged_read(&mut self, width: Width, ready: u32) {
+        self.rearm_paged_access(width.bytes(), ready);
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn rearm_paged_access(&mut self, bytes: u8, ready: u32) {
         let (_, attempts) = self.paged_loop_guard.expect("paged loop guard");
         self.op(Op::LocalGet(attempts))
             .op(Op::I32Const(PAGED_READ_REPLAY))
@@ -795,7 +800,7 @@ impl Emitter {
             .op(Op::I32Const(PAGED_READ_COOLDOWN))
             .op(Op::I32Const(2));
         self.linear_address();
-        self.op(Op::I32Const(i32::from(width.bytes())))
+        self.op(Op::I32Const(i32::from(bytes)))
             .op(Op::Call(ready))
             .op(Op::Select)
             .op(Op::LocalSet(attempts))
@@ -842,8 +847,16 @@ impl Emitter {
         let paged_write = match (width, address.segment) {
             (Width::W8, Segment::Ds) => self.paged_loop_write_byte,
             (Width::W32, Segment::Ss) => self.paged_loop_write_dword,
+            #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+            (Width::W32, Segment::Ds) if self.paged_loop_read_block.is_some() => {
+                self.paged_loop_write_dword
+            }
             _ => None,
         };
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        let write_ready = self
+            .paged_write_ready
+            .filter(|_| matches!((width, address.segment), (Width::W32, Segment::Ds)));
         if self.guarded_paged_lap
             && let Some(write) = paged_write
         {
@@ -851,7 +864,11 @@ impl Emitter {
             self.data_operand(src, width);
             // The helper admits only writes that leave the active source valid.
             self.op(Op::I32WrapI64).op(Op::Call(write)).op(Op::I32Eqz);
-            self.retry_guarded_paged_operand(exit_depth, false);
+            #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+            let replay = write_ready.is_some();
+            #[cfg(not(all(not(feature = "parallel"), target_arch = "wasm32")))]
+            let replay = false;
+            self.retry_guarded_paged_operand(exit_depth, replay);
             return;
         }
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -909,5 +926,12 @@ impl Emitter {
             .op(Op::If(BlockType::Empty));
         self.memory_failure(exit_depth + 1);
         self.op(Op::End);
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if let Some(ready) = write_ready.filter(|_| {
+            self.paged_read_rearm
+                .is_some_and(|(_, order)| order.position(self.current_index).is_some())
+        }) {
+            self.rearm_paged_access(width.bytes(), ready);
+        }
     }
 }

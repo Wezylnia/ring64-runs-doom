@@ -28,6 +28,8 @@ enum LoopKind {
     PagedReads,
     #[cfg(not(feature = "parallel"))]
     PagedScalarF32,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    PagedSseWrite,
     ForwardEdges,
 }
 
@@ -180,7 +182,12 @@ impl StructuredLoop {
     }
 
     pub(super) fn forward_edges(self) -> bool {
-        self.kind == LoopKind::ForwardEdges
+        match self.kind {
+            LoopKind::ForwardEdges => true,
+            #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+            LoopKind::PagedSseWrite => true,
+            _ => false,
+        }
     }
 
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
@@ -380,6 +387,83 @@ impl StructuredLoop {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn select_paged_sse_write(unit: &super::Unit) -> Option<Self> {
+        use crate::x86::{
+            context::Segment,
+            instruction::{VectorMask, VectorOperand},
+        };
+        if !unit.context.is_long64() {
+            return None;
+        }
+        let graph = super::loop_cfg::select_paged_sse_write_graph(&unit.instructions, |body| {
+            let mut vector_load = false;
+            let mut compare = false;
+            let mut mask = false;
+            let mut dword_store = false;
+            body.iter().all(|instruction| match instruction.operation {
+                Operation::Vector(VectorInstruction::Move {
+                    operand:
+                        VectorOperand::Memory(Address {
+                            segment: Segment::Ds,
+                            ..
+                        }),
+                    bytes: 16,
+                    aligned: false,
+                    store: false,
+                    ..
+                }) => {
+                    vector_load = true;
+                    true
+                }
+                Operation::Float(float)
+                    if super::float::is_cmpnleps(float)
+                        && matches!(float.src, Location::Register(_)) =>
+                {
+                    compare = true;
+                    true
+                }
+                Operation::Vector(VectorInstruction::Mask {
+                    kind: VectorMask::Singles,
+                    ..
+                }) => {
+                    mask = true;
+                    true
+                }
+                Operation::Store {
+                    width: Width::W32,
+                    address:
+                        Address {
+                            segment: Segment::Ds,
+                            ..
+                        },
+                    ..
+                } => {
+                    dword_store = true;
+                    true
+                }
+                Operation::Load { .. } => {
+                    paged_read_width(instruction.operation, None) == Some(Width::W32)
+                }
+                Operation::Jump { target } | Operation::Jcc { target, .. } => {
+                    crate::memory::canonical48(target)
+                }
+                op => inside_register_body(op),
+            }) && vector_load
+                && compare
+                && mask
+                && dword_store
+        })?;
+        let mut body = Self::forward(graph).without_dword_projection();
+        body.kind = LoopKind::PagedSseWrite;
+        body.within_paged_fetch(unit)
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn paged_sse_write(self) -> bool {
+        self.kind == LoopKind::PagedSseWrite
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     pub(super) fn with_paged_read_span(mut self, unit: &super::Unit) -> Option<Self> {
         if self.kind != LoopKind::PagedReads || self.paged_read_widths(unit) != [true, false] {
             return None;
@@ -559,6 +643,8 @@ impl StructuredLoop {
                 unreachable!("paged reads use guarded admission")
             }
             LoopKind::ForwardEdges => unreachable!("forward edges use graph admission"),
+            #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+            LoopKind::PagedSseWrite => unreachable!("paged SSE writes use graph admission"),
         };
         Self::select_straight_body(instructions, kind, inside, |body| match kind {
             LoopKind::Registers => true,
@@ -577,6 +663,8 @@ impl StructuredLoop {
                 unreachable!("paged reads use guarded admission")
             }
             LoopKind::ForwardEdges => unreachable!("forward edges use graph admission"),
+            #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+            LoopKind::PagedSseWrite => unreachable!("paged SSE writes use graph admission"),
         })
     }
 
@@ -1326,28 +1414,35 @@ impl Emitter {
         #[cfg(not(all(not(feature = "parallel"), target_arch = "wasm32")))]
         let proved_integer_lap = false;
         let commit_lap = outlined_float || proved_integer_lap;
-        let (predicates, read_prefix_len) =
-            if !cfg!(feature = "parallel") && self.loop_gates_prechecked && body.forward_edges() {
-                // A faulting or refused read settles its already-executed prefix.
-                let read_prefix_len = if self.guarded_paged_lap
-                    || (self.context.mode() == Mode::Protected && self.context.code32())
-                {
-                    super::loop_cfg::read_prefix_len(instructions, order)
-                } else {
-                    0
-                };
-                (
-                    super::loop_cfg::compare_predicates(
-                        instructions,
-                        order,
-                        &self.context,
-                        !self.paged,
-                    ),
-                    read_prefix_len,
-                )
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        let paged_sse_write = body.paged_sse_write();
+        #[cfg(not(all(not(feature = "parallel"), target_arch = "wasm32")))]
+        let paged_sse_write = false;
+        let (predicates, read_prefix_len) = if !cfg!(feature = "parallel")
+            && self.loop_gates_prechecked
+            && body.forward_edges()
+            && !paged_sse_write
+        {
+            // A faulting or refused read settles its already-executed prefix.
+            let read_prefix_len = if self.guarded_paged_lap
+                || (self.context.mode() == Mode::Protected && self.context.code32())
+            {
+                super::loop_cfg::read_prefix_len(instructions, order)
             } else {
-                (Vec::new(), 0)
+                0
             };
+            (
+                super::loop_cfg::compare_predicates(
+                    instructions,
+                    order,
+                    &self.context,
+                    !self.paged,
+                ),
+                read_prefix_len,
+            )
+        } else {
+            (Vec::new(), 0)
+        };
         if body.forward_edges() {
             // Each later cloned instruction has an enclosing forward label.
             for _ in 1..order.len() {

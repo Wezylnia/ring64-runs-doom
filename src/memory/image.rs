@@ -421,6 +421,11 @@ impl Image {
         Some(())
     }
 
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(crate) fn physical_direct_write_ready(&self, address: u64, width: u32) -> bool {
+        self.physical && self.writable_direct_mapping(address, width).is_some()
+    }
+
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
     fn writable_direct_mapping(&self, address: u64, width: u32) -> Option<(&Mapping, u64)> {
         let mapping = &self.mappings[self.locate_index(address)?];

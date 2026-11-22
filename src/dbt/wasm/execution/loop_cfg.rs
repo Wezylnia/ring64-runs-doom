@@ -42,6 +42,8 @@ enum Layout {
     Natural,
     Rotated,
     NaturalReadShifts,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    TwoBackedges,
 }
 
 pub(super) fn select(instructions: &[Instruction]) -> Option<(LoopOrder, u32)> {
@@ -71,6 +73,14 @@ pub(super) fn select_paged_write_graph(
     admit: impl Fn(&[Instruction]) -> bool,
 ) -> Option<(LoopOrder, u32)> {
     select_layout_filtered(instructions, Layout::Natural, instructions.len(), admit)
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+pub(super) fn select_paged_sse_write_graph(
+    instructions: &[Instruction],
+    admit: impl Fn(&[Instruction]) -> bool,
+) -> Option<(LoopOrder, u32)> {
+    select_layout_filtered(instructions, Layout::TwoBackedges, 64, admit)
 }
 
 pub(super) fn select_natural_read_shifts(instructions: &[Instruction]) -> Option<(LoopOrder, u32)> {
@@ -750,6 +760,18 @@ fn iteration_bound(instructions: &[Instruction], order: LoopOrder, layout: Layou
         costs[position as usize] = (cost + 1, reaches_head, head_via_prefix);
     }
     let (cost, repeats, head_via_prefix) = costs[0];
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    if layout == Layout::TwoBackedges {
+        let branches_back = |operation| branch_target(operation) == Some(first_pc);
+        let bypass = source[..source.len() - 1]
+            .iter()
+            .filter(|i| matches!(i.operation, Operation::Jcc { .. }) && branches_back(i.operation))
+            .count();
+        return (repeats
+            && bypass == 1
+            && matches!(source.last()?.operation, Operation::Jump { target } if target == first_pc))
+        .then_some(cost);
+    }
     (repeats
         && if rotated {
             head_via_prefix
@@ -775,6 +797,13 @@ fn reads_memory(operation: Operation) -> bool {
 }
 
 fn inside_body(operation: Operation, layout: Layout) -> bool {
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    if layout == Layout::TwoBackedges
+        && matches!(operation, Operation::Vector(_) | Operation::Float(_))
+    {
+        // The paged SSE selector owns the narrower operand and operation checks.
+        return true;
+    }
     matches!(
         operation,
         Operation::Alu { .. }
