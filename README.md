@@ -7,7 +7,7 @@
 
 an x86 and x86-64 cpu emulator for JavaScript runtimes
 
-[ring64.fatihguzel.dev](https://ring64.fatihguzel.dev)
+[ring64.fatihguzel.dev](https://ring64.fatihguzel.dev) · [docs](https://ring64.fatihguzel.dev/docs/)
 
 ## install
 
@@ -50,4 +50,17 @@ try {
 }
 ```
 
-[docs and parallel examples](https://ring64.fatihguzel.dev/docs/)
+## parallel
+
+run each vcpu on its own worker with shared guest memory. pass a machine created by `createMachine` and the guest address where each vcpu should stop.
+
+```ts
+import type { Machine } from 'ring64/parallel';
+
+export function runTogether(machine: Machine, stop: bigint) {
+  const options = { budget: 1_000n, stop };
+  return Promise.all(machine.cpus.map((cpu) => cpu.run(options)));
+}
+```
+
+[complete parallel example](https://ring64.fatihguzel.dev/docs/#parallel-example)

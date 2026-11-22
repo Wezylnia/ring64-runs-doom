@@ -74,8 +74,13 @@ test(
     );
     assert.equal(installedManifest.license, 'MIT');
     const quickstart = await readFile(resolve(root, 'website/docs/examples/add.ts'), 'utf8');
+    const parallel = await readFile(
+      resolve(root, 'website/docs/examples/api/run-together.ts'),
+      'utf8',
+    );
     const readme = await readFile(resolve(root, 'README.md'), 'utf8');
-    assert.ok(readme.includes('```ts\n' + quickstart.trimEnd() + '\n```'));
+    assert.ok(readme.includes('```ts\n' + quickstart.trimEnd() + '\n```'), 'README quickstart');
+    assert.ok(readme.includes('```ts\n' + parallel.trimEnd() + '\n```'), 'README parallel example');
     await writeFile(join(project, 'add.ts'), quickstart);
     const quickstartResult = await exec(
       process.execPath,
