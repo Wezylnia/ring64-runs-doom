@@ -747,6 +747,47 @@ export class Cpu {
     }
   }
 
+  async #compileFlatTrace(
+    artifact: Artifact,
+    pc: bigint,
+    maxArtifactBytes: number,
+    resources: Pick<RunResult['resources'], 'compilations' | 'generatedBytes'>,
+    timings: RunResult['timings'],
+  ): Promise<{ module: WebAssembly.Module; bytes: number } | undefined> {
+    if (maxArtifactBytes <= 0 || resources.compilations >= this.#limits.maxTranslationsPerRun)
+      return;
+    const engine = this.#engine;
+    const started = performance.now();
+    resources.compilations++;
+    const limits = { ...this.#limits, maxArtifactBytes };
+    const { entries, dependencies, contextVersion } = artifact.metadata;
+    const output = engine.compile(pc, limits, entries, 'flat-trace');
+    timings.translationMs += performance.now() - started;
+    if (!output) return;
+    resources.generatedBytes += output.bytes.length;
+    try {
+      if (
+        output.metadata.entries.length !== entries.length ||
+        output.metadata.entries.some((point, index) => point !== entries[index]) ||
+        output.metadata.dependencies.length !== dependencies.length ||
+        output.metadata.dependencies.some(
+          ({ start, length }, index) =>
+            start !== dependencies[index]!.start || length !== dependencies[index]!.length,
+        ) ||
+        output.metadata.contextVersion !== contextVersion
+      )
+        return;
+      const began = performance.now();
+      const module = await WebAssembly.compile(output.bytes);
+      timings.browserCompileMs += performance.now() - began;
+      return { module, bytes: output.bytes.length };
+    } finally {
+      // The trace clone has the installed owner's exact entries and source
+      // context. Its execution uses that owner, which keeps source authority.
+      engine.release(output.metadata.owner);
+    }
+  }
+
   async #tryRegion(
     region:
       | RegionTrace
@@ -820,6 +861,7 @@ export class Cpu {
   #hasLinearCallOwner = false;
   // Short frames can interrupt capture. An owner pays for one attempt per lifetime.
   readonly #sampledPagedCorridors = new WeakSet<Artifact>();
+  #flatTraceReady = false;
 
   async run(options: RunOptions): Promise<RunResult> {
     const run = this[BEGIN_RUN](options);
@@ -834,8 +876,23 @@ export class Cpu {
       admissionRestarts++;
       return true;
     };
-    const finish = (reason: string) =>
-      this[FINISH_RUN](run, reason, remaining, remainingRepeatBudget, remainingDeliveryBudget);
+    let rememberFlatPressure = false;
+    const finish = (reason: string) => {
+      const result = this[FINISH_RUN](
+        run,
+        reason,
+        remaining,
+        remainingRepeatBudget,
+        remainingDeliveryBudget,
+      );
+      const entries = result.resources.nativeEntries;
+      this.#flatTraceReady =
+        rememberFlatPressure &&
+        (reason === 'stop' || reason === 'budget') &&
+        entries >= 64 &&
+        result.retired < 2n * BigInt(entries) * BigInt(this.#limits.maxInstructions);
+      return result;
+    };
     try {
       const engine = this.#engine;
       if (deliveryBudget !== undefined) engine.configureDelivery(true);
@@ -866,11 +923,16 @@ export class Cpu {
       let dispatchedPc: bigint | undefined;
       const pagedRegionsSupported =
         deliveryBudget === undefined && !queuedInterrupts && engine.supportsRegionCompilation;
+      const linearRegionsSupported =
+        deliveryBudget === undefined && !queuedInterrupts && engine.supportsLinearRegionCompilation;
+      rememberFlatPressure = linearRegionsSupported && engine.supportsFlatRegionTrace;
+      // Up to four temporary owners and one promotion can require compilation.
+      const flatTracing =
+        rememberFlatPressure && this.#flatTraceReady && this.#limits.maxTranslationsPerRun >= 6;
       let region: RegionTrace | undefined;
       let corridor =
-        pagedRegionsSupported &&
         this.#limits.maxInstructions >= 32 &&
-        engine.supportsPagedRegionTrace
+        (flatTracing || (pagedRegionsSupported && engine.supportsPagedRegionTrace))
           ? new PagedCorridor()
           : undefined;
       let capture:
@@ -880,6 +942,7 @@ export class Cpu {
             retired: bigint;
             entrances: Set<bigint>;
             aliases: Map<Artifact, GeneratedRun>;
+            traceBytes: number;
           }
         | undefined;
       const abortCapture = () => {
@@ -887,8 +950,6 @@ export class Cpu {
         cancelPagedTrace = undefined;
         capture = undefined;
       };
-      const linearRegionsSupported =
-        deliveryBudget === undefined && !queuedInterrupts && engine.supportsLinearRegionCompilation;
       let sampling = pagedRegionsSupported
         ? 'paged'
         : linearRegionsSupported && this.#hasLinearCallOwner
@@ -966,6 +1027,7 @@ export class Cpu {
           refusedEpoch = epoch;
         }
         if (!entry) {
+          if (flatTracing && capture) abortCapture();
           const probe = engine.probe(pc);
           if (probe === 'paging-restart') {
             resources.pagingRestarts = (resources.pagingRestarts ?? 0) + 1;
@@ -1037,14 +1099,52 @@ export class Cpu {
         if (capture) {
           const artifact = entry.artifact;
           let alias = capture.aliases.get(artifact);
-          const module =
-            alias === undefined && capture.aliases.size < 8
+          let module =
+            !flatTracing && alias === undefined && capture.aliases.size < 8
               ? this.#cache.traceModule(artifact)
               : undefined;
+          if (
+            flatTracing &&
+            !boundaryObserved &&
+            !alias &&
+            capture.aliases.size < 4 &&
+            pc >> 12n === capture.page &&
+            engine.contextVersion() === capture.version &&
+            eventKind === 'ready'
+          ) {
+            const cache = this.#cache.resources();
+            if (cache.cachedArtifacts + capture.aliases.size < this.#limits.maxCachedArtifacts) {
+              const maxBytes = Math.min(
+                this.#limits.maxArtifactBytes,
+                96 * 1024 - capture.traceBytes,
+                this.#limits.maxCachedBytes - cache.cachedBytes - capture.traceBytes,
+              );
+              const started = performance.now();
+              const traced = await this.#compileFlatTrace(
+                artifact,
+                pc,
+                maxBytes,
+                resources,
+                timings,
+              );
+              executionBegan += performance.now() - started;
+              if (traced) {
+                capture.traceBytes += traced.bytes;
+                module = traced.module;
+              }
+              if (!engine.valid(artifact.metadata.owner)) {
+                abortCapture();
+                this.#cache.remove(artifact);
+                if (!restartAdmission()) return finish('resource-limit');
+                continue execution;
+              }
+            }
+          }
           if (
             pc >> 12n !== capture.page ||
             engine.contextVersion() !== capture.version ||
             (!alias && !module) ||
+            (flatTracing && boundaryObserved) ||
             eventKind !== 'ready'
           ) {
             abortCapture();
@@ -1159,6 +1259,7 @@ export class Cpu {
               [...aliases.keys()].every((artifact) => engine.valid(artifact.metadata.owner))
             ) {
               entrances.add(current.rip);
+              aliases.clear();
               await this.#tryRegion({ boundaryObserved, points, entrances }, resources, timings);
             }
           }
@@ -1168,7 +1269,7 @@ export class Cpu {
           resources.compilations === 0 &&
           remaining >= 2048n &&
           !this.#sampledPagedCorridors.has(entry.artifact) &&
-          this.#cache.traceModule(entry.artifact) &&
+          (flatTracing || this.#cache.traceModule(entry.artifact)) &&
           corridor.sample(pc, current.rip, entry.artifact)
         ) {
           corridor = undefined;
@@ -1189,6 +1290,7 @@ export class Cpu {
               retired: 0n,
               entrances: new Set(),
               aliases: new Map(),
+              traceBytes: 0,
             };
           }
         }
@@ -1203,7 +1305,7 @@ export class Cpu {
               sampling = undefined;
               if (!capture) await this.#tryRegion(region, resources, timings);
             }
-          } else if (resources.dispatches >= 16) {
+          } else if (!capture && resources.dispatches >= 16) {
             if (boundaryObserved || this.#sampledLinearOwners.has(entry.artifact)) {
               sampling = undefined;
             } else if (entry.artifact.metadata.instructionCount >= this.#limits.maxInstructions) {

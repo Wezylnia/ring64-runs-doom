@@ -1,5 +1,7 @@
 // Group source files by responsibility while keeping the emitter modules in one scope.
 mod artifact;
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+pub(crate) use artifact::emit_flat_trace;
 #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
 pub(crate) use artifact::emit_mmio_profile;
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -305,6 +307,7 @@ struct Emitter {
     software_event: Option<u32>,
     system_flags: Option<u32>,
     debug_step: Option<u32>,
+    flat_retire: Option<u32>,
     debug_register: Option<u32>,
     paging_control: Option<u32>,
     invpcid: Option<u32>,

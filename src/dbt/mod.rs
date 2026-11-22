@@ -29,6 +29,8 @@ pub(crate) enum EntrySelection<'a> {
     Discover(&'a [u64]),
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
     Sampled(&'a [u64]),
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    Traced(&'a [u64]),
 }
 
 #[derive(Debug)]
@@ -133,6 +135,8 @@ fn compile_profile(
         paged_copy_spans: _paged_copy_spans,
         entries,
     } = profile;
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let flat_trace = matches!(&entries, EntrySelection::Traced(_));
     let unit = discovery::discover_with_entries(
         image,
         context,
@@ -151,7 +155,13 @@ fn compile_profile(
     #[cfg(not(all(not(feature = "parallel"), any(target_arch = "wasm32", test))))]
     let emit = wasm::emit_profile;
     let max_artifact_bytes = limits.max_artifact_bytes as usize;
-    let checked = || emit(&unit, observed, paging.is_some(), max_artifact_bytes);
+    let checked = || {
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if flat_trace {
+            return wasm::emit_flat_trace(&unit, max_artifact_bytes);
+        }
+        emit(&unit, observed, paging.is_some(), max_artifact_bytes)
+    };
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let bytes = if _paged_vector_copy && paging.is_some() && !image.has_mmio() {
         wasm::emit_paged_vector_copy(&unit, max_artifact_bytes, _paged_copy_spans)

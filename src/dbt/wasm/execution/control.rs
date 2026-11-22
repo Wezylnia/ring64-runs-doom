@@ -74,12 +74,8 @@ impl Emitter {
     }
 
     pub(super) fn commit_runtime_target(&mut self, exit_depth: u32) {
-        self.op(Op::LocalGet(RHS))
-            .op(Op::LocalSet(RIP))
-            .op(Op::LocalGet(REMAINING))
-            .op(Op::I64Const(1))
-            .op(Op::I64Sub)
-            .op(Op::LocalSet(REMAINING));
+        self.op(Op::LocalGet(RHS)).op(Op::LocalSet(RIP));
+        self.retire_instructions(1);
         if self.finish_instruction(exit_depth) {
             return;
         }
@@ -314,6 +310,13 @@ impl Emitter {
     }
 
     pub(super) fn retire_instructions(&mut self, count: u32) {
+        // Bulk paths cannot report individual PCs. An incomplete capture is discarded.
+        if count == 1
+            && let Some(retire) = self.flat_retire
+        {
+            self.op(Op::I64Const(self.current_pc as i64))
+                .op(Op::Call(retire));
+        }
         self.op(Op::LocalGet(REMAINING))
             .op(Op::I64Const(i64::from(count)))
             .op(Op::I64Sub)

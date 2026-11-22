@@ -62,6 +62,8 @@ pub(super) fn discover_with_entries(
         EntrySelection::Discover(seeds) => (seeds, false),
         #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
         EntrySelection::Sampled(starts) => (starts, true),
+        #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+        EntrySelection::Traced(starts) => (starts, true),
     };
     let mut pending = VecDeque::from([entry]);
     // Linear traces record already executed paths. Start all those entries

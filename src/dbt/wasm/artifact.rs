@@ -276,7 +276,7 @@ fn emit_paged_profile(
             Some(body),
             false,
             max_artifact_bytes,
-            (None, copy_prefix),
+            (None, copy_prefix, false),
         );
         (bytes.len() <= max_artifact_bytes).then_some(bytes)
     };
@@ -371,7 +371,7 @@ pub(crate) fn emit_paged_vector_copy(
             windowed.or(body),
             false,
             max_artifact_bytes,
-            (additional, copy_prefix),
+            (additional, copy_prefix, false),
         );
         if bytes.len() <= max_artifact_bytes {
             return Some(bytes);
@@ -414,6 +414,19 @@ pub(crate) fn emit_mmio_profile(
     )
 }
 
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+pub(crate) fn emit_flat_trace(unit: &Unit, max_artifact_bytes: usize) -> Vec<u8> {
+    emit_placement_with_copy(
+        unit,
+        false,
+        (false, false),
+        None,
+        false,
+        max_artifact_bytes,
+        (None, false, true),
+    )
+}
+
 fn emit_placement(
     unit: &Unit,
     observed: bool,
@@ -429,7 +442,7 @@ fn emit_placement(
         loop_body,
         guard_reads,
         max_artifact_bytes,
-        (None, false),
+        (None, false, false),
     )
 }
 
@@ -440,7 +453,7 @@ fn emit_placement_with_copy(
     loop_body: Option<StructuredLoop>,
     guard_reads: bool,
     max_artifact_bytes: usize,
-    (_additional_copy, _copy_prefix): (Option<StructuredLoop>, bool),
+    (_additional_copy, _copy_prefix, flat_trace): (Option<StructuredLoop>, bool, bool),
 ) -> Vec<u8> {
     let reads = if cfg!(all(feature = "parallel", target_arch = "wasm32")) {
         let indexed = !observed
@@ -481,6 +494,7 @@ fn emit_placement_with_copy(
         GuardedReads::Inline
     };
     let optional = OptionalLowering {
+        flat_trace,
         extra_spans: true,
         inline_f32_compares: true,
         inline_f32_sub: true,
@@ -489,7 +503,7 @@ fn emit_placement_with_copy(
         #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
         parallel_native_lock_memo: max_artifact_bytes >= 256 * 1024,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-        x87_register_pairs: true,
+        x87_register_pairs: !flat_trace,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_register_prefixes: true,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -499,7 +513,7 @@ fn emit_placement_with_copy(
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         copy_prefix: _copy_prefix,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-        scalar_copy_prefix: _copy_prefix || (!paged && !observed && !mmio),
+        scalar_copy_prefix: !flat_trace && (_copy_prefix || (!paged && !observed && !mmio)),
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         linear_recurrence: max_artifact_bytes >= 64 * 1024,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -608,6 +622,7 @@ enum GuardedReads {
 
 #[derive(Clone, Copy)]
 struct OptionalLowering {
+    flat_trace: bool,
     extra_spans: bool,
     inline_f32_compares: bool,
     inline_f32_sub: bool,
@@ -1628,6 +1643,10 @@ fn emit_body(
             });
     let debug_begin = debug_begin_type.map(|index| import_function("debug_begin", index));
     let debug_step = debug_type.map(|index| import_function("debug_finish", index));
+    let flat_retire = optional.flat_trace.then(|| {
+        let signature = add_function_type(&mut types, [ValType::I64], []);
+        import_function("flat_region_retire", signature)
+    });
     let external_step = external_step_type.map(|index| import_function("external_step", index));
     let halt = halt_type.map(|index| import_function("halt", index));
     let vector_access_reason = if vector_banks.loads || vector_store.is_some() || store_mxcsr_used {
@@ -2524,6 +2543,7 @@ fn emit_body(
         software_event,
         system_flags,
         debug_step,
+        flat_retire,
         debug_register,
         paging_control,
         invpcid,

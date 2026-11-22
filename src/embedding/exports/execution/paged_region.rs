@@ -8,22 +8,30 @@ const MAX_OBSERVATIONS: u16 = 2048;
 
 pub(super) struct Trace {
     page: u64,
-    paging: State,
+    paging: Option<State>,
     context_version: u64,
     samples: u16,
     counts: [u16; 4096],
 }
 
-fn trace_profile(core: &Core) -> Option<State> {
-    core.paging.filter(|paging| {
-        paging.cr0 & (1 << 31) != 0
-            && core.context.is_long64()
-            && !core.io_present
-            && !core.image.has_mmio()
-    })
+fn trace_profile(core: &Core) -> Option<Option<State>> {
+    if core.io_present || core.image.has_mmio() {
+        return None;
+    }
+    match core.paging {
+        Some(paging) if paging.cr0 & (1 << 31) != 0 && core.context.is_long64() => {
+            Some(Some(paging))
+        }
+        None if core.context.mode() == crate::x86::context::Mode::Protected
+            && core.context.nonwrapping_code32_fetch(0, 1) == Some(0) =>
+        {
+            Some(None)
+        }
+        _ => None,
+    }
 }
 
-fn traceable(core: &Core) -> Option<State> {
+fn traceable(core: &Core) -> Option<Option<State>> {
     let paging = trace_profile(core)?;
     let state = unsafe { &*core.state.get() };
     (!core.image.active_changed()
@@ -108,19 +116,28 @@ pub extern "C" fn core_paged_region_debug_finish(
     decision: u32,
 ) -> i32 {
     let reason = paging::core_paged_debug_finish(pc, resume, completed, flags, decision);
+    record_trace(pc, completed, reason == CONTINUE_ACTIVE);
+    reason
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn core_flat_region_retire(pc: u64) {
+    record_trace(pc, 1, true);
+}
+
+fn record_trace(pc: u64, completed: u32, continuing: bool) {
     BRIDGE.with_borrow_mut(|bridge| {
         let core = bridge.core.as_mut().unwrap();
         let Some(trace) = core.paged_region_trace.as_mut() else {
             return;
         };
-        if reason != CONTINUE_ACTIVE || trace.page != pc & PAGE_MASK {
+        if !continuing || trace.page != pc & PAGE_MASK || core.image.active_changed() {
             core.paged_region_trace = None;
         } else if completed != 0 && trace.samples < MAX_OBSERVATIONS {
             trace.samples += 1;
             trace.counts[(pc & !PAGE_MASK) as usize] += 1;
         }
     });
-    reason
 }
 
 #[unsafe(no_mangle)]
@@ -141,8 +158,43 @@ pub extern "C" fn core_compile_with_paged_region_points(
     max_source_bytes: u32,
     max_artifact_bytes: u32,
 ) -> i32 {
+    compile_region_points(
+        pc,
+        max_instructions,
+        max_source_bytes,
+        max_artifact_bytes,
+        false,
+    )
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn core_compile_flat_region_trace(
+    pc: u64,
+    max_instructions: u32,
+    max_source_bytes: u32,
+    max_artifact_bytes: u32,
+) -> i32 {
+    compile_region_points(
+        pc,
+        max_instructions,
+        max_source_bytes,
+        max_artifact_bytes,
+        true,
+    )
+}
+
+fn compile_region_points(
+    pc: u64,
+    max_instructions: u32,
+    max_source_bytes: u32,
+    max_artifact_bytes: u32,
+    tracing: bool,
+) -> i32 {
     let Some(points) = BRIDGE.with_borrow(|bridge| {
-        traceable(bridge.core.as_ref()?)?;
+        let paging = traceable(bridge.core.as_ref()?)?;
+        if tracing && paging.is_some() {
+            return None;
+        }
         let count = bridge.input.len() / 8;
         if !bridge.input.len().is_multiple_of(8)
             || count == 0
@@ -174,6 +226,10 @@ pub extern "C" fn core_compile_with_paged_region_points(
         max_artifact_bytes,
         true,
         true,
-        EntrySelection::Sampled(&points),
+        if tracing {
+            EntrySelection::Traced(&points)
+        } else {
+            EntrySelection::Sampled(&points)
+        },
     )
 }

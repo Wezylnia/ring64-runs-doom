@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import type { RunResult } from '../../../../src/index.js';
+import { createCpu, type RunResult } from '../../../../src/index.js';
 import { Core } from '../../../../src/wasm/core.js';
 import { PC, initial, usingPaged } from '../../../../../tests/execution/paging/fixture.js';
+import { protectedSnapshot } from '../../../../../tests/support/context.js';
+import { LIMITS, hex } from '../../../../../tests/support/fixture.js';
 import { compiler } from './fixture.js';
 
 function fragmentedLoop() {
@@ -179,5 +181,92 @@ test('a short paged program never begins a region trace', async () => {
     });
   } finally {
     Core.prototype.beginPagedRegionTrace = begin;
+  }
+});
+
+test('flat region taps preserve the run budget and obey the artifact cache cap', async () => {
+  const { code, stop } = fragmentedLoop();
+  const bytes = hex(code);
+  const options = {
+    compiler,
+    entry: PC,
+    context: protectedSnapshot(),
+    memory: {
+      backings: [{ id: 'code', bytes }],
+      mappings: [
+        {
+          backing: 'code',
+          base: PC,
+          length: bytes.length,
+          offset: 0,
+          permissions: { read: true, write: false, execute: true },
+        },
+      ],
+    },
+    memoryLimits: { maxBackings: 1, maxMappings: 1, maxBackingBytes: bytes.length },
+  };
+  const limits = { ...LIMITS, maxInstructions: 32 };
+  const finish = Core.prototype.finishPagedRegionTrace;
+  const instantiate = Core.prototype.instantiatePagedRegionTrace;
+  let completed = 0;
+  let clones = 0;
+  Core.prototype.finishPagedRegionTrace = function (maxPoints) {
+    const trace = finish.call(this, maxPoints);
+    if (maxPoints > 0) {
+      assert.equal(trace.retired, 2048);
+      completed++;
+    }
+    return trace;
+  };
+  Core.prototype.instantiatePagedRegionTrace = function (...args) {
+    const imports = WebAssembly.Module.imports(args[0]);
+    assert.ok(imports.some(({ name }) => name === 'flat_region_retire'));
+    assert.ok(imports.every(({ name }) => name !== 'debug_finish'));
+    clones++;
+    return instantiate.apply(this, args);
+  };
+  const input = initial(PC, { 0: 0n, 1: 512n, 2: 0n, 3: 0n });
+  const run = { stop, budget: 20_000n };
+  const cpu = await createCpu({ ...options, limits });
+  try {
+    cpu.setState(input);
+    const cold = await cpu.run(run);
+    assert.equal(cold.reason, 'stop');
+    assert.equal(clones, 0);
+
+    cpu.setState(input);
+    const partial = await cpu.run({ ...run, budget: 4096n });
+    assert.equal(partial.reason, 'budget');
+    assert.equal(partial.retired, 4096n);
+    assert.equal(completed, 1);
+    assert.ok(clones > 0 && clones <= 4);
+
+    const resumed = await cpu.run(run);
+    assert.equal(resumed.reason, 'stop');
+    assert.equal(partial.retired + resumed.retired, cold.retired);
+    assert.deepEqual(resumed.state, cold.state);
+
+    const capped = await createCpu({
+      ...options,
+      limits: { ...limits, maxCachedArtifacts: cold.resources.cachedArtifacts },
+    });
+    try {
+      const priorClones = clones;
+      capped.setState(input);
+      assert.deepEqual((await capped.run(run)).state, cold.state);
+      capped.setState(input);
+      const denied = await capped.run(run);
+      assert.equal(denied.reason, 'stop');
+      assert.equal(denied.retired, cold.retired);
+      assert.deepEqual(denied.state, cold.state);
+      assert.equal(clones, priorClones);
+      assert.equal(completed, 1);
+    } finally {
+      capped.dispose();
+    }
+  } finally {
+    cpu.dispose();
+    Core.prototype.finishPagedRegionTrace = finish;
+    Core.prototype.instantiatePagedRegionTrace = instantiate;
   }
 });

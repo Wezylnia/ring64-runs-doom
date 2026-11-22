@@ -1174,6 +1174,15 @@ export class Core {
     );
   }
 
+  get supportsFlatRegionTrace(): boolean {
+    return (
+      !this.isPaged &&
+      this.#exports.core_supports_paged_region_trace?.() === 1 &&
+      typeof this.#exports.core_compile_flat_region_trace === 'function' &&
+      typeof this.#exports.core_flat_region_retire === 'function'
+    );
+  }
+
   beginPagedRegionTrace(pc: bigint): boolean {
     return this.#exports.core_begin_paged_region_trace?.(pc) === 1;
   }
@@ -1198,10 +1207,16 @@ export class Core {
   }
 
   instantiatePagedRegionTrace(module: WebAssembly.Module, observed: boolean): GeneratedRun {
+    const env = this.artifactImports(observed);
+    if (!this.isPaged) {
+      const retire = this.#exports.core_flat_region_retire;
+      if (!retire) throw new Error('core does not support flat region tracing');
+      env.flat_region_retire = retire;
+      return instantiateArtifact(module, env);
+    }
     const finish = this.#exports.core_paged_region_debug_finish;
     const guard = this.#exports.core_paged_region_checked_guard;
     if (!finish || !guard) throw new Error('core does not support paged region tracing');
-    const env = this.artifactImports(observed);
     env.debug_finish = finish;
     for (const name of [
       'paged_loop_guard',
@@ -1230,7 +1245,7 @@ export class Core {
     pc: bigint,
     limits: CompileLimits,
     seeds?: readonly bigint[],
-    regionPoints = false,
+    regionPoints: boolean | 'flat-trace' = false,
   ): { bytes: Uint8Array<ArrayBuffer>; metadata: CompiledUnitMetadata } | undefined {
     let compile = this.#exports.core_compile;
     if (this.isPaged && this.#exports.core_paged_loop_write_block) {
@@ -1239,11 +1254,14 @@ export class Core {
         compile = this.#exports.core_compile_with_paged_copy_spans ?? compile;
     }
     if (seeds?.length) {
-      const seeded = regionPoints
-        ? this.#exports.core_compile_with_paged_region_points
-        : this.isPaged
-          ? this.#exports.core_compile_with_paged_entries
-          : this.#exports.core_compile_with_linear_entries;
+      const seeded =
+        regionPoints === 'flat-trace'
+          ? this.#exports.core_compile_flat_region_trace
+          : regionPoints
+            ? this.#exports.core_compile_with_paged_region_points
+            : this.isPaged
+              ? this.#exports.core_compile_with_paged_entries
+              : this.#exports.core_compile_with_linear_entries;
       if (!seeded) return undefined;
       const length = seeds.length * 8;
       const pointer = this.#exports.core_input(length) >>> 0;

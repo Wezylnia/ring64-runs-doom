@@ -131,6 +131,7 @@ export type CoreExports = WebAssembly.Exports & {
   core_supports_paged_region_trace?(): number;
   core_finish_paged_region_trace?(maxPoints: number): number;
   core_paged_region_debug_finish?: CoreExports['core_debug_finish'];
+  core_flat_region_retire?(pc: bigint): void;
   core_paged_region_checked_guard?: CoreExports['core_paged_loop_guard'];
   core_paged_loop_guard?(pc: bigint, bytes: number, flags: bigint, shadow: number): number;
   core_paged_walk_guard?(pc: bigint, bytes: number, flags: bigint, shadow: number): number;
@@ -263,6 +264,7 @@ export type CoreExports = WebAssembly.Exports & {
   core_compile_with_paged_copy_spans?: CoreExports['core_compile'];
   core_compile_with_paged_entries?: CoreExports['core_compile'];
   core_compile_with_paged_region_points?: CoreExports['core_compile'];
+  core_compile_flat_region_trace?: CoreExports['core_compile'];
   core_compile_with_linear_entries?: CoreExports['core_compile'];
   core_supports_linear_entries?(): number;
   core_paged_loop_write_block?(address: bigint, valuePointer: number): number;
