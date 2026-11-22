@@ -42,6 +42,8 @@ pub const PHYSICAL_MEMORY: i32 = 25;
 pub const DEVICE_NOT_AVAILABLE: i32 = 27;
 pub const ALIGNMENT_CHECK: i32 = 28;
 pub const SCALAR_STATE_SIZE: usize = 176;
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+pub(crate) const COPY_SCALAR: u32 = 1 << 31;
 
 pub const REASONS: [&str; 29] = [
     "dispatch",

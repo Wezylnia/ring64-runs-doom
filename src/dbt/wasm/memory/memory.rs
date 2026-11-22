@@ -965,7 +965,7 @@ impl Emitter {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    fn direct_scalar_load(&mut self, width: Width, memory: MemArg) {
+    pub(super) fn direct_scalar_load(&mut self, width: Width, memory: MemArg) {
         self.op(match width {
             Width::W8 => Op::I64Load8U(memory),
             Width::W16 => Op::I64Load16U(memory),
@@ -976,7 +976,7 @@ impl Emitter {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    fn direct_scalar_store(&mut self, width: Width, memory: MemArg) {
+    pub(super) fn direct_scalar_store(&mut self, width: Width, memory: MemArg) {
         self.op(match width {
             Width::W8 => Op::I64Store8(memory),
             Width::W16 => Op::I64Store16(memory),

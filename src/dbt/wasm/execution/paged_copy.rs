@@ -3,7 +3,7 @@ use super::{
 };
 use crate::x86::context::Segment;
 use crate::x86::instruction::{
-    Address, AddressBase, Alu, DataOperand, Instruction, Operation, RegisterView,
+    Address, AddressBase, Alu, DataOperand, Instruction, Location, Operation, RegisterView,
     VectorInstruction, VectorOperand, Width,
 };
 use wasm_encoder::{BlockType, Instruction as Op, MemArg};
@@ -23,6 +23,176 @@ struct DestinationAdjustment {
     register: RegisterView,
     address: Address,
     advance: u64,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CopyRegister {
+    General(RegisterView, Width),
+    Vector(u8),
+}
+
+#[derive(Clone, Copy)]
+struct ScalarTransfer {
+    register: CopyRegister,
+    width: Width,
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct ScalarCopyGroup {
+    source: Address,
+    destination: Address,
+    transfers: [Option<ScalarTransfer>; 4],
+    pub(super) instructions: usize,
+    width: u32,
+    end: u64,
+}
+
+fn separate_copy_register(register: RegisterView, address: Address) -> bool {
+    address.base != AddressBase::Register(register.bank)
+        && address
+            .index
+            .is_none_or(|index| index.register != register.bank)
+}
+
+fn follows_address(base: Address, address: Address, offset: u32) -> bool {
+    base.displacement
+        .checked_add(i64::from(offset))
+        .is_some_and(|displacement| {
+            address
+                == Address {
+                    displacement,
+                    ..base
+                }
+        })
+}
+
+impl ScalarCopyGroup {
+    pub(super) fn finite_prefix(
+        unit: &Unit,
+        loops: [Option<StructuredLoop>; 2],
+    ) -> Option<(usize, Self)> {
+        if !unit.context.is_long64() {
+            return None;
+        }
+        unit.instructions
+            .iter()
+            .enumerate()
+            .filter_map(|(head, first)| {
+                let group = Self::recognize(&unit.instructions[head..], Width::W64)?;
+                let end = head + group.instructions;
+                let length = u32::try_from(group.end.checked_sub(first.pc)?).ok()?;
+                if !unit.context.single_page_code_span(first.pc, length)
+                    || loops.into_iter().flatten().any(|body| {
+                        (head..end).any(|index| body.order().position(index as u32).is_some())
+                    })
+                {
+                    return None;
+                }
+                Some((head, group))
+            })
+            .max_by_key(|(head, group)| (group.width, group.instructions, std::cmp::Reverse(*head)))
+    }
+
+    fn recognize(instructions: &[Instruction], size: Width) -> Option<Self> {
+        fn read(instruction: Instruction) -> Option<(Address, Width, CopyRegister)> {
+            Some(match instruction.operation {
+                Operation::Load {
+                    dst,
+                    address,
+                    width,
+                } => (address, width, CopyRegister::General(dst, width)),
+                Operation::Extend {
+                    dst,
+                    src: Location::Memory(address),
+                    source_width,
+                    width,
+                    signed: false,
+                } => (address, source_width, CopyRegister::General(dst, width)),
+                Operation::Vector(VectorInstruction::Move {
+                    operand: VectorOperand::Memory(address),
+                    register,
+                    bytes: 8,
+                    store: false,
+                    aligned: false,
+                    preserve_upper: false,
+                    ..
+                }) => (address, Width::W64, CopyRegister::Vector(register)),
+                _ => return None,
+            })
+        }
+        fn transfer(
+            pair: &[Instruction],
+            size: Width,
+        ) -> Option<(Address, Address, ScalarTransfer)> {
+            let (source, width, register) = read(*pair.first()?)?;
+            let destination = match (pair.get(1)?.operation, register) {
+                (
+                    Operation::Store {
+                        src: DataOperand::Register(src),
+                        address,
+                        width: stored,
+                    },
+                    CopyRegister::General(dst, _),
+                ) if src == dst
+                    && stored == width
+                    && separate_copy_register(dst, source)
+                    && separate_copy_register(dst, address) =>
+                {
+                    address
+                }
+                (
+                    Operation::Vector(VectorInstruction::Move {
+                        operand: VectorOperand::Memory(address),
+                        register: dst,
+                        bytes: 8,
+                        store: true,
+                        aligned: false,
+                        ..
+                    }),
+                    CopyRegister::Vector(src),
+                ) if src == dst => address,
+                _ => return None,
+            };
+            [source, destination]
+                .iter()
+                .all(|address| {
+                    address.size == size
+                        && address.segment == Segment::Ds
+                        && address.base != AddressBase::NextPc
+                })
+                .then_some((source, destination, ScalarTransfer { register, width }))
+        }
+
+        let (source, destination, _) = transfer(instructions, size)?;
+        let mut transfers = [None; 4];
+        let mut width = 0;
+        let mut count = 0;
+        let mut end = instructions[0].pc;
+        for pair in instructions.chunks_exact(2).take(transfers.len()) {
+            let Some((from, to, step)) = transfer(pair, size) else {
+                break;
+            };
+            if pair[0].pc != end
+                || pair[0].next_pc != pair[1].pc
+                || !follows_address(source, from, width)
+                || !follows_address(destination, to, width)
+            {
+                break;
+            }
+            transfers[count] = Some(step);
+            count += 1;
+            width += u32::from(step.width.bytes());
+            end = pair[1].next_pc;
+        }
+        (count >= 2).then_some(Self {
+            source,
+            destination,
+            transfers,
+            instructions: count * 2,
+            width,
+            end,
+        })
+    }
 }
 
 impl CopyGroup {
@@ -205,6 +375,35 @@ pub(super) struct CopyWindow {
 }
 
 impl Emitter {
+    pub(super) fn emit_finite_scalar_copy(
+        &mut self,
+        instructions: &[Instruction],
+        group: ScalarCopyGroup,
+        loop_depth: u32,
+        guard: u32,
+        resolve: u32,
+    ) {
+        self.guard_straight_paged_prefix(
+            &instructions[0],
+            &instructions[group.instructions - 1],
+            group.instructions as u32,
+            guard,
+        );
+        self.address(group.source, 0);
+        self.op(Op::LocalSet(LHS));
+        self.address(group.destination, 0);
+        self.op(Op::LocalSet(RHS));
+        self.resolve_copy_window(group.width | crate::embedding::layout::COPY_SCALAR, resolve);
+        self.op(Op::If(BlockType::Empty));
+        self.copy_descriptor_hosts();
+        self.emit_scalar_transfers(group);
+        self.guarded_paged_lap = true;
+        self.stores = false;
+        self.route(group.end, loop_depth + 3, loop_depth + 4);
+        self.guarded_paged_lap = false;
+        self.op(Op::End).op(Op::End).op(Op::End);
+    }
+
     pub(super) fn emit_finite_copy_prefix(
         &mut self,
         instructions: &[Instruction],
@@ -218,8 +417,18 @@ impl Emitter {
         self.op(Op::LocalSet(LHS));
         self.address(group.destination, 0);
         self.op(Op::LocalSet(RHS));
-        self.resolve_copy_window(group, resolve);
+        self.resolve_copy_window(group.width, resolve);
         self.op(Op::If(BlockType::Empty));
+        self.copy_descriptor_hosts();
+        self.emit_ordered_copy(group);
+        self.guarded_paged_lap = true;
+        self.stores = false;
+        self.route(group.end, loop_depth + 3, loop_depth + 4);
+        self.guarded_paged_lap = false;
+        self.op(Op::End).op(Op::End).op(Op::End);
+    }
+
+    fn copy_descriptor_hosts(&mut self) {
         self.op(Op::LocalGet(STORE_STATUS))
             .op(Op::I32Load(memory(4)))
             .op(Op::I64ExtendI32U)
@@ -227,12 +436,6 @@ impl Emitter {
             .op(Op::LocalGet(STORE_STATUS))
             .op(Op::I32Load(memory(0)))
             .op(Op::LocalSet(STORE_STATUS));
-        self.emit_ordered_copy(group);
-        self.guarded_paged_lap = true;
-        self.stores = false;
-        self.route(group.end, loop_depth + 3, loop_depth + 4);
-        self.guarded_paged_lap = false;
-        self.op(Op::End).op(Op::End).op(Op::End);
     }
 
     pub(super) fn emit_paged_copy_group(&mut self, window: CopyWindow, exit_depth: u32) {
@@ -254,7 +457,7 @@ impl Emitter {
             .op(Op::I32And)
             .op(Op::I32Eqz)
             .op(Op::If(BlockType::Empty));
-        self.resolve_copy_window(group, window.resolve);
+        self.resolve_copy_window(group.width, window.resolve);
         self.op(Op::I32Eqz);
         self.retry_guarded_paged_operand(exit_depth + 1, true);
         self.op(Op::LocalGet(LHS))
@@ -291,12 +494,41 @@ impl Emitter {
         self.emit_ordered_copy(group);
     }
 
-    fn resolve_copy_window(&mut self, group: CopyGroup, resolve: u32) {
+    fn resolve_copy_window(&mut self, width: u32, resolve: u32) {
         self.op(Op::LocalGet(LHS))
             .op(Op::LocalGet(RHS))
-            .op(Op::I32Const(group.width as i32))
+            .op(Op::I32Const(width as i32))
             .op(Op::Call(resolve))
             .op(Op::LocalTee(STORE_STATUS));
+    }
+
+    fn emit_scalar_transfers(&mut self, group: ScalarCopyGroup) {
+        let mut offset = 0;
+        for movement in group.transfers.into_iter().flatten() {
+            self.op(Op::LocalGet(STORE_STATUS));
+            self.direct_scalar_load(movement.width, memory(offset));
+            match movement.register {
+                CopyRegister::General(register, width) => {
+                    self.op(Op::LocalGet(VALUE));
+                    self.write_register(register, width);
+                }
+                CopyRegister::Vector(register) => {
+                    let xmm = self.xmm(register);
+                    self.op(Op::V128Const(0))
+                        .op(Op::LocalGet(VALUE))
+                        .op(Op::I64x2ReplaceLane(0))
+                        .op(Op::LocalSet(xmm));
+                }
+            }
+            self.op(Op::LocalGet(ADDRESS))
+                .op(Op::I32WrapI64)
+                .op(Op::LocalGet(VALUE));
+            self.direct_scalar_store(movement.width, memory(offset));
+            offset += u64::from(movement.width.bytes());
+        }
+        self.op(Op::I64Const(group.end as i64))
+            .op(Op::LocalSet(RIP));
+        self.retire_instructions(group.instructions as u32);
     }
 
     fn emit_ordered_copy(&mut self, group: CopyGroup) {

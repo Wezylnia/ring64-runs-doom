@@ -6,7 +6,9 @@ use super::{
 };
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 use super::{
-    float_dyadic, float_loop, loop_cfg, memory, paged_copy::CopyGroup, read_loop, stack_slots,
+    float_dyadic, float_loop, loop_cfg, memory,
+    paged_copy::{CopyGroup, ScalarCopyGroup},
+    read_loop, stack_slots,
 };
 use crate::embedding::layout::DISPATCH;
 use crate::x86::context::Segment;
@@ -305,7 +307,10 @@ pub(crate) fn emit_paged_vector_copy(
     let additional = copy_spans
         .then(|| body.and_then(|body| StructuredLoop::select_additional_paged_copy(unit, body)))
         .flatten();
-    let copy_prefix = copy_spans && CopyGroup::finite_prefix(unit, [body, additional]).is_some();
+    let copy_prefix = copy_spans
+        && (CopyGroup::finite_prefix(unit, [body, additional]).is_some()
+            || unit.context.is_long64()
+                && ScalarCopyGroup::finite_prefix(unit, [body, additional]).is_some());
     if copy_prefix
         && body.is_none()
         && let Some(bytes) = emit_paged_profile(unit, max_artifact_bytes, true)
@@ -446,6 +451,8 @@ fn emit_placement_with_copy(
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         copy_prefix: _copy_prefix,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        scalar_copy_prefix: _copy_prefix,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         linear_recurrence: max_artifact_bytes >= 64 * 1024,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         direct_vector_loads: true,
@@ -566,6 +573,8 @@ struct OptionalLowering {
     additional_copy: Option<StructuredLoop>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     copy_prefix: bool,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    scalar_copy_prefix: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     linear_recurrence: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -1052,7 +1061,14 @@ fn emit_body(
         .then(|| CopyGroup::finite_prefix(unit, [loop_body, optional.additional_copy]))
         .flatten();
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    let copy_prefix_guard_type = copy_prefix.map(|_| {
+    let scalar_copy_prefix =
+        (paged && !mmio && optional.scalar_copy_prefix && unit.context.is_long64())
+            .then(|| ScalarCopyGroup::finite_prefix(unit, [loop_body, optional.additional_copy]))
+            .flatten();
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let has_copy_prefix = copy_prefix.is_some() || scalar_copy_prefix.is_some();
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let copy_prefix_guard_type = has_copy_prefix.then(|| {
         paged_loop_guard_type.unwrap_or_else(|| {
             add_function_type(
                 &mut types,
@@ -1062,10 +1078,8 @@ fn emit_body(
         })
     });
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    let paged_copy_resolver = copy_group
-        .or(additional_copy_group)
-        .or(copy_prefix.map(|(_, group)| group))
-        .map(|_| {
+    let paged_copy_resolver =
+        (copy_group.is_some() || additional_copy_group.is_some() || has_copy_prefix).then(|| {
             add_function_type(
                 &mut types,
                 [ValType::I64, ValType::I64, ValType::I32],
@@ -2474,6 +2488,16 @@ fn emit_body(
             );
         }
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if let Some((head, group)) = scalar_copy_prefix.filter(|(head, _)| *head == index) {
+            emitter.emit_finite_scalar_copy(
+                &unit.instructions[head..head + group.instructions],
+                group,
+                loop_depth,
+                copy_prefix_guard.expect("copy prefix guard"),
+                paged_copy_resolver.expect("copy prefix operand resolver"),
+            );
+        }
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         if let Some((end, guard)) = register_prefixes
             .as_ref()
             .and_then(|p| p[index])
@@ -2677,6 +2701,21 @@ fn emit_body(
     }
     let code_start = bytes.len();
     code.append_to(&mut bytes);
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    if bytes.len() > max_artifact_bytes && scalar_copy_prefix.is_some() {
+        return emit_body(
+            unit,
+            observed,
+            (paged, mmio),
+            loop_body,
+            _guard_reads,
+            OptionalLowering {
+                scalar_copy_prefix: false,
+                ..optional
+            },
+            max_artifact_bytes,
+        );
+    }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if bytes.len() > max_artifact_bytes && copy_prefix.is_some() {
         return emit_body(

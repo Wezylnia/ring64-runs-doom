@@ -942,9 +942,17 @@ pub extern "C" fn core_paged_loop_write_block(address: u64, value_ptr: u32) -> i
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 #[unsafe(no_mangle)]
 pub extern "C" fn core_paged_loop_copy_window(source: u64, destination: u64, width: u32) -> u32 {
+    use crate::embedding::layout::COPY_SCALAR;
     use crate::memory::check_span;
 
-    if !(32..=64).contains(&width) || !width.is_multiple_of(16) {
+    let scalar = width & COPY_SCALAR != 0;
+    let width = width & !COPY_SCALAR;
+    let valid = if scalar {
+        (2..=32).contains(&width)
+    } else {
+        (32..=64).contains(&width) && width.is_multiple_of(16)
+    };
+    if !valid {
         return 0;
     }
     let page_remaining = |address: u64| 4096 - (address & 4095);
@@ -966,6 +974,13 @@ pub extern "C" fn core_paged_loop_copy_window(source: u64, destination: u64, wid
             }
             let paging = core.paging.as_ref()?;
             let state = unsafe { &mut *core.state.get() };
+            if scalar
+                && core.context.cpl() == 3
+                && paging.cr0 & (1 << 18) != 0
+                && state.flags & crate::x86::flags::AC != 0
+            {
+                return None;
+            }
             let class = paging::walk::AccessClass::operand(
                 core.context.cpl(),
                 state.flags & crate::x86::flags::AC != 0,
