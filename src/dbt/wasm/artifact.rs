@@ -283,6 +283,8 @@ fn emit_placement(
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         direct_vector_loads: true,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        direct_vector_stores: true,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_float_dyadic: true,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_f32_read_pair: true,
@@ -366,6 +368,8 @@ struct OptionalLowering {
     inline_cmpnleps: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     direct_vector_loads: bool,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    direct_vector_stores: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_float_dyadic: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -1179,22 +1183,34 @@ fn emit_body(
         })
     });
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    let write_segments = {
+    let direct_vector_stores =
+        optional.direct_vector_stores && vector_banks.stores && !observed && !paged && !mmio;
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let (write_segments, cyclic_vector_store) = {
         let mut segments = [false; 2];
+        let mut cyclic_vector_store = false;
         if !observed && _extra_spans {
             for instruction in &unit.instructions {
-                if let Operation::Store { address, .. }
-                | Operation::NonTemporalStore { address, .. } = instruction.operation
+                let store = match instruction.operation {
+                    Operation::Store { address, .. }
+                    | Operation::NonTemporalStore { address, .. } => Some((address, false)),
+                    op if direct_vector_stores => {
+                        vector::unaligned_store_address(op).map(|address| (address, true))
+                    }
+                    _ => None,
+                };
+                if let Some((address, vector)) = store
                     && span_cycles
                         .iter()
                         .any(|range| range.contains(&instruction.pc))
                 {
                     // Stack spills often alternate with writes to a separate backing.
                     segments[usize::from(address.segment == Segment::Ss)] = true;
+                    cyclic_vector_store |= vector;
                 }
             }
         }
-        segments
+        (segments, cyclic_vector_store)
     };
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let write_span = write_segments
@@ -1650,6 +1666,8 @@ fn emit_body(
         direct_vector_loads: optional.direct_vector_loads && !observed && !paged && !mmio,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         used_direct_vector_load: false,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        direct_vector_stores: cyclic_vector_store,
         load_mxcsr,
         store_mxcsr,
         x87,
@@ -1901,6 +1919,21 @@ fn emit_body(
     }
     let code_start = bytes.len();
     code.append_to(&mut bytes);
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    if bytes.len() > max_artifact_bytes && cyclic_vector_store {
+        return emit_body(
+            unit,
+            observed,
+            (paged, mmio),
+            loop_body,
+            _guard_reads,
+            OptionalLowering {
+                direct_vector_stores: false,
+                ..optional
+            },
+            max_artifact_bytes,
+        );
+    }
     if bytes.len() > max_artifact_bytes
         && optional.inline_cmpnleps
         && unit.instructions.iter().any(|instruction| {

@@ -142,6 +142,20 @@ pub(super) fn memory(offset: usize) -> MemArg {
     }
 }
 
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+pub(super) fn unaligned_store_address(operation: Operation) -> Option<Address> {
+    match operation {
+        Operation::Vector(VectorInstruction::Move {
+            operand: VectorOperand::Memory(address),
+            bytes: 16,
+            aligned: false,
+            store: true,
+            ..
+        }) => Some(address),
+        _ => None,
+    }
+}
+
 impl Emitter {
     pub(super) fn xmm(&self, bank: u8) -> u32 {
         self.vector_registers[usize::from(bank)].expect("selected XMM bank")
@@ -284,15 +298,42 @@ impl Emitter {
         next_pc: u64,
         exit_depth: u32,
     ) {
-        let helper = self.vector_store.expect("vector store import");
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if self.direct_vector_stores && bytes == 16 && !aligned {
+            self.segment = address.segment;
+            if self.direct_access(
+                DirectOperand::VectorBlockStore {
+                    value,
+                    address,
+                    next_pc,
+                },
+                exit_depth,
+                |emitter, depth| {
+                    emitter.vector_store_scratch(value);
+                    emitter.vector_store_offset(bytes, aligned, depth);
+                },
+            ) {
+                return;
+            }
+        }
+        self.vector_store_scratch(value);
+        self.address(address, next_pc);
+        self.op(Op::LocalSet(ADDRESS));
+        self.vector_store_offset(bytes, aligned, exit_depth);
+    }
+
+    fn vector_store_scratch(&mut self, value: u32) {
         self.op(Op::LocalGet(0))
             .op(Op::LocalGet(value))
             .op(Op::V128Store(memory(offset_of!(RunState, vector_scratch))));
-        self.address(address, next_pc);
-        self.op(Op::LocalSet(ADDRESS));
+    }
+
+    fn vector_store_offset(&mut self, bytes: u8, aligned: bool, exit_depth: u32) {
+        let helper = self.vector_store.expect("vector store import");
+        let segment = self.segment as i32;
         self.op(Op::LocalGet(ADDRESS))
             .op(Op::I32Const(i32::from(bytes)))
-            .op(Op::I32Const(address.segment as i32))
+            .op(Op::I32Const(segment))
             .op(Op::I32Const(if aligned { 16 } else { 1 }))
             .op(Op::LocalGet(0))
             .op(Op::I32Const(offset_of!(RunState, vector_scratch) as i32))

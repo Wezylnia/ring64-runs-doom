@@ -49,6 +49,11 @@ pub(super) enum DirectOperand {
     ScalarStore(Width),
     VectorDword(u32),
     VectorBlock(u32),
+    VectorBlockStore {
+        value: u32,
+        address: Address,
+        next_pc: u64,
+    },
 }
 
 impl Emitter {
@@ -592,9 +597,12 @@ impl Emitter {
                 u32::from(width.bytes())
             }
             DirectOperand::VectorDword(_) => 4,
-            DirectOperand::VectorBlock(_) => 16,
+            DirectOperand::VectorBlock(_) | DirectOperand::VectorBlockStore { .. } => 16,
         };
-        let (span, access) = if matches!(operand, DirectOperand::ScalarStore(_)) {
+        let (span, access) = if matches!(
+            operand,
+            DirectOperand::ScalarStore(_) | DirectOperand::VectorBlockStore { .. }
+        ) {
             (self.write_span(), Access::Write)
         } else {
             let span = if self.segment == Segment::Ss {
@@ -628,6 +636,13 @@ impl Emitter {
             DirectOperand::VectorDword(_) | DirectOperand::VectorBlock(_)
         ) {
             // SIMD passes its original effective offset on the stack.
+            self.op(Op::LocalSet(ADDRESS));
+        }
+        if let DirectOperand::VectorBlockStore {
+            address, next_pc, ..
+        } = operand
+        {
+            self.address(address, next_pc);
             self.op(Op::LocalSet(ADDRESS));
         }
         self.op(Op::Block(BlockType::Empty));
@@ -701,6 +716,12 @@ impl Emitter {
             }
             DirectOperand::VectorBlock(vector) => {
                 self.op(Op::V128Load(memory)).op(Op::LocalSet(vector));
+            }
+            DirectOperand::VectorBlockStore { value, .. } => {
+                self.op(Op::LocalGet(value))
+                    .op(Op::V128Store(memory))
+                    .op(Op::I32Const(1))
+                    .op(Op::LocalSet(STORE_STATUS));
             }
             DirectOperand::ScalarLoad(width) => self.direct_scalar_load(width, memory),
             DirectOperand::ScalarStore(width) => {
