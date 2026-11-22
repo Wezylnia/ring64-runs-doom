@@ -397,9 +397,7 @@ impl StructuredLoop {
             instruction::{AddressBase, VectorMask, VectorOperand},
         };
         let long64 = unit.context.is_long64();
-        if !long64
-            && (unit.context.mode() != Mode::Compatibility || !unit.context.flat_paged_write32())
-        {
+        if !long64 && !unit.context.flat_paged_write32() {
             return None;
         }
         let data = |address: Address| {
@@ -476,7 +474,15 @@ impl StructuredLoop {
         })?;
         let mut body = Self::forward(graph).without_dword_projection();
         body.kind = LoopKind::PagedSseWrite;
-        body.within_paged_fetch(unit)
+        let body = body.within_paged_fetch(unit)?;
+        if unit.context.mode() == Mode::Protected {
+            // Physical execution can also have paging disabled.
+            let bytes = body.paged_fetch_bytes?;
+            let head = unit.instructions[body.head as usize].pc;
+            let linear = unit.context.nonwrapping_code32_fetch(head, bytes)?;
+            unit.fetch_proof.physical_span(linear, bytes)?;
+        }
+        Some(body)
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
