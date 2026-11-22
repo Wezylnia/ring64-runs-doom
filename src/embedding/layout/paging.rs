@@ -21,7 +21,7 @@ pub(crate) const NEWEST_FETCH_INDEXED: u64 = 2;
 // Numeric controls admit SSE while this executable proof is current.
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 pub(crate) const NEWEST_FETCH_SSE: u64 = 4;
-#[cfg(not(feature = "parallel"))]
+#[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
 pub(crate) const MXCSR_EXCEPTION_MASKS: u32 = 0x1f80;
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
