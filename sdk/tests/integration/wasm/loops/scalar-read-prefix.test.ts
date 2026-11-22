@@ -506,3 +506,92 @@ test('guarded MOVZX prefixes reuse live read translations across entries and rev
     Core.prototype.compile = compile;
   }
 });
+
+test('sampled stack comparisons retire with their branch and replay an unavailable operand precisely', async () => {
+  const prototype = Core.prototype as unknown as {
+    artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
+  };
+  const imports = prototype.artifactImports;
+  const compile = Core.prototype.compile;
+  const source = PC + 0x1000n;
+  const data = new Uint8Array(4096);
+  data[0] = 16;
+  let accepted = 0;
+  let refused = 0;
+  let corridor: bigint[];
+  Core.prototype.compile = function (pc, limits, seeds, regionPoints) {
+    if (pc === PC && !seeds?.length) return compile.call(this, pc, limits, corridor, true);
+    return compile.call(this, pc, limits, seeds, regionPoints);
+  };
+  prototype.artifactImports = function (observed) {
+    const env = imports.call(this, observed);
+    const read = env.paged_loop_read_span;
+    if (typeof read === 'function') {
+      env.paged_loop_read_span = (address: bigint, width: number, segment: number) => {
+        const result = read(address, width, segment);
+        if (width === 8) {
+          if (result) accepted++;
+          else refused++;
+        }
+        return result;
+      };
+    }
+    return env;
+  };
+  try {
+    for (const add of ['', '4883c201']) {
+      // Optional ADD RDX,1; CMP RAX,[RSP]; JB stop; INC RCX; HLT.
+      const code = add + '483b0424720348ffc1f4';
+      const compare = PC + BigInt(add.length / 2);
+      const branch = compare + 4n;
+      const preceding = add ? 1n : 0n;
+      const stop = compare + 9n;
+      corridor = [...new Set([PC, compare, branch, branch + 2n, stop])];
+      await usingPaged(
+        compiler,
+        { code, words: [[0x4008n, 0xa003n]], spans: [{ physical: 0xa000n, bytes: data }] },
+        async (cpu) => {
+          const enter = (rax: bigint, rsp = source) =>
+            cpu.setState(initial(PC, { 0: rax, 1: 5n, 2: 8n, 4: rsp }));
+          const before = accepted;
+          for (let wave = 0; wave < 3; wave++) {
+            for (const rax of [1n, 32n]) {
+              enter(rax);
+              const outcome = await cpu.run({ budget: 12n, stop });
+              const taken = rax === 1n;
+              assert.equal(outcome.reason, 'stop');
+              assert.equal(outcome.retired, preceding + (taken ? 2n : 3n));
+              assert.equal(outcome.state.registers[1], taken ? 5n : 6n);
+              assert.equal(outcome.state.flags & 1n, taken ? 1n : 0n);
+            }
+          }
+          assert.ok(accepted > before, 'the checked comparison should use a retained stack span');
+
+          enter(1n);
+          const partial = await cpu.run({ budget: preceding + 1n, stop });
+          assert.equal(partial.reason, 'budget');
+          assert.equal(partial.retired, preceding + 1n);
+          assert.equal(partial.state.rip, branch);
+
+          enter(1n);
+          const interior = await cpu.run({ budget: 12n, stop: branch });
+          assert.equal(interior.reason, 'stop');
+          assert.equal(interior.retired, preceding + 1n);
+          assert.equal(interior.state.rip, branch);
+
+          const beforeSplit = refused;
+          enter(1n, source + 4092n);
+          const split = await cpu.run({ budget: 12n, stop });
+          assert.equal(split.reason, 'page-fault');
+          assert.equal(split.retired, preceding);
+          assert.equal(split.state.rip, compare);
+          assert.equal(split.state.registers[2], 8n + preceding);
+          assert.equal(refused, beforeSplit + 1);
+        },
+      );
+    }
+  } finally {
+    prototype.artifactImports = imports;
+    Core.prototype.compile = compile;
+  }
+});

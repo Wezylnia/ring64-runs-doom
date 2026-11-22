@@ -52,13 +52,13 @@ fn paged_register_prefixes(unit: &Unit, loops: [Option<StructuredLoop>; 2]) -> V
                 }
             )
     };
-    let terminal_branch = |instruction: &Instruction| {
+    let terminal_branch = |instruction: &Instruction, wide_read: bool| {
         long64
             && matches!(
                 instruction.operation,
                 Operation::Jcc { target, .. }
                     if crate::memory::canonical48(target)
-                        && instructions.binary_search_by_key(&target, |i| i.pc).is_ok()
+                        && (wide_read || instructions.binary_search_by_key(&target, |i| i.pc).is_ok())
             )
     };
     let mut prefixes = vec![None; instructions.len()];
@@ -67,6 +67,7 @@ fn paged_register_prefixes(unit: &Unit, loops: [Option<StructuredLoop>; 2]) -> V
         let pc = instructions[first].pc;
         let mut end = first;
         let mut has_read = false;
+        let mut has_wide_read = false;
         let mut has_branch = false;
         while let Some(instruction) = instructions.get(end)
             && end - first < maximum
@@ -77,11 +78,15 @@ fn paged_register_prefixes(unit: &Unit, loops: [Option<StructuredLoop>; 2]) -> V
                 .any(|body| body.order().position(end as u32).is_some())
             && (is_register_only(instruction)
                 || (if has_read {
-                    end - first >= 2
+                    has_wide_read || end - first >= 2
                 } else {
                     short_register_prefixes && end > first
-                } && terminal_branch(instruction))
+                } && terminal_branch(instruction, has_wide_read))
+                || (short_register_prefixes
+                    && !has_read
+                    && super::instruction::paged_prefix_wide_read(*instruction))
                 || (long64
+                    && !has_wide_read
                     && if end == first {
                         super::instruction::paged_prefix_read(*instruction).is_some()
                     } else {
@@ -96,13 +101,15 @@ fn paged_register_prefixes(unit: &Unit, loops: [Option<StructuredLoop>; 2]) -> V
             && (end == first || instructions[end - 1].next_pc == instruction.pc)
         {
             // Keep an already useful register-only prefix before a checked store.
-            has_read |= if end == first {
-                super::instruction::paged_prefix_read(*instruction).is_some()
-            } else {
-                super::instruction::paged_prefix_dword_read(*instruction)
-            };
+            has_wide_read |= super::instruction::paged_prefix_wide_read(*instruction);
+            has_read |= has_wide_read
+                || if end == first {
+                    super::instruction::paged_prefix_read(*instruction).is_some()
+                } else {
+                    super::instruction::paged_prefix_dword_read(*instruction)
+                };
             end += 1;
-            if terminal_branch(instruction) {
+            if terminal_branch(instruction, has_wide_read) {
                 has_branch = true;
                 break;
             }
@@ -111,11 +118,12 @@ fn paged_register_prefixes(unit: &Unit, loops: [Option<StructuredLoop>; 2]) -> V
         // in-prefix instruction so a stop or exhausted budget cannot omit it.
         while end > first + 1
             && (super::instruction::paged_prefix_dword_read(instructions[end - 1])
-                || super::instruction::paged_prefix_dword_store(instructions[end - 1]))
+                || super::instruction::paged_prefix_dword_store(instructions[end - 1])
+                || super::instruction::paged_prefix_wide_read(instructions[end - 1]))
         {
             end -= 1;
         }
-        let minimum = if short_register_prefixes && !has_read {
+        let minimum = if short_register_prefixes && (!has_read || has_wide_read && has_branch) {
             2
         } else if has_branch {
             3
@@ -1105,10 +1113,10 @@ fn emit_body(
             prefixes.iter().enumerate().any(|(first, end)| {
                 end.is_some_and(|end| {
                     super::instruction::paged_prefix_read(unit.instructions[first]).is_some()
-                        || unit.instructions[first + 1..end]
-                            .iter()
-                            .copied()
-                            .any(super::instruction::paged_prefix_dword_read)
+                        || unit.instructions[first..end].iter().copied().any(|i| {
+                            super::instruction::paged_prefix_dword_read(i)
+                                || super::instruction::paged_prefix_wide_read(i)
+                        })
                 })
             })
         })

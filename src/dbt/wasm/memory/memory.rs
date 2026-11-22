@@ -291,8 +291,14 @@ impl Emitter {
         exit_depth: u32,
     ) {
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-        if let Some((read, indexed)) = self.paged_prefix_read {
-            debug_assert!(!for_write && width == Width::W32 && address.segment == Segment::Ds);
+        if let Some((read, indexed, inline_fallback)) = self.paged_prefix_read {
+            debug_assert!(!for_write && matches!(width, Width::W32 | Width::W64));
+            debug_assert!(
+                address.segment == Segment::Ds
+                    || width == Width::W64
+                        && self.context.is_long64()
+                        && address.segment == Segment::Ss
+            );
             self.address(address, next_pc);
             if indexed {
                 self.indexed_prefix_operand_host(read, 4);
@@ -300,16 +306,20 @@ impl Emitter {
                 let check_alignment = self.context.cpl() == 3;
                 if check_alignment {
                     self.op(Op::LocalTee(ADDRESS))
-                        .op(Op::I64Const(3))
+                        .op(Op::I64Const(i64::from(width.bytes() - 1)))
                         .op(Op::I64And)
                         .op(Op::I64Eqz)
                         .op(Op::If(BlockType::Result(wasm_encoder::ValType::I32)))
                         .op(Op::LocalGet(ADDRESS));
                 }
-                self.op(Op::I32Const(4))
-                    .op(Op::I32Const(
-                        crate::embedding::layout::paging::PREFIX_DWORD_READ_SEGMENT as i32,
-                    ))
+                let segment = if width == Width::W32 {
+                    crate::embedding::layout::paging::PREFIX_DWORD_READ_SEGMENT
+                } else {
+                    // Long mode ignores the original DS or SS base.
+                    Segment::Ds as u32
+                };
+                self.op(Op::I32Const(i32::from(width.bytes())))
+                    .op(Op::I32Const(segment as i32))
                     .op(Op::Call(read));
                 if check_alignment {
                     self.op(Op::Else).op(Op::I32Const(0)).op(Op::End);
@@ -320,7 +330,11 @@ impl Emitter {
                 .op(Op::If(BlockType::Empty));
             // Earlier instructions already retired. Branch to the original
             // label of this read so its fault/observation order stays exact.
-            self.route(self.current_pc, exit_depth, exit_depth + 1);
+            if inline_fallback {
+                self.op(Op::Br(1));
+            } else {
+                self.route(self.current_pc, exit_depth, exit_depth + 1);
+            }
             self.op(Op::End).op(Op::LocalGet(STORE_STATUS));
             if !indexed {
                 self.op(Op::I32Load(MemArg {
@@ -329,11 +343,16 @@ impl Emitter {
                     memory_index: 0,
                 }));
             }
-            self.op(Op::I64Load32U(MemArg {
+            let operand = MemArg {
                 offset: 0,
                 align: 0,
                 memory_index: 0,
-            }))
+            };
+            self.op(if width == Width::W32 {
+                Op::I64Load32U(operand)
+            } else {
+                Op::I64Load(operand)
+            })
             .op(Op::LocalSet(VALUE));
             return;
         }

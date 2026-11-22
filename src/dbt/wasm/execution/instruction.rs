@@ -109,6 +109,21 @@ pub(super) fn paged_prefix_dword_read(instruction: Instruction) -> bool {
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+pub(super) fn paged_prefix_wide_read(instruction: Instruction) -> bool {
+    use crate::x86::context::Segment;
+    use crate::x86::instruction::{MemoryAluOperands, Width};
+    matches!(
+        instruction.operation,
+        Operation::MemoryAlu {
+            kind: Alu::Cmp,
+            width: Width::W64,
+            operands: MemoryAluOperands::RegisterFirst(_),
+            address,
+        } if matches!(address.segment, Segment::Ds | Segment::Ss)
+    )
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 pub(super) fn paged_prefix_dword_store(instruction: Instruction) -> bool {
     use crate::x86::{
         context::Segment,
@@ -582,8 +597,11 @@ impl Emitter {
         write_import: Option<u32>,
         fetch_handoff: Option<(u32, bool, Option<usize>)>,
     ) {
+        use super::control::InstructionRetirement;
+
         let first = instructions.first().unwrap();
         let last = instructions.last().unwrap();
+        let leading_wide_read = paged_prefix_wide_read(*first);
         let incoming = fetch_handoff.and_then(|(local, incoming, _)| incoming.then_some(local));
         let read = paged_prefix_read(*first)
             .map(|operation| (read_import.expect("leading read prefix import"), operation));
@@ -660,26 +678,51 @@ impl Emitter {
             self.write_register(register, width);
             self.commit(first.next_pc);
         }
-        let loop_depth = loop_depth + 2 + u32::from(read.is_some());
+        if leading_wide_read {
+            // A first-operand refusal drops directly to the checked entry.
+            self.op(Op::Block(BlockType::Empty));
+        }
+        let loop_depth = loop_depth + 2 + u32::from(read.is_some() || leading_wide_read);
         self.guarded_paged_lap = true;
         self.loop_gates_prechecked = true;
         self.paged_prefix_fetch_out =
             fetch_handoff.and_then(|(local, _, outgoing)| outgoing.map(|target| (local, target)));
-        for instruction in &instructions[usize::from(read.is_some())..] {
+        let guarded = &instructions[usize::from(read.is_some())..];
+        let mut retired_read = false;
+        for (index, instruction) in guarded.iter().enumerate() {
+            let wide = paged_prefix_wide_read(*instruction);
+            let fuse_branch = wide && guarded.get(index + 1).is_some_and(|next| {
+                matches!(next.operation, Operation::Jcc { target, .. } if crate::memory::canonical48(target))
+            });
+            self.instruction_retirement = if fuse_branch {
+                InstructionRetirement::DeferredCommit
+            } else if retired_read {
+                InstructionRetirement::AfterPrefix(1)
+            } else {
+                InstructionRetirement::One
+            };
+            retired_read = fuse_branch;
             self.paged_prefix_read = read_import
-                .filter(|_| paged_prefix_dword_read(*instruction))
-                .map(|read| (read, indexed_dword));
+                .filter(|_| wide || paged_prefix_dword_read(*instruction))
+                .map(|read| {
+                    (
+                        read,
+                        !wide && indexed_dword,
+                        leading_wide_read && index == 0,
+                    )
+                });
             self.paged_prefix_store =
                 write_import.filter(|_| paged_prefix_dword_store(*instruction));
             self.emit_instruction(*instruction, None, loop_depth, None, None, false);
         }
+        self.instruction_retirement = InstructionRetirement::One;
         self.paged_prefix_read = None;
         self.paged_prefix_store = None;
         self.paged_prefix_fetch_out = None;
         self.loop_gates_prechecked = false;
         self.route(last.next_pc, loop_depth, loop_depth + 1);
         self.guarded_paged_lap = false;
-        if read.is_some() {
+        if read.is_some() || leading_wide_read {
             self.op(Op::End);
         }
         self.op(Op::End).op(Op::End);
