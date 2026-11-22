@@ -129,3 +129,86 @@ test('paged ADD and ROL reuse a writable and readable leaf and replay invalid ac
     prototype.artifactImports = imports;
   }
 });
+
+test('guarded handler ADD and ROL keep precise RMW boundaries', async () => {
+  // CALL RAX; INC ECX; CMP ECX,4; JB start; HLT.
+  // Handler: MOV EDX,[RDI]; ADD EDX,1 (three times); ADD [RSI],EDX; ROL [RSI],1; RET.
+  const code = 'ffd0ffc183f90472f7f49090909090908b1783c20183c20183c2010116d106c3';
+  const handler = PC + 16n;
+  const add = handler + 11n;
+  const rotate = add + 2n;
+  const stop = PC + 9n;
+  const stack = PC + 0x1000n;
+  const data = stack + 0x40n;
+  const prototype = Core.prototype as unknown as {
+    artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
+  };
+  const imports = prototype.artifactImports;
+  const compile = Core.prototype.compile;
+  Core.prototype.compile = function (pc, limits, seeds, regionPoints) {
+    if (pc === PC && !seeds?.length) return compile.call(this, pc, limits, [handler, stop], false);
+    return compile.call(this, pc, limits, seeds, regionPoints);
+  };
+  let begins = 0;
+  prototype.artifactImports = function (observed) {
+    const env = imports.call(this, observed);
+    const begin = env.debug_begin;
+    if (typeof begin === 'function') {
+      env.debug_begin = (pc: bigint, flags: bigint, shadow: number) => {
+        if (pc === add || pc === rotate) begins++;
+        return begin(pc, flags, shadow);
+      };
+    }
+    return env;
+  };
+  try {
+    await usingPaged(
+      compiler,
+      {
+        code,
+        words: [[0x4008n, 0xa003n]],
+        spans: [{ physical: 0xa000n, bytes: new Uint8Array(4096) }],
+      },
+      async (cpu) => {
+        const enter = (destination = data) =>
+          cpu.setState(initial(PC, { 0: handler, 1: 0n, 4: stack + 8n, 6: destination, 7: data }));
+        let expected = 0n;
+        for (let wave = 0; wave < 3; wave++) {
+          begins = 0;
+          enter();
+          const result = await cpu.run({ stop, budget: 64n });
+          assert.equal(result.reason, 'stop');
+          assert.equal(result.retired, 44n);
+          for (let lap = 0; lap < 4; lap++) expected = expected * 4n + 6n;
+          assert.equal(word(cpu, 0xa040n), expected);
+        }
+        assert.equal(begins, 0, 'warm RMWs reuse the checked handler fetch');
+
+        const end = stack + 4096n;
+        enter(end - 2n);
+        const split = await cpu.run({ stop, budget: 64n });
+        assert.equal(split.reason, 'page-fault');
+        assert.equal(split.pageFault?.address, end);
+        assert.equal(split.retired, 5n);
+        assert.equal(split.state.rip, add);
+        assert.equal(split.state.registers[2], expected + 3n);
+        assert.deepEqual(cpu.readPhysicalMemory(0xaffen, 2), Uint8Array.of(0, 0));
+        assert.equal(begins, 1);
+
+        begins = 0;
+        cpu.setDebugState({ addresses: [data, 0n, 0n, 0n], dr6: 0n, dr7: 0xd0401n });
+        enter();
+        const watched = await cpu.run({ stop, budget: 64n });
+        assert.equal(watched.reason, 'debug-exception');
+        assert.equal(watched.debugException?.cause, 'data-breakpoint');
+        assert.equal(watched.state.rip, rotate);
+        assert.equal(watched.retired, 6n);
+        assert.equal(word(cpu, 0xa040n), expected * 2n + 3n);
+        assert.equal(begins, 1);
+      },
+    );
+  } finally {
+    prototype.artifactImports = imports;
+    Core.prototype.compile = compile;
+  }
+});
