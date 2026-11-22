@@ -274,3 +274,38 @@ test('discarding one dormant owner preserves overlapping candidates and never re
   cache.clear();
   assert.deepEqual(released, [b, a]);
 });
+
+test('a covered caller entrance keeps ordinary fallback and respects changed ownership', () => {
+  const cache = new Translations(5, 100);
+  const handler = artifact([2n, 3n], 10);
+  const caller = artifact([1n, 2n, 3n], 20);
+  caller.metadata.hasIndirectCall = true;
+  const broader = artifact([2n, 3n, 4n, 5n], 30);
+  const observed = artifact([2n, 3n], 20, true);
+  cache.install(handler);
+  cache.install(caller, new Set([1n]));
+  cache.install(observed);
+  const original = cache.candidates(2n);
+  const covered = cache.candidates(2n, false, true);
+  assert.deepEqual(
+    original.map((entry) => entry.artifact),
+    [handler, caller],
+  );
+  assert.deepEqual(
+    covered.map((entry) => entry.artifact),
+    [caller, handler],
+  );
+  assert.equal(cache.candidates(2n, false, true), covered);
+  assert.equal(cache.candidates(2n), original);
+  assert.equal(cache.candidates(2n, true, true)[0]?.artifact, observed);
+
+  cache.install(broader, new Set([2n]));
+  assert.equal(cache.candidates(2n, false, true)[0]?.artifact, broader);
+  cache.remove(broader);
+  assert.equal(cache.candidates(2n, false, true)[0]?.artifact, caller);
+  cache.remove(caller);
+  assert.deepEqual(
+    cache.candidates(2n, false, true).map((entry) => entry.artifact),
+    [handler],
+  );
+});

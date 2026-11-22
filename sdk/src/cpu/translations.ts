@@ -24,6 +24,7 @@ export class Translations {
   readonly #observedEntries = new Map<bigint, readonly InstalledEntry[]>();
   readonly #artifacts = new Map<Artifact, Recency>();
   readonly #preferred = new WeakMap<Artifact, ReadonlySet<bigint>>();
+  readonly #covered = new WeakMap<readonly InstalledEntry[], readonly InstalledEntry[]>();
   readonly #traceModules = new Map<Artifact, WebAssembly.Module>();
   #oldest: Recency | undefined;
   #newest: Recency | undefined;
@@ -35,9 +36,36 @@ export class Translations {
     readonly release: (artifact: Artifact) => void = () => {},
   ) {}
 
-  candidates(pc: bigint, boundaryObserved = false): readonly InstalledEntry[] {
-    const entries = boundaryObserved ? this.#observedEntries : this.#entries;
-    return entries.get(pc) ?? EMPTY;
+  candidates(
+    pc: bigint,
+    boundaryObserved = false,
+    useCoveredEntrance = false,
+  ): readonly InstalledEntry[] {
+    const entries = (boundaryObserved ? this.#observedEntries : this.#entries).get(pc) ?? EMPTY;
+    if (boundaryObserved || !useCoveredEntrance || entries.length < 2) return entries;
+    const existing = this.#covered.get(entries);
+    if (existing) return existing;
+    const [first, ...rest] = entries as readonly [InstalledEntry, ...InstalledEntry[]];
+    const ordinary = first.artifact.metadata;
+    let ordered = entries;
+    if (!ordinary.hasIndirectCall && !this.#preferred.get(first.artifact)?.has(pc)) {
+      const caller = rest.find(({ artifact }) => {
+        const covered = artifact.metadata;
+        if (
+          !covered.hasIndirectCall ||
+          !this.#preferred.has(artifact) ||
+          covered.contextVersion !== ordinary.contextVersion ||
+          covered.entries.length <= ordinary.entries.length
+        )
+          return false;
+        const included = new Set(covered.entries);
+        return ordinary.entries.every((entry) => included.has(entry));
+      });
+      if (caller) ordered = [caller, first, ...rest.filter((entry) => entry !== caller)];
+    }
+    // Installation or eviction replaces the immutable candidates at every affected PC.
+    this.#covered.set(entries, ordered);
+    return ordered;
   }
 
   preferred(pc: bigint, boundaryObserved: boolean): Artifact | undefined {

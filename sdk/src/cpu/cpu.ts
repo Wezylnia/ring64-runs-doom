@@ -968,6 +968,7 @@ export class Cpu {
           : undefined;
       let linearRegion: LinearRegionTrace | undefined;
       let saturatedDispatches = 0;
+      const corridorDispatchLimit = 512;
       execution: for (;;) {
         if (eventKind === 'shutdown' && (deliveryBudget === undefined || !engine.shutdownCanWake()))
           return finish('shutdown');
@@ -1017,7 +1018,14 @@ export class Cpu {
         let cached = false;
         let executionBegan = 0;
         let refusedEpoch: bigint | undefined;
-        for (const candidate of this.#cache.candidates(pc, boundaryObserved)) {
+        // Finish learning the normal corridor before selecting a retained caller entrance.
+        const useCoveredEntrance =
+          linearRegionsSupported &&
+          !boundaryObserved &&
+          !capture &&
+          resources.compilations === 0 &&
+          resources.dispatches >= corridorDispatchLimit;
+        for (const candidate of this.#cache.candidates(pc, boundaryObserved, useCoveredEntrance)) {
           executionBegan = performance.now();
           if (engine.activate(candidate.artifact.metadata.owner)) {
             entry = candidate;
@@ -1253,7 +1261,7 @@ export class Cpu {
         this.pruneTranslations();
         resources.dispatches++;
         dispatchedPc = current.rip;
-        if (resources.dispatches >= 512) corridor = undefined;
+        if (resources.dispatches >= corridorDispatchLimit) corridor = undefined;
         if (capture) {
           capture.retired += before - remaining;
           if (current.rip >> 12n !== capture.page || engine.contextVersion() !== capture.version) {
