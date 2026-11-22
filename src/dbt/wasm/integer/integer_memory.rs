@@ -19,7 +19,7 @@ impl Emitter {
         let writes_memory =
             matches!(operands, MemoryAluOperands::MemoryFirst(_)) && kind.writes_result();
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-        let cached = (writes_memory && self.linear_call_spans)
+        let cached = (writes_memory && (self.linear_call_spans || self.uses_indexed_scalar_rmw()))
             .then(|| self.load_cached_rmw(address, width, next_pc, exit_depth))
             .flatten();
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]

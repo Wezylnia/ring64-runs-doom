@@ -1,3 +1,5 @@
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+use super::instruction::IndexedOperand;
 use super::{ADDRESS, Emitter, GPR, REASON, RESULT, STORE_STATUS, VALUE};
 use crate::embedding::layout::{DATA, RunState};
 use crate::x86::context::Segment;
@@ -1204,6 +1206,32 @@ impl Emitter {
     ) -> Option<RmwAccess> {
         use crate::memory::Access;
 
+        if self.uses_indexed_scalar_rmw() {
+            self.address(address, next_pc);
+            self.op(Op::LocalSet(ADDRESS));
+            self.indexed_read_host(
+                self.indexed_paged_read.unwrap(),
+                width.bytes(),
+                false,
+                IndexedOperand::ReadModifyWrite,
+            );
+            self.op(Op::LocalTee(STORE_STATUS))
+                .op(Op::If(BlockType::Empty))
+                .op(Op::LocalGet(STORE_STATUS));
+            self.direct_scalar_load(
+                width,
+                MemArg {
+                    offset: 0,
+                    align: 0,
+                    memory_index: 0,
+                },
+            );
+            self.op(Op::Else);
+            self.load_address_slow(width, true, exit_depth + 1);
+            self.op(Op::End);
+            return Some(RmwAccess::Cached);
+        }
+
         if let Some((proof, host)) = self.proved_stack
             && proof.writes
             && let Some(offset) = proof.offset(address, width)
@@ -1329,7 +1357,7 @@ impl Emitter {
                 self.indexed_paged_read.unwrap(),
                 width.bytes(),
                 false,
-                false,
+                IndexedOperand::Read,
             );
             self.op(Op::LocalTee(STORE_STATUS))
                 .op(Op::If(BlockType::Empty))
@@ -1533,13 +1561,20 @@ impl Emitter {
         self.stores = true;
         self.linear_address();
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-        let indexed = self.uses_indexed_scalar_write(self.current_operation);
+        let fill_index = self.uses_indexed_scalar_write(self.current_operation);
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        let indexed = fill_index && !self.uses_indexed_scalar_rmw();
         #[cfg(any(feature = "parallel", not(target_arch = "wasm32")))]
         let indexed = false;
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         if indexed {
             self.op(Op::LocalSet(ADDRESS));
-            self.indexed_read_host(self.indexed_paged_read.unwrap(), width.bytes(), false, true);
+            self.indexed_read_host(
+                self.indexed_paged_read.unwrap(),
+                width.bytes(),
+                false,
+                IndexedOperand::Write,
+            );
             self.op(Op::LocalTee(STORE_STATUS))
                 .op(Op::If(BlockType::Empty))
                 .op(Op::LocalGet(STORE_STATUS))
@@ -1556,6 +1591,9 @@ impl Emitter {
                 .op(Op::LocalSet(STORE_STATUS))
                 .op(Op::Else)
                 .op(Op::LocalGet(ADDRESS));
+        } else if fill_index {
+            // A checked RMW consumes its prepared write before filling the slot.
+            self.op(Op::LocalTee(ADDRESS));
         }
         let bytes = i32::from(width.bytes());
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -1584,7 +1622,7 @@ impl Emitter {
         self.memory_failure(exit_depth + 1 + u32::from(indexed));
         self.op(Op::End);
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-        if indexed {
+        if fill_index {
             let fill = self.indexed_store_fill.unwrap();
             self.op(Op::LocalGet(STORE_STATUS))
                 .op(Op::I32Const(1))
@@ -1593,8 +1631,10 @@ impl Emitter {
                 .op(Op::LocalGet(ADDRESS))
                 .op(Op::I32Const(bytes))
                 .op(Op::Call(fill))
-                .op(Op::End)
                 .op(Op::End);
+            if indexed {
+                self.op(Op::End);
+            }
         }
     }
 

@@ -24,7 +24,24 @@ impl Emitter {
         next_pc: u64,
         exit_depth: u32,
     ) {
-        self.read_location(dst, width, next_pc, true, exit_depth);
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        let proof = match dst {
+            Location::Memory(address) if self.uses_indexed_scalar_rmw() => {
+                self.load_cached_rmw(address, width, next_pc, exit_depth)
+            }
+            _ => None,
+        };
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        let direct = proof.is_some();
+        #[cfg(any(feature = "parallel", not(target_arch = "wasm32")))]
+        let direct = false;
+        if direct {
+            self.op(Op::LocalGet(VALUE));
+            self.narrow(width);
+            self.op(Op::LocalSet(LHS));
+        } else {
+            self.read_location(dst, width, next_pc, true, exit_depth);
+        }
         self.count(count, width);
         self.op(Op::LocalGet(LHS)).op(Op::LocalSet(RESULT));
         self.op(Op::LocalGet(RHS))
@@ -62,7 +79,13 @@ impl Emitter {
             Shift::Rcl | Shift::Rcr => self.carry_rotate_result(kind, width),
         }
         self.op(Op::End);
-        self.write_location(dst, width, exit_depth);
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if let Some(proof) = proof {
+            self.store_cached_rmw(proof, width, exit_depth);
+        }
+        if !direct {
+            self.write_location(dst, width, exit_depth);
+        }
         if self.omit_result_status {
             return;
         }

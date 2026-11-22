@@ -18,6 +18,7 @@ impl Core {
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     pub(super) fn remember_indexed_scalar_write(&mut self, address: u64, width: u32) {
+        use crate::embedding::layout::paging::INDEXED_WRITE_READABLE;
         use crate::x86::paging::cache::{INDEXED_READ_ENTRIES, IndexedReadEntry};
         if self.state.indexed_paged_reads == 0 || self.image.active_changed() {
             return;
@@ -45,8 +46,10 @@ impl Core {
             let host = span.host + (physical - span.base) as u32;
             if host != 0 {
                 let index = (page >> 12) as usize & (INDEXED_READ_ENTRIES - 1);
+                let readable =
+                    self.image.physical_direct_read_pointer(physical, 4096) == Some(host);
                 self.state.indexed_paged_writes[index] = IndexedReadEntry {
-                    page,
+                    page: page | if readable { INDEXED_WRITE_READABLE } else { 0 },
                     id,
                     slot: slot as u32,
                     host,

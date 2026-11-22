@@ -6,6 +6,14 @@ use crate::x86::instruction::{Alu, Instruction, Operation};
 use wasm_encoder::{BlockType, Instruction as Op};
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum IndexedOperand {
+    Read,
+    Write,
+    ReadModifyWrite,
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 pub(super) fn indexed_scalar_read(operation: Operation) -> bool {
     use crate::x86::context::Segment;
     use crate::x86::instruction::{Location, MemoryAluOperands, Width};
@@ -47,8 +55,30 @@ pub(super) fn indexed_scalar_write(operation: Operation, sampled: bool) -> bool 
             src: Operand::Register(_) | Operand::Immediate(_),
             width: Width::W64,
         } => sampled,
-        _ => false,
+        _ => indexed_scalar_rmw(operation),
     }
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+pub(super) fn indexed_scalar_rmw(operation: Operation) -> bool {
+    use crate::x86::context::Segment;
+    use crate::x86::instruction::{Location, MemoryAluOperands, Width};
+
+    let address = match operation {
+        Operation::MemoryAlu {
+            address,
+            kind,
+            operands: MemoryAluOperands::MemoryFirst(_),
+            width: Width::W32,
+        } if kind.writes_result() => address,
+        Operation::Shift {
+            dst: Location::Memory(address),
+            width: Width::W32,
+            ..
+        } => address,
+        _ => return false,
+    };
+    matches!(address.segment, Segment::Ds | Segment::Ss)
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -158,6 +188,13 @@ impl Emitter {
         self.indexed_store_fill.is_some()
             && !self.guarded_paged_lap
             && indexed_scalar_write(operation, self.sampled_region)
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn uses_indexed_scalar_rmw(&self) -> bool {
+        self.indexed_store_fill.is_some()
+            && !self.guarded_paged_lap
+            && indexed_scalar_rmw(self.current_operation)
     }
 
     pub(super) fn instruction(
@@ -748,7 +785,7 @@ impl Emitter {
             self.indexed_paged_read.expect("indexed prefix locals"),
             width,
             true,
-            false,
+            IndexedOperand::Read,
         );
         self.op(Op::LocalTee(STORE_STATUS))
             .op(Op::If(BlockType::Result(ValType::I32)))
@@ -780,10 +817,10 @@ impl Emitter {
         [table, entry, data, fetch]: [u32; 4],
         width: u8,
         preserve_fetch: bool,
-        write: bool,
+        operand: IndexedOperand,
     ) {
         use super::{ADDRESS, LHS, STORE_STATUS, VALUE};
-        use crate::embedding::layout::StateStorage;
+        use crate::embedding::layout::{StateStorage, paging::INDEXED_WRITE_READABLE};
         use crate::x86::paging::cache::{
             CAPACITY, INDEXED_READ_ENTRIES, IndexedReadEntry, IndexedReadTable,
         };
@@ -798,7 +835,7 @@ impl Emitter {
         let clock = mem(offset_of!(IndexedReadTable, clock), 3);
         let ages = mem(offset_of!(IndexedReadTable, ages), 3);
         let live_ids = mem(offset_of!(IndexedReadTable, live_ids), 3);
-        let (record_base, records) = if write {
+        let (record_base, records) = if operand != IndexedOperand::Read {
             (0, offset_of!(StateStorage, indexed_paged_writes))
         } else {
             (table, offset_of!(IndexedReadTable, entries))
@@ -843,11 +880,19 @@ impl Emitter {
             .op(Op::I32Add)
             .op(Op::LocalTee(entry))
             .op(Op::I64Load(mem(offset_of!(IndexedReadEntry, page), 3)))
-            .op(Op::LocalGet(ADDRESS))
-            .op(Op::I64Const(!4095))
-            .op(Op::I64And)
-            .op(Op::I64Ne)
-            .op(Op::BrIf(0))
+            .op(Op::LocalGet(ADDRESS));
+        if operand == IndexedOperand::Write {
+            // Ordinary writes accept the tag with or without the read proof.
+            self.op(Op::I64Xor).op(Op::I64Const(4095)).op(Op::I64GtU);
+        } else {
+            self.op(Op::I64Const(!4095)).op(Op::I64And);
+            if operand == IndexedOperand::ReadModifyWrite {
+                self.op(Op::I64Const(INDEXED_WRITE_READABLE as i64))
+                    .op(Op::I64Or);
+            }
+            self.op(Op::I64Ne);
+        }
+        self.op(Op::BrIf(0))
             .op(Op::LocalGet(entry))
             .op(Op::I64Load(mem(offset_of!(IndexedReadEntry, id), 3)))
             .op(Op::LocalTee(id))
