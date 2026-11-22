@@ -11,17 +11,21 @@ import {
 } from '../../../../../tests/execution/paging/fixture.js';
 import { compiler } from './fixture.js';
 
-test('an indexed near call preserves checked handler fetch across stack hits', async () => {
-  // CALL RAX; INC ECX; CMP ECX,4; JB start; HLT; handler resets EDX and adds 3.
+test('an indexed near call preserves checked fetch and writes in a guarded handler', async () => {
+  // CALL RAX; INC ECX; CMP ECX,4; JB start; HLT.
+  // Handler: MOV EDX,[RDI]; ADD EDX,1; MOV [RSI],EDX; ADD EDX,1; RET.
   const target = PC + 16n;
   const stop = PC + 9n;
-  const rsp = PC + 0x1008n;
+  const page = PC + 0x1000n;
+  const rsp = page + 8n;
+  const data = page + 0x40n;
   const prototype = Core.prototype as unknown as {
     artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
   };
   const imports = prototype.artifactImports;
   const compile = Core.prototype.compile;
   let handlerGuards = 0;
+  let guardedWrites = 0;
   Core.prototype.compile = function (pc, limits, seeds, regionPoints) {
     if (pc === PC && !seeds?.length) return compile.call(this, pc, limits, [target, stop], false);
     return compile.call(this, pc, limits, seeds, regionPoints);
@@ -35,29 +39,40 @@ test('an indexed near call preserves checked handler fetch across stack hits', a
         return guard(pc, width, flags, shadow);
       };
     }
+    const write = env.paged_loop_write_dword;
+    if (typeof write === 'function') {
+      env.paged_loop_write_dword = (address: bigint, value: number) => {
+        if (address === data) guardedWrites++;
+        return write(address, value);
+      };
+    }
     return env;
   };
   try {
     await usingPaged(
       compiler,
       {
-        code: 'ffd0ffc183f90472f7f490909090909031d283c20183c20183c201c3',
+        code: 'ffd0ffc183f90472f7f49090909090908b1783c201891683c201c3',
         words: [[0x4008n, 0xa003n]],
         spans: [{ physical: 0xa000n, bytes: new Uint8Array(4096) }],
       },
       async (cpu) => {
-        const enter = () => cpu.setState(initial(PC, { 0: target, 1: 0n, 4: rsp }));
-        for (let wave = 0; wave < 3; wave++) {
+        const enter = (store = data) =>
+          cpu.setState(initial(PC, { 0: target, 1: 0n, 4: rsp, 6: store, 7: data }));
+        for (let wave = 1; wave <= 3; wave++) {
           handlerGuards = 0;
+          guardedWrites = 0;
           enter();
           const result = await cpu.run({ stop, budget: 40n });
           assert.equal(result.reason, 'stop');
           assert.equal(result.retired, 36n);
           assert.equal(result.state.registers[1], 4n);
-          assert.equal(result.state.registers[2], 3n);
+          assert.equal(result.state.registers[2], BigInt(wave * 4 + 1));
           assert.equal(result.state.registers[4], rsp);
+          assert.equal(word(cpu, 0xa040n), BigInt(wave * 4));
         }
         assert.equal(handlerGuards, 1, 'only the first handler needs checked admission');
+        assert.equal(guardedWrites, 0, 'warm handler stores use the retained writable mapping');
         enter();
         const inside = await cpu.run({ stop: target + 2n, budget: 40n });
         assert.equal(inside.reason, 'stop');
@@ -70,6 +85,25 @@ test('an indexed near call preserves checked handler fetch across stack hits', a
         assert.equal(watched.reason, 'debug-exception');
         assert.equal(watched.retired, 1n);
         assert.equal(watched.state.rip, target);
+
+        cpu.setDebugState({ addresses: [data, 0n, 0n, 0n], dr6: 0n, dr7: 0xd0401n });
+        enter();
+        const writeWatch = await cpu.run({ stop, budget: 40n });
+        assert.equal(writeWatch.reason, 'debug-exception');
+        assert.equal(writeWatch.debugException?.cause, 'data-breakpoint');
+        assert.equal(writeWatch.retired, 4n);
+        assert.equal(writeWatch.state.rip, target + 7n);
+        assert.equal(word(cpu, 0xa040n), 13n);
+
+        cpu.setDebugState({ addresses: [0n, 0n, 0n, 0n], dr6: 0n, dr7: 0n });
+        const end = page + 4096n;
+        enter(end - 2n);
+        const split = await cpu.run({ stop, budget: 40n });
+        assert.equal(split.reason, 'page-fault');
+        assert.equal(split.pageFault?.address, end);
+        assert.equal(split.retired, 3n);
+        assert.equal(split.state.rip, target + 5n);
+        assert.deepEqual(cpu.readPhysicalMemory(0xaffen, 2), Uint8Array.of(0, 0));
       },
     );
   } finally {
