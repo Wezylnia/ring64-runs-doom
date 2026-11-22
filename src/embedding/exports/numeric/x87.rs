@@ -100,16 +100,15 @@ fn core_x87_impl<const OBSERVED: bool, const PAGED: bool>(
         if operation.is_waiting() && pending != 0 {
             return core.pending_x87_reason();
         }
+        let store = operation.is_store();
+        let private_linear = !PAGED && !cfg!(feature = "parallel");
         let width = operation.memory_bytes();
         let mut address = None;
+        let mut linear_write = None;
         let source = if width == 0 {
             0
         } else {
-            let access = if operation.is_store() {
-                Access::Write
-            } else {
-                Access::Read
-            };
+            let access = if store { Access::Write } else { Access::Read };
             let Some(linear) = core.segment_address(offset, width, segment, access, false) else {
                 return if core.segment_fault.is_some() {
                     SEGMENT
@@ -118,8 +117,16 @@ fn core_x87_impl<const OBSERVED: bool, const PAGED: bool>(
                 };
             };
             address = Some(linear);
-            if operation.is_store() {
-                if let Err(fault) = guest_access!(
+            if store {
+                if private_linear {
+                    match core.image.prepare_linear_write(linear, width) {
+                        Ok(write) => linear_write = Some(write),
+                        Err(fault) => {
+                            core.access_failure(AccessFailure::Linear(fault));
+                            return core.memory_failure_reason();
+                        }
+                    }
+                } else if let Err(fault) = guest_access!(
                     core,
                     PAGED,
                     check_write_aligned(linear, width, operation.alignment_intent())
@@ -142,10 +149,8 @@ fn core_x87_impl<const OBSERVED: bool, const PAGED: bool>(
                 }
             }
         };
-        // Operands are admitted; only stores still need fallible payload publication.
-        let mut staged = operation
-            .is_store()
-            .then(|| unsafe { (*core.state.get()).x87 });
+        // A prepared private write holds the complete admission through publication.
+        let mut staged = (store && !private_linear).then(|| unsafe { (*core.state.get()).x87 });
         let effect = {
             let candidate = match staged.as_mut() {
                 Some(candidate) => candidate,
@@ -164,20 +169,26 @@ fn core_x87_impl<const OBSERVED: bool, const PAGED: bool>(
             }
             effect
         };
-        if effect.store {
-            let linear = address.expect("x87 memory store address");
-            if let Err(fault) = guest_access!(
-                core,
-                PAGED,
-                write_bytes_aligned(
-                    linear,
-                    &effect.value.to_le_bytes()[..width as usize],
-                    operation.alignment_intent()
-                )
-            ) {
-                core.access_failure(fault);
-                return core.memory_failure_reason();
+        match (effect.store, private_linear, linear_write) {
+            (true, true, write) => write
+                .expect("prepared linear x87 store")
+                .publish(&effect.value.to_le_bytes()[..width as usize]),
+            (true, false, _) => {
+                let linear = address.expect("x87 memory store address");
+                if let Err(fault) = guest_access!(
+                    core,
+                    PAGED,
+                    write_bytes_aligned(
+                        linear,
+                        &effect.value.to_le_bytes()[..width as usize],
+                        operation.alignment_intent()
+                    )
+                ) {
+                    core.access_failure(fault);
+                    return core.memory_failure_reason();
+                }
             }
+            _ => {}
         }
         unsafe {
             let state = &mut *core.state.get();
@@ -192,7 +203,7 @@ fn core_x87_impl<const OBSERVED: bool, const PAGED: bool>(
             }
         }
         if OBSERVED && let Some(address) = address {
-            if !operation.is_store() {
+            if !store {
                 core.debug_operand(address, width, Access::Read);
             }
             if effect.store {

@@ -272,36 +272,32 @@ fn x87_exact_ten_byte_loads_keep_raw_encodings_and_update_only_defined_environme
 fn executable_alias(raw: u128) -> u64 {
     BRIDGE.with_borrow_mut(|bridge| {
         let core = bridge.core.as_mut().unwrap();
+        let bytes = raw.to_le_bytes();
         core.image = Image::mapped(
-            vec![("code".into(), raw.to_le_bytes()[..10].to_vec())],
             vec![
-                MappingInput {
-                    base: 0x1000,
-                    backing: "code".into(),
-                    offset: 0,
-                    length: 10,
-                    permissions: Permissions {
-                        read: false,
-                        write: false,
-                        execute: true,
-                    },
-                },
-                MappingInput {
-                    base: 0x4000,
-                    backing: "code".into(),
-                    offset: 0,
-                    length: 10,
-                    permissions: Permissions {
-                        read: false,
-                        write: true,
-                        execute: false,
-                    },
-                },
+                ("head".into(), bytes[..2].to_vec()),
+                ("tail".into(), bytes[2..10].to_vec()),
             ],
+            [("head", 0, 2), ("tail", 2, 8)]
+                .into_iter()
+                .flat_map(|(backing, start, length)| {
+                    [0x1000, 0x4000].map(|base| MappingInput {
+                        base: base + start,
+                        backing: backing.into(),
+                        offset: 0,
+                        length,
+                        permissions: Permissions {
+                            read: false,
+                            write: base == 0x4000,
+                            execute: base == 0x1000,
+                        },
+                    })
+                })
+                .collect(),
             MemoryLimits {
                 max_backing_bytes: 10,
-                max_backings: 1,
-                max_mappings: 2,
+                max_backings: 2,
+                max_mappings: 4,
             },
         )
         .unwrap();
@@ -312,7 +308,7 @@ fn executable_alias(raw: u128) -> u64 {
 }
 
 #[test]
-fn x87_identity_code_store_invalidates_only_after_store_and_pop_commit() {
+fn x87_split_code_store_invalidates_only_after_store_and_pop_commit() {
     initialize(0x1000, &[0xf4]);
     let raw = (0x3fffu128 << 64) | 0x8000000000000000;
     let owner = executable_alias(raw);
@@ -333,7 +329,14 @@ fn x87_identity_code_store_invalidates_only_after_store_and_pop_commit() {
     assert_eq!(after.instruction_pointer, 0x1000);
     assert_eq!(after.data_pointer, 0x4000);
     assert_eq!(after.opcode, 0x123);
-    assert!(!BRIDGE.with_borrow(|bridge| bridge.core.as_ref().unwrap().image.owner_valid(owner)));
+    BRIDGE.with_borrow(|bridge| {
+        let image = &bridge.core.as_ref().unwrap().image;
+        assert!(!image.owner_valid(owner));
+        assert!(image.active_changed());
+        for (index, expected) in raw.to_le_bytes()[..10].iter().copied().enumerate() {
+            assert_eq!(image.fetch(0x1000 + index as u64).unwrap(), expected);
+        }
+    });
 
     let owner = executable_alias(raw);
     let mut before = X87State {
@@ -350,8 +353,17 @@ fn x87_identity_code_store_invalidates_only_after_store_and_pop_commit() {
     assert_eq!(after.raw(0), before.raw(0));
     assert_eq!(after.tag_word, before.tag_word);
     assert_eq!(after.status_word, 0x8088);
+    assert_eq!(after.instruction_pointer, 0x1000);
+    assert_eq!(after.data_pointer, 0x4000);
     assert_eq!(after.opcode, 0x11b);
-    assert!(BRIDGE.with_borrow(|bridge| bridge.core.as_ref().unwrap().image.owner_valid(owner)));
+    BRIDGE.with_borrow(|bridge| {
+        let image = &bridge.core.as_ref().unwrap().image;
+        assert!(image.owner_valid(owner));
+        assert!(!image.active_changed());
+        for (index, expected) in raw.to_le_bytes()[..10].iter().copied().enumerate() {
+            assert_eq!(image.fetch(0x1000 + index as u64).unwrap(), expected);
+        }
+    });
 }
 
 #[test]

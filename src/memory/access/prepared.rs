@@ -1,5 +1,21 @@
 use super::{Access, Fault, Image};
 
+/// A complete ordinary write whose mapping layout is held until publication.
+pub(crate) struct PreparedLinearWrite<'a> {
+    image: &'a mut Image,
+    address: u64,
+    width: u32,
+    first: usize,
+}
+
+impl PreparedLinearWrite<'_> {
+    pub(crate) fn publish(self, bytes: &[u8]) {
+        assert_eq!(bytes.len(), self.width as usize);
+        self.image
+            .write_after_preflight(self.address, bytes, self.first);
+    }
+}
+
 /// One originating image's admitted span, valid only while mapping/backing layout is unchanged.
 /// Paging retains this only within the current instruction/element's publication boundary.
 #[derive(Debug)]
@@ -13,6 +29,20 @@ pub(crate) struct PreparedPhysicalWrite {
 pub(crate) struct PreparedPhysicalUpdate(PreparedPhysicalWrite);
 
 impl Image {
+    pub(crate) fn prepare_linear_write(
+        &mut self,
+        address: u64,
+        width: u32,
+    ) -> Result<PreparedLinearWrite<'_>, Fault> {
+        let first = self.preflight::<false>(address, width, Access::Write, false, false)?;
+        Ok(PreparedLinearWrite {
+            image: self,
+            address,
+            width,
+            first,
+        })
+    }
+
     pub(crate) fn prepare_physical_write(
         &self,
         address: u64,
