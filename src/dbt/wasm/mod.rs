@@ -231,7 +231,7 @@ struct Emitter {
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_prefix_read: Option<(u32, bool, bool)>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    paged_prefix_store: Option<u32>,
+    paged_prefix_store: Option<(u32, bool)>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_prefix_fetch_out: Option<(u32, usize)>,
     paged_loop_guard: Option<(u32, u32)>,

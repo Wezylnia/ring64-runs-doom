@@ -1652,16 +1652,42 @@ impl Emitter {
         exit_depth: u32,
     ) {
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-        if let Some(write) = self.paged_prefix_store {
+        if let Some((write, indexed)) = self.paged_prefix_store {
             debug_assert!(width == Width::W32 && address.segment == Segment::Ds);
             self.address(address, next_pc);
+            if indexed {
+                self.op(Op::LocalSet(ADDRESS));
+                self.indexed_read_host(
+                    self.indexed_paged_read.unwrap(),
+                    width.bytes(),
+                    true,
+                    IndexedOperand::Write,
+                );
+                self.op(Op::LocalTee(STORE_STATUS))
+                    .op(Op::If(BlockType::Empty))
+                    .op(Op::LocalGet(STORE_STATUS));
+                self.data_operand(src, width);
+                self.direct_scalar_store(
+                    width,
+                    MemArg {
+                        offset: 0,
+                        align: 0,
+                        memory_index: 0,
+                    },
+                );
+                self.op(Op::Else).op(Op::LocalGet(ADDRESS));
+            }
             self.data_operand(src, width);
             self.op(Op::I32WrapI64)
                 .op(Op::Call(write))
                 .op(Op::I32Eqz)
                 .op(Op::If(BlockType::Empty));
-            self.route(self.current_pc, exit_depth, exit_depth + 1);
+            let depth = exit_depth + u32::from(indexed);
+            self.route(self.current_pc, depth, depth + 1);
             self.op(Op::End);
+            if indexed {
+                self.op(Op::End);
+            }
             return;
         }
         let paged_write = match (width, address.segment) {

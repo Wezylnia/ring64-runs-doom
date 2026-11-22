@@ -648,6 +648,10 @@ impl Emitter {
             && instructions.iter().copied().any(paged_prefix_dword_read);
         let indexed_wide = self.indexed_scalar_scratch.is_some()
             && instructions.iter().copied().any(paged_prefix_wide_read);
+        let indexed_store = self.retouch_prefix_fetch
+            && self.indexed_paged_read.is_some()
+            && write_import.is_some()
+            && instructions.iter().copied().any(paged_prefix_dword_store);
         let indexed_leading = read.is_some_and(|(_, (_, _, width, _))| {
             if width == crate::x86::instruction::Width::W32 {
                 indexed_dword
@@ -658,11 +662,12 @@ impl Emitter {
         // A handoff can bypass its guard only directly from a read-only
         // prefix in this unit. Wide reads must admit their index at the
         // checked entry because other prefixes can hand off fetch alone.
-        let indexed = indexed_leading || self.indexed_dword_prefixes || indexed_wide;
+        let indexed =
+            indexed_leading || self.indexed_dword_prefixes || indexed_wide || indexed_store;
         self.guard_straight_paged_prefix(
             instructions,
             guard,
-            incoming.filter(|_| !indexed_wide),
+            incoming.filter(|_| !indexed_wide && !indexed_store),
             indexed,
             self.retouch_prefix_fetch || indexed_wide || !indexed,
         );
@@ -753,8 +758,9 @@ impl Emitter {
                         leading_wide_read && index == 0,
                     )
                 });
-            self.paged_prefix_store =
-                write_import.filter(|_| paged_prefix_dword_store(*instruction));
+            self.paged_prefix_store = write_import
+                .filter(|_| paged_prefix_dword_store(*instruction))
+                .map(|write| (write, indexed_store));
             self.emit_instruction(*instruction, None, loop_depth, None, None, false);
         }
         self.instruction_retirement = InstructionRetirement::One;
