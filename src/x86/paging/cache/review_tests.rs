@@ -304,7 +304,7 @@ fn guarded_dword_store_memo_preserves_backing_admission_and_recency() {
 
 #[cfg(not(feature = "parallel"))]
 #[test]
-fn guarded_dword_candidates_revalidate_removals_and_later_ordinary_fills() {
+fn indexed_candidates_revalidate_removals_and_later_ordinary_fills() {
     let (mut image, mut origin, request) = fixture();
     origin.cr4 |= (1 << 7) | (1 << 17);
     origin.cr3 = 0x1001;
@@ -318,9 +318,8 @@ fn guarded_dword_candidates_revalidate_removals_and_later_ordinary_fills() {
     let check = |state: &State, request: Request, expected| {
         let mut entries = cache.entries.borrow_mut();
         entries.hint = None;
-        let mut candidates = cache.guarded_candidates.borrow_mut();
-        let found = candidates.find(&entries, state, request);
-        assert_eq!(found, entries.find(state, request));
+        let found = entries.find(state, request);
+        assert_eq!(found, entries.find_linear_reference(state, request));
         assert_eq!(
             found.map(|index| entries.slots[index]
                 .unwrap()

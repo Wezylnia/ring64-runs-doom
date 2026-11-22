@@ -11,8 +11,7 @@ use crate::x86::protection_keys::State as ProtectionKeys;
 
 const CAPACITY: usize = 64;
 
-#[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
-mod guarded_candidates;
+mod lookup_index;
 
 #[cfg(test)]
 mod review_tests;
@@ -31,6 +30,7 @@ struct Entry {
 
 struct Entries {
     slots: [Option<Entry>; CAPACITY],
+    lookup_index: lookup_index::LookupIndex,
     capacity: usize,
     clock: u64,
     next_id: u64,
@@ -48,6 +48,48 @@ pub(super) enum RetainedSpan {
 
 impl Entries {
     fn find(&self, state: &State, request: Request) -> Option<usize> {
+        let family = family(state);
+        let pcid = state.pcid();
+        let matches = |entry: &Entry| {
+            entry.family == family
+                && (entry.global || entry.pcid == pcid)
+                && entry.translation.contains(request.linear)
+        };
+        if let Some(index) = self.hint
+            && let Some(entry) = self.slots[index].as_ref()
+            && !entry.global
+            && matches(entry)
+        {
+            return Some(index);
+        }
+        let mut candidates = self.lookup_index.candidates(request.linear);
+        let mut global = None;
+        while candidates != 0 {
+            let index = candidates.trailing_zeros() as usize;
+            candidates &= candidates - 1;
+            let entry = self.slots[index].as_ref().unwrap();
+            if matches(entry) {
+                if !entry.global {
+                    return Some(index);
+                }
+                global.get_or_insert(index);
+            }
+        }
+        global
+    }
+
+    fn insert(&mut self, index: usize, entry: Entry) {
+        self.lookup_index.insert(index, &entry);
+        self.slots[index] = Some(entry);
+    }
+
+    fn remove(&mut self, index: usize) {
+        self.lookup_index.remove(index);
+        self.slots[index] = None;
+    }
+
+    #[cfg(all(not(feature = "parallel"), test))]
+    fn find_linear_reference(&self, state: &State, request: Request) -> Option<usize> {
         let matches = |entry: &Entry| {
             entry.family == family(state)
                 && (entry.global || entry.pcid == state.pcid())
@@ -117,8 +159,6 @@ pub struct Cache {
     entries: RefCell<Entries>,
     changed: Cell<bool>,
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
-    guarded_candidates: RefCell<guarded_candidates::Candidates>,
-    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
     last_dword_write: Cell<Option<NonZeroU8>>,
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
     last_byte_read: Cell<Option<NonZeroU8>>,
@@ -136,6 +176,7 @@ impl Cache {
         Self {
             entries: RefCell::new(Entries {
                 slots: [None; CAPACITY],
+                lookup_index: lookup_index::LookupIndex::default(),
                 capacity,
                 clock: 0,
                 next_id: 1,
@@ -143,8 +184,6 @@ impl Cache {
                 hint: None,
             }),
             changed: Cell::new(false),
-            #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
-            guarded_candidates: RefCell::default(),
             #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
             last_dword_write: Cell::new(None),
             #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
@@ -172,7 +211,7 @@ impl Cache {
         };
         let entry = entries.slots[index].unwrap();
         if request.access == Access::Write && entry.translation.dirty {
-            entries.slots[index] = None;
+            entries.remove(index);
             self.changed.set(true);
             return Ok(None);
         }
@@ -461,10 +500,7 @@ impl Cache {
         let fetch = entries
             .hint
             .filter(|&index| entries.slots[index].is_some())?;
-        let found = self
-            .guarded_candidates
-            .borrow_mut()
-            .find(&entries, state, request);
+        let found = entries.find(state, request);
         let Some(data) = found else {
             drop(entries);
             return self.fill_dword_miss_then_fetch(image, state, request, fetch, peek);
@@ -520,19 +556,17 @@ impl Cache {
             let value = image.physical_read_local_dword(translation.physical)?;
             Some((translation, value))
         })?;
+        let only_4k_leaves = entries.lookup_index.only_4k_leaves();
         drop(entries);
         // A nonoverlapping fill with at least two slots cannot evict the
         // newest entry. Commit the same fill and next fetch as checked execution.
-        if self.guarded_candidates.borrow().only_4k_leaves() {
+        if only_4k_leaves {
             self.install_known_local_miss(state, translation);
         } else {
             let installed = self.fill(state, request, translation);
             debug_assert!(installed.cache_id.is_some());
         }
         let mut entries = self.entries.borrow_mut();
-        self.guarded_candidates
-            .borrow_mut()
-            .observe_fill(&entries, entries.hint.unwrap());
         entries.touch(fetch);
         Some(value)
     }
@@ -564,13 +598,16 @@ impl Cache {
         let mut translation = translation;
         translation.cache_id = Some(entries.next_id);
         entries.next_id += 1;
-        entries.slots[index] = Some(Entry {
-            translation,
-            pcid: state.pcid(),
-            global: false,
-            family: family(state),
-            used: 0,
-        });
+        entries.insert(
+            index,
+            Entry {
+                translation,
+                pcid: state.pcid(),
+                global: false,
+                family: family(state),
+                used: 0,
+            },
+        );
         entries.touch(index);
     }
 
@@ -871,6 +908,7 @@ impl Cache {
         if entries.next_id == u64::MAX {
             // Exhaustion falls back to uncached walks rather than reusing captured IDs.
             entries.slots.fill(None);
+            entries.lookup_index = lookup_index::LookupIndex::default();
             entries.hint = None;
             entries.exhausted = true;
             self.changed.set(true);
@@ -884,8 +922,8 @@ impl Cache {
         let mut oldest_age = u64::MAX;
         let mut overlaps_visible_entry = false;
         let capacity = entries.capacity;
-        for (index, slot) in entries.slots[..capacity].iter_mut().enumerate() {
-            let Some(entry) = slot.as_ref() else {
+        for index in 0..capacity {
+            let Some(entry) = entries.slots[index].as_ref() else {
                 first_free.get_or_insert(index);
                 continue;
             };
@@ -897,7 +935,7 @@ impl Cache {
                 // Local entries shadow overlapping globals for this PCID.
                 // Other PCIDs can still use the global translation.
                 if entry.global == global {
-                    *slot = None;
+                    entries.remove(index);
                     first_free.get_or_insert(index);
                     continue;
                 }
@@ -913,13 +951,16 @@ impl Cache {
         }
         translation.cache_id = Some(entries.next_id);
         entries.next_id += 1;
-        entries.slots[index] = Some(Entry {
-            translation,
-            pcid,
-            global,
-            family,
-            used: 0,
-        });
+        entries.insert(
+            index,
+            Entry {
+                translation,
+                pcid,
+                global,
+                family,
+                used: 0,
+            },
+        );
         entries.touch(index);
         translation.at(request.linear)
     }
@@ -968,9 +1009,10 @@ impl Cache {
     }
 
     fn remove(&self, predicate: impl Fn(&Entry) -> bool) {
-        for slot in &mut self.entries.borrow_mut().slots {
-            if slot.as_ref().is_some_and(&predicate) {
-                *slot = None;
+        let mut entries = self.entries.borrow_mut();
+        for index in 0..entries.capacity {
+            if entries.slots[index].as_ref().is_some_and(&predicate) {
+                entries.remove(index);
                 self.changed.set(true);
             }
         }

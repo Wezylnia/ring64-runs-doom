@@ -1,0 +1,54 @@
+use super::{CAPACITY, Entry};
+
+const WIDE: usize = CAPACITY;
+const VACANT: u8 = u8::MAX;
+
+/// Indexes candidate slots. The entries still own translation and recency.
+pub(super) struct LookupIndex {
+    buckets: [u64; CAPACITY + 1],
+    bucket_by_slot: [u8; CAPACITY],
+}
+
+impl Default for LookupIndex {
+    fn default() -> Self {
+        Self {
+            buckets: [0; CAPACITY + 1],
+            bucket_by_slot: [VACANT; CAPACITY],
+        }
+    }
+}
+
+impl LookupIndex {
+    pub(super) fn candidates(&self, address: u64) -> u64 {
+        self.buckets[bucket(address)] | self.buckets[WIDE]
+    }
+
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    pub(super) fn only_4k_leaves(&self) -> bool {
+        self.buckets[WIDE] == 0
+    }
+
+    pub(super) fn insert(&mut self, index: usize, entry: &Entry) {
+        self.remove(index);
+        let translation = entry.translation;
+        let bucket = if translation.span == 4096 && translation.linear_base & 4095 == 0 {
+            bucket(translation.linear_base)
+        } else {
+            WIDE
+        };
+        self.buckets[bucket] |= 1u64 << index;
+        self.bucket_by_slot[index] = bucket as u8;
+    }
+
+    pub(super) fn remove(&mut self, index: usize) {
+        let old = self.bucket_by_slot[index];
+        if old != VACANT {
+            self.buckets[usize::from(old)] &= !(1u64 << index);
+            self.bucket_by_slot[index] = VACANT;
+        }
+    }
+}
+
+fn bucket(address: u64) -> usize {
+    ((address >> 12).wrapping_mul(0x9e37_79b9_7f4a_7c15) >> (64 - CAPACITY.ilog2())) as usize
+}
