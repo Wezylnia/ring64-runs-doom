@@ -1054,7 +1054,9 @@ impl Emitter {
                 self.proved_reads = Some((proof, bias));
             }
             self.op(Op::If(BlockType::Empty));
+            self.float_dyadic = self.paged_float_dyadic;
             self.emit_prechecked_body(instructions, body, loop_depth + 4, None);
+            self.float_dyadic = None;
             self.proved_reads = None;
             self.paged_proved_f32_reads = None;
             self.op(Op::Else);
@@ -1242,7 +1244,11 @@ impl Emitter {
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         if let Some(reduction) = dyadic {
             self.op(Op::Block(BlockType::Empty));
-            self.try_dyadic_prefix(reduction);
+            let paged_prefix = self.guarded_paged_lap.then(|| {
+                let update = body.tail - 2;
+                (update - body.head, instructions[update as usize].pc)
+            });
+            self.try_dyadic_prefix(reduction, paged_prefix);
         }
         let order = body.order();
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]

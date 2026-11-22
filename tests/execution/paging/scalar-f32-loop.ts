@@ -345,5 +345,92 @@ export function pagingScalarF32LoopScenarios(compiler: WebAssembly.Module): Scen
         }
       },
     },
+    {
+      name: 'paged dyadic scalar F32 preserves zero signs, mixed data, and exact boundaries',
+      async run() {
+        // Warm both streams. Four scalar products form left-to-right prefixes;
+        // the last prefix supplies the next lap's accumulator in XMM1.
+        const prefix =
+          '8b178b16f30f101c9ff30f10549f04f30f591c9ef30f59549e04f30f58d9' +
+          'f30f10649f08f30f59649e08f30f58d3f30f104c9f0cf30f594c9e0c' +
+          'f30f58e2f30f58cc';
+        const negative = 0x80000000n;
+        const nan = 0x7fc00011n;
+        const one = 0x3f800000n;
+        const initialAccumulator = (oldXmm & ~0xffffffffn) | negative;
+        for (const mode of ['long', 'compatibility'] as const) {
+          const code = prefix + (mode === 'long' ? '4883c3044839cb75b9' : '83c30439cb75bb');
+          for (const kind of ['zero', 'cancel', 'mixed', 'downward', 'partial', 'stop'] as const) {
+            const mixed = kind === 'mixed' || kind === 'partial';
+            const downward = kind === 'downward';
+            const left = Array<bigint>(8).fill(negative);
+            const right = Array<bigint>(8).fill(one);
+            if (mixed) {
+              left.splice(4, 4, one + 1n, 0x7f800011n, one, 0xbf800000n);
+              right[4] = one + 1n;
+            } else if (downward) {
+              left[1] = left[5] = 0n;
+            } else if (kind === 'cancel') {
+              left[1] = left[5] = one;
+              left[2] = left[6] = 0xbf800000n;
+            }
+            await usingPaged(
+              compiler,
+              {
+                code,
+                ...(mode === 'compatibility' ? { context: context(mode) } : {}),
+                words: dataPages,
+                spans: [{ physical: 0xa000n, bytes: little([...left, ...right], 4) }],
+              },
+              async (cpu) => {
+                cpu.setState(initial(PC, { 1: 8n, 3: 0n, 6: data + 32n, 7: data }, 2n));
+                cpu.setXmmState([0n, initialAccumulator, ...Array<bigint>(14).fill(0n)]);
+                const mxcsr = downward ? 0x3f80 : 0x1f80;
+                cpu.setMxcsr(mxcsr);
+                const stop = PC + BigInt(kind === 'stop' ? 15 : code.length / 2);
+                const result = await cpu.run({ budget: kind === 'partial' ? 18n : 40n, stop });
+                if (kind === 'stop') {
+                  equal(result.reason, 'stop', 'interior stop precedes MULSS');
+                  equal(result.retired, 4n, 'preloads and both MOVSS operations retire');
+                  equal(cpu.readXmmState()[1], initialAccumulator, 'accumulator is still incoming');
+                  equal(cpu.readXmmState()[2], negative, 'second MOVSS has retired');
+                  equal(cpu.readXmmState()[3], negative, 'first MOVSS has retired');
+                  equal(cpu.readMxcsr(), mxcsr, 'interior stop does not publish arithmetic status');
+                  return;
+                }
+                if (kind === 'partial') {
+                  equal(result.reason, 'budget', 'one exact lap and a following MOVSS retire');
+                  equal(result.retired, 18n, 'partial retired count');
+                  equal(result.state.rip, PC + 9n, 'second MOVSS is unstarted');
+                  equal(result.state.registers[3], 4n, 'only the first latch has committed');
+                  for (const bank of [1, 2, 4])
+                    equal(cpu.readXmmState()[bank], negative, 'first exact lap is published');
+                  equal(cpu.readXmmState()[3], one + 1n, 'partial MOVSS overwrites only XMM3');
+                  equal(cpu.readMxcsr(), mxcsr, 'the precise exception is still unstarted');
+                  const resumed = await cpu.run({ budget: 32n, stop });
+                  equal(resumed.reason, 'stop', 'resume executes the exact suffix');
+                  equal(resumed.retired, 14n, 'resume excludes all committed instructions');
+                } else {
+                  equal(
+                    result.reason,
+                    'stop',
+                    `${mode}/${kind}: pc=${result.state.rip.toString(16)} fault=${result.pageFault?.address.toString(16)}`,
+                  );
+                  equal(result.retired, 32n, 'preloads plus the two original laps');
+                }
+                const expected = mixed
+                  ? [nan, nan, one + 2n, nan]
+                  : kind === 'cancel'
+                    ? [0n, one, 0n, 0n]
+                    : Array<bigint>(4).fill(negative);
+                for (const [index, value] of expected.entries())
+                  equal(cpu.readXmmState()[index + 1], value, 'exact XMM prefix and upper bits');
+                equal(cpu.readMxcsr(), mixed ? mxcsr | 0x21 : mxcsr, 'precise sticky status');
+              },
+            );
+          }
+        }
+      },
+    },
   ];
 }

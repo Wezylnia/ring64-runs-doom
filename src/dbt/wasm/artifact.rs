@@ -281,6 +281,8 @@ fn emit_placement(
         inline_f32_packed: true,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         direct_vector_loads: true,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        paged_float_dyadic: true,
     };
     let (bytes, extra_spans) = emit_body(
         unit,
@@ -354,6 +356,8 @@ struct OptionalLowering {
     inline_f32_packed: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     direct_vector_loads: bool,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    paged_float_dyadic: bool,
 }
 
 fn emit_body(
@@ -1448,6 +1452,22 @@ fn emit_body(
         vector_temporaries.expect("outlined Float temporaries")[2] + 1
     });
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let paged_float_dyadic = loop_body
+        .filter(|body| optional.paged_float_dyadic && body.paged_sse())
+        .zip(paged_read_span)
+        .and_then(|(body, (proof, _, _))| {
+            proof.outline_registers()?;
+            let first_local = vector_temporaries.expect("paged Float temporaries")[2] + 1;
+            let reduction = float_dyadic::DyadicReduction::recognize(
+                proof,
+                body,
+                &unit.instructions,
+                first_local,
+            )?;
+            locals.extend_from_slice(&float_dyadic::DyadicReduction::LOCALS);
+            Some(reduction)
+        });
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let mut outlined_functions = Vec::new();
     let mut emitter = Emitter {
         paged,
@@ -1479,6 +1499,8 @@ fn emit_body(
         float_raw_sticky: false,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         float_dyadic: None,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        paged_float_dyadic,
         #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
         parallel_atomic,
         #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
@@ -1797,6 +1819,21 @@ fn emit_body(
     }
     let code_start = bytes.len();
     code.append_to(&mut bytes);
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    if bytes.len() > max_artifact_bytes && paged_float_dyadic.is_some() {
+        return emit_body(
+            unit,
+            observed,
+            (paged, mmio),
+            loop_body,
+            _guard_reads,
+            OptionalLowering {
+                paged_float_dyadic: false,
+                ..optional
+            },
+            max_artifact_bytes,
+        );
+    }
     #[cfg(not(feature = "parallel"))]
     if bytes.len() > max_artifact_bytes && loop_body.is_some_and(StructuredLoop::paged_sse) {
         return (bytes, false);

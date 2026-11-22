@@ -1,4 +1,4 @@
-use super::{ADDRESS, Emitter, STORE_STATUS, StructuredLoop, read_loop::ReadLoop};
+use super::{ADDRESS, Emitter, RIP, STORE_STATUS, StructuredLoop, read_loop::ReadLoop};
 use crate::x86::{
     float::{Format, Kind},
     instruction::{Address, Instruction, Location, Operation, VectorInstruction, VectorOperand},
@@ -137,7 +137,10 @@ impl DyadicReduction {
 
 impl Emitter {
     pub(super) fn admit_dyadic_accumulator(&mut self, reduction: DyadicReduction) {
-        let (proof, _) = self.proved_reads.expect("dyadic read proof");
+        let (proof, _) = self
+            .paged_proved_f32_reads
+            .or(self.proved_reads)
+            .expect("dyadic read proof");
         // Inputs are multiples of 1/16. Keep every product and partial sum
         // on the 1/256 grid within binary32's exact integer range.
         const MAX_COEFFICIENT: i32 = 1 << 24;
@@ -145,6 +148,10 @@ impl Emitter {
         let accumulator = self.xmm(reduction.accumulator);
         self.op(Op::Block(BlockType::Result(ValType::I32)))
             .op(Op::I32Const(0));
+        if self.paged_proved_f32_reads.is_some() {
+            self.load_float_mxcsr();
+            self.reject_non_nearest_fp32();
+        }
         self.proved_read_laps(proof);
         self.op(Op::LocalTee(ADDRESS))
             .op(Op::I64Const(i64::from(MAX_COEFFICIENT / LAP_COEFFICIENT)))
@@ -184,8 +191,15 @@ impl Emitter {
             .op(Op::LocalSet(reduction.pending()));
     }
 
-    pub(super) fn try_dyadic_prefix(&mut self, reduction: DyadicReduction) {
-        let (_, bias) = self.proved_reads.expect("dyadic read proof");
+    pub(super) fn try_dyadic_prefix(
+        &mut self,
+        reduction: DyadicReduction,
+        paged_prefix: Option<(u32, u64)>,
+    ) {
+        let (_, bias) = self
+            .paged_proved_f32_reads
+            .or(self.proved_reads)
+            .expect("dyadic read proof");
         let [left, right, prefixes] = [0, 1, 2].map(|i| reduction.first_local + i);
         self.op(Op::LocalGet(reduction.state()))
             .op(Op::If(BlockType::Empty))
@@ -252,12 +266,21 @@ impl Emitter {
             .op(Op::LocalGet(prefixes))
             .op(Op::F32x4Add)
             .op(Op::LocalSet(reduction.pending()));
-        self.op(Op::I32Const(DYADIC_PENDING))
-            .op(Op::LocalSet(reduction.state()))
-            .op(Op::Br(2))
-            .op(Op::End);
+        if let Some((retired, next_pc)) = paged_prefix {
+            // The integer latch still retires normally. Its exit or a partial
+            // following lap can immediately observe these XMM banks.
+            self.publish_dyadic_prefixes(reduction);
+            self.op(Op::I64Const(next_pc as i64)).op(Op::LocalSet(RIP));
+            self.retire_instructions(retired);
+        } else {
+            self.op(Op::I32Const(DYADIC_PENDING))
+                .op(Op::LocalSet(reduction.state()));
+        }
+        self.op(Op::Br(2)).op(Op::End);
         // The existing lap can expose its incoming banks through checked replay.
-        self.flush_dyadic_prefixes(reduction);
+        if paged_prefix.is_none() {
+            self.flush_dyadic_prefixes(reduction);
+        }
         self.op(Op::I32Const(DYADIC_DISABLED))
             .op(Op::LocalSet(reduction.state()))
             .op(Op::End);
@@ -268,6 +291,11 @@ impl Emitter {
             .op(Op::I32Const(DYADIC_PENDING))
             .op(Op::I32Eq)
             .op(Op::If(BlockType::Empty));
+        self.publish_dyadic_prefixes(reduction);
+        self.op(Op::End);
+    }
+
+    fn publish_dyadic_prefixes(&mut self, reduction: DyadicReduction) {
         for (lane, bank) in reduction.outputs.into_iter().enumerate() {
             let destination = self.xmm(bank);
             self.op(Op::V128Const(0))
@@ -276,6 +304,5 @@ impl Emitter {
                 .op(Op::I32x4ReplaceLane(0))
                 .op(Op::LocalSet(destination));
         }
-        self.op(Op::End);
     }
 }
