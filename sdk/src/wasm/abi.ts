@@ -155,6 +155,7 @@ export type CoreExports = WebAssembly.Exports & {
   core_paged_loop_block_window?(address: bigint): bigint;
   core_paged_loop_retouchable_block_window?(address: bigint): bigint;
   core_paged_loop_retouch_block_window?(address: bigint): number;
+  core_paged_store_fill?(address: bigint, width: number): void;
   core_paged_loop_write_ready?(address: bigint, width: number): number;
   core_paged_loop_read_byte?(address: bigint): bigint;
   core_paged_loop_read_byte_for_store?(address: bigint): bigint;

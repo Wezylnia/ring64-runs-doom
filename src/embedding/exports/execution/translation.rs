@@ -326,6 +326,7 @@ pub(super) fn compile_artifact(
                 if !artifact.read_dependencies.is_empty() {
                     // Execute aliases are already excluded when admitting a write span.
                     core.state.flat_data_write = Default::default();
+                    core.state.indexed_paged_writes.fill(Default::default());
                 }
                 if !core.translation_owners.register(owner, &core.context, observed, core.context_version) {
                     core.image.release(owner);

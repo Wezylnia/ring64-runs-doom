@@ -1306,7 +1306,12 @@ impl Emitter {
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         if indexed {
             self.op(Op::LocalSet(ADDRESS));
-            self.indexed_read_host(self.indexed_paged_read.unwrap(), width.bytes(), false);
+            self.indexed_read_host(
+                self.indexed_paged_read.unwrap(),
+                width.bytes(),
+                false,
+                false,
+            );
             self.op(Op::LocalTee(STORE_STATUS))
                 .op(Op::If(BlockType::Empty))
                 .op(Op::LocalGet(STORE_STATUS));
@@ -1508,6 +1513,31 @@ impl Emitter {
     pub(super) fn store_result_slow(&mut self, width: Width, exit_depth: u32) {
         self.stores = true;
         self.linear_address();
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        let indexed = self.uses_indexed_scalar_write(self.current_operation);
+        #[cfg(any(feature = "parallel", not(target_arch = "wasm32")))]
+        let indexed = false;
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if indexed {
+            self.op(Op::LocalSet(ADDRESS));
+            self.indexed_read_host(self.indexed_paged_read.unwrap(), width.bytes(), false, true);
+            self.op(Op::LocalTee(STORE_STATUS))
+                .op(Op::If(BlockType::Empty))
+                .op(Op::LocalGet(STORE_STATUS))
+                .op(Op::LocalGet(RESULT));
+            self.direct_scalar_store(
+                width,
+                MemArg {
+                    offset: 0,
+                    align: 0,
+                    memory_index: 0,
+                },
+            );
+            self.op(Op::I32Const(1))
+                .op(Op::LocalSet(STORE_STATUS))
+                .op(Op::Else)
+                .op(Op::LocalGet(ADDRESS));
+        }
         let bytes = i32::from(width.bytes());
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         let bytes = if self.paged
@@ -1530,8 +1560,21 @@ impl Emitter {
             .op(Op::LocalTee(STORE_STATUS))
             .op(Op::I32Eqz)
             .op(Op::If(BlockType::Empty));
-        self.memory_failure(exit_depth + 1);
+        self.memory_failure(exit_depth + 1 + u32::from(indexed));
         self.op(Op::End);
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if indexed {
+            let fill = self.indexed_store_fill.unwrap();
+            self.op(Op::LocalGet(STORE_STATUS))
+                .op(Op::I32Const(1))
+                .op(Op::I32Eq)
+                .op(Op::If(BlockType::Empty))
+                .op(Op::LocalGet(ADDRESS))
+                .op(Op::I32Const(bytes))
+                .op(Op::Call(fill))
+                .op(Op::End)
+                .op(Op::End);
+        }
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -1672,19 +1715,29 @@ impl Emitter {
             self.store_result(width, exit_depth);
             return;
         }
-        self.linear_address();
-        self.op(Op::I32Const(i32::from(width.bytes())));
-        self.data_operand(src, width);
-        if !self.context.is_long64() {
-            self.op(Op::I32Const(self.segment as i32));
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        let indexed = self.uses_indexed_scalar_write(self.current_operation);
+        #[cfg(any(feature = "parallel", not(target_arch = "wasm32")))]
+        let indexed = false;
+        if indexed {
+            self.data_operand(src, width);
+            self.op(Op::LocalSet(RESULT));
+            self.store_result_slow(width, exit_depth);
+        } else {
+            self.linear_address();
+            self.op(Op::I32Const(i32::from(width.bytes())));
+            self.data_operand(src, width);
+            if !self.context.is_long64() {
+                self.op(Op::I32Const(self.segment as i32));
+            }
+            self.stores = true;
+            self.op(Op::Call(1))
+                .op(Op::LocalTee(STORE_STATUS))
+                .op(Op::I32Eqz)
+                .op(Op::If(BlockType::Empty));
+            self.memory_failure(exit_depth + 1);
+            self.op(Op::End);
         }
-        self.stores = true;
-        self.op(Op::Call(1))
-            .op(Op::LocalTee(STORE_STATUS))
-            .op(Op::I32Eqz)
-            .op(Op::If(BlockType::Empty));
-        self.memory_failure(exit_depth + 1);
-        self.op(Op::End);
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         if let Some(ready) = write_ready.filter(|_| {
             self.paged_read_rearm

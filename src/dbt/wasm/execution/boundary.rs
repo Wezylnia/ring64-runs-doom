@@ -242,7 +242,7 @@ impl Emitter {
             .op(Op::I32Or);
         }
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-        if self.uses_indexed_scalar_read(operation) {
+        if self.uses_indexed_scalar_read(operation) || self.uses_indexed_scalar_write(operation) {
             self.op(Op::I32Const(
                 crate::embedding::layout::debug::PAGED_INDEXED_SCALAR_READ as i32,
             ))

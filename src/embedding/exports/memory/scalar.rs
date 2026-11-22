@@ -332,6 +332,18 @@ pub extern "C" fn core_paged_store_observed(address: u64, width: u32, value: u64
     core_store_impl::<true, true, false>(address, width, value)
 }
 
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[unsafe(no_mangle)]
+pub extern "C" fn core_paged_store_fill(address: u64, width: u32) {
+    BRIDGE.with_borrow_mut(|bridge| {
+        bridge
+            .core
+            .as_mut()
+            .unwrap()
+            .remember_indexed_scalar_write(address, width);
+    });
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn core_segmented_load(offset: u64, width: u32, segment: u32) -> u64 {
     core_segmented_load_impl::<false, false>(offset, width, segment)

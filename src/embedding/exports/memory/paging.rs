@@ -16,6 +16,45 @@ impl Core {
         }
     }
 
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn remember_indexed_scalar_write(&mut self, address: u64, width: u32) {
+        use crate::x86::paging::cache::{INDEXED_READ_ENTRIES, IndexedReadEntry};
+        if self.state.indexed_paged_reads == 0 || self.image.active_changed() {
+            return;
+        }
+        let Some(paging) = self.paging.as_ref() else {
+            return;
+        };
+        let Some((slot, translation)) = self.translation_cache.recent_indexed_read(paging, address)
+        else {
+            return;
+        };
+        let page = address & !4095;
+        let offset = address - page;
+        if translation.dirty
+            || offset + u64::from(width) > 4096
+            || !translation.contains(page)
+            || translation.remaining < 4096 - offset
+        {
+            return;
+        }
+        let physical = translation.physical - offset;
+        if let Some(span) = self.image.physical_direct_write_span(physical, 4096)
+            && let Some(id) = translation.cache_id
+        {
+            let host = span.host + (physical - span.base) as u32;
+            if host != 0 {
+                let index = (page >> 12) as usize & (INDEXED_READ_ENTRIES - 1);
+                self.state.indexed_paged_writes[index] = IndexedReadEntry {
+                    page,
+                    id,
+                    slot: slot as u32,
+                    host,
+                };
+            }
+        }
+    }
+
     #[cfg(not(feature = "parallel"))]
     #[cold]
     #[inline(never)]
@@ -361,6 +400,7 @@ impl Core {
         // No-flush CR3 changes can keep live slots for another PCID.
         if self.indexed_paged_read_root != Some(paging.cr3) {
             self.translation_cache.clear_indexed_reads();
+            self.state.indexed_paged_writes.fill(Default::default());
             self.indexed_paged_read_root = Some(paging.cr3);
         }
         if self.state.indexed_paged_reads == 0 {

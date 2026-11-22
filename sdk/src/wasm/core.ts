@@ -1425,6 +1425,8 @@ export class Core {
           this.#exports.core_paged_loop_retouchable_block_window;
       if (this.#exports.core_paged_loop_retouch_block_window)
         env.paged_loop_retouch_block_window = this.#exports.core_paged_loop_retouch_block_window;
+      if (this.#exports.core_paged_store_fill)
+        env.paged_store_fill = this.#exports.core_paged_store_fill;
       if (this.#exports.core_paged_loop_write_ready)
         env.paged_loop_write_ready = this.#exports.core_paged_loop_write_ready;
       if (this.#exports.core_paged_loop_read_byte)

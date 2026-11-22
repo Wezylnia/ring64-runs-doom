@@ -1484,6 +1484,22 @@ fn emit_body(
     let block16_for_write =
         block16_for_write_type.map(|index| import_function("block16_for_write", index));
     let vector_store = vector_store_type.map(|index| import_function("vector_store", index));
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let indexed_store_fill = (unit.sampled
+        && paged
+        && observed
+        && !mmio
+        && unit.context.is_long64()
+        && unit.context.cpl() == 0
+        && optional.indexed_scalar_read
+        && unit
+            .instructions
+            .iter()
+            .any(|instruction| super::instruction::indexed_scalar_write(instruction.operation)))
+    .then(|| {
+        let signature = add_function_type(&mut types, [ValType::I64, ValType::I32], []);
+        import_function("paged_store_fill", signature)
+    });
     let float = float_type.map(|index| import_function("float", index));
     let load_mxcsr = load_mxcsr_used.then(|| import_function("load_mxcsr", mxcsr_type.unwrap()));
     let store_mxcsr = store_mxcsr_used.then(|| import_function("store_mxcsr", mxcsr_type.unwrap()));
@@ -2439,10 +2455,11 @@ fn emit_body(
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let indexed_scalar_scratch = (indexed_paging
         && optional.indexed_scalar_read
-        && unit
-            .instructions
-            .iter()
-            .any(|instruction| super::instruction::indexed_scalar_read(instruction.operation)))
+        && unit.instructions.iter().any(|instruction| {
+            super::instruction::indexed_scalar_read(instruction.operation)
+                || indexed_store_fill.is_some()
+                    && super::instruction::indexed_scalar_write(instruction.operation)
+        }))
     .then(|| {
         let first = super::GPR + locals.iter().map(|(count, _)| count).sum::<u32>();
         locals.push((2, ValType::I64));
@@ -2478,6 +2495,8 @@ fn emit_body(
         indexed_paged_read,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         indexed_scalar_scratch,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        indexed_store_fill,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         indexed_dword_prefixes,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]

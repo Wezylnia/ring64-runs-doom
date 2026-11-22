@@ -33,6 +33,23 @@ pub(super) fn indexed_scalar_read(operation: Operation) -> bool {
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+pub(super) fn indexed_scalar_write(operation: Operation) -> bool {
+    use crate::x86::context::Segment;
+    use crate::x86::instruction::{Operand, Width};
+
+    matches!(
+        operation,
+        Operation::Store { address, .. } if matches!(address.segment, Segment::Ds | Segment::Ss)
+    ) || matches!(
+        operation,
+        Operation::Push {
+            src: Operand::Register(_) | Operand::Immediate(_),
+            width: Width::W64,
+        }
+    )
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 pub(super) fn paged_prefix_read(
     instruction: Instruction,
 ) -> Option<(
@@ -117,6 +134,13 @@ impl Emitter {
         self.indexed_scalar_scratch.is_some()
             && !self.guarded_paged_lap
             && indexed_scalar_read(operation)
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn uses_indexed_scalar_write(&self, operation: Operation) -> bool {
+        self.indexed_store_fill.is_some()
+            && !self.guarded_paged_lap
+            && indexed_scalar_write(operation)
     }
 
     pub(super) fn instruction(
@@ -677,6 +701,7 @@ impl Emitter {
             self.indexed_paged_read.expect("indexed prefix locals"),
             width,
             true,
+            false,
         );
         self.op(Op::LocalTee(STORE_STATUS))
             .op(Op::If(BlockType::Result(ValType::I32)))
@@ -708,6 +733,7 @@ impl Emitter {
         [table, entry, data, fetch]: [u32; 4],
         width: u8,
         preserve_fetch: bool,
+        write: bool,
     ) {
         use super::{ADDRESS, LHS, STORE_STATUS, VALUE};
         use crate::embedding::layout::StateStorage;
@@ -725,6 +751,11 @@ impl Emitter {
         let clock = mem(offset_of!(IndexedReadTable, clock), 3);
         let ages = mem(offset_of!(IndexedReadTable, ages), 3);
         let live_ids = mem(offset_of!(IndexedReadTable, live_ids), 3);
+        let (record_base, records) = if write {
+            (0, offset_of!(StateStorage, indexed_paged_writes))
+        } else {
+            (table, offset_of!(IndexedReadTable, entries))
+        };
         let [id, stamp] = if preserve_fetch {
             [LHS, VALUE]
         } else {
@@ -751,7 +782,7 @@ impl Emitter {
             .op(Op::I32Const(4096 - i32::from(width)))
             .op(Op::I32GtU)
             .op(Op::BrIf(0))
-            .op(Op::LocalGet(table))
+            .op(Op::LocalGet(record_base))
             .op(Op::LocalGet(ADDRESS))
             .op(Op::I32WrapI64)
             .op(Op::I32Const(12))
@@ -761,7 +792,7 @@ impl Emitter {
             .op(Op::I32Const(size_of::<IndexedReadEntry>() as i32))
             .op(Op::I32Mul)
             .op(Op::I32Add)
-            .op(Op::I32Const(offset_of!(IndexedReadTable, entries) as i32))
+            .op(Op::I32Const(records as i32))
             .op(Op::I32Add)
             .op(Op::LocalTee(entry))
             .op(Op::I64Load(mem(offset_of!(IndexedReadEntry, page), 3)))
