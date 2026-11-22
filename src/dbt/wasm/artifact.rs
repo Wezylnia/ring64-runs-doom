@@ -1495,17 +1495,15 @@ fn emit_body(
         block16_for_write_type.map(|index| import_function("block16_for_write", index));
     let vector_store = vector_store_type.map(|index| import_function("vector_store", index));
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    let indexed_store_fill = (unit.sampled
-        && paged
+    let indexed_store_fill = (paged
         && observed
         && !mmio
         && unit.context.is_long64()
         && unit.context.cpl() == 0
         && optional.indexed_scalar_read
-        && unit
-            .instructions
-            .iter()
-            .any(|instruction| super::instruction::indexed_scalar_write(instruction.operation)))
+        && unit.instructions.iter().any(|instruction| {
+            super::instruction::indexed_scalar_write(instruction.operation, unit.sampled)
+        }))
     .then(|| {
         let signature = add_function_type(&mut types, [ValType::I64, ValType::I32], []);
         import_function("paged_store_fill", signature)
@@ -2468,7 +2466,7 @@ fn emit_body(
         && unit.instructions.iter().any(|instruction| {
             super::instruction::indexed_scalar_read(instruction.operation)
                 || indexed_store_fill.is_some()
-                    && super::instruction::indexed_scalar_write(instruction.operation)
+                    && super::instruction::indexed_scalar_write(instruction.operation, unit.sampled)
         }))
     .then(|| {
         let first = super::GPR + locals.iter().map(|(count, _)| count).sum::<u32>();

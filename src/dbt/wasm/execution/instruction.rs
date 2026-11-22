@@ -33,20 +33,21 @@ pub(super) fn indexed_scalar_read(operation: Operation) -> bool {
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-pub(super) fn indexed_scalar_write(operation: Operation) -> bool {
+pub(super) fn indexed_scalar_write(operation: Operation, sampled: bool) -> bool {
     use crate::x86::context::Segment;
     use crate::x86::instruction::{Operand, Width};
 
     matches!(
         operation,
         Operation::Store { address, .. } if matches!(address.segment, Segment::Ds | Segment::Ss)
-    ) || matches!(
-        operation,
-        Operation::Push {
-            src: Operand::Register(_) | Operand::Immediate(_),
-            width: Width::W64,
-        }
-    )
+    ) || sampled
+        && matches!(
+            operation,
+            Operation::Push {
+                src: Operand::Register(_) | Operand::Immediate(_),
+                width: Width::W64,
+            }
+        )
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -155,7 +156,7 @@ impl Emitter {
     pub(super) fn uses_indexed_scalar_write(&self, operation: Operation) -> bool {
         self.indexed_store_fill.is_some()
             && !self.guarded_paged_lap
-            && indexed_scalar_write(operation)
+            && indexed_scalar_write(operation, self.sampled_region)
     }
 
     pub(super) fn instruction(
