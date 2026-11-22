@@ -96,7 +96,7 @@ impl Emitter {
         }
         self.gates(exit_depth);
         self.code_write_boundary(exit_depth);
-        if self.flat_dense_dispatch {
+        if self.dense_dispatch {
             self.op(Op::Br(exit_depth - 1));
             return;
         }
@@ -434,7 +434,7 @@ impl Emitter {
                 let extra_depth = loop_depth - (self.entries.len() as u32 - placement);
                 self.op(Op::Br(index - placement - 1 + extra_depth));
             } else {
-                if !self.flat_dense_dispatch {
+                if !self.dense_dispatch {
                     self.op(Op::I32Const(index as i32)).op(Op::LocalSet(ENTRY));
                 }
                 self.op(Op::Br(loop_depth));

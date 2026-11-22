@@ -283,3 +283,66 @@ test('near calls reuse the indexed stack write and replay observed faults', asyn
     Core.prototype.compile = compile;
   }
 });
+
+test('paged near transfers preserve the full target through dense owner dispatch', async () => {
+  // CALL RAX; HLT; padding; INC RCX; RET.
+  const resume = PC + 2n;
+  const target = PC + 8n;
+  const alias = target + (1n << 32n);
+  const stack = PC + 0x1000n;
+  const rsp = stack + 8n;
+  const compile = Core.prototype.compile;
+  Core.prototype.compile = function (pc, limits, seeds, regionPoints) {
+    if (pc === PC && !seeds?.length) return compile.call(this, pc, limits, [target, resume]);
+    return compile.call(this, pc, limits, seeds, regionPoints);
+  };
+  try {
+    await usingPaged(
+      compiler,
+      {
+        code: 'ffd0f4909090909048ffc1c3',
+        words: [[0x4008n, 0xa003n]],
+        spans: [{ physical: 0xa000n, bytes: new Uint8Array(4096) }],
+      },
+      async (cpu) => {
+        const enter = (rax: bigint) => cpu.setState(initial(PC, { 0: rax, 1: 5n, 4: rsp }));
+        enter(target);
+        const returned = await cpu.run({ stop: resume, budget: 8n });
+        assert.equal(returned.reason, 'stop');
+        assert.equal(returned.retired, 3n);
+        assert.equal(returned.state.registers[1], 6n);
+        assert.equal(returned.state.registers[4], rsp);
+        assert.equal(returned.resources.nativeEntries, 1);
+
+        for (const budget of [1n, 8n]) {
+          enter(alias);
+          const stopped = await cpu.run({ stop: alias, budget });
+          assert.equal(stopped.reason, budget === 1n ? 'budget' : 'stop');
+          assert.equal(stopped.retired, 1n);
+          assert.equal(stopped.state.rip, alias);
+          assert.equal(stopped.state.registers[4], stack);
+          assert.equal(word(cpu, 0xa000n), resume);
+        }
+
+        enter(alias);
+        const fault = await cpu.run({ budget: 8n });
+        assert.equal(fault.reason, 'page-fault');
+        assert.equal(fault.retired, 1n);
+        assert.equal(fault.state.rip, alias);
+        assert.equal(fault.pageFault?.address, alias);
+        assert.equal(fault.state.registers[1], 5n);
+
+        enter(0x8000_0000_0000n);
+        const invalid = await cpu.run({ budget: 8n, eventDelivery: { budget: 0n } });
+        assert.equal(invalid.reason, 'event-budget');
+        assert.equal(invalid.retired, 0n);
+        assert.equal(invalid.state.rip, PC);
+        assert.equal(invalid.state.registers[4], rsp);
+        assert.equal(invalid.state.event.kind, 'pending');
+        assert.equal(invalid.state.event.exception.vector, 13);
+      },
+    );
+  } finally {
+    Core.prototype.compile = compile;
+  }
+});

@@ -1941,16 +1941,21 @@ fn emit_body(
         .then(|| flat_integer_groups(unit, loop_body))
         .filter(|groups| groups.iter().any(Option::is_some));
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    let flat_dense_dispatch = if unit.sampled && linear_call_spans && loop_body.is_none() {
+    let dense_dispatch = if dynamic_targets
+        && (unit.sampled && linear_call_spans || indexed_paging)
+        // Structured clones can hand off an entry ordinal independently of RIP.
+        && loop_body.is_none()
+        && optional.additional_copy.is_none()
+    {
         let first = unit.instructions.first().unwrap().pc;
-        let span = unit.instructions.last().unwrap().pc - first + 1;
-        (span <= (unit.instructions.len() as u64 * 6).min(1024)).then_some((first, span))
+        let distance = unit.instructions.last().unwrap().pc - first;
+        (distance < (unit.instructions.len() as u64 * 6).min(1024)).then(|| (first, distance + 1))
     } else {
         None
     };
     #[cfg(any(feature = "parallel", not(target_arch = "wasm32")))]
-    let flat_dense_dispatch: Option<(u64, u64)> = None;
-    let target_lookup = dynamic_targets && flat_dense_dispatch.is_none();
+    let dense_dispatch: Option<(u64, u64)> = None;
+    let target_lookup = dynamic_targets && dense_dispatch.is_none();
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let mut span_import = |name| {
         let signature = add_function_type(
@@ -2760,7 +2765,7 @@ fn emit_body(
         flags_on_read_fault: None,
         instruction_retirement: control::InstructionRetirement::One,
         entry_lookup: target_lookup.then_some(run_index + 1),
-        flat_dense_dispatch: flat_dense_dispatch.is_some(),
+        dense_dispatch: dense_dispatch.is_some(),
         multiply_high,
         divide,
         divide_failed,
@@ -2864,7 +2869,7 @@ fn emit_body(
     let count = unit.instructions.len() as u32;
     // The owner selects the entry ordinal for the loaded RIP. Every in-unit
     // edge commits its destination RIP before routing to the next instruction.
-    if flat_dense_dispatch.is_none() {
+    if dense_dispatch.is_none() {
         emitter
             .op(Op::LocalGet(ENTRY_INDEX))
             .op(Op::LocalSet(ENTRY));
@@ -2875,7 +2880,7 @@ fn emit_body(
     for _ in &unit.instructions {
         emitter.op(Op::Block(BlockType::Empty));
     }
-    if let Some((base, span)) = flat_dense_dispatch {
+    if let Some((base, span)) = dense_dispatch {
         use super::{ADDRESS, RIP};
         // Use the committed guest IP directly, including on dynamic transfers.
         let mut labels = vec![count; span as usize];
