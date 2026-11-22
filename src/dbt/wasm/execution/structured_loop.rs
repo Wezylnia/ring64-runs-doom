@@ -1249,27 +1249,23 @@ impl Emitter {
         let outlined_float = self.float_outline_params != 0;
         #[cfg(not(all(not(feature = "parallel"), target_arch = "wasm32")))]
         let outlined_float = false;
-        let (predicates, read_prefix_len) = if !cfg!(feature = "parallel")
-            && self.loop_gates_prechecked
-            && body.forward_edges()
-            && !self.guarded_paged_lap
-        {
-            // Batching the protected dword prefix removes a hot spill
-            // needed only when the first read faults.
-            let read_prefix_len = if self.context.mode() == crate::x86::context::Mode::Protected
-                && self.context.code32()
-            {
-                super::loop_cfg::read_prefix_len(instructions, order)
+        let (predicates, read_prefix_len) =
+            if !cfg!(feature = "parallel") && self.loop_gates_prechecked && body.forward_edges() {
+                // A faulting or refused read settles its already-executed prefix.
+                let read_prefix_len = if self.guarded_paged_lap
+                    || (self.context.mode() == Mode::Protected && self.context.code32())
+                {
+                    super::loop_cfg::read_prefix_len(instructions, order)
+                } else {
+                    0
+                };
+                (
+                    super::loop_cfg::compare_predicates(instructions, order, &self.context),
+                    read_prefix_len,
+                )
             } else {
-                0
+                (Vec::new(), 0)
             };
-            (
-                super::loop_cfg::compare_predicates(instructions, order, &self.context),
-                read_prefix_len,
-            )
-        } else {
-            (Vec::new(), 0)
-        };
         if body.forward_edges() {
             // Each later cloned instruction has an enclosing forward label.
             for _ in 1..order.len() {

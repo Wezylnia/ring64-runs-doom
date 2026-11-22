@@ -144,7 +144,7 @@ impl Emitter {
             }));
     }
 
-    fn memory_failure(&mut self, exit_depth: u32) {
+    fn restore_preceding_read_state(&mut self) {
         self.retire_before_read_fault();
         match self.flags_on_read_fault {
             Some(super::loop_cfg::ReadFaultFlags::Arithmetic(kind, width)) => {
@@ -158,6 +158,10 @@ impl Emitter {
             }
             None => {}
         }
+    }
+
+    fn memory_failure(&mut self, exit_depth: u32) {
+        self.restore_preceding_read_state();
         if self.paged {
             self.record_fault_segment(self.segment);
         }
@@ -366,10 +370,11 @@ impl Emitter {
     fn retry_guarded_paged_operand(&mut self, exit_depth: u32) {
         let entry = self.current_index as i32;
         let (_, attempts) = self.paged_loop_guard.expect("paged loop guard");
-        // The probe left this instruction unstarted. Enter its checked label
-        // with the already-retired prefix still local.
-        self.op(Op::If(BlockType::Empty))
-            .op(Op::I32Const(2))
+        // The probe left this instruction unstarted. Settle the preceding
+        // instructions before entering its checked label.
+        self.op(Op::If(BlockType::Empty));
+        self.restore_preceding_read_state();
+        self.op(Op::I32Const(2))
             .op(Op::LocalSet(attempts))
             .op(Op::I32Const(entry))
             .op(Op::LocalSet(super::ENTRY))
