@@ -242,12 +242,16 @@ impl Emitter {
         next_pc: u64,
         exit_depth: u32,
     ) -> bool {
-        if !self.guarded_paged_lap || address.segment != Segment::Ds {
+        if !self.guarded_paged_lap {
             return false;
         }
-        let read = match width {
-            Width::W8 => self.paged_loop_read_byte,
-            Width::W32 => self.paged_loop_read_dword,
+        let read = match (width, address.segment) {
+            (Width::W8, Segment::Ds) => self.paged_loop_read_byte,
+            (Width::W32, Segment::Ds) => self.paged_loop_read_dword,
+            // This import requires a live flat writable SS in the graph guard.
+            (Width::W32, Segment::Ss) if self.paged_loop_write_dword.is_some() => {
+                self.paged_loop_read_dword
+            }
             _ => None,
         };
         let Some(read) = read else {

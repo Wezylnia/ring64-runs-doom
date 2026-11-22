@@ -640,7 +640,12 @@ fn paged_stack_spills_require_flat_segments_and_32_bit_effective_addresses() {
                 wasmparser::Payload::ImportSection(reader) => Some(reader),
                 _ => None,
             })
-            .flat_map(|reader| reader.into_imports().map(|import| import.unwrap().name))
+            .flat_map(|reader| {
+                reader.into_imports().filter_map(|import| {
+                    let import = import.unwrap();
+                    matches!(import.ty, wasmparser::TypeRef::Func(_)).then_some(import.name)
+                })
+            })
             .collect();
         for name in [
             "paged_write_loop_guard32",
@@ -650,6 +655,27 @@ fn paged_stack_spills_require_flat_segments_and_32_bit_effective_addresses() {
             "paged_loop_write_dword",
         ] {
             assert_eq!(imports.contains(&name), accepted, "{name}");
+        }
+        if let Some(read) = imports
+            .iter()
+            .position(|name| *name == "paged_loop_read_dword")
+        {
+            let calls = wasmparser::Parser::new(0)
+                .parse_all(&bytes)
+                .filter_map(|payload| match payload.unwrap() {
+                    wasmparser::Payload::CodeSectionEntry(body) => Some(body),
+                    _ => None,
+                })
+                .flat_map(|body| body.get_operators_reader().unwrap().into_iter())
+                .filter(|operator| {
+                    matches!(
+                        operator.as_ref().unwrap(),
+                        wasmparser::Operator::Call { function_index } if *function_index == read as u32
+                    )
+                })
+                .count();
+            // Both the SS load and SS comparison must use the retained helper.
+            assert_eq!(calls, 2);
         }
     }
 }
