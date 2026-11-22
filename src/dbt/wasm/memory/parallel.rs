@@ -19,26 +19,44 @@ const LANE: MemArg = MemArg {
     memory_index: 1,
 };
 
-pub(super) fn native_add_memo_site(instructions: &[Instruction]) -> Option<u32> {
-    let mut sites = instructions.iter().enumerate().filter(|(_, instruction)| {
-        instruction.explicit_lock
-            && matches!(instruction.operation, Operation::MemoryAlu {
-                kind: Alu::Add,
-                width: Width::W64,
-                operands: MemoryAluOperands::MemoryFirst(_),
-                address: Address {
+pub(super) fn native_lock_memo_site(instructions: &[Instruction]) -> Option<u32> {
+    let mut add = None;
+    let mut other = None;
+    let mut multiple_others = false;
+    for (index, instruction) in instructions.iter().enumerate() {
+        let Operation::MemoryAlu {
+            kind,
+            width: Width::W64,
+            operands: MemoryAluOperands::MemoryFirst(_),
+            address:
+                Address {
                     base: AddressBase::Register(bank),
                     index: None,
                     segment: Segment::Ds,
                     size: Width::W64,
                     ..
                 },
-            } if bank != 4)
-    });
-    let (index, site) = sites.next()?;
-    if sites.next().is_some() {
-        return None;
+        } = instruction.operation
+        else {
+            continue;
+        };
+        if !instruction.explicit_lock || bank == 4 {
+            continue;
+        }
+        match kind {
+            Alu::Add => {
+                if add.replace((index, instruction)).is_some() {
+                    return None;
+                }
+            }
+            Alu::Sub | Alu::And | Alu::Or | Alu::Xor => {
+                multiple_others |= other.replace((index, instruction)).is_some();
+            }
+            _ => {}
+        }
     }
+    // Keep an existing ADD site even when the unit also contains another native RMW.
+    let (index, site) = add.or(other.filter(|_| !multiple_others))?;
     instructions
         .iter()
         .any(|instruction| {
@@ -459,7 +477,7 @@ impl Emitter {
         self.address(address, next_pc);
         self.op(Op::LocalSet(ADDRESS));
         let memo = self
-            .parallel_native_add_memo
+            .parallel_native_lock_memo
             .filter(|(site, _, _)| *site == self.current_index)
             .map(|(_, address, resolved)| (address, resolved));
         self.resolve_shared_address(scalar, width, 2, memo);
