@@ -57,6 +57,13 @@ struct Entries {
     hint: Option<usize>,
 }
 
+#[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+struct CopySpan {
+    physical: u64,
+    first: usize,
+    split: Option<(u32, usize)>,
+}
+
 #[cfg(not(feature = "parallel"))]
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum RetainedSpan {
@@ -152,6 +159,42 @@ impl Entries {
             return None;
         }
         Some((index, translation))
+    }
+
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    fn retained_copy_span<const WRITE: bool>(
+        &self,
+        state: &State,
+        request: Request,
+        keys: &ProtectionKeys,
+        width: u32,
+    ) -> Option<CopySpan> {
+        let (first, start) = self.retained_data_span::<WRITE>(state, request, keys, 1)?;
+        if self.slots[first].as_ref()?.global {
+            return None;
+        }
+        let split = if start.remaining < u64::from(width) {
+            let next = Request {
+                linear: request.linear.checked_add(start.remaining)?,
+                ..request
+            };
+            let offset = start.remaining as u32;
+            let (last, end) =
+                self.retained_data_span::<WRITE>(state, next, keys, width - offset)?;
+            if self.slots[last].as_ref()?.global
+                || start.physical.checked_add(start.remaining) != Some(end.physical)
+            {
+                return None;
+            }
+            Some((offset, last))
+        } else {
+            None
+        };
+        Some(CopySpan {
+            physical: start.physical,
+            first,
+            split,
+        })
     }
 
     fn touch(&mut self, index: usize) {
@@ -526,6 +569,49 @@ impl Cache {
         for data in [source, destination] {
             if data != fetch && entries.slots[data].as_ref().unwrap().used != entries.clock - 1 {
                 entries.touch_data_and_fetch(data, fetch);
+            }
+        }
+        Some(value)
+    }
+
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn copy_split_pair_then_fetch<T>(
+        &self,
+        state: &State,
+        [read, write]: [Request; 2],
+        keys: &ProtectionKeys,
+        width: u32,
+        admit: impl FnOnce(u64, u64) -> Option<T>,
+    ) -> Option<T> {
+        const VECTOR: u32 = 16;
+        debug_assert!((32..=64).contains(&width) && width.is_multiple_of(VECTOR));
+        let mut entries = self.entries.borrow_mut();
+        let fetch = entries
+            .hint
+            .filter(|&index| entries.slots[index].is_some())?;
+        let spans = [
+            entries.retained_copy_span::<false>(state, read, keys, width)?,
+            entries.retained_copy_span::<true>(state, write, keys, width)?,
+        ];
+        let value = admit(spans[0].physical, spans[1].physical)?;
+        // Each admitted vector touches its operand leaves before the next fetch.
+        for offset in (0..width).step_by(VECTOR as usize) {
+            for span in &spans {
+                let first = span.split.is_none_or(|(split, _)| offset < split);
+                if first && entries.hint != Some(span.first) {
+                    entries.touch(span.first);
+                }
+                if let Some((split, last)) = span.split
+                    && offset + VECTOR > split
+                    && entries.hint != Some(last)
+                {
+                    entries.touch(last);
+                }
+                if entries.hint != Some(fetch) {
+                    entries.touch(fetch);
+                }
             }
         }
         Some(value)

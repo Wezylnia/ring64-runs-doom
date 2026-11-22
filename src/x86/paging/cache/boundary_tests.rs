@@ -868,3 +868,69 @@ fn paired_data_spans_commit_recency_only_after_both_succeed() {
         );
     }
 }
+
+#[cfg(not(feature = "parallel"))]
+#[test]
+fn split_copy_preflights_rights_and_keeps_ordered_recency() {
+    let (mut image, state, request) = fixture();
+    for (pte, leaf) in [
+        (0x4010, 0xb067),
+        (0x4018, 0xc067),
+        (0x4020, 0xd067),
+        (0x4028, 0xe067),
+    ] {
+        image.physical_write(pte, 8, leaf).unwrap();
+    }
+    let cache = Cache::with_capacity(5);
+    let at = |linear, access| Request {
+        linear,
+        access,
+        ..request
+    };
+    let read = at(0x1ff8, Access::Read);
+    let write = at(0x3ff0, Access::Write);
+    let code = at(0x5002, Access::Execute);
+    let keys = &ProtectionKeys::ZERO;
+    for operand in [
+        read,
+        at(0x2000, Access::Read),
+        write,
+        at(0x4000, Access::Write),
+        code,
+    ] {
+        insert(&cache, &mut image, &state, operand);
+    }
+    let clock = || cache.entries.borrow().clock;
+    let start = clock();
+    assert_eq!(
+        cache.copy_split_pair_then_fetch(&state, [read, write], keys, 32, |_, _| None::<()>),
+        None
+    );
+    assert_eq!(clock(), start);
+    assert_eq!(
+        cache.copy_split_pair_then_fetch(&state, [read, write], keys, 32, |source, destination| {
+            assert_eq!((source, destination), (0xaff8, 0xcff0));
+            Some(())
+        }),
+        Some(())
+    );
+    {
+        let entries = cache.entries.borrow();
+        let mut order = [0, 1, 2, 3, 4];
+        order.sort_unstable_by_key(|&slot| entries.slots[slot].unwrap().used);
+        assert_eq!(order, [0, 2, 1, 3, 4]);
+    }
+
+    cache.invalidate_page(state.pcid(), 0x4000, false);
+    image.physical_write(0x4020, 8, 0xd065).unwrap();
+    insert(&cache, &mut image, &state, at(0x4000, Access::Read));
+    assert!(cache.lookup(&state, code, keys).unwrap().is_some());
+    let start = clock();
+    assert_eq!(
+        cache.copy_split_pair_then_fetch(&state, [read, write], keys, 32, |_, _| -> Option<()> {
+            unreachable!("a denied second destination leaf cannot reach backing admission")
+        }),
+        None
+    );
+    assert_eq!(clock(), start);
+}

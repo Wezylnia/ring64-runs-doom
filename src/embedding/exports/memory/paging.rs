@@ -956,7 +956,8 @@ pub extern "C" fn core_paged_loop_copy_window(source: u64, destination: u64, wid
         return 0;
     }
     let page_remaining = |address: u64| 4096 - (address & 4095);
-    if page_remaining(source).min(page_remaining(destination)) < u64::from(width)
+    let split = page_remaining(source).min(page_remaining(destination)) < u64::from(width);
+    if scalar && split
         || check_span(source, width, Access::Read).is_err()
         || check_span(destination, width, Access::Write).is_err()
     {
@@ -995,7 +996,25 @@ pub extern "C" fn core_paged_loop_copy_window(source: u64, destination: u64, wid
                 access: Access::Write,
                 class,
             };
-            let (source_host, destination_host, length) =
+            let (source_host, destination_host, length) = if split {
+                core.translation_cache.copy_split_pair_then_fetch(
+                    paging,
+                    [read, write],
+                    &state.protection_keys,
+                    width,
+                    |physical_read, physical_write| {
+                        let source = core
+                            .image
+                            .physical_direct_read_pointer(physical_read, width)?;
+                        let destination = core
+                            .image
+                            .physical_direct_write_span(physical_write, width)?;
+                        let offset = (physical_write - destination.base) as u32;
+                        // No subsequent range inherits a split proof.
+                        Some((source, destination.host + offset, width))
+                    },
+                )?
+            } else {
                 core.translation_cache.copy_pair_then_fetch(
                     paging,
                     [read, write],
@@ -1024,7 +1043,8 @@ pub extern "C" fn core_paged_loop_copy_window(source: u64, destination: u64, wid
                             length,
                         ))
                     },
-                )?;
+                )?
+            };
             let scratch = &mut state.vector_scratch;
             scratch[..4].copy_from_slice(&source_host.to_le_bytes());
             scratch[4..8].copy_from_slice(&destination_host.to_le_bytes());
