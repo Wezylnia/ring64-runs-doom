@@ -9,6 +9,7 @@ use wasm_encoder::{BlockType, Instruction as Op, MemArg};
 pub(super) enum InstructionRetirement {
     One,
     Deferred,
+    DeferredCommit,
     AfterPrefix(u32),
 }
 
@@ -264,12 +265,12 @@ impl Emitter {
     }
 
     pub(super) fn commit(&mut self, next: u64) {
-        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-        if self.float_outline_params != 0
-            && matches!(self.instruction_retirement, InstructionRetirement::Deferred)
-        {
-            return;
-        }
+        let retired = match self.instruction_retirement {
+            InstructionRetirement::One => Some(1),
+            InstructionRetirement::Deferred => None,
+            InstructionRetirement::DeferredCommit => return,
+            InstructionRetirement::AfterPrefix(count) => Some(count + 1),
+        };
         if self.loop_gates_prechecked
             && let crate::x86::instruction::Operation::Jcc { target, .. } = self.current_operation
             && next != target
@@ -277,10 +278,8 @@ impl Emitter {
             self.restore_loop_registers();
         }
         self.op(Op::I64Const(next as i64)).op(Op::LocalSet(RIP));
-        match self.instruction_retirement {
-            InstructionRetirement::One => self.retire_instructions(1),
-            InstructionRetirement::Deferred => {}
-            InstructionRetirement::AfterPrefix(count) => self.retire_instructions(count + 1),
+        if let Some(count) = retired {
+            self.retire_instructions(count);
         }
     }
 

@@ -54,11 +54,29 @@ test('affine byte reads keep ADD flags at a denied span and resume after remappi
     cpu.setState(input);
     exit(await cpu.run({ budget, stop }), 'stop', budget, 22n, output);
 
+    const lap = changed(
+      input,
+      head,
+      { 0: upper | 3n, 1: 4n, 2: upper | 4n, 6: 259n, 7: 6n },
+      0x97n,
+    );
+    cpu.setState(input);
+    exit(await cpu.run({ budget: 11n, stop }), 'budget', 11n, 11n, lap);
+
+    cpu.setState(input);
+    cpu.setTimeState({ tsc: 0n, tscAux: 9 });
+    const partial = changed(lap, head + 11n, { 0: upper | 5n, 2: upper | 6n, 6: 264n }, 2n);
+    exit(await cpu.run({ budget: 14n, stop }), 'budget', 14n, 14n, partial);
+    assert.deepEqual(cpu.readTimeState(), { tsc: 14n, tscAux: 9 });
+
+    const next = head + 6n;
+    const afterAdd = changed(input, next, { 0: upper | 255n, 6: 256n }, 0x16n);
+    cpu.setState(input);
+    exit(await cpu.run({ budget, stop: next }), 'stop', budget, 2n, afterAdd);
+
     cpu.setMappings([codeMap, { ...dataMap, length: 1 }]);
     cpu.setState(input);
     const denied = await cpu.run({ budget, stop });
-    const next = head + 6n;
-    const afterAdd = changed(input, next, { 0: upper | 255n, 6: 256n }, 0x16n);
     exit(denied, 'data-fault', budget, 2n, afterAdd);
     fault(denied, {
       instructionPc: next,

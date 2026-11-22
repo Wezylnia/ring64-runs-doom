@@ -1255,6 +1255,24 @@ impl Emitter {
         let outlined_float = self.float_outline_params != 0;
         #[cfg(not(all(not(feature = "parallel"), target_arch = "wasm32")))]
         let outlined_float = false;
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        let proved_integer_lap = {
+            let head = instructions[body.head as usize].pc;
+            let valid_head = if self.context.is_long64() {
+                crate::memory::canonical48(head)
+            } else {
+                head <= self.context.code_limit()
+            };
+            body.kind == LoopKind::IntegerReads
+                && self.loop_gates_prechecked
+                && self.proved_reads.is_some()
+                && !self.observed
+                && !self.paged
+                && valid_head
+        };
+        #[cfg(not(all(not(feature = "parallel"), target_arch = "wasm32")))]
+        let proved_integer_lap = false;
+        let commit_lap = outlined_float || proved_integer_lap;
         let (predicates, read_prefix_len) =
             if !cfg!(feature = "parallel") && self.loop_gates_prechecked && body.forward_edges() {
                 // A faulting or refused read settles its already-executed prefix.
@@ -1361,11 +1379,13 @@ impl Emitter {
             if diamond.is_some_and(|diamond| diamond.read == self.current_index) {
                 self.omit_result_status = true;
             }
-            self.instruction_retirement = if outlined_float && self.current_index == body.tail {
-                // The guard funded the complete lap. A numeric rejection
-                // publishes its own prefix before unwinding the child.
+            self.instruction_retirement = if commit_lap && self.current_index == body.tail {
+                // The guard funded the complete lap. Integer reads cannot
+                // fault here, and numeric rejection publishes its own prefix.
                 InstructionRetirement::AfterPrefix(position)
-            } else if outlined_float || position < read_prefix_len {
+            } else if commit_lap {
+                InstructionRetirement::DeferredCommit
+            } else if position < read_prefix_len {
                 InstructionRetirement::Deferred
             } else if read_prefix_len != 0 && position == read_prefix_len {
                 InstructionRetirement::AfterPrefix(read_prefix_len)
