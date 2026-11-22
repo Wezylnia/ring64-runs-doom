@@ -43,7 +43,7 @@ impl State {
         self.dr7 & 0xff != 0
     }
     pub fn active(&self) -> bool {
-        (0..4).any(|slot| self.slot(slot).is_some())
+        self.has_enabled_slots() && (0..4).any(|slot| self.slot(slot).is_some())
     }
     pub fn matches(&self, address: u64, width: u32, access: Access) -> u8 {
         if !self.has_enabled_slots() {
