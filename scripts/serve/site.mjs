@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { extname, resolve, sep } from 'node:path';
@@ -55,15 +56,26 @@ const server = createServer(async (request, response) => {
 
   try {
     const bytes = await readFile(file);
+    const etag = `"${createHash('sha256').update(bytes).digest('base64url')}"`;
+    const cacheHeaders = { 'Cache-Control': 'no-cache', ETag: etag };
+    const validators = request.headers['if-none-match'];
+    if (
+      validators?.trim() === '*' ||
+      validators?.split(',').some((tag) => tag.trim().replace(/^W\//, '') === etag)
+    ) {
+      response.writeHead(304, cacheHeaders).end();
+      return;
+    }
     response.writeHead(200, {
-      'Cache-Control': 'no-store',
+      ...cacheHeaders,
       'Content-Length': bytes.length,
       'Content-Type': contentTypes[extname(file)] ?? 'application/octet-stream',
     });
     response.end(request.method === 'HEAD' ? undefined : bytes);
   } catch (error) {
-    if (['ENOENT', 'ENOTDIR', 'EISDIR'].includes(error.code)) response.writeHead(404).end();
-    else {
+    if (['ENOENT', 'ENOTDIR', 'EISDIR'].includes(error.code)) {
+      response.writeHead(404, { 'Cache-Control': 'no-store' }).end();
+    } else {
       console.error(error);
       response.writeHead(500).end();
     }
