@@ -1693,6 +1693,72 @@ impl Emitter {
         self.write_spans[usize::from(self.segment == Segment::Ss)]
     }
 
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn try_guarded_store(
+        &mut self,
+        instruction: crate::x86::instruction::Instruction,
+        exit_depth: u32,
+    ) -> bool {
+        use crate::embedding::layout::debug::CONTINUE_ACTIVE;
+        use crate::x86::instruction::Operation;
+        use wasm_encoder::ValType;
+
+        let Operation::Store {
+            src,
+            address,
+            width,
+        } = instruction.operation
+        else {
+            return false;
+        };
+        if self.guarded_paged_lap
+            || !self.retouch_prefix_fetch
+            || !self.can_complete_paged_write_quietly(instruction.operation)
+            || instruction.next_pc <= instruction.pc
+            || (instruction.next_pc - 1) >> 12 != instruction.pc >> 12
+        {
+            return false;
+        }
+
+        self.newest_prefix_fetch(instruction.pc, true, false);
+        self.op(Op::If(BlockType::Result(ValType::I32)));
+        self.address(address, instruction.next_pc);
+        self.op(Op::LocalSet(ADDRESS));
+        self.linear_address();
+        self.op(Op::LocalSet(ADDRESS));
+        self.indexed_read_host(
+            self.indexed_paged_read.unwrap(),
+            width.bytes(),
+            false,
+            IndexedOperand::Write,
+        );
+        self.op(Op::Else)
+            .op(Op::I32Const(0))
+            .op(Op::End)
+            .op(Op::LocalTee(STORE_STATUS))
+            .op(Op::If(BlockType::Empty))
+            .op(Op::LocalGet(STORE_STATUS));
+        self.data_operand(src, width);
+        self.direct_scalar_store(
+            width,
+            MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            },
+        );
+        let result = self.boundary_result.unwrap();
+        self.op(Op::I32Const(CONTINUE_ACTIVE))
+            .op(Op::LocalSet(result))
+            .op(Op::I32Const(1))
+            .op(Op::LocalSet(STORE_STATUS))
+            .op(Op::Else);
+        self.begin(instruction.operation, instruction.next_pc, exit_depth + 1);
+        self.store(src, address, width, instruction.next_pc, exit_depth + 1);
+        self.op(Op::End);
+        true
+    }
+
     pub(super) fn store(
         &mut self,
         src: DataOperand,

@@ -247,9 +247,11 @@ impl Emitter {
         }
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         let guarded_return = self.try_guarded_return_read(instruction, exit_depth);
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        let guarded_store = self.try_guarded_store(instruction, exit_depth);
         #[cfg(any(feature = "parallel", not(target_arch = "wasm32")))]
-        let guarded_return = false;
-        if !guarded_return {
+        let (guarded_return, guarded_store) = (false, false);
+        if !guarded_return && !guarded_store {
             self.begin(instruction.operation, instruction.next_pc, exit_depth);
         }
         #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
@@ -450,16 +452,18 @@ impl Emitter {
                 address,
                 width,
             } => {
-                if self.mmio_operand.is_some() {
-                    self.mmio_move(
-                        super::mmio::Move::Write(src),
-                        address,
-                        width,
-                        instruction.next_pc,
-                        exit_depth,
-                    );
-                } else {
-                    self.store(src, address, width, instruction.next_pc, exit_depth);
+                if !guarded_store {
+                    if self.mmio_operand.is_some() {
+                        self.mmio_move(
+                            super::mmio::Move::Write(src),
+                            address,
+                            width,
+                            instruction.next_pc,
+                            exit_depth,
+                        );
+                    } else {
+                        self.store(src, address, width, instruction.next_pc, exit_depth);
+                    }
                 }
             }
             Operation::NonTemporalStore {

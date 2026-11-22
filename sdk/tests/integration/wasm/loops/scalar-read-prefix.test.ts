@@ -718,6 +718,7 @@ test('a short indexed handler prefix preserves interior stops and operand faults
   const code = 'ffd0ffc183f90472f7f490909090909089ca031783ca018916c3';
   const target = PC + 16n;
   const read = target + 2n;
+  const store = target + 7n;
   const stop = PC + 9n;
   const page = PC + 0x1000n;
   const ram = new Uint8Array(4096);
@@ -729,6 +730,7 @@ test('a short indexed handler prefix preserves interior stops and operand faults
   const imports = prototype.artifactImports;
   const compile = Core.prototype.compile;
   let prefixBegins = 0;
+  let storeBegins = 0;
   Core.prototype.compile = function (pc, limits, seeds, regionPoints) {
     if (pc === PC && !seeds?.length) return compile.call(this, pc, limits, [target, stop], false);
     return compile.call(this, pc, limits, seeds, regionPoints);
@@ -739,6 +741,7 @@ test('a short indexed handler prefix preserves interior stops and operand faults
     if (typeof begin === 'function') {
       env.debug_begin = (pc: bigint, flags: bigint, shadow: number) => {
         if (pc === target || pc === read) prefixBegins++;
+        if (pc === store) storeBegins++;
         return begin(pc, flags, shadow);
       };
     }
@@ -749,10 +752,11 @@ test('a short indexed handler prefix preserves interior stops and operand faults
       compiler,
       { code, words: [[0x4008n, 0xa003n]], spans: [{ physical: 0xa000n, bytes: ram }] },
       async (cpu) => {
-        const enter = (source = page + 0x40n) =>
-          cpu.setState(initial(PC, { 0: target, 1: 0n, 4: page + 8n, 6: page + 0x48n, 7: source }));
+        const enter = (source = page + 0x40n, destination = page + 0x48n) =>
+          cpu.setState(initial(PC, { 0: target, 1: 0n, 4: page + 8n, 6: destination, 7: source }));
         for (let wave = 0; wave < 3; wave++) {
           prefixBegins = 0;
+          storeBegins = 0;
           enter();
           const full = await cpu.run({ stop, budget: 40n });
           assert.equal(full.reason, 'stop');
@@ -761,6 +765,7 @@ test('a short indexed handler prefix preserves interior stops and operand faults
           assert.deepEqual(cpu.readPhysicalMemory(0xa048n, 4), little([5n], 4));
         }
         assert.equal(prefixBegins, 0, 'warm handler enters the short indexed prefix');
+        assert.equal(storeBegins, 0, 'warm scalar writes keep the checked fetch proof');
 
         enter();
         const inside = await cpu.run({ stop: target + 4n, budget: 40n });
@@ -778,6 +783,27 @@ test('a short indexed handler prefix preserves interior stops and operand faults
         assert.equal(split.state.rip, read);
         assert.equal(split.state.registers[2], 0n);
         assert.deepEqual(cpu.readPhysicalMemory(0xa048n, 4), little([5n], 4));
+
+        enter(page + 0x40n, end - 2n);
+        storeBegins = 0;
+        const splitWrite = await cpu.run({ stop, budget: 40n });
+        assert.equal(splitWrite.reason, 'page-fault');
+        assert.equal(splitWrite.pageFault?.address, end);
+        assert.equal(splitWrite.retired, 4n);
+        assert.equal(splitWrite.state.rip, store);
+        assert.equal(storeBegins, 1);
+        assert.deepEqual(cpu.readPhysicalMemory(0xaffen, 2), Uint8Array.of(0, 0));
+
+        cpu.setDebugState({ addresses: [page + 0x48n, 0n, 0n, 0n], dr6: 0n, dr7: 0xd0401n });
+        storeBegins = 0;
+        enter();
+        const watched = await cpu.run({ stop, budget: 40n });
+        assert.equal(watched.reason, 'debug-exception');
+        assert.equal(watched.debugException?.cause, 'data-breakpoint');
+        assert.equal(watched.retired, 5n);
+        assert.equal(watched.state.rip, store + 2n);
+        assert.equal(storeBegins, 1);
+        assert.deepEqual(cpu.readPhysicalMemory(0xa048n, 4), little([3n], 4));
       },
     );
   } finally {

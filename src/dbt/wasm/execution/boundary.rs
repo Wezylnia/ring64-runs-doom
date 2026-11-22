@@ -65,7 +65,7 @@ impl Emitter {
         }
     }
 
-    fn can_complete_paged_write_quietly(&self, operation: Operation) -> bool {
+    pub(super) fn can_complete_paged_write_quietly(&self, operation: Operation) -> bool {
         #[cfg(any(feature = "parallel", not(target_arch = "wasm32")))]
         {
             let _ = operation;
