@@ -292,18 +292,25 @@ fn reached_paged_32_bit_instruction_uses_the_translated_cs_span() {
             "{family}"
         );
         assert_eq!(paging::core_paged_loop_guard(PC, 3, 2, 0), 1, "{family}");
+        BRIDGE.with_borrow(|bridge| {
+            let context = &bridge.core.as_ref().unwrap().context;
+            assert!(context.flat_paged_read_span32(0xffff_fff8, 8), "{family}");
+            assert!(!context.flat_paged_read_span32(0xffff_fffc, 8), "{family}");
+            assert!(
+                !context.flat_paged_read_span32(0x1_0000_0000, 1),
+                "{family}"
+            );
+            assert!(!context.flat_paged_read_span32(u64::MAX, 2), "{family}");
+        });
         assert_eq!(
             paging::core_paged_read_loop_guard32(PC, 3, 2, 0),
             1,
             "{family}"
         );
         BRIDGE.with_borrow_mut(|bridge| {
-            bridge
-                .core
-                .as_mut()
-                .unwrap()
-                .context
-                .set_segment_base(Segment::Ds, 1);
+            let context = &mut bridge.core.as_mut().unwrap().context;
+            context.set_segment_base(Segment::Ds, 1);
+            assert!(!context.flat_paged_read_span32(0x1000, 8), "{family}");
         });
         assert_eq!(
             paging::core_paged_read_loop_guard32(PC, 3, 2, 0),

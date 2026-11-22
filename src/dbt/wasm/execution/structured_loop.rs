@@ -251,10 +251,7 @@ impl StructuredLoop {
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     pub(super) fn with_paged_read_span(mut self, unit: &super::Unit) -> Option<Self> {
-        if !unit.context.is_long64()
-            || self.kind != LoopKind::PagedReads
-            || self.paged_read_widths(unit) != [true, false]
-        {
+        if self.kind != LoopKind::PagedReads || self.paged_read_widths(unit) != [true, false] {
             return None;
         }
         let proof = super::read_loop::ReadLoop::recognize_integer(

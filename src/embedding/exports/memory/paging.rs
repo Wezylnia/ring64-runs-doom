@@ -395,7 +395,7 @@ pub extern "C" fn core_paged_loop_read_span(address: u64, bytes: u32, segment: u
     }
     BRIDGE.with_borrow_mut(|bridge| {
         let core = bridge.core.as_mut().unwrap();
-        if !core.context.is_long64() {
+        if !core.context.is_long64() && !core.context.flat_paged_read_span32(address, bytes) {
             return 0;
         }
         let Some(paging) = core.paging.as_ref() else {

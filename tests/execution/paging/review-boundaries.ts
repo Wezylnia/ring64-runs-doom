@@ -518,6 +518,83 @@ export function pagingBoundaryReviewScenarios(compiler: WebAssembly.Module): Sce
       },
     },
     {
+      name: 'paged 32-bit affine byte span keeps reads within a flat DS and the address ceiling',
+      async run() {
+        const head = 0x3fffd0n;
+        const code = '0fb60731c90fb6040f0fb6540f010fb65c0f020fb6740f0301c583c10483f90875e3';
+        const bytes = Uint8Array.of(0xff, 1, 2, 3, 4, 5, 6, 7);
+        for (const layout of ['local', 'address-ceiling', 'wrap', 'nonflat'] as const) {
+          const execution = context('compatibility');
+          execution.segments.cs.base = 0x30n;
+          if (layout === 'nonflat') execution.segments.ds.base = 0x400000n;
+          const pdAt3 = new Uint8Array(0x1000);
+          pdAt3.set(little([0x7027n]), 0xff8);
+          const highPt = new Uint8Array(0x1000);
+          highPt.set(little([0xb027n]), 0xff8);
+          const data = {
+            local: 0x401000n,
+            'address-ceiling': 0xfffffff8n,
+            wrap: 0xfffffffcn,
+            nonflat: 0x1000n,
+          }[layout];
+          const spans =
+            layout === 'wrap'
+              ? [
+                  { physical: 0x5000n, bytes: little([0xa027n]) },
+                  { physical: 0xa000n, bytes: bytes.slice(4) },
+                  { physical: 0xbffcn, bytes: bytes.slice(0, 4) },
+                ]
+              : [{ physical: layout === 'address-ceiling' ? 0xbff8n : 0xa000n, bytes }];
+          await usingPaged(
+            compiler,
+            {
+              code,
+              context: execution,
+              words: [
+                [0x1000n, 0x2027n],
+                [0x2000n, 0x3027n],
+                [0x2018n, 0x6027n],
+                [0x3000n, 0x5027n],
+                [0x3010n, 0x4027n],
+                [0x4000n, 0x9027n],
+                [0x4008n, 0xa027n],
+              ],
+              spans: [
+                { physical: 0x6000n, bytes: pdAt3 },
+                { physical: 0x7000n, bytes: highPt },
+                ...spans,
+              ],
+            },
+            async (cpu) => {
+              const high = 0x1234567800000000n;
+              cpu.setState(
+                initial(
+                  head,
+                  {
+                    0: high,
+                    1: high,
+                    5: high,
+                    6: high,
+                    7: high | data,
+                  },
+                  2n,
+                ),
+              );
+              const result = await cpu.run({ budget: 20n, stop: head + 34n });
+              equal(result.reason, 'stop', layout);
+              equal(result.retired, 18n, 'both laps retire');
+              equal(result.state.rip, head + 34n, 'CS-relative exit');
+              equal(result.state.registers[0], high | 4n, 'zero extension preserves high bank');
+              equal(result.state.registers[1], high | 8n, 'induction keeps high bank');
+              equal(result.state.registers[5], high | 259n, 'exact byte sum across the span');
+              equal(result.state.registers[6], high | 7n, 'last byte is visible');
+              equal(result.state.flags, 0x46n, 'the exit comparison supplies flags');
+            },
+          );
+        }
+      },
+    },
+    {
       name: 'paging review native cross-page fetch discards an owner invalidated by its one accessed-bit update',
       async run() {
         await usingPaged(
