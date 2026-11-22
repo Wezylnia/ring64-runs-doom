@@ -200,6 +200,8 @@ struct Emitter {
     guarded_paged_lap: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_prefix_read: Option<u32>,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    paged_prefix_store: Option<u32>,
     paged_loop_guard: Option<(u32, u32)>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_preamble: Option<(structured_loop::PagedPreamble, u32, u32)>,

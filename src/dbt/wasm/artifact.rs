@@ -23,6 +23,22 @@ use wasm_encoder::{
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 fn paged_register_prefixes(unit: &Unit, loops: [Option<StructuredLoop>; 2]) -> Vec<Option<usize>> {
     let instructions = &unit.instructions;
+    let long64 = unit.context.is_long64();
+    let maximum = if long64 { 12 } else { 8 };
+    let mut targets = vec![false; instructions.len()];
+    if long64 {
+        for instruction in instructions {
+            let target = match instruction.operation {
+                Operation::Jump { target }
+                | Operation::Jcc { target, .. }
+                | Operation::CountBranch { target, .. } => target,
+                _ => continue,
+            };
+            if let Ok(index) = instructions.binary_search_by_key(&target, |i| i.pc) {
+                targets[index] = true;
+            }
+        }
+    }
     let is_register_only = |instruction: &Instruction| {
         super::structured_loop::inside_register_body(instruction.operation)
             || matches!(
@@ -38,18 +54,22 @@ fn paged_register_prefixes(unit: &Unit, loops: [Option<StructuredLoop>; 2]) -> V
     while first < instructions.len() {
         let pc = instructions[first].pc;
         let mut end = first;
+        let mut has_read = false;
         while let Some(instruction) = instructions.get(end)
-            && end - first < 8
+            && end - first < maximum
+            && (end == first || !targets[end])
             && !loops
                 .into_iter()
                 .flatten()
                 .any(|body| body.order().position(end as u32).is_some())
             && (is_register_only(instruction)
-                || (unit.context.is_long64()
+                || (long64
                     && if end == first {
                         super::instruction::paged_prefix_read(*instruction).is_some()
                     } else {
                         super::instruction::paged_prefix_dword_read(*instruction)
+                            || has_read
+                                && super::instruction::paged_prefix_dword_store(*instruction)
                     }))
             && instruction.next_pc > instruction.pc
             && instruction.next_pc.checked_sub(pc).is_some_and(|bytes| {
@@ -57,11 +77,19 @@ fn paged_register_prefixes(unit: &Unit, loops: [Option<StructuredLoop>; 2]) -> V
             })
             && (end == first || instructions[end - 1].next_pc == instruction.pc)
         {
+            // Keep an already useful register-only prefix before a checked store.
+            has_read |= if end == first {
+                super::instruction::paged_prefix_read(*instruction).is_some()
+            } else {
+                super::instruction::paged_prefix_dword_read(*instruction)
+            };
             end += 1;
         }
-        // Each successful read accounts for the next fetch. Leave a following
+        // Each successful operand accounts for the next fetch. Leave a following
         // in-prefix instruction so a stop or exhausted budget cannot omit it.
-        while end > first + 1 && super::instruction::paged_prefix_dword_read(instructions[end - 1])
+        while end > first + 1
+            && (super::instruction::paged_prefix_dword_read(instructions[end - 1])
+                || super::instruction::paged_prefix_dword_store(instructions[end - 1]))
         {
             end -= 1;
         }
@@ -1070,9 +1098,22 @@ fn emit_body(
         || paged_scalar_writes
         || loop_body.is_some_and(|body| body.paged_stack_writes);
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let prefix_write_dword = register_prefixes.as_ref().is_some_and(|prefixes| {
+        prefixes.iter().enumerate().any(|(first, end)| {
+            end.is_some_and(|end| {
+                unit.instructions[first + 1..end]
+                    .iter()
+                    .copied()
+                    .any(super::instruction::paged_prefix_dword_store)
+            })
+        })
+    });
+    #[cfg(not(all(not(feature = "parallel"), target_arch = "wasm32")))]
+    let prefix_write_dword = false;
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let paged_vector_write_type = paged_vector_copy
         .then(|| add_function_type(&mut types, [ValType::I64, ValType::I32], [ValType::I32]));
-    let paged_loop_write_type = (paged_write_byte || paged_write_dword)
+    let paged_loop_write_type = (paged_write_byte || paged_write_dword || prefix_write_dword)
         .then(|| add_function_type(&mut types, [ValType::I64, ValType::I32], [ValType::I32]));
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let paged_byte_write_pair = loop_body
@@ -1447,9 +1488,10 @@ fn emit_body(
     let paged_loop_write_byte = paged_loop_write_type
         .filter(|_| paged_write_byte)
         .map(|index| import_function("paged_loop_write_byte", index));
-    let paged_loop_write_dword = paged_loop_write_type
-        .filter(|_| paged_write_dword)
+    let write_dword = paged_loop_write_type
+        .filter(|_| paged_write_dword || prefix_write_dword)
         .map(|index| import_function("paged_loop_write_dword", index));
+    let paged_loop_write_dword = write_dword.filter(|_| paged_write_dword);
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let paged_byte_write_pair =
         paged_byte_write_pair
@@ -2200,6 +2242,8 @@ fn emit_body(
         guarded_paged_lap: false,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_prefix_read: None,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        paged_prefix_store: None,
         paged_loop_guard,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_preamble,
@@ -2389,6 +2433,7 @@ fn emit_body(
                 loop_depth,
                 guard,
                 register_prefix_read,
+                write_dword.filter(|_| prefix_write_dword),
             );
         }
 

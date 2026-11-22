@@ -24,6 +24,93 @@ const PAGED_BYTE_STORE_LOOP = '0fb6073c407602fec0880648ffc748ffc6ffc975eb';
 export function pagingBoundaryReviewScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [
     {
+      name: 'paged mixed prefixes decline unadmitted scalar stores at the original write',
+      async run() {
+        const head = 0x400000n;
+        const end = head + 13n;
+        const data = 0x401000n;
+        // MOV EDX,[RDI]; INC ECX; MOV [RSI],EAX; XOR EAX,5; MOV EBX,[RDI]; INC EDX; HLT.
+        const code = '8b17ffc1890683f0058b1fffc2f4';
+        const writes: Array<[bigint, number]> = [];
+        const create = Core.create;
+        Core.create = async (...args) => {
+          const core = await create(...args);
+          const imports = Reflect.get(core, 'artifactImports') as (
+            observed: boolean,
+          ) => Record<string, WebAssembly.ImportValue>;
+          Reflect.set(core, 'artifactImports', (observed: boolean) => {
+            const env = imports.call(core, observed);
+            const write = env.paged_loop_write_dword;
+            if (typeof write === 'function') {
+              env.paged_loop_write_dword = (address: bigint, value: number) => {
+                const result = write(address, value);
+                writes.push([address, result]);
+                return result;
+              };
+            }
+            return env;
+          });
+          return core;
+        };
+        try {
+          await usingPaged(
+            compiler,
+            {
+              code,
+              words: [[0x4008n, 0xa007n]],
+              spans: [{ physical: 0xa000n, bytes: little([19n, 0n], 4) }],
+            },
+            async (cpu) => {
+              const prepare = (destination: bigint, source = 4n) => {
+                cpu.setState(
+                  initial(head, { 0: source, 1: 7n, 2: 23n, 6: destination, 7: data }, 2n),
+                );
+                writes.length = 0;
+              };
+              prepare(data + 4n);
+              equal((await cpu.run({ stop: end, budget: 8n })).reason, 'stop', 'cold checked fill');
+              prepare(data + 4n);
+              const warm = await cpu.run({ stop: end, budget: 8n });
+              equal(warm.reason, 'stop', 'the warmed mixed prefix completes');
+              equal(warm.retired, 6n, 'the store and its neighbors retire');
+              equal(word(cpu, 0xa000n) >> 32n, 4n, 'the retained store commits its source dword');
+              same(writes, [[data + 4n, 1]], 'the warmed writable operand takes the clone');
+
+              const missing = 0x402000n;
+              prepare(missing);
+              const fault = await cpu.run({ stop: end, budget: 8n });
+              equal(fault.reason, 'page-fault', 'the ordinary path publishes the fault');
+              equal(fault.pageFault?.address, missing, 'the write faults at its original address');
+              equal(fault.state.rip, head + 4n, 'the refused write stays unstarted');
+              equal(fault.retired, 2n, 'the leading load and increment retire');
+              equal(fault.state.registers[1], 8n, 'the increment executes once');
+              equal(fault.state.registers[2], 19n, 'the load commits before the write fault');
+              equal(fault.state.registers[0], 4n, 'the post-write XOR remains unstarted');
+              same(writes, [[missing, 0]], 'the unbacked write refuses without a store');
+
+              const codeAlias = head + 8n;
+              // The aligned dword changes XOR's immediate from 5 to 6.
+              const changed = 0xff1f8b06n;
+              prepare(codeAlias, changed);
+              const watched = await cpu.run({ stop: end, budget: 8n });
+              equal(watched.reason, 'stop', 'self-modifying code uses the ordinary store');
+              equal(watched.retired, 6n, 'the write retires once before running the new owner');
+              equal(watched.state.registers[0], changed ^ 6n, 'the changed XOR executes');
+              equal(watched.state.registers[1], 8n, 'the earlier increment is not replayed');
+              same(writes, [[codeAlias, 0]], 'the clone never writes executable backing');
+              equal(
+                word(cpu, 0x9008n) & 0xffffffffn,
+                changed,
+                'the ordinary store commits code bytes',
+              );
+            },
+          );
+        } finally {
+          Core.create = create;
+        }
+      },
+    },
+    {
       name: 'paged mixed prefixes resume the checked scalar read without repeating earlier effects',
       async run() {
         const head = 0x400000n;

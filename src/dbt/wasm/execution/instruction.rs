@@ -17,15 +17,20 @@ pub(super) fn paged_prefix_read(
     use crate::x86::context::Segment;
     use crate::x86::instruction::{Location, Width};
 
-    let Operation::Extend {
-        dst,
-        src: Location::Memory(address),
-        source_width: source_width @ (Width::W8 | Width::W16),
-        width,
-        signed: false,
-    } = instruction.operation
-    else {
-        return None;
+    let (dst, address, source_width, width) = match instruction.operation {
+        Operation::Extend {
+            dst,
+            src: Location::Memory(address),
+            source_width: source_width @ (Width::W8 | Width::W16),
+            width,
+            signed: false,
+        } => (dst, address, source_width, width),
+        Operation::Load {
+            dst,
+            address,
+            width: Width::W32,
+        } => (dst, address, Width::W32, Width::W32),
+        _ => return None,
     };
     (address.segment == Segment::Ds).then_some((dst, address, source_width, width))
 }
@@ -57,6 +62,26 @@ pub(super) fn paged_prefix_dword_read(instruction: Instruction) -> bool {
         _ => return false,
     };
     address.segment == Segment::Ds
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+pub(super) fn paged_prefix_dword_store(instruction: Instruction) -> bool {
+    use crate::x86::{
+        context::Segment,
+        instruction::{Address, Width},
+    };
+
+    matches!(
+        instruction.operation,
+        Operation::Store {
+            address: Address {
+                segment: Segment::Ds,
+                ..
+            },
+            width: Width::W32,
+            ..
+        }
+    )
 }
 
 impl Emitter {
@@ -489,6 +514,7 @@ impl Emitter {
         loop_depth: u32,
         guard: u32,
         read_import: Option<u32>,
+        write_import: Option<u32>,
     ) {
         let first = instructions.first().unwrap();
         let last = instructions.last().unwrap();
@@ -506,11 +532,11 @@ impl Emitter {
             };
 
             self.address(address, first.next_pc);
-            let check_alignment = source_width == Width::W16 && self.context.cpl() == 3;
+            let check_alignment = source_width != Width::W8 && self.context.cpl() == 3;
             if check_alignment {
                 // A checked CPL3 load owns any naturally-unaligned #AC decision.
                 self.op(Op::LocalTee(ADDRESS))
-                    .op(Op::I64Const(1))
+                    .op(Op::I64Const(i64::from(source_width.bytes() - 1)))
                     .op(Op::I64And)
                     .op(Op::I64Eqz)
                     .op(Op::If(BlockType::Result(ValType::I32)))
@@ -528,10 +554,11 @@ impl Emitter {
                 .op(Op::I32Load(mem(
                     std::mem::offset_of!(crate::memory::DirectSpan, host) as u64,
                 )))
-                .op(if source_width == Width::W8 {
-                    Op::I64Load8U(mem(0))
-                } else {
-                    Op::I64Load16U(mem(0))
+                .op(match source_width {
+                    Width::W8 => Op::I64Load8U(mem(0)),
+                    Width::W16 => Op::I64Load16U(mem(0)),
+                    Width::W32 => Op::I64Load32U(mem(0)),
+                    Width::W64 => unreachable!("unsupported prefix read width"),
                 });
             self.write_register(register, width);
             self.commit(first.next_pc);
@@ -541,9 +568,12 @@ impl Emitter {
         self.loop_gates_prechecked = true;
         for instruction in &instructions[usize::from(read.is_some())..] {
             self.paged_prefix_read = read_import.filter(|_| paged_prefix_dword_read(*instruction));
+            self.paged_prefix_store =
+                write_import.filter(|_| paged_prefix_dword_store(*instruction));
             self.emit_instruction(*instruction, None, loop_depth, None, None, false);
         }
         self.paged_prefix_read = None;
+        self.paged_prefix_store = None;
         self.loop_gates_prechecked = false;
         self.route(last.next_pc, loop_depth, loop_depth + 1);
         self.guarded_paged_lap = false;

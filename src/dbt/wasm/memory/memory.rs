@@ -1228,6 +1228,19 @@ impl Emitter {
         next_pc: u64,
         exit_depth: u32,
     ) {
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if let Some(write) = self.paged_prefix_store {
+            debug_assert!(width == Width::W32 && address.segment == Segment::Ds);
+            self.address(address, next_pc);
+            self.data_operand(src, width);
+            self.op(Op::I32WrapI64)
+                .op(Op::Call(write))
+                .op(Op::I32Eqz)
+                .op(Op::If(BlockType::Empty));
+            self.route(self.current_pc, exit_depth, exit_depth + 1);
+            self.op(Op::End);
+            return;
+        }
         let paged_write = match (width, address.segment) {
             (Width::W8, Segment::Ds) => self.paged_loop_write_byte,
             (Width::W32, Segment::Ss) => self.paged_loop_write_dword,
