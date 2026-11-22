@@ -85,12 +85,15 @@ fn guarded_vector_read_window_retouch_rejects_a_refilled_slot() {
     cache
         .data_then_fetch::<false, _>(&state, other, &Keys::ZERO, 4, true, Some)
         .unwrap();
-    let fetch_slot = cache.entries.borrow().hint.unwrap();
+    let fetch_slot = cache.entries.borrow().hint().unwrap();
     assert_eq!(cache.retouch_guarded_read_window(read.linear), Some(()));
     {
         let entries = cache.entries.borrow();
-        assert_eq!(entries.hint, Some(fetch_slot));
-        assert_eq!(entries.slots[window.0].unwrap().used, entries.clock - 1);
+        assert_eq!(entries.hint(), Some(fetch_slot));
+        assert_eq!(
+            entries.recency().ages[window.0],
+            entries.recency().clock - 1
+        );
     }
 
     cache.invalidate_page(state.pcid(), read.linear, false);
@@ -102,9 +105,9 @@ fn guarded_vector_read_window_retouch_rejects_a_refilled_slot() {
         walk::peek(&image, &state, read, &Keys::ZERO).unwrap(),
     );
     cache.lookup(&state, fetch, &Keys::ZERO).unwrap().unwrap();
-    let clock = cache.entries.borrow().clock;
+    let clock = cache.entries.borrow().recency().clock;
     assert_eq!(cache.retouch_guarded_read_window(read.linear), None);
-    assert_eq!(cache.entries.borrow().clock, clock);
+    assert_eq!(cache.entries.borrow().recency().clock, clock);
 }
 
 #[cfg(not(feature = "parallel"))]
@@ -144,7 +147,7 @@ fn guarded_byte_store_slot_keeps_write_authority_and_fetch_recency() {
         };
         let oldest_order = {
             let entries = cache.entries.borrow();
-            (entries.clock, entries.hint)
+            (entries.recency().clock, entries.hint())
         };
         for selected in [slot, 1 - slot, usize::MAX] {
             let used = Cell::new(false);
@@ -162,7 +165,7 @@ fn guarded_byte_store_slot_keeps_write_authority_and_fetch_recency() {
             assert_eq!(result, admitted.then_some(0xa234));
             assert_eq!(used.get(), admitted);
             let entries = cache.entries.borrow();
-            assert_eq!((entries.clock, entries.hint), oldest_order);
+            assert_eq!((entries.recency().clock, entries.hint()), oldest_order);
         }
     }
 }
@@ -219,14 +222,14 @@ fn guarded_byte_read_memo_rechecks_the_live_slot_and_access_class() {
     fill(&image, &second, supervisor_read);
     fill(&image, &second, fetch);
     assert_eq!(cache.last_byte_read.get(), Some(slot));
-    let before = cache.entries.borrow().clock;
+    let before = cache.entries.borrow().recency().clock;
     assert_eq!(
         cache.read_byte_then_fetch(&second, read, &Keys::ZERO, |_| {
             panic!("A retained supervisor translation cannot satisfy the same user read")
         }),
         None::<()>
     );
-    assert_eq!(cache.entries.borrow().clock, before);
+    assert_eq!(cache.entries.borrow().recency().clock, before);
 }
 
 #[cfg(not(feature = "parallel"))]
@@ -280,7 +283,7 @@ fn guarded_dword_store_memo_rechecks_evicted_and_replaced_slots() {
         image.physical_write(0x4008, 8, leaf).unwrap();
         fill(&image, &first, read);
         fill(&image, &first, fetch);
-        let clock = cache.entries.borrow().clock;
+        let clock = cache.entries.borrow().recency().clock;
         assert_eq!(cache.last_dword_write.get(), Some(original_slot));
         assert_eq!(
             cache.write_dword_then_fetch(&first, write, &Keys::ZERO, |_| {
@@ -288,7 +291,7 @@ fn guarded_dword_store_memo_rechecks_evicted_and_replaced_slots() {
             }),
             None::<()>
         );
-        assert_eq!(cache.entries.borrow().clock, clock);
+        assert_eq!(cache.entries.borrow().recency().clock, clock);
     }
 }
 
@@ -339,11 +342,11 @@ fn guarded_dword_store_memo_preserves_backing_admission_and_recency() {
     let other = walk::peek(&image, &state, unrelated, &Keys::ZERO).unwrap();
     cache.fill(&state, unrelated, other);
     cache.lookup(&state, fetch, &Keys::ZERO).unwrap().unwrap();
-    let clock = cache.entries.borrow().clock;
+    let clock = cache.entries.borrow().recency().clock;
     let owner = image.register_dependencies([], [(0xa234, 4)]).unwrap();
     assert!(image.activate(owner));
     assert_eq!(store(&mut image, 0xdeadbeef), None);
-    assert_eq!(cache.entries.borrow().clock, clock);
+    assert_eq!(cache.entries.borrow().recency().clock, clock);
     assert!(image.source_is_active(owner));
     assert_eq!(image.physical_read(0xa234, 4), Ok(0x11223344));
 
@@ -353,9 +356,9 @@ fn guarded_dword_store_memo_preserves_backing_admission_and_recency() {
     let entries = cache.entries.borrow();
     let data = entries.find(&state, write).unwrap();
     let code = entries.find(&state, fetch).unwrap();
-    assert_eq!(entries.clock, clock + 2);
-    assert_eq!(entries.hint, Some(code));
-    assert_eq!(entries.slots[data].unwrap().used, entries.clock - 1);
+    assert_eq!(entries.recency().clock, clock + 2);
+    assert_eq!(entries.hint(), Some(code));
+    assert_eq!(entries.recency().ages[data], entries.recency().clock - 1);
 }
 
 #[cfg(not(feature = "parallel"))]
@@ -373,7 +376,7 @@ fn indexed_candidates_revalidate_removals_and_later_ordinary_fills() {
     let cache = Cache::with_capacity(2);
     let check = |state: &State, request: Request, expected| {
         let mut entries = cache.entries.borrow_mut();
-        entries.hint = None;
+        entries.set_hint(None);
         let found = entries.find(state, request);
         assert_eq!(found, entries.find_linear_reference(state, request));
         assert_eq!(
@@ -548,7 +551,7 @@ fn a_local_large_page_fill_signals_when_it_shadows_a_smaller_global() {
             (local.linear_base, local.physical_base, local.span),
             (0, 0, 0x20_0000)
         );
-        let old_clock = cache.entries.borrow().clock;
+        let old_clock = cache.entries.borrow().recency().clock;
         assert!(
             cache
                 .data_translation_then_fetch::<false, _>(
@@ -561,7 +564,7 @@ fn a_local_large_page_fill_signals_when_it_shadows_a_smaller_global() {
                 )
                 .is_none(),
         );
-        assert_eq!(cache.entries.borrow().clock, old_clock);
+        assert_eq!(cache.entries.borrow().recency().clock, old_clock);
     }
 }
 

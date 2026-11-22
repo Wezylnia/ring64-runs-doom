@@ -137,6 +137,8 @@ struct Core {
     physical_controls: bool,
     paging_work: crate::x86::paging::access::AccessState,
     translation_cache: crate::x86::paging::cache::Cache,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    indexed_paged_read_root: Option<u64>,
     active_owner: Option<u64>,
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
     paged_region_trace: Option<Box<paged_region::Trace>>,
@@ -226,6 +228,8 @@ impl Bridge {
             physical_controls,
             paging_work: Default::default(),
             translation_cache: Default::default(),
+            #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+            indexed_paged_read_root: None,
             active_owner: None,
             #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
             paged_region_trace: None,

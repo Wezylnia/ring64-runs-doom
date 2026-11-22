@@ -488,6 +488,7 @@ impl Emitter {
             group.instructions as u32,
             guard,
             None,
+            false,
         );
         self.address(group.source, 0);
         self.op(Op::LocalSet(LHS));
@@ -519,6 +520,7 @@ impl Emitter {
             count as u32,
             guard,
             None,
+            false,
         );
         self.address(group.source, 0);
         self.op(Op::LocalSet(LHS));

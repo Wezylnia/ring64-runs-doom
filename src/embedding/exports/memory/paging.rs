@@ -330,6 +330,31 @@ pub extern "C" fn core_paged_access_reason() -> i32 {
 }
 
 impl Core {
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    fn admit_indexed_paged_reads(&mut self) {
+        let Some(paging) = self.paging else {
+            self.state.indexed_paged_reads = 0;
+            return;
+        };
+        if !self.context.is_long64()
+            || self.context.cpl() != 0
+            || paging.cr0 & (1 << 31) == 0
+            || paging.cr4 & (paging::CR4_SMAP | paging::CR4_PKE | paging::CR4_PKS) != 0
+            || self.paged_region_trace.is_some()
+        {
+            self.state.indexed_paged_reads = 0;
+            return;
+        }
+        // No-flush CR3 changes can keep live slots for another PCID.
+        if self.indexed_paged_read_root != Some(paging.cr3) {
+            self.translation_cache.clear_indexed_reads();
+            self.indexed_paged_read_root = Some(paging.cr3);
+        }
+        if self.state.indexed_paged_reads == 0 {
+            self.state.indexed_paged_reads = self.translation_cache.indexed_reads_ptr();
+        }
+    }
+
     fn clear_paged_instruction(&mut self) {
         self.paging_work.clear();
         self.alignment_check = None;
@@ -462,6 +487,10 @@ fn paged_loop_guard<const FLAT_DATA32: bool, const SSE: bool, const FLAT_WRITE32
     use crate::x86::flags::{RF, TF};
     const MXCSR_EXCEPTION_MASKS: u32 = 0x1f80;
 
+    #[cfg(target_arch = "wasm32")]
+    let indexed_reads = shadow & crate::embedding::layout::paging::INDEXED_PAGED_READ_GUARD != 0;
+    #[cfg(target_arch = "wasm32")]
+    let shadow = shadow & !crate::embedding::layout::paging::INDEXED_PAGED_READ_GUARD;
     if flags & (RF | TF) != 0 || shadow != 0 {
         return 2;
     }
@@ -497,6 +526,10 @@ fn paged_loop_guard<const FLAT_DATA32: bool, const SSE: bool, const FLAT_WRITE32
         // covers the whole lap; admitted operands preserve its translation.
         core.clear_paged_instruction();
         core.reconcile_translation_changes();
+        #[cfg(target_arch = "wasm32")]
+        if indexed_reads {
+            core.admit_indexed_paged_reads();
+        }
         1
     })
 }
@@ -809,13 +842,23 @@ fn paged_loop_read<const WIDTH: u32, const CAPTURE_SLOT: bool>(address: u64) -> 
 #[unsafe(no_mangle)]
 #[inline(never)]
 pub extern "C" fn core_paged_loop_read_span(address: u64, bytes: u32, segment: u32) -> u32 {
-    use crate::embedding::layout::{PAGED_PAIR_CONTINUE, PAGED_PAIR_START, PAGED_PAIR_WINDOW};
+    use crate::embedding::layout::{
+        PAGED_PAIR_CONTINUE, PAGED_PAIR_START, PAGED_PAIR_WINDOW,
+        paging::PREFIX_INDEXED_READ_SEGMENT,
+    };
 
     if segment == Segment::Ds as u32 {
-        return paged_loop_read_span::<false, false, false>(address, bytes, segment);
+        return paged_loop_read_span::<false, false, false, false>(address, bytes, segment);
     }
     if segment == crate::embedding::layout::paging::PREFIX_DWORD_READ_SEGMENT && bytes == 4 {
-        return paged_loop_read_span::<false, false, true>(address, 4, Segment::Ds as u32);
+        return paged_loop_read_span::<false, false, true, false>(address, 4, Segment::Ds as u32);
+    }
+    if segment == PREFIX_INDEXED_READ_SEGMENT && matches!(bytes, 1 | 2) {
+        return paged_loop_read_span::<false, false, false, true>(
+            address,
+            bytes,
+            Segment::Ds as u32,
+        );
     }
     if bytes == 8 && matches!(segment, PAGED_PAIR_START | PAGED_PAIR_CONTINUE) {
         return paged_loop_read_paired_dwords(address, segment == PAGED_PAIR_CONTINUE);
@@ -830,7 +873,7 @@ pub extern "C" fn core_paged_loop_read_span(address: u64, bytes: u32, segment: u
 #[unsafe(no_mangle)]
 #[inline(never)]
 pub extern "C" fn core_paged_loop_read_span_pages(address: u64, bytes: u32, segment: u32) -> u32 {
-    paged_loop_read_span::<true, false, false>(address, bytes, segment)
+    paged_loop_read_span::<true, false, false, false>(address, bytes, segment)
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -904,11 +947,11 @@ pub extern "C" fn core_paged_loop_read_block(address: u64) -> u32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn core_paged_loop_block_host(address: u64) -> u32 {
     let segment = Segment::Ds as u32;
-    let host = paged_loop_read_span::<false, true, false>(address, 16, segment);
+    let host = paged_loop_read_span::<false, true, false, false>(address, 16, segment);
     if host != 0 || address & 0xfff <= 0xff0 {
         host
     } else {
-        paged_loop_read_span::<true, true, false>(address, 16, segment)
+        paged_loop_read_span::<true, true, false, false>(address, 16, segment)
     }
 }
 
@@ -1155,6 +1198,7 @@ fn paged_loop_read_span<
     const MULTI_PAGE: bool,
     const HOST_POINTER: bool,
     const PREFIX_DWORD_MEMO: bool,
+    const INDEXED: bool,
 >(
     address: u64,
     bytes: u32,
@@ -1184,6 +1228,7 @@ fn paged_loop_read_span<
             ),
         };
         let read = |physical| core.image.physical_direct_read_pointer(physical, bytes);
+        let mut indexed_page = None;
         let host = if MULTI_PAGE {
             core.translation_cache.contiguous_read_then_fetch(
                 paging,
@@ -1199,6 +1244,30 @@ fn paged_loop_read_span<
                 &state.protection_keys,
                 |physical| core.image.physical_direct_read_span(physical, 4),
             )
+        } else if INDEXED && core.state.indexed_paged_reads != 0 {
+            core.translation_cache
+                .data_translation_then_fetch::<false, _>(
+                    paging,
+                    request,
+                    &state.protection_keys,
+                    bytes,
+                    true,
+                    |slot, translation| {
+                        let page = address & !4095;
+                        let offset = address - page;
+                        if offset + u64::from(bytes) <= 4096
+                            && translation.contains(page)
+                            && translation.remaining >= 4096 - offset
+                            && let Some(host) = core
+                                .image
+                                .physical_direct_read_pointer(translation.physical - offset, 4096)
+                        {
+                            indexed_page = Some((slot, page, host));
+                            return Some(host + offset as u32);
+                        }
+                        read(translation.physical)
+                    },
+                )
         } else {
             core.translation_cache.data_then_fetch::<false, _>(
                 paging,
@@ -1212,6 +1281,10 @@ fn paged_loop_read_span<
         let Some(host) = host else {
             return 0;
         };
+        if let Some((slot, page, host)) = indexed_page {
+            core.translation_cache
+                .remember_indexed_read(slot, page, host);
+        }
         if HOST_POINTER {
             // The guarded MOVUPS consumes this pointer immediately.
             return host;

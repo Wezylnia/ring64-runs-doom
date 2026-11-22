@@ -2425,9 +2425,20 @@ fn emit_body(
     });
     #[cfg(any(feature = "parallel", not(target_arch = "wasm32")))]
     let quiet_fetch_page = None;
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let indexed_paged_read = (unit.sampled && unit.context.is_long64() && unit.context.cpl() == 0)
+        .then_some(())
+        .and(register_prefix_read)
+        .map(|_| {
+            let first = super::GPR + locals.iter().map(|(count, _)| count).sum::<u32>();
+            locals.push((4, ValType::I32));
+            [first, first + 1, first + 2, first + 3]
+        });
     let mut emitter = Emitter {
         paged,
         quiet_fetch_page,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        indexed_paged_read,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_quiet_completion: optional.paged_quiet_completion
             && paged

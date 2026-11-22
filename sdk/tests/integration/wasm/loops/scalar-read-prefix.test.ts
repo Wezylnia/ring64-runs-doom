@@ -2,7 +2,13 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Core } from '../../../../src/wasm/core.js';
 import { snapshot } from '../../../../../tests/execution/far-control/fixture.js';
-import { BANK, PC, initial, usingPaged } from '../../../../../tests/execution/paging/fixture.js';
+import {
+  BANK,
+  PC,
+  initial,
+  little,
+  usingPaged,
+} from '../../../../../tests/execution/paging/fixture.js';
 import { compiler } from './fixture.js';
 
 test('sampled quiet completion keeps branch, single-step, and execute breakpoint handling', async () => {
@@ -327,5 +333,176 @@ test('guarded scalar read prefixes preserve stop, single-step, and split-page fa
     );
   } finally {
     prototype.artifactImports = imports;
+  }
+});
+
+test('guarded MOVZX prefixes reuse live read translations across entries and revoke on host remap', async () => {
+  const source = PC + 0x1001n;
+  const stop = PC + 11n;
+  const prototype = Core.prototype as unknown as {
+    artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
+  };
+  const imports = prototype.artifactImports;
+  const compile = Core.prototype.compile;
+  let readCalls = 0;
+  let acceptedGuards = 0;
+  Core.prototype.compile = function (pc, limits, seeds, regionPoints) {
+    if (pc === PC && !seeds?.length)
+      return compile.call(this, pc, limits, [PC, PC + 3n, PC + 6n, PC + 8n, stop], true);
+    return compile.call(this, pc, limits, seeds, regionPoints);
+  };
+  prototype.artifactImports = function (observed) {
+    const env = imports.call(this, observed);
+    const read = env.paged_loop_read_span;
+    if (typeof read === 'function') {
+      env.paged_loop_read_span = (address: bigint, width: number, segment: number) => {
+        readCalls++;
+        return read(address, width, segment);
+      };
+    }
+    const guard = env.paged_loop_guard;
+    if (typeof guard === 'function') {
+      env.paged_loop_guard = (pc: bigint, bytes: number, flags: bigint, shadow: number) => {
+        const proof = guard(pc, bytes, flags, shadow);
+        if (pc === PC && proof === 1) acceptedGuards++;
+        return proof;
+      };
+    }
+    return env;
+  };
+
+  const original = new Uint8Array(4096);
+  original.set([0x65, 0x87], 1);
+  const replacement = new Uint8Array(4096);
+  replacement.set([0x34, 0x12], 1);
+  try {
+    for (const [opcode, initialValue, remappedValue] of [
+      ['b6', 0x65n, 0x34n],
+      ['b7', 0x8765n, 0x1234n],
+    ] as const) {
+      await usingPaged(
+        compiler,
+        {
+          // MOVZX EAX,[RDI]; ADD EAX,3; XOR ECX,ECX; ADD EAX,1; JMP back to MOVZX.
+          code: `0f${opcode}0783c00331c983c001ebf3`,
+          words: [[0x4008n, 0xa003n]],
+          spans: [
+            { physical: 0xa000n, bytes: original },
+            { physical: 0xb000n, bytes: replacement },
+          ],
+        },
+        async (cpu) => {
+          const enter = (address = source, flags = 2n) =>
+            cpu.setState(initial(PC, { 0: 0x4321n, 7: address }, flags));
+          const prefix = async (value: bigint) => {
+            const result = await cpu.run({ stop, budget: 10n });
+            assert.equal(result.reason, 'stop');
+            assert.equal(result.retired, 4n);
+            assert.equal(result.state.rip, stop);
+            assert.equal(result.state.registers[0], value + 4n);
+          };
+          const rewind = async () => {
+            const back = await cpu.run({ stop: PC, budget: 10n });
+            assert.equal(back.reason, 'stop');
+            assert.equal(back.retired, 1n);
+          };
+
+          enter();
+          await prefix(initialValue);
+          await rewind();
+          await prefix(initialValue);
+          await rewind();
+          const beforeWarm = readCalls;
+          const beforeGuards = acceptedGuards;
+          for (let wave = 0; wave < 3; wave++) {
+            await prefix(initialValue);
+            await rewind();
+          }
+          assert.equal(acceptedGuards, beforeGuards + 3);
+          assert.equal(readCalls, beforeWarm, 'warm guarded reads bypass the translation helper');
+
+          cpu.writePhysicalMemory(0x4008n, little([0xb003n]));
+          await prefix(remappedValue);
+          await rewind();
+          await prefix(remappedValue);
+          await rewind();
+          const afterRemap = readCalls;
+          const beforeRemappedGuard = acceptedGuards;
+          await prefix(remappedValue);
+          assert.equal(acceptedGuards, beforeRemappedGuard + 1);
+          assert.equal(readCalls, afterRemap);
+          await rewind();
+
+          const interior = await cpu.run({ stop: PC + 3n, budget: 10n });
+          assert.equal(interior.reason, 'stop');
+          assert.equal(interior.retired, 1n);
+          assert.equal(interior.state.rip, PC + 3n);
+          assert.equal(interior.state.registers[0], remappedValue);
+          assert.equal(readCalls, afterRemap);
+
+          enter(source, 0x102n);
+          const step = await cpu.run({ stop, budget: 10n });
+          assert.equal(step.reason, 'debug-exception');
+          assert.equal(step.retired, 1n);
+          assert.equal(step.state.rip, PC + 3n);
+          assert.equal(step.state.registers[0], remappedValue);
+          assert.equal(readCalls, afterRemap);
+
+          if (opcode === 'b7') {
+            enter(PC + 0x1fffn);
+            const split = await cpu.run({ stop, budget: 10n });
+            assert.equal(split.reason, 'page-fault');
+            assert.equal(split.retired, 0n);
+            assert.equal(split.state.rip, PC);
+            assert.equal(split.state.registers[0], 0x4321n);
+            assert.equal(split.pageFault?.address, PC + 0x2000n);
+            assert.equal(readCalls, afterRemap + 1);
+          }
+
+          cpu.setDebugState({ addresses: [source, 0n, 0n, 0n], dr6: 0n, dr7: 0x30401n });
+          enter();
+          const watch = await cpu.run({ stop, budget: 10n });
+          assert.equal(watch.reason, 'debug-exception');
+          assert.equal(watch.debugException?.cause, 'data-breakpoint');
+          assert.equal(watch.retired, 1n);
+          assert.equal(watch.state.rip, PC + 3n);
+          assert.equal(watch.state.registers[0], remappedValue);
+        },
+      );
+    }
+
+    const largePage = PC + 0x200000n;
+    await usingPaged(
+      compiler,
+      {
+        code: '0fb70783c00331c983c001',
+        words: [[0x3018n, 0x200083n]],
+        spans: [
+          { physical: 0x200000n, bytes: original },
+          { physical: 0x201000n, bytes: replacement, read: false },
+        ],
+      },
+      async (cpu) => {
+        for (let wave = 0; wave < 3; wave++) {
+          cpu.setState(initial(PC, { 7: largePage + 1n }));
+          const ordinary = await cpu.run({ stop, budget: 10n });
+          assert.equal(ordinary.reason, 'stop');
+          assert.equal(ordinary.retired, 4n);
+          assert.equal(ordinary.state.registers[0], 0x8769n);
+        }
+        const beforeGuard = acceptedGuards;
+        cpu.setState(initial(PC, { 0: 0x4321n, 7: largePage + 0xfffn }));
+        const split = await cpu.run({ stop, budget: 10n });
+        assert.equal(acceptedGuards, beforeGuard + 1);
+        assert.equal(split.reason, 'physical-memory-fault');
+        assert.equal(split.physicalMemoryFault?.phase, 'final-access');
+        assert.equal(split.retired, 0n);
+        assert.equal(split.state.rip, PC);
+        assert.equal(split.state.registers[0], 0x4321n);
+      },
+    );
+  } finally {
+    prototype.artifactImports = imports;
+    Core.prototype.compile = compile;
   }
 });

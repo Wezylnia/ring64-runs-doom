@@ -110,7 +110,7 @@ impl GuardedOrder {
             indices[count] = index;
             count += 1;
         }
-        indices[..count].sort_unstable_by_key(|&index| entries.slots[index].as_ref().unwrap().used);
+        indices[..count].sort_unstable_by_key(|&index| entries.recency().ages[index]);
         for index in indices[..count].iter().copied() {
             order.touch(index);
         }
@@ -125,13 +125,13 @@ impl GuardedOrder {
     }
 
     pub(super) fn matches(&self, entries: &Entries) -> bool {
-        self.clock == entries.clock
+        self.clock == entries.recency().clock
             && self.next_id == entries.next_id
             && self.occupied == entries.lookup_index.occupancy()
     }
 
     pub(super) fn record(&mut self, entries: &Entries) {
-        self.clock = entries.clock;
+        self.clock = entries.recency().clock;
         self.next_id = entries.next_id;
         self.occupied = entries.lookup_index.occupancy();
     }

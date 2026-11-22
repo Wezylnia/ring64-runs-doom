@@ -47,8 +47,8 @@ fn fill_chooses_the_first_vacant_slot_then_the_first_oldest_slot() {
     {
         // Force a tie to verify the historical first-slot selection.
         let mut entries = cache.entries.borrow_mut();
-        entries.slots[0].as_mut().unwrap().used = 1;
-        entries.slots[1].as_mut().unwrap().used = 1;
+        entries.recency_mut().ages[0] = 1;
+        entries.recency_mut().ages[1] = 1;
     }
     let fourth_id = id(insert(&cache, &mut image, &state, at(0x4234)));
     assert_eq!(fourth_id, first_id + 1);
@@ -124,9 +124,9 @@ fn guarded_read_ages_data_then_code_only_on_success() {
         insert(&cache, &mut image, &state, code);
         assert!(cache.touch_current_fetch(&state, code, 0xb234));
         if clock_overflow {
-            cache.entries.borrow_mut().clock = u64::MAX;
+            cache.entries.borrow_mut().recency_mut().clock = u64::MAX;
         }
-        let clock = cache.entries.borrow().clock;
+        let clock = cache.entries.borrow().recency().clock;
         assert_eq!(
             cache.data_then_fetch::<false, u32>(
                 &state,
@@ -149,7 +149,7 @@ fn guarded_read_ages_data_then_code_only_on_success() {
             ),
             None
         );
-        assert_eq!(cache.entries.borrow().clock, clock);
+        assert_eq!(cache.entries.borrow().recency().clock, clock);
         assert_eq!(
             cache.data_then_fetch::<false, u32>(
                 &state,
@@ -165,7 +165,7 @@ fn guarded_read_ages_data_then_code_only_on_success() {
             Some(u32::MAX)
         );
         assert_eq!(
-            cache.entries.borrow().clock,
+            cache.entries.borrow().recency().clock,
             if clock_overflow { 4 } else { clock + 2 }
         );
         insert(&cache, &mut image, &state, missing);
@@ -209,13 +209,15 @@ fn guarded_hits_on_the_newest_pair_preserve_all_victims_through_rollover() {
         }
         if overflow {
             let mut entries = cache.entries.borrow_mut();
-            let offset = u64::MAX - entries.clock;
-            for entry in entries.slots.iter_mut().flatten() {
-                entry.used += offset;
+            let offset = u64::MAX - entries.recency().clock;
+            for index in 0..entries.capacity {
+                if entries.slots[index].is_some() {
+                    entries.recency_mut().ages[index] += offset;
+                }
             }
-            entries.clock = u64::MAX;
+            entries.recency_mut().clock = u64::MAX;
         }
-        let clock = cache.entries.borrow().clock;
+        let clock = cache.entries.borrow().recency().clock;
         for operand in [at(2), data, at(2), data] {
             assert!(
                 cache
@@ -230,7 +232,7 @@ fn guarded_hits_on_the_newest_pair_preserve_all_victims_through_rollover() {
                     .is_some()
             );
         }
-        assert_eq!(cache.entries.borrow().clock, clock);
+        assert_eq!(cache.entries.borrow().recency().clock, clock);
         assert!(!cache.take_changed());
         for (page, victim) in (4..=6).zip([oldest, data, code]) {
             insert(&cache, &mut image, &state, at(page));
@@ -261,7 +263,7 @@ fn guarded_read_span_rejects_global_or_split_without_touching_retained_ages() {
     insert(&cache, &mut image, &state, data);
     insert(&cache, &mut image, &state, code);
     assert!(cache.touch_current_fetch(&state, code, 0xb234));
-    let clock = cache.entries.borrow().clock;
+    let clock = cache.entries.borrow().recency().clock;
     let split = Request {
         linear: 0x2ffc,
         ..data
@@ -279,7 +281,7 @@ fn guarded_read_span_rejects_global_or_split_without_touching_retained_ages() {
             None
         );
     }
-    assert_eq!(cache.entries.borrow().clock, clock);
+    assert_eq!(cache.entries.borrow().recency().clock, clock);
     assert!(!cache.take_changed());
 }
 
@@ -340,8 +342,12 @@ fn split_pair_ages_match_ordered_reads_when_data_and_fetch_alias() {
                 let mut age: Vec<_> = entries
                     .slots
                     .iter()
-                    .flatten()
-                    .map(|entry| (entry.used, entry.translation.linear_base))
+                    .enumerate()
+                    .filter_map(|(index, entry)| {
+                        entry.map(|entry| {
+                            (entries.recency().ages[index], entry.translation.linear_base)
+                        })
+                    })
                     .collect();
                 age.sort_unstable();
                 age.into_iter()
@@ -386,7 +392,7 @@ fn split_pair_refusal_preserves_ages_and_never_partially_resolves() {
             "both" => [(at(0x1fe0), 64), (at(0x3fe0), 64)],
             _ => [(at(0x1fe0), 64), (at(0x3000), 64)],
         };
-        let clock = cache.entries.borrow().clock;
+        let clock = cache.entries.borrow().recency().clock;
         assert_eq!(
             cache.read_split_pair_then_fetch::<()>(
                 &state,
@@ -400,7 +406,7 @@ fn split_pair_refusal_preserves_ages_and_never_partially_resolves() {
             ),
             None,
         );
-        assert_eq!(cache.entries.borrow().clock, clock, "{case}");
+        assert_eq!(cache.entries.borrow().recency().clock, clock, "{case}");
         assert!(!cache.take_changed());
     }
 }
@@ -446,7 +452,7 @@ fn contiguous_retained_span_touches_three_pages_atomically_in_linear_order() {
         if layout == "local" {
             image.physical_write(0x4010, 8, 0xf007).unwrap();
         }
-        let prior = cache.entries.borrow().clock;
+        let prior = cache.entries.borrow().recency().clock;
         let resolved = cache.contiguous_read_then_fetch(
             &state,
             at(0x1ffc),
@@ -477,7 +483,7 @@ fn contiguous_retained_span_touches_three_pages_atomically_in_linear_order() {
             }
             assert_eq!(image.physical_read(0x4010, 8), Ok(0xf007));
         } else {
-            assert_eq!(cache.entries.borrow().clock, prior, "{layout}");
+            assert_eq!(cache.entries.borrow().recency().clock, prior, "{layout}");
             assert!(!cache.take_changed());
         }
     }
@@ -564,7 +570,7 @@ fn ready_dense_span_installs_only_after_all_three_pages_are_admitted() {
         image.physical_write(0x4010, 8, 0xf007).unwrap();
         let snapshot = || {
             let entries = cache.entries.borrow();
-            (entries.clock, entries.next_id, entries.hint)
+            (entries.recency().clock, entries.next_id, entries.hint())
         };
         let before = snapshot();
         let reads = [at(0x1ff0), at(0x2000), at(0x3000)];
@@ -585,14 +591,11 @@ fn ready_dense_span_installs_only_after_all_three_pages_are_admitted() {
         assert!(!cache.take_changed());
         if admit {
             let entries = cache.entries.borrow();
-            let ages = [reads[0], reads[1], reads[2], code].map(|request| {
-                entries.slots[entries.find(&state, request).unwrap()]
-                    .unwrap()
-                    .used
-            });
+            let ages = [reads[0], reads[1], reads[2], code]
+                .map(|request| entries.recency().ages[entries.find(&state, request).unwrap()]);
             assert!(ages.windows(2).all(|ages| ages[0] < ages[1]));
             assert_eq!(entries.next_id, before.1 + 2);
-            assert_eq!(entries.hint, before.2);
+            assert_eq!(entries.hint(), before.2);
         } else {
             assert_eq!(snapshot(), before);
             for request in [reads[0], reads[2]] {
@@ -634,7 +637,7 @@ fn guarded_store_requires_dirty_ready_writable_retention_before_aging() {
         insert(&cache, &mut image, &state, data);
         insert(&cache, &mut image, &state, code);
         assert!(cache.touch_current_fetch(&state, code, 0xb234));
-        let clock = cache.entries.borrow().clock;
+        let clock = cache.entries.borrow().recency().clock;
         let result = cache.data_then_fetch::<true, _>(
             &state,
             store,
@@ -649,7 +652,7 @@ fn guarded_store_requires_dirty_ready_writable_retention_before_aging() {
         );
         assert_eq!(result, admit.then_some(()));
         assert_eq!(
-            cache.entries.borrow().clock,
+            cache.entries.borrow().recency().clock,
             clock + if admit { 2 } else { 0 }
         );
         assert_eq!(image.physical_read(0x4008, 8), Ok(leaf));
@@ -805,7 +808,7 @@ fn lru_clock_renormalization_preserves_actual_order() {
     let cache = Cache::with_capacity(2);
     insert(&cache, &mut image, &state, first);
     insert(&cache, &mut image, &state, second);
-    cache.entries.borrow_mut().clock = u64::MAX;
+    cache.entries.borrow_mut().recency_mut().clock = u64::MAX;
     cache.lookup(&state, first, &ProtectionKeys::ZERO).unwrap();
     insert(&cache, &mut image, &state, third);
     assert!(
@@ -847,12 +850,12 @@ fn paired_data_spans_commit_recency_only_after_both_succeed() {
         insert(&cache, &mut image, &state, request);
     }
     let pair = [(first, 4), (last, 8)];
-    let prior = cache.entries.borrow().clock;
+    let prior = cache.entries.borrow().recency().clock;
     assert_eq!(
         cache.read_pair_then_fetch::<()>(&state, &ProtectionKeys::ZERO, pair, |_| None),
         None
     );
-    assert_eq!(cache.entries.borrow().clock, prior);
+    assert_eq!(cache.entries.borrow().recency().clock, prior);
     assert_eq!(
         cache.read_pair_then_fetch(&state, &ProtectionKeys::ZERO, pair, Some),
         Some([0xa234, 0xb234])
@@ -900,7 +903,7 @@ fn split_copy_preflights_rights_and_keeps_ordered_recency() {
     ] {
         insert(&cache, &mut image, &state, operand);
     }
-    let clock = || cache.entries.borrow().clock;
+    let clock = || cache.entries.borrow().recency().clock;
     let start = clock();
     assert_eq!(
         cache.copy_split_pair_then_fetch(&state, [read, write], keys, 32, |_, _| None::<()>),
@@ -917,7 +920,7 @@ fn split_copy_preflights_rights_and_keeps_ordered_recency() {
     {
         let entries = cache.entries.borrow();
         let mut order = [0, 1, 2, 3, 4];
-        order.sort_unstable_by_key(|&slot| entries.slots[slot].unwrap().used);
+        order.sort_unstable_by_key(|&slot| entries.recency().ages[slot]);
         assert_eq!(order, [0, 2, 1, 3, 4]);
     }
 

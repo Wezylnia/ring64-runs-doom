@@ -12,7 +12,7 @@ use super::{
 use crate::memory::Access;
 use crate::x86::protection_keys::State as ProtectionKeys;
 
-const CAPACITY: usize = 64;
+pub(crate) const CAPACITY: usize = 64;
 
 mod lookup_index;
 
@@ -31,7 +31,6 @@ struct Entry {
     pcid: u16,
     global: bool,
     family: u8,
-    used: u64,
 }
 
 #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
@@ -90,14 +89,56 @@ pub(crate) struct IndexedWriteMemo {
     pub(crate) unsupported_leaf: bool,
 }
 
+#[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+pub(crate) const INDEXED_READ_ENTRIES: usize = 256;
+
+#[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+#[derive(Clone, Copy, Default)]
+#[repr(C)]
+pub(crate) struct IndexedReadEntry {
+    pub(crate) page: u64,
+    pub(crate) id: u64,
+    pub(crate) slot: u32,
+    pub(crate) host: u32,
+}
+
+// Generated Wasm and Rust use these same ages. The translation slot
+// topology and the publication of read records stay Rust-owned.
+#[repr(C)]
+pub(crate) struct IndexedReadTable {
+    pub(crate) clock: u64,
+    pub(crate) ages: [u64; CAPACITY],
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    pub(crate) live_ids: [u64; CAPACITY],
+    pub(crate) hint: u32,
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    pub(crate) entries: [IndexedReadEntry; INDEXED_READ_ENTRIES],
+}
+
+impl Default for IndexedReadTable {
+    fn default() -> Self {
+        Self {
+            clock: 0,
+            ages: [0; CAPACITY],
+            #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+            live_ids: [0; CAPACITY],
+            hint: u32::MAX,
+            #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+            entries: [IndexedReadEntry::default(); INDEXED_READ_ENTRIES],
+        }
+    }
+}
+
 struct Entries {
     slots: [Option<Entry>; CAPACITY],
     lookup_index: lookup_index::LookupIndex,
     capacity: usize,
-    clock: u64,
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    indexed_reads: Box<std::cell::UnsafeCell<IndexedReadTable>>,
+    #[cfg(not(all(not(feature = "parallel"), any(target_arch = "wasm32", test))))]
+    indexed_reads: IndexedReadTable,
     next_id: u64,
     exhausted: bool,
-    hint: Option<usize>,
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
     admitted_fetch: Option<AdmittedFetch>,
 }
@@ -118,6 +159,32 @@ pub(super) enum RetainedSpan {
 }
 
 impl Entries {
+    fn recency(&self) -> &IndexedReadTable {
+        #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+        // Generated Wasm accesses this only between synchronous Rust calls.
+        unsafe {
+            &*self.indexed_reads.get()
+        }
+        #[cfg(not(all(not(feature = "parallel"), any(target_arch = "wasm32", test))))]
+        &self.indexed_reads
+    }
+
+    fn recency_mut(&mut self) -> &mut IndexedReadTable {
+        #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+        return self.indexed_reads.get_mut();
+        #[cfg(not(all(not(feature = "parallel"), any(target_arch = "wasm32", test))))]
+        &mut self.indexed_reads
+    }
+
+    fn hint(&self) -> Option<usize> {
+        let hint = self.recency().hint;
+        (hint != u32::MAX).then_some(hint as usize)
+    }
+
+    fn set_hint(&mut self, hint: Option<usize>) {
+        self.recency_mut().hint = hint.map_or(u32::MAX, |index| index as u32);
+    }
+
     fn find(&self, state: &State, request: Request) -> Option<usize> {
         let family = family(state);
         let pcid = state.pcid();
@@ -126,7 +193,7 @@ impl Entries {
                 && (entry.global || entry.pcid == pcid)
                 && entry.translation.contains(request.linear)
         };
-        if let Some(index) = self.hint
+        if let Some(index) = self.hint()
             && let Some(entry) = self.slots[index].as_ref()
             && !entry.global
             && matches(entry)
@@ -151,11 +218,21 @@ impl Entries {
 
     fn insert(&mut self, index: usize, entry: Entry) {
         self.lookup_index.insert(index, &entry);
+        self.recency_mut().ages[index] = 0;
+        #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+        {
+            self.recency_mut().live_ids[index] = entry.translation.cache_id.unwrap_or(0);
+        }
         self.slots[index] = Some(entry);
     }
 
     fn remove(&mut self, index: usize) {
         self.lookup_index.remove(index);
+        self.recency_mut().ages[index] = 0;
+        #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+        {
+            self.recency_mut().live_ids[index] = 0;
+        }
         self.slots[index] = None;
     }
 
@@ -166,7 +243,7 @@ impl Entries {
                 && (entry.global || entry.pcid == state.pcid())
                 && entry.translation.contains(request.linear)
         };
-        if let Some(index) = self.hint
+        if let Some(index) = self.hint()
             && let Some(entry) = self.slots[index]
             && !entry.global
             && matches(&entry)
@@ -243,21 +320,21 @@ impl Entries {
     }
 
     fn touch(&mut self, index: usize) {
-        if self.clock == u64::MAX {
+        if self.recency().clock == u64::MAX {
             let mut ordered: Vec<_> = self.slots[..self.capacity]
                 .iter()
                 .enumerate()
-                .filter_map(|(i, entry)| entry.map(|e| (i, e.used)))
+                .filter_map(|(i, entry)| entry.map(|_| (i, self.recency().ages[i])))
                 .collect();
             ordered.sort_unstable_by_key(|&(_, used)| used);
             for (age, &(i, _)) in ordered.iter().enumerate() {
-                self.slots[i].as_mut().unwrap().used = age as u64 + 1;
+                self.recency_mut().ages[i] = age as u64 + 1;
             }
-            self.clock = ordered.len() as u64;
+            self.recency_mut().clock = ordered.len() as u64;
         }
-        self.clock += 1;
-        self.slots[index].as_mut().unwrap().used = self.clock;
-        self.hint = Some(index);
+        self.recency_mut().clock += 1;
+        self.recency_mut().ages[index] = self.recency().clock;
+        self.set_hint(Some(index));
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -292,16 +369,16 @@ impl Entries {
 
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
     fn touch_data_and_fetch(&mut self, data: usize, fetch: usize) {
-        debug_assert_eq!(self.hint, Some(fetch));
+        debug_assert_eq!(self.hint(), Some(fetch));
         debug_assert_ne!(data, fetch);
-        if self.clock > u64::MAX - 2 {
+        if self.recency().clock > u64::MAX - 2 {
             self.touch(data);
             self.touch(fetch);
             return;
         }
-        self.slots[data].as_mut().unwrap().used = self.clock + 1;
-        self.clock += 2;
-        self.slots[fetch].as_mut().unwrap().used = self.clock;
+        self.recency_mut().ages[data] = self.recency().clock + 1;
+        self.recency_mut().clock += 2;
+        self.recency_mut().ages[fetch] = self.recency().clock;
     }
 }
 
@@ -335,10 +412,9 @@ impl Cache {
                 slots: [None; CAPACITY],
                 lookup_index: lookup_index::LookupIndex::default(),
                 capacity,
-                clock: 0,
+                indexed_reads: Default::default(),
                 next_id: 1,
                 exhausted: false,
-                hint: None,
                 #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
                 admitted_fetch: None,
             }),
@@ -354,6 +430,47 @@ impl Cache {
             #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
             last_dword_read: Cell::new(None),
         }
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(crate) fn indexed_reads_ptr(&self) -> u32 {
+        self.entries.borrow().indexed_reads.get() as u32
+    }
+
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    pub(crate) fn clear_indexed_reads(&self) {
+        self.entries
+            .borrow_mut()
+            .recency_mut()
+            .entries
+            .fill(IndexedReadEntry::default());
+    }
+
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    pub(crate) fn remember_indexed_read(&self, slot: usize, linear: u64, host: u32) {
+        let mut entries = self.entries.borrow_mut();
+        let Some(entry) = entries.slots.get(slot).copied().flatten() else {
+            return;
+        };
+        if entry.global
+            || host == 0
+            || linear & 4095 != 0
+            || !entry.translation.contains(linear)
+            || !entry.translation.contains(linear | 4095)
+        {
+            return;
+        }
+        let Some(id) = entry.translation.cache_id else {
+            return;
+        };
+        let table = entries.recency_mut();
+        let index = (linear >> 12) as usize & (INDEXED_READ_ENTRIES - 1);
+        table.entries[index] = IndexedReadEntry {
+            page: linear,
+            id,
+            slot: slot as u32,
+            host,
+        };
     }
 
     #[cfg(test)]
@@ -409,9 +526,9 @@ impl Cache {
             // This local leaf is still the lookup winner. Fetching the newest
             // leaf again cannot change eviction order.
             let index = fetch.index;
-            if entries.hint != Some(index)
-                || entry.used != entries.clock
-                || entries.clock == u64::MAX
+            if entries.hint() != Some(index)
+                || entries.recency().ages[index] != entries.recency().clock
+                || entries.recency().clock == u64::MAX
             {
                 entries.touch(index);
             }
@@ -497,7 +614,7 @@ impl Cache {
     ) -> bool {
         let mut entries = self.entries.borrow_mut();
         // The stock path renumbers entries before publishing any payload.
-        if entries.clock == u64::MAX {
+        if entries.recency().clock == u64::MAX {
             return false;
         }
         let Some((slot, translation)) =
@@ -547,7 +664,7 @@ impl Cache {
         // The admitted same-page loop makes the code entry most recent and
         // always has a successor fetch after a successful data access.
         let fetch = entries
-            .hint
+            .hint()
             .filter(|&index| entries.slots[index].is_some())?;
         let (data, translation) =
             entries.retained_data_span::<WRITE>(state, request, keys, width)?;
@@ -558,7 +675,7 @@ impl Cache {
         let value = access(data, translation)?;
         // A live hint is the entry last touched. The same entry or the two
         // already newest entries would keep their relative order.
-        if data != fetch && entries.slots[data].as_ref().unwrap().used != entries.clock - 1 {
+        if data != fetch && entries.recency().ages[data] != entries.recency().clock - 1 {
             entries.touch_data_and_fetch(data, fetch);
         }
         Some(value)
@@ -587,9 +704,9 @@ impl Cache {
             return None;
         }
         let fetch = entries
-            .hint
+            .hint()
             .filter(|&index| entries.slots[index].is_some())?;
-        if slot != fetch && entry.used != entries.clock - 1 {
+        if slot != fetch && entries.recency().ages[slot] != entries.recency().clock - 1 {
             entries.touch(slot);
             entries.touch(fetch);
         }
@@ -607,7 +724,9 @@ impl Cache {
         memo: &mut IndexedWriteMemo,
     ) -> Option<crate::memory::IndexedDwordWrite> {
         let mut entries = self.entries.borrow_mut();
-        let fetch = entries.hint.filter(|&slot| entries.slots[slot].is_some())?;
+        let fetch = entries
+            .hint()
+            .filter(|&slot| entries.slots[slot].is_some())?;
         // The guarded clone cannot change paging, permissions or access class.
         // Local slot generations still distinguish a replacement or eviction.
         let index_memo = (index.linear >> 12) as usize % memo.index.len();
@@ -621,7 +740,9 @@ impl Cache {
         )?;
         let index_value = image.physical_read_mapped_byte(first)?;
         if index_value == 0 {
-            if index_slot != fetch && entries.slots[index_slot].unwrap().used != entries.clock - 1 {
+            if index_slot != fetch
+                && entries.recency().ages[index_slot] != entries.recency().clock - 1
+            {
                 entries.touch_data_and_fetch(index_slot, fetch);
             }
             return Some(crate::memory::IndexedDwordWrite::default());
@@ -665,7 +786,7 @@ impl Cache {
         // No retained age changes before all operations are admitted. After
         // the straight group, the last uses are these operands and code.
         for slot in [index_slot, table_slot, store_slot, fetch] {
-            if entries.hint != Some(slot) {
+            if entries.hint() != Some(slot) {
                 entries.touch(slot);
             }
         }
@@ -687,7 +808,7 @@ impl Cache {
     ) -> Option<T> {
         let mut entries = self.entries.borrow_mut();
         let fetch = entries
-            .hint
+            .hint()
             .filter(|&index| entries.slots[index].is_some())?;
         let (source, read) =
             entries.retained_data_span::<false>(state, operands[0], keys, width)?;
@@ -700,7 +821,7 @@ impl Cache {
         // An alternating read/write group has this recency whenever it completes.
         // Further accesses in the same pair of leaves preserve that order.
         for data in [source, destination] {
-            if data != fetch && entries.slots[data].as_ref().unwrap().used != entries.clock - 1 {
+            if data != fetch && entries.recency().ages[data] != entries.recency().clock - 1 {
                 entries.touch_data_and_fetch(data, fetch);
             }
         }
@@ -722,7 +843,7 @@ impl Cache {
         debug_assert!((32..=64).contains(&width) && width.is_multiple_of(VECTOR));
         let mut entries = self.entries.borrow_mut();
         let fetch = entries
-            .hint
+            .hint()
             .filter(|&index| entries.slots[index].is_some())?;
         let spans = [
             entries.retained_copy_span::<false>(state, read, keys, width)?,
@@ -733,16 +854,16 @@ impl Cache {
         for offset in (0..width).step_by(VECTOR as usize) {
             for span in &spans {
                 let first = span.split.is_none_or(|(split, _)| offset < split);
-                if first && entries.hint != Some(span.first) {
+                if first && entries.hint() != Some(span.first) {
                     entries.touch(span.first);
                 }
                 if let Some((split, last)) = span.split
                     && offset + VECTOR > split
-                    && entries.hint != Some(last)
+                    && entries.hint() != Some(last)
                 {
                     entries.touch(last);
                 }
-                if entries.hint != Some(fetch) {
+                if entries.hint() != Some(fetch) {
                     entries.touch(fetch);
                 }
             }
@@ -803,7 +924,7 @@ impl Cache {
             if delta <= u64::from(memo.span.length - 4) {
                 let mut entries = self.entries.borrow_mut();
                 let fetch = entries
-                    .hint
+                    .hint()
                     .filter(|&index| entries.slots[index].is_some())?;
                 if let Some(data) = entries.slots[memo.slot].as_ref()
                     && data.translation.cache_id == Some(memo.id)
@@ -814,7 +935,9 @@ impl Cache {
                         .rights
                         .authorize(state, request, keys)
                         .ok()?;
-                    if memo.slot != fetch && data.used != entries.clock - 1 {
+                    if memo.slot != fetch
+                        && entries.recency().ages[memo.slot] != entries.recency().clock - 1
+                    {
                         entries.touch_data_and_fetch(memo.slot, fetch);
                     }
                     return Some(memo.span.host + delta as u32);
@@ -902,7 +1025,7 @@ impl Cache {
     ) -> Option<T> {
         let mut entries = self.entries.borrow_mut();
         let fetch = entries
-            .hint
+            .hint()
             .filter(|&index| entries.slots[index].is_some())?;
         let preferred = slot.and_then(|index| {
             let entry = entries.slots.get(index)?.as_ref()?;
@@ -930,7 +1053,7 @@ impl Cache {
         }
         let value = access(data, translation)?;
         // Preserve the normal guarded data-then-fetch recency order.
-        if data != fetch && entries.slots[data].as_ref().unwrap().used != entries.clock - 1 {
+        if data != fetch && entries.recency().ages[data] != entries.recency().clock - 1 {
             entries.touch_data_and_fetch(data, fetch);
         }
         if let Some(remember) = remember.filter(|_| !entries.slots[data].unwrap().global) {
@@ -957,7 +1080,7 @@ impl Cache {
         }
         let mut entries = self.entries.borrow_mut();
         let fetch = entries
-            .hint
+            .hint()
             .filter(|&index| entries.slots[index].is_some())?;
         let found = entries.find(state, request);
         let Some(data) = found else {
@@ -973,7 +1096,7 @@ impl Cache {
             Some(value) => value,
             None => image.physical_read(translation.physical, 4).ok()? as u32,
         };
-        if data != fetch && entries.slots[data].as_ref().unwrap().used != entries.clock - 1 {
+        if data != fetch && entries.recency().ages[data] != entries.recency().clock - 1 {
             let mut order = self.guarded_order.borrow_mut();
             if order.as_ref().is_some_and(|hint| !hint.matches(&entries)) {
                 *order = None;
@@ -1003,7 +1126,7 @@ impl Cache {
         if entries.capacity < 2
             || entries.exhausted
             || entries.next_id == u64::MAX
-            || code.used != entries.clock
+            || entries.recency().ages[fetch] != entries.recency().clock
             || code.translation.span != 4096
             || code.family != family(state)
             || !code.global && code.pcid != state.pcid()
@@ -1064,7 +1187,6 @@ impl Cache {
                 pcid: state.pcid(),
                 global: false,
                 family: family(state),
-                used: 0,
             },
         );
         entries.touch_data_and_fetch(index, fetch);
@@ -1083,7 +1205,7 @@ impl Cache {
     ) -> Option<T> {
         let mut entries = self.entries.borrow_mut();
         let fetch = entries
-            .hint
+            .hint()
             .filter(|&index| entries.slots[index].is_some())?;
         let (first, first_translation) =
             entries.retained_data_span::<false>(state, first_request, keys, first_width)?;
@@ -1096,7 +1218,7 @@ impl Cache {
         // A complete lap repeats these two data translations. Touch them in
         // the order of their last accesses, with the successor fetch last.
         for index in [first, last, fetch] {
-            if entries.hint != Some(index) {
+            if entries.hint() != Some(index) {
                 entries.touch(index);
             }
         }
@@ -1113,7 +1235,7 @@ impl Cache {
     ) -> Option<T> {
         let mut entries = self.entries.borrow_mut();
         let fetch = entries
-            .hint
+            .hint()
             .filter(|&index| entries.slots[index].is_some())?;
         let mut prefix = None;
         let mut ends = [0; 2];
@@ -1155,7 +1277,7 @@ impl Cache {
         // In the funded final lap both streams touch their end leaves,
         // strictly after the prefix's last use. Aliases are touched in order.
         for index in [prefix, ends[0], ends[1], fetch] {
-            if entries.hint != Some(index) {
+            if entries.hint() != Some(index) {
                 entries.touch(index);
             }
         }
@@ -1180,7 +1302,7 @@ impl Cache {
         }
         let mut entries = self.entries.borrow_mut();
         let fetch = entries
-            .hint
+            .hint()
             .filter(|&index| entries.slots[index].is_some())?;
         let mut indices = [0; MAX_PAGES];
         let mut used = 0;
@@ -1212,7 +1334,7 @@ impl Cache {
         // Every dense byte is read before leaving the funded loop. The final
         // touch on each data leaf ascends, and the successor fetch is newest.
         for index in indices[..used].iter().copied().chain([fetch]) {
-            if entries.hint != Some(index) {
+            if entries.hint() != Some(index) {
                 entries.touch(index);
             }
         }
@@ -1241,9 +1363,12 @@ impl Cache {
             return None;
         }
         let entries = self.entries.borrow();
-        let fetch = entries.hint?;
+        let fetch = entries.hint()?;
         let code = entries.slots[fetch].as_ref()?;
-        if code.used != entries.clock || code.translation.span != PAGE || entries.exhausted {
+        if entries.recency().ages[fetch] != entries.recency().clock
+            || code.translation.span != PAGE
+            || entries.exhausted
+        {
             return None;
         }
         let mut plan = [None; MAX_PAGES];
@@ -1370,8 +1495,17 @@ impl Cache {
         if entries.next_id == u64::MAX {
             // Exhaustion falls back to uncached walks rather than reusing captured IDs.
             entries.slots.fill(None);
+            entries.recency_mut().ages.fill(0);
+            #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+            {
+                entries.recency_mut().live_ids.fill(0);
+                entries
+                    .recency_mut()
+                    .entries
+                    .fill(IndexedReadEntry::default());
+            }
             entries.lookup_index = lookup_index::LookupIndex::default();
-            entries.hint = None;
+            entries.set_hint(None);
             entries.exhausted = true;
             self.changed.set(true);
             return translation;
@@ -1402,9 +1536,9 @@ impl Cache {
                     continue;
                 }
             }
-            if entry.used < oldest_age {
+            if entries.recency().ages[index] < oldest_age {
                 oldest_index = index;
-                oldest_age = entry.used;
+                oldest_age = entries.recency().ages[index];
             }
         }
         let index = first_free.unwrap_or(oldest_index);
@@ -1420,7 +1554,6 @@ impl Cache {
                 pcid,
                 global,
                 family,
-                used: 0,
             },
         );
         entries.touch(index);

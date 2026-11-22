@@ -83,19 +83,19 @@ fn current_fetch_requires_the_right_physical_span_and_live_execute_rights() {
         cr4: state.cr4 | CR4_SMEP,
         ..state
     };
-    let clock = cache.entries.borrow().clock;
+    let clock = cache.entries.borrow().recency().clock;
     assert!(!cache.touch_current_fetch(&smep, supervisor, physical));
     assert!(!cache.touch_current_fetch(&state, fetch, physical + 1));
-    assert_eq!(cache.entries.borrow().clock, clock);
+    assert_eq!(cache.entries.borrow().recency().clock, clock);
     assert!(cache.touch_current_fetch(&smep, fetch, physical));
 
     cache.invalidate_page(state.pcid(), read.linear, false);
     assert!(!cache.touch_current_fetch(&state, fetch, physical));
     image.physical_write(0x4008, 8, 0xa067 | (1 << 63)).unwrap();
     assert_eq!(fill(&mut image), physical);
-    let clock = cache.entries.borrow().clock;
+    let clock = cache.entries.borrow().recency().clock;
     assert!(!cache.touch_current_fetch(&state, fetch, physical));
-    assert_eq!(cache.entries.borrow().clock, clock);
+    assert_eq!(cache.entries.borrow().recency().clock, clock);
 }
 
 #[cfg(not(feature = "parallel"))]
@@ -126,26 +126,26 @@ fn retained_fetch_token_keeps_recency_and_refuses_a_recycled_slot() {
     let physical = fill(&mut image, code).physical;
     assert!(cache.touch_current_fetch(&state, code, physical));
     let token = cache.entries.borrow().admitted_fetch.unwrap();
-    let clock = cache.entries.borrow().clock;
+    let clock = cache.entries.borrow().recency().clock;
     let nearby = Request {
         linear: code.linear + 7,
         ..code
     };
     assert!(cache.touch_current_fetch(&state, nearby, physical + 7));
-    assert_eq!(cache.entries.borrow().clock, clock);
+    assert_eq!(cache.entries.borrow().recency().clock, clock);
 
     {
         let mut entries = cache.entries.borrow_mut();
-        entries.clock = u64::MAX;
-        entries.slots[token.index].as_mut().unwrap().used = u64::MAX;
+        entries.recency_mut().clock = u64::MAX;
+        entries.recency_mut().ages[token.index] = u64::MAX;
     }
     assert!(cache.touch_current_fetch(&state, code, physical));
-    assert_eq!(cache.entries.borrow().clock, 2);
+    assert_eq!(cache.entries.borrow().recency().clock, 2);
 
     fill(&mut image, data);
-    let clock = cache.entries.borrow().clock;
+    let clock = cache.entries.borrow().recency().clock;
     assert!(cache.touch_current_fetch(&state, code, physical));
-    assert_eq!(cache.entries.borrow().clock, clock + 1);
+    assert_eq!(cache.entries.borrow().recency().clock, clock + 1);
     fill(&mut image, third);
     assert!(
         cache
@@ -164,7 +164,7 @@ fn retained_fetch_token_keeps_recency_and_refuses_a_recycled_slot() {
     assert!(!cache.touch_current_fetch(&state, code, physical));
     image.physical_write(0x4008, 8, 0xd067).unwrap();
     let replacement = fill(&mut image, code);
-    assert_eq!(cache.entries.borrow().hint, Some(token.index));
+    assert_eq!(cache.entries.borrow().hint(), Some(token.index));
     assert_ne!(replacement.cache_id, Some(token.id));
     assert!(!cache.touch_current_fetch(&state, code, physical));
     assert!(cache.touch_current_fetch(&state, code, replacement.physical));
@@ -191,7 +191,7 @@ fn retained_fetch_token_follows_subpages_of_a_large_local_leaf() {
     let large = fill(&mut image, code);
     assert_eq!((large.span, large.physical), (2 * 1024 * 1024, 0x201234));
     assert!(cache.touch_current_fetch(&state, code, large.physical));
-    let clock = cache.entries.borrow().clock;
+    let clock = cache.entries.borrow().recency().clock;
     assert!(cache.touch_current_fetch(
         &state,
         Request {
@@ -201,7 +201,7 @@ fn retained_fetch_token_follows_subpages_of_a_large_local_leaf() {
         large.physical + 8
     ));
     assert!(!cache.touch_current_fetch(&state, adjacent, large.physical));
-    assert_eq!(cache.entries.borrow().clock, clock);
+    assert_eq!(cache.entries.borrow().recency().clock, clock);
     assert!(cache.touch_current_fetch(&state, adjacent, 0x202234));
     let adjacent_token = cache.entries.borrow().admitted_fetch.unwrap();
     assert_eq!(adjacent_token.linear_base, 0x2000);
@@ -210,7 +210,7 @@ fn retained_fetch_token_follows_subpages_of_a_large_local_leaf() {
     image.physical_write(0x3000, 8, 0x4007).unwrap();
     let small = fill(&mut image, code);
     assert_eq!((small.span, small.physical), (4096, 0xa234));
-    assert_eq!(cache.entries.borrow().hint, Some(adjacent_token.index));
+    assert_eq!(cache.entries.borrow().hint(), Some(adjacent_token.index));
     assert_ne!(small.cache_id, large.cache_id);
     assert!(!cache.touch_current_fetch(&state, adjacent, 0x202234));
     assert!(!cache.touch_current_fetch(&state, code, large.physical));
@@ -281,12 +281,12 @@ fn retained_dword_read_checks_the_live_occupant_after_invalidation() {
         ..data
     };
     let refuse_recheck = |_| panic!("covered data should reuse its backing");
-    let clock = cache.entries.borrow().clock;
+    let clock = cache.entries.borrow().recency().clock;
     assert_eq!(
         cache.read_local_dword_then_fetch(&state, nearby, &ProtectionKeys::ZERO, refuse_recheck),
         Some(0xb00c)
     );
-    assert_eq!(cache.entries.borrow().clock, clock);
+    assert_eq!(cache.entries.borrow().recency().clock, clock);
     let outside = Request {
         linear: nearby.linear + 1,
         ..nearby
@@ -310,7 +310,7 @@ fn retained_dword_read_checks_the_live_occupant_after_invalidation() {
         cache.read_local_dword_then_fetch(&smap, denied, &ProtectionKeys::ZERO, refuse_recheck),
         None
     );
-    assert_eq!(cache.entries.borrow().clock, clock);
+    assert_eq!(cache.entries.borrow().recency().clock, clock);
 
     cache.invalidate_page(state.pcid(), data.linear, false);
     assert_eq!(
@@ -382,9 +382,9 @@ fn paired_touch_matches_sequential_ages_at_clock_rollover() {
         }
         {
             let mut entries = cache.entries.borrow_mut();
-            entries.clock = clock;
-            entries.slots[0].as_mut().unwrap().used = clock - 1;
-            entries.slots[1].as_mut().unwrap().used = clock;
+            entries.recency_mut().clock = clock;
+            entries.recency_mut().ages[0] = clock - 1;
+            entries.recency_mut().ages[1] = clock;
         }
         cache
     };
@@ -396,11 +396,11 @@ fn paired_touch_matches_sequential_ages_at_clock_rollover() {
         exact.touch(1);
         let mut paired = paired.entries.borrow_mut();
         paired.touch_data_and_fetch(0, 1);
-        assert_eq!((paired.clock, paired.hint), (exact.clock, exact.hint));
         assert_eq!(
-            paired.slots.map(|entry| entry.map(|entry| entry.used)),
-            exact.slots.map(|entry| entry.map(|entry| entry.used)),
+            (paired.recency().clock, paired.hint()),
+            (exact.recency().clock, exact.hint())
         );
+        assert_eq!(paired.recency().ages, exact.recency().ages);
     }
 }
 
@@ -440,10 +440,10 @@ fn guarded_dword_miss_matches_checked_fill_and_successor_fetch() {
             }
         })
     };
-    let before = cache.entries.borrow().clock;
+    let before = cache.entries.borrow().recency().clock;
     assert_eq!(read(&image, true), None);
     assert_eq!(image.physical_read(0x4010, 8).unwrap(), 0xb007);
-    assert_eq!(cache.entries.borrow().clock, before);
+    assert_eq!(cache.entries.borrow().recency().clock, before);
     assert!(!cache.take_changed());
     let walked = walk::walk(&mut image, &state, data, keys).unwrap();
     assert_eq!(image.physical_read(0x4010, 8).unwrap(), 0xb027);
@@ -459,17 +459,18 @@ fn guarded_dword_miss_matches_checked_fill_and_successor_fetch() {
     let actual = cache.entries.borrow();
     let exact = reference.entries.borrow();
     assert_eq!(
-        (actual.clock, actual.hint, actual.next_id),
-        (exact.clock, exact.hint, exact.next_id)
+        (actual.recency().clock, actual.hint(), actual.next_id),
+        (exact.recency().clock, exact.hint(), exact.next_id)
     );
     assert_eq!(
         actual
             .slots
-            .map(|entry| entry.map(|entry| (entry.translation, entry.used))),
+            .map(|entry| entry.map(|entry| entry.translation)),
         exact
             .slots
-            .map(|entry| entry.map(|entry| (entry.translation, entry.used))),
+            .map(|entry| entry.map(|entry| entry.translation)),
     );
+    assert_eq!(actual.recency().ages, exact.recency().ages);
     drop(actual);
     assert_eq!(
         read(&image, false),
@@ -508,7 +509,7 @@ fn guarded_dword_miss_uses_the_first_vacancy_before_an_older_live_slot() {
     }
     cache.invalidate_page(state.pcid(), data.linear, true);
     assert!(cache.take_changed());
-    assert_eq!(cache.entries.borrow().hint, Some(2));
+    assert_eq!(cache.entries.borrow().hint(), Some(2));
     assert_eq!(
         cache.read_dword_then_fetch(&image, &state, data, keys, || {
             walk::peek(&image, &state, data, keys).ok()
@@ -518,7 +519,7 @@ fn guarded_dword_miss_uses_the_first_vacancy_before_an_older_live_slot() {
     let entries = cache.entries.borrow();
     assert_eq!(entries.find(&state, data), Some(0));
     assert_eq!(entries.find(&state, old), Some(1));
-    assert_eq!(entries.hint, Some(2));
+    assert_eq!(entries.hint(), Some(2));
     assert!(!cache.take_changed());
 }
 
@@ -545,7 +546,7 @@ fn guarded_dword_miss_refuses_eviction_of_code_or_a_retained_denial() {
         capacity_one.read_dword_then_fetch(&image, &state, data, keys, || panic!("code eviction")),
         None
     );
-    assert_eq!(capacity_one.entries.borrow().clock, 1);
+    assert_eq!(capacity_one.entries.borrow().recency().clock, 1);
     assert!(!capacity_one.take_changed());
 
     // A stale small code entry can coexist with a new covering PDE.
@@ -556,7 +557,7 @@ fn guarded_dword_miss_refuses_eviction_of_code_or_a_retained_denial() {
         }),
         None
     );
-    assert_eq!(cached.entries.borrow().clock, 1);
+    assert_eq!(cached.entries.borrow().recency().clock, 1);
     assert!(!cached.take_changed());
 
     image.physical_write(0x3000, 8, 0x4027).unwrap();
@@ -583,7 +584,7 @@ fn read_span_touches_only_the_authorized_whole_operand() {
     let cache = Cache::default();
     let translation = walk::walk(&mut image, &state, request, &ProtectionKeys::ZERO).unwrap();
     cache.fill(&state, request, translation);
-    let clock = cache.entries.borrow().clock;
+    let clock = cache.entries.borrow().recency().clock;
     #[cfg(feature = "parallel")]
     let hit = Some(0xa234);
     #[cfg(not(feature = "parallel"))]
@@ -592,7 +593,7 @@ fn read_span_touches_only_the_authorized_whole_operand() {
         cache.touch_read_span(&state, request, &ProtectionKeys::ZERO, 16),
         hit
     );
-    assert_eq!(cache.entries.borrow().clock, clock + 1);
+    assert_eq!(cache.entries.borrow().recency().clock, clock + 1);
     #[cfg(feature = "parallel")]
     let (refused, missed) = (None, None);
     #[cfg(not(feature = "parallel"))]
@@ -607,7 +608,7 @@ fn read_span_touches_only_the_authorized_whole_operand() {
             ),
             expected
         );
-        assert_eq!(cache.entries.borrow().clock, clock + 1);
+        assert_eq!(cache.entries.borrow().recency().clock, clock + 1);
         assert!(!cache.take_changed());
     }
     state.cr4 |= 1 << 21;
@@ -619,7 +620,7 @@ fn read_span_touches_only_the_authorized_whole_operand() {
         cache.touch_read_span(&state, supervisor, &ProtectionKeys::ZERO, 4),
         refused
     );
-    assert_eq!(cache.entries.borrow().clock, clock + 1);
+    assert_eq!(cache.entries.borrow().recency().clock, clock + 1);
     assert!(!cache.take_changed());
     assert!(matches!(
         cache.lookup(&state, supervisor, &ProtectionKeys::ZERO),
@@ -657,5 +658,74 @@ fn dirty_zero_write_intent_evicts_before_cached_denial() {
             .lookup(&state, request, &ProtectionKeys::ZERO)
             .unwrap()
             .is_none()
+    );
+}
+
+#[cfg(not(feature = "parallel"))]
+#[test]
+fn indexed_read_collision_and_slot_reuse_preserve_translation_identity() {
+    let (mut image, state, first) = fixture();
+    let cache = Cache::with_capacity(2);
+    let first_page = first.linear & !4095;
+    let second = Request {
+        linear: first.linear + (INDEXED_READ_ENTRIES as u64 * 4096),
+        ..first
+    };
+    let second_page = second.linear & !4095;
+    let pte = 0x4000 + ((second_page >> 12) & 511) * 8;
+    image.physical_write(pte, 8, 0xb067).unwrap();
+    let mut fill = |request| {
+        let translation = walk::walk(&mut image, &state, request, &ProtectionKeys::ZERO).unwrap();
+        let result = cache.fill(&state, request, translation);
+        let slot = cache.entries.borrow().find(&state, request).unwrap();
+        (slot, result.cache_id.unwrap())
+    };
+    let publish = |slot, page, host| {
+        cache.remember_indexed_read(slot, page, host);
+        let entries = cache.entries.borrow();
+        let index = ((page >> 12) as usize) & (INDEXED_READ_ENTRIES - 1);
+        entries.recency().entries[index]
+    };
+    let (first_slot, first_id) = fill(first);
+    let first_record = publish(first_slot, first_page, 0x10000);
+    assert_eq!(
+        (first_record.page, first_record.slot, first_record.id),
+        (first_page, first_slot as u32, first_id),
+    );
+    let (second_slot, second_id) = fill(second);
+    assert_ne!(second_slot, first_slot);
+    let second_record = publish(second_slot, second_page, 0x20000);
+    assert_eq!(
+        (second_record.page, second_record.host, second_record.id),
+        (second_page, 0x20000, second_id),
+    );
+    {
+        let entries = cache.entries.borrow();
+        assert_eq!(entries.recency().live_ids[first_slot], first_id);
+        assert_eq!(entries.recency().live_ids[second_slot], second_id);
+        assert_eq!(entries.hint(), Some(second_slot));
+    }
+    cache.invalidate_page(state.pcid(), second_page, false);
+    assert_eq!(cache.entries.borrow().recency().live_ids[second_slot], 0);
+    let (reused_slot, new_id) = fill(second);
+    assert_eq!(reused_slot, second_slot);
+    assert_ne!(new_id, second_record.id);
+    assert_eq!(
+        cache.entries.borrow().recency().live_ids[reused_slot],
+        new_id
+    );
+    cache.clear_indexed_reads();
+    assert!(
+        cache
+            .entries
+            .borrow()
+            .recency()
+            .entries
+            .iter()
+            .all(|record| record.id == 0)
+    );
+    assert_eq!(
+        cache.entries.borrow().recency().live_ids[reused_slot],
+        new_id
     );
 }

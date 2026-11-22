@@ -303,6 +303,8 @@ pub(crate) struct StateStorage {
     pub(crate) flat_data_write: crate::memory::DirectSpan,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     pub(crate) flat_stack_pointer_read: crate::memory::DirectSpan,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(crate) indexed_paged_reads: u32,
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -319,6 +321,8 @@ impl StateStorage {
             flat_data_write: Default::default(),
             #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
             flat_stack_pointer_read: Default::default(),
+            #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+            indexed_paged_reads: 0,
         }
     }
 

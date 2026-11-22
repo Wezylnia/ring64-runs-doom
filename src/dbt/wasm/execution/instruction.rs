@@ -527,9 +527,20 @@ impl Emitter {
         let first = instructions.first().unwrap();
         let last = instructions.last().unwrap();
         let incoming = fetch_handoff.and_then(|(local, incoming, _)| incoming.then_some(local));
-        self.guard_straight_paged_prefix(first, last, instructions.len() as u32, guard, incoming);
         let read = paged_prefix_read(*first)
             .map(|operation| (read_import.expect("leading read prefix import"), operation));
+        let indexed = self.indexed_paged_read.filter(|_| {
+            incoming.is_none()
+                && read.is_some_and(|(_, (_, _, source_width, _))| source_width.bytes() <= 2)
+        });
+        self.guard_straight_paged_prefix(
+            first,
+            last,
+            instructions.len() as u32,
+            guard,
+            incoming,
+            indexed.is_some(),
+        );
         if let Some((read, (register, address, source_width, width))) = read {
             use super::{ADDRESS, STORE_STATUS};
             use crate::x86::instruction::Width;
@@ -541,39 +552,67 @@ impl Emitter {
             };
 
             self.address(address, first.next_pc);
-            let check_alignment = source_width != Width::W8 && self.context.cpl() == 3;
-            if check_alignment {
-                // A checked CPL3 load owns any naturally-unaligned #AC decision.
-                self.op(Op::LocalTee(ADDRESS))
-                    .op(Op::I64Const(i64::from(source_width.bytes() - 1)))
-                    .op(Op::I64And)
-                    .op(Op::I64Eqz)
+            if let Some(locals) = indexed {
+                self.op(Op::LocalSet(ADDRESS));
+                self.indexed_prefix_read_host(locals, source_width.bytes());
+                self.op(Op::LocalTee(STORE_STATUS))
                     .op(Op::If(BlockType::Result(ValType::I32)))
-                    .op(Op::LocalGet(ADDRESS));
-            }
-            let segment = if source_width == Width::W32 {
-                crate::embedding::layout::paging::PREFIX_DWORD_READ_SEGMENT
+                    .op(Op::LocalGet(STORE_STATUS))
+                    .op(Op::Else)
+                    .op(Op::LocalGet(ADDRESS))
+                    .op(Op::I32Const(i32::from(source_width.bytes())))
+                    .op(Op::I32Const(
+                        crate::embedding::layout::paging::PREFIX_INDEXED_READ_SEGMENT as i32,
+                    ))
+                    .op(Op::Call(read))
+                    .op(Op::LocalTee(STORE_STATUS))
+                    .op(Op::If(BlockType::Result(ValType::I32)))
+                    .op(Op::LocalGet(STORE_STATUS))
+                    .op(Op::I32Load(mem(
+                        std::mem::offset_of!(crate::memory::DirectSpan, host) as u64,
+                    )))
+                    .op(Op::Else)
+                    .op(Op::I32Const(0))
+                    .op(Op::End)
+                    .op(Op::End)
+                    .op(Op::LocalTee(STORE_STATUS))
+                    .op(Op::If(BlockType::Empty))
+                    .op(Op::LocalGet(STORE_STATUS));
             } else {
-                address.segment as u32
-            };
-            self.op(Op::I32Const(i32::from(source_width.bytes())))
-                .op(Op::I32Const(segment as i32))
-                .op(Op::Call(read));
-            if check_alignment {
-                self.op(Op::Else).op(Op::I32Const(0)).op(Op::End);
+                let check_alignment = source_width != Width::W8 && self.context.cpl() == 3;
+                if check_alignment {
+                    // A checked CPL3 load owns any naturally-unaligned #AC decision.
+                    self.op(Op::LocalTee(ADDRESS))
+                        .op(Op::I64Const(i64::from(source_width.bytes() - 1)))
+                        .op(Op::I64And)
+                        .op(Op::I64Eqz)
+                        .op(Op::If(BlockType::Result(ValType::I32)))
+                        .op(Op::LocalGet(ADDRESS));
+                }
+                let segment = if source_width == Width::W32 {
+                    crate::embedding::layout::paging::PREFIX_DWORD_READ_SEGMENT
+                } else {
+                    address.segment as u32
+                };
+                self.op(Op::I32Const(i32::from(source_width.bytes())))
+                    .op(Op::I32Const(segment as i32))
+                    .op(Op::Call(read));
+                if check_alignment {
+                    self.op(Op::Else).op(Op::I32Const(0)).op(Op::End);
+                }
+                self.op(Op::LocalTee(STORE_STATUS))
+                    .op(Op::If(BlockType::Empty))
+                    .op(Op::LocalGet(STORE_STATUS))
+                    .op(Op::I32Load(mem(
+                        std::mem::offset_of!(crate::memory::DirectSpan, host) as u64,
+                    )));
             }
-            self.op(Op::LocalTee(STORE_STATUS))
-                .op(Op::If(BlockType::Empty))
-                .op(Op::LocalGet(STORE_STATUS))
-                .op(Op::I32Load(mem(
-                    std::mem::offset_of!(crate::memory::DirectSpan, host) as u64,
-                )))
-                .op(match source_width {
-                    Width::W8 => Op::I64Load8U(mem(0)),
-                    Width::W16 => Op::I64Load16U(mem(0)),
-                    Width::W32 => Op::I64Load32U(mem(0)),
-                    Width::W64 => unreachable!("unsupported prefix read width"),
-                });
+            self.op(match source_width {
+                Width::W8 => Op::I64Load8U(mem(0)),
+                Width::W16 => Op::I64Load16U(mem(0)),
+                Width::W32 => Op::I64Load32U(mem(0)),
+                Width::W64 => unreachable!("unsupported prefix read width"),
+            });
             self.write_register(register, width);
             self.commit(first.next_pc);
         }
@@ -606,6 +645,143 @@ impl Emitter {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    fn indexed_prefix_read_host(&mut self, [table, entry, data, fetch]: [u32; 4], width: u8) {
+        use super::{ADDRESS, LHS, STORE_STATUS, VALUE};
+        use crate::embedding::layout::StateStorage;
+        use crate::x86::paging::cache::{
+            CAPACITY, INDEXED_READ_ENTRIES, IndexedReadEntry, IndexedReadTable,
+        };
+        use std::mem::{offset_of, size_of};
+        use wasm_encoder::{MemArg, ValType};
+
+        let mem = |offset, align| MemArg {
+            offset: offset as u64,
+            align,
+            memory_index: 0,
+        };
+        let clock = mem(offset_of!(IndexedReadTable, clock), 3);
+        let ages = mem(offset_of!(IndexedReadTable, ages), 3);
+        let live_ids = mem(offset_of!(IndexedReadTable, live_ids), 3);
+        // Keep a zero result beneath the inner checks. An invalid authority
+        // exits the inner block without touching recency or operand memory.
+        self.op(Op::Block(BlockType::Result(ValType::I32)))
+            .op(Op::I32Const(0))
+            .op(Op::Block(BlockType::Empty))
+            .op(Op::LocalGet(0))
+            .op(Op::I32Load(mem(
+                offset_of!(StateStorage, indexed_paged_reads),
+                2,
+            )))
+            .op(Op::LocalTee(table))
+            .op(Op::I32Eqz)
+            .op(Op::BrIf(0))
+            .op(Op::LocalGet(ADDRESS))
+            .op(Op::I32WrapI64)
+            .op(Op::I32Const(4095))
+            .op(Op::I32And)
+            .op(Op::LocalTee(STORE_STATUS))
+            .op(Op::I32Const(4096 - i32::from(width)))
+            .op(Op::I32GtU)
+            .op(Op::BrIf(0))
+            .op(Op::LocalGet(table))
+            .op(Op::LocalGet(ADDRESS))
+            .op(Op::I32WrapI64)
+            .op(Op::I32Const(12))
+            .op(Op::I32ShrU)
+            .op(Op::I32Const(INDEXED_READ_ENTRIES as i32 - 1))
+            .op(Op::I32And)
+            .op(Op::I32Const(size_of::<IndexedReadEntry>() as i32))
+            .op(Op::I32Mul)
+            .op(Op::I32Add)
+            .op(Op::I32Const(offset_of!(IndexedReadTable, entries) as i32))
+            .op(Op::I32Add)
+            .op(Op::LocalTee(entry))
+            .op(Op::I64Load(mem(offset_of!(IndexedReadEntry, page), 3)))
+            .op(Op::LocalGet(ADDRESS))
+            .op(Op::I64Const(!4095))
+            .op(Op::I64And)
+            .op(Op::I64Ne)
+            .op(Op::BrIf(0))
+            .op(Op::LocalGet(entry))
+            .op(Op::I64Load(mem(offset_of!(IndexedReadEntry, id), 3)))
+            .op(Op::LocalTee(LHS))
+            .op(Op::I64Eqz)
+            .op(Op::BrIf(0))
+            .op(Op::LocalGet(entry))
+            .op(Op::I32Load(mem(offset_of!(IndexedReadEntry, slot), 2)))
+            .op(Op::LocalSet(data))
+            .op(Op::LocalGet(table))
+            .op(Op::I32Load(mem(offset_of!(IndexedReadTable, hint), 2)))
+            .op(Op::LocalSet(fetch));
+        for slot in [data, fetch] {
+            self.op(Op::LocalGet(slot))
+                .op(Op::I32Const(CAPACITY as i32))
+                .op(Op::I32GeU)
+                .op(Op::BrIf(0))
+                .op(Op::LocalGet(table))
+                .op(Op::LocalGet(slot))
+                .op(Op::I32Const(3))
+                .op(Op::I32Shl)
+                .op(Op::I32Add)
+                .op(Op::LocalSet(slot));
+        }
+        self.op(Op::LocalGet(data))
+            .op(Op::I64Load(live_ids))
+            .op(Op::LocalGet(LHS))
+            .op(Op::I64Ne)
+            .op(Op::BrIf(0))
+            .op(Op::LocalGet(fetch))
+            .op(Op::I64Load(live_ids))
+            .op(Op::I64Eqz)
+            .op(Op::BrIf(0))
+            .op(Op::LocalGet(table))
+            .op(Op::I64Load(clock))
+            .op(Op::LocalTee(VALUE))
+            .op(Op::I64Const(-3))
+            .op(Op::I64GtU)
+            .op(Op::BrIf(0))
+            .op(Op::LocalGet(fetch))
+            .op(Op::I64Load(ages))
+            .op(Op::LocalGet(VALUE))
+            .op(Op::I64Ne)
+            .op(Op::BrIf(0));
+
+        // Match data_translation_then_fetch. Leave the hot data/fetch order
+        // untouched if it already matches and otherwise install both ages.
+        self.op(Op::LocalGet(data))
+            .op(Op::LocalGet(fetch))
+            .op(Op::I32Ne)
+            .op(Op::LocalGet(data))
+            .op(Op::I64Load(ages))
+            .op(Op::LocalGet(VALUE))
+            .op(Op::I64Const(1))
+            .op(Op::I64Sub)
+            .op(Op::I64Ne)
+            .op(Op::I32And)
+            .op(Op::If(BlockType::Empty));
+        for (slot, advance) in [(data, 1), (fetch, 2)] {
+            self.op(Op::LocalGet(slot))
+                .op(Op::LocalGet(VALUE))
+                .op(Op::I64Const(advance))
+                .op(Op::I64Add)
+                .op(Op::I64Store(ages));
+        }
+        self.op(Op::LocalGet(table))
+            .op(Op::LocalGet(VALUE))
+            .op(Op::I64Const(2))
+            .op(Op::I64Add)
+            .op(Op::I64Store(clock))
+            .op(Op::End)
+            .op(Op::LocalGet(entry))
+            .op(Op::I32Load(mem(offset_of!(IndexedReadEntry, host), 2)))
+            .op(Op::LocalGet(STORE_STATUS))
+            .op(Op::I32Add)
+            .op(Op::Br(1))
+            .op(Op::End)
+            .op(Op::End);
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     pub(super) fn guard_straight_paged_prefix(
         &mut self,
         first: &Instruction,
@@ -613,6 +789,7 @@ impl Emitter {
         count: u32,
         guard: u32,
         handoff: Option<u32>,
+        indexed_read: bool,
     ) {
         use super::SHADOW;
 
@@ -632,7 +809,14 @@ impl Emitter {
         self.op(Op::I64Const(first.pc as i64))
             .op(Op::I32Const((last.next_pc - first.pc) as i32));
         self.system_bits();
-        self.op(Op::LocalGet(SHADOW)).op(Op::Call(guard));
+        self.op(Op::LocalGet(SHADOW));
+        if indexed_read {
+            self.op(Op::I32Const(
+                crate::embedding::layout::paging::INDEXED_PAGED_READ_GUARD as i32,
+            ))
+            .op(Op::I32Or);
+        }
+        self.op(Op::Call(guard));
         if handoff.is_some() {
             self.op(Op::End);
         }
