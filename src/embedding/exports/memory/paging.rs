@@ -542,8 +542,8 @@ fn paged_loop_guard<const FLAT_DATA32: bool, const SSE: bool, const FLAT_WRITE32
     flags: u64,
     shadow: u32,
 ) -> i32 {
+    use crate::embedding::layout::paging::MXCSR_EXCEPTION_MASKS;
     use crate::x86::flags::{RF, TF};
-    const MXCSR_EXCEPTION_MASKS: u32 = 0x1f80;
 
     #[cfg(target_arch = "wasm32")]
     let indexed_reads = shadow & crate::embedding::layout::paging::INDEXED_PAGED_READ_GUARD != 0;
@@ -599,7 +599,6 @@ fn paged_loop_guard<const FLAT_DATA32: bool, const SSE: bool, const FLAT_WRITE32
         }
         #[cfg(target_arch = "wasm32")]
         if newest_fetch
-            && !SSE
             && warm_guard
             && core.paged_region_trace.is_none()
             && !core.image.active_changed()
@@ -617,8 +616,13 @@ fn paged_loop_guard<const FLAT_DATA32: bool, const SSE: bool, const FLAT_WRITE32
             } else {
                 0
             };
+            let numeric = if SSE || core.numeric_admission_unrestricted() {
+                crate::embedding::layout::paging::NEWEST_FETCH_SSE
+            } else {
+                0
+            };
             core.state.newest_fetch = crate::embedding::layout::paging::NewestFetch {
-                tag: (pc & !4095) | 1 | indexed,
+                tag: (pc & !4095) | 1 | indexed | numeric,
                 id,
                 table: core.translation_cache.indexed_reads_ptr(),
                 source_invalid: core.image.active_source_invalid_ptr(),

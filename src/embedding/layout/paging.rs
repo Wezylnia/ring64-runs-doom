@@ -18,6 +18,11 @@ pub(crate) const NEWEST_FETCH_GUARD: u32 = 1 << 30;
 // The guard also refreshed indexed data authority in this paging context.
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 pub(crate) const NEWEST_FETCH_INDEXED: u64 = 2;
+// Numeric controls admit SSE while this executable proof is current.
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+pub(crate) const NEWEST_FETCH_SSE: u64 = 4;
+#[cfg(not(feature = "parallel"))]
+pub(crate) const MXCSR_EXCEPTION_MASKS: u32 = 0x1f80;
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 #[derive(Default)]

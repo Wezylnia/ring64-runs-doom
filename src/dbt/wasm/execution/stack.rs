@@ -172,7 +172,7 @@ impl Emitter {
             .op(Op::I64Const(4095))
             .op(Op::I64GtU)
             .op(Op::BrIf(0));
-        self.newest_prefix_fetch(instruction.pc, true);
+        self.newest_prefix_fetch(instruction.pc, true, false);
         self.op(Op::I32Eqz)
             .op(Op::BrIf(0))
             .op(Op::LocalGet(RSP))
@@ -235,7 +235,7 @@ impl Emitter {
             return false;
         }
 
-        self.newest_prefix_fetch(instruction.pc, true);
+        self.newest_prefix_fetch(instruction.pc, true, false);
         self.op(Op::If(BlockType::Result(ValType::I32)))
             .op(Op::LocalGet(RSP))
             .op(Op::LocalSet(ADDRESS));

@@ -14,6 +14,14 @@ pub(super) enum IndexedOperand {
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum PagedPrefixFetch {
+    Checked,
+    Retained,
+    RetainedSse,
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 pub(super) fn indexed_scalar_read(operation: Operation) -> bool {
     use crate::x86::context::Segment;
     use crate::x86::instruction::{Location, MemoryAluOperands, Width};
@@ -679,7 +687,11 @@ impl Emitter {
             guard,
             incoming.filter(|_| !indexed_wide && !indexed_store),
             indexed,
-            self.retouch_prefix_fetch || indexed_wide || !indexed,
+            if self.retouch_prefix_fetch || indexed_wide || !indexed {
+                PagedPrefixFetch::Retained
+            } else {
+                PagedPrefixFetch::Checked
+            },
         );
         if let Some((read, (register, address, source_width, width))) = read {
             use super::{ADDRESS, STORE_STATUS};
@@ -1026,10 +1038,12 @@ impl Emitter {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) fn newest_prefix_fetch(&mut self, pc: u64, indexed_read: bool) {
+    pub(super) fn newest_prefix_fetch(&mut self, pc: u64, indexed_read: bool, sse: bool) {
         use super::{SHADOW, STORE_STATUS};
         use crate::embedding::layout::debug::{Continuation, DebugState};
-        use crate::embedding::layout::paging::{NEWEST_FETCH_INDEXED, NewestFetch};
+        use crate::embedding::layout::paging::{
+            MXCSR_EXCEPTION_MASKS, NEWEST_FETCH_INDEXED, NEWEST_FETCH_SSE, NewestFetch,
+        };
         use crate::embedding::layout::{RawEventState, RawInterruptState, RunState, StateStorage};
         use crate::x86::paging::cache::IndexedReadTable;
         use std::mem::offset_of;
@@ -1052,20 +1066,30 @@ impl Emitter {
             .op(Op::Block(BlockType::Empty))
             .op(Op::LocalGet(0))
             .op(Op::I64Load(field(offset_of!(NewestFetch, tag), 3)));
-        if !indexed_read {
-            self.op(Op::I64Const(!NEWEST_FETCH_INDEXED as i64))
-                .op(Op::I64And);
+        let indexed = if indexed_read {
+            NEWEST_FETCH_INDEXED
+        } else {
+            0
+        };
+        let numeric = if sse { NEWEST_FETCH_SSE } else { 0 };
+        let ignored = (NEWEST_FETCH_INDEXED | NEWEST_FETCH_SSE) & !(indexed | numeric);
+        if ignored != 0 {
+            self.op(Op::I64Const(!ignored as i64)).op(Op::I64And);
         }
-        let tag = (pc & !4095)
-            | 1
-            | if indexed_read {
-                NEWEST_FETCH_INDEXED
-            } else {
-                0
-            };
+        let tag = (pc & !4095) | 1 | indexed | numeric;
         self.op(Op::I64Const(tag as i64))
             .op(Op::I64Ne)
             .op(Op::BrIf(0));
+        if sse {
+            // Keep the original masked-SSE admission when MXCSR changes.
+            self.op(Op::LocalGet(0))
+                .op(Op::I32Load(mem(offset_of!(RunState, mxcsr), 2)))
+                .op(Op::I32Const(MXCSR_EXCEPTION_MASKS as i32))
+                .op(Op::I32And)
+                .op(Op::I32Const(MXCSR_EXCEPTION_MASKS as i32))
+                .op(Op::I32Ne)
+                .op(Op::BrIf(0));
+        }
         if indexed_read && self.retouch_prefix_fetch {
             self.op(Op::LocalGet(0))
                 .op(Op::I32Load(mem(
@@ -1212,7 +1236,7 @@ impl Emitter {
         guard: u32,
         handoff: Option<u32>,
         indexed_read: bool,
-        check_newest: bool,
+        fetch: PagedPrefixFetch,
     ) {
         use super::SHADOW;
 
@@ -1231,14 +1255,18 @@ impl Emitter {
                 .op(Op::I32Const(1))
                 .op(Op::Else);
         }
-        let newest = check_newest
+        let newest = fetch != PagedPrefixFetch::Checked
             && (self.sampled_region || self.retouch_prefix_fetch)
             && self.context.is_long64()
             && self.context.cpl() == 0
             && last.next_pc > first.pc
             && (last.next_pc - 1) & !4095 == first.pc & !4095;
         if newest {
-            self.newest_prefix_fetch(first.pc, indexed_read);
+            self.newest_prefix_fetch(
+                first.pc,
+                indexed_read,
+                fetch == PagedPrefixFetch::RetainedSse,
+            );
             self.op(Op::If(BlockType::Result(wasm_encoder::ValType::I32)))
                 .op(Op::I32Const(1))
                 .op(Op::Else);

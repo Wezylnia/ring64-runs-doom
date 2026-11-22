@@ -1,3 +1,4 @@
+use super::instruction::PagedPrefixFetch;
 use super::{
     ADDRESS, Emitter, LHS, REMAINING, RESULT, RHS, RIP, STORE_STATUS, StructuredLoop, Unit, VALUE,
 };
@@ -487,7 +488,7 @@ impl Emitter {
             guard,
             None,
             false,
-            false,
+            PagedPrefixFetch::RetainedSse,
         );
         self.address(group.source, 0);
         self.op(Op::LocalSet(LHS));
@@ -512,7 +513,13 @@ impl Emitter {
         guard: u32,
         resolve: u32,
     ) {
-        self.guard_straight_paged_prefix(instructions, guard, None, false, false);
+        self.guard_straight_paged_prefix(
+            instructions,
+            guard,
+            None,
+            false,
+            PagedPrefixFetch::RetainedSse,
+        );
         self.address(group.source, 0);
         self.op(Op::LocalSet(LHS));
         self.address(group.destination, 0);
