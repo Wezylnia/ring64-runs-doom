@@ -359,6 +359,7 @@ impl Cache {
             let translation = peek()?;
             if !translation.accessed
                 || translation.span != 4096
+                || translation.linear_base & 4095 != 0
                 || translation.remaining < 4
                 || translation.global && state.cr4 & (1 << 7) != 0
                 || overlaps(code.translation, translation)
@@ -371,14 +372,55 @@ impl Cache {
         drop(entries);
         // A nonoverlapping fill with at least two slots cannot evict the
         // newest entry. Commit the same fill and next fetch as checked execution.
-        let installed = self.fill(state, request, translation);
-        debug_assert!(installed.cache_id.is_some());
+        if self.guarded_candidates.borrow().only_4k_leaves() {
+            self.install_known_local_miss(state, translation);
+        } else {
+            let installed = self.fill(state, request, translation);
+            debug_assert!(installed.cache_id.is_some());
+        }
         let mut entries = self.entries.borrow_mut();
         self.guarded_candidates
             .borrow_mut()
             .observe_fill(&entries, entries.hint.unwrap());
         entries.touch(fetch);
         Some(value)
+    }
+
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    fn install_known_local_miss(&self, state: &State, translation: Translation) {
+        // The indexed scan just proved the absence of any visible hit.
+        // An aligned 4 KiB leaf in this cache can overlap only the same leaf.
+        let mut entries = self.entries.borrow_mut();
+        let mut oldest = 0;
+        let mut age = u64::MAX;
+        let vacancy = entries.slots[..entries.capacity]
+            .iter()
+            .enumerate()
+            .find_map(|(index, slot)| match slot {
+                None => Some(index),
+                Some(entry) => {
+                    if entry.used < age {
+                        age = entry.used;
+                        oldest = index;
+                    }
+                    None
+                }
+            });
+        let index = vacancy.unwrap_or(oldest);
+        if vacancy.is_none() {
+            self.changed.set(true);
+        }
+        let mut translation = translation;
+        translation.cache_id = Some(entries.next_id);
+        entries.next_id += 1;
+        entries.slots[index] = Some(Entry {
+            translation,
+            pcid: state.pcid(),
+            global: false,
+            family: family(state),
+            used: 0,
+        });
+        entries.touch(index);
     }
 
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]

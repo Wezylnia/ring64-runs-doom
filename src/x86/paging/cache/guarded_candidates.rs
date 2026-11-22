@@ -21,6 +21,10 @@ impl Default for Candidates {
 }
 
 impl Candidates {
+    pub(super) fn only_4k_leaves(&self) -> bool {
+        self.buckets[WIDE] == 0
+    }
+
     pub(super) fn find(
         &mut self,
         entries: &Entries,

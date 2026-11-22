@@ -159,6 +159,50 @@ fn guarded_dword_miss_matches_checked_fill_and_successor_fetch() {
 
 #[cfg(not(feature = "parallel"))]
 #[test]
+fn guarded_dword_miss_uses_the_first_vacancy_before_an_older_live_slot() {
+    let (mut image, state, code) = fixture();
+    let code = Request {
+        access: Access::Execute,
+        ..code
+    };
+    let data = Request {
+        linear: 0x2234,
+        access: Access::Read,
+        ..code
+    };
+    let old = Request {
+        linear: 0x3234,
+        ..data
+    };
+    let keys = &ProtectionKeys::ZERO;
+    image.physical_write(0x4010, 8, 0xb027).unwrap();
+    image.physical_write(0x4018, 8, 0xc027).unwrap();
+    let cache = Cache::with_capacity(3);
+    for page in [data, old, code] {
+        cache.fill(
+            &state,
+            page,
+            walk::walk(&mut image, &state, page, keys).unwrap(),
+        );
+    }
+    cache.invalidate_page(state.pcid(), data.linear, true);
+    assert!(cache.take_changed());
+    assert_eq!(cache.entries.borrow().hint, Some(2));
+    assert_eq!(
+        cache.read_dword_then_fetch(&image, &state, data, keys, || {
+            walk::peek(&image, &state, data, keys).ok()
+        }),
+        Some(0)
+    );
+    let entries = cache.entries.borrow();
+    assert_eq!(entries.find(&state, data), Some(0));
+    assert_eq!(entries.find(&state, old), Some(1));
+    assert_eq!(entries.hint, Some(2));
+    assert!(!cache.take_changed());
+}
+
+#[cfg(not(feature = "parallel"))]
+#[test]
 fn guarded_dword_miss_refuses_eviction_of_code_or_a_retained_denial() {
     let (mut image, mut state, request) = fixture();
     let code = Request {
