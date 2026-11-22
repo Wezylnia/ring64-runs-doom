@@ -276,7 +276,9 @@ impl Entries {
         let translation = self.slots[index].unwrap().translation.at(request.linear);
         if WRITE && translation.dirty
             || translation.remaining < u64::from(width)
-            || translation.rights.authorize(state, request, keys).is_err()
+            || !translation
+                .rights
+                .allows_data(state, request.class, keys, WRITE)
         {
             return None;
         }

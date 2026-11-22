@@ -136,38 +136,57 @@ impl Rights {
                 Err(request.page_fault(state, true, false, false))
             };
         }
-        let user_request = request.class.is_user();
-        let protection_denied = !user_request
-            && self.user
-            && state.cr4 & CR4_SMAP != 0
-            && !matches!(request.class, AccessClass::Supervisor { ac: true });
-        let key_denied = state.cr0 & (1 << 31) != 0
-            && state.efer & (1 << 10) != 0
-            && if self.user {
-                state.cr4 & CR4_PKE != 0 && key_denied(keys.pkru, self.key, state, request)
-            } else {
-                state.cr4 & CR4_PKS != 0 && key_denied(keys.pkrs, self.key, state, request)
-            };
-        if user_request && !self.user
-            || request.access == Access::Write
-                && !self.writable
-                && (user_request || state.cr0 & (1 << 16) != 0)
-            || protection_denied
-            || key_denied
-        {
+        let (denied, key_denied) =
+            self.data_denial(state, request.class, keys, request.access == Access::Write);
+        if denied {
             Err(request.page_fault(state, true, false, key_denied))
         } else {
             Ok(())
         }
     }
+
+    #[cfg(any(feature = "parallel", target_arch = "wasm32", test))]
+    #[inline]
+    pub(super) fn allows_data(
+        self,
+        state: &State,
+        class: AccessClass,
+        keys: &ProtectionKeys,
+        write: bool,
+    ) -> bool {
+        !self.data_denial(state, class, keys, write).0
+    }
+
+    #[inline]
+    fn data_denial(
+        self,
+        state: &State,
+        class: AccessClass,
+        keys: &ProtectionKeys,
+        write: bool,
+    ) -> (bool, bool) {
+        let user_request = class.is_user();
+        let protected_write = write && (user_request || state.cr0 & (1 << 16) != 0);
+        let protection_denied = !user_request
+            && self.user
+            && state.cr4 & CR4_SMAP != 0
+            && !matches!(class, AccessClass::Supervisor { ac: true });
+        let key_denied = state.cr0 & (1 << 31) != 0
+            && state.efer & (1 << 10) != 0
+            && if self.user {
+                state.cr4 & CR4_PKE != 0 && key_denied(keys.pkru, self.key, protected_write)
+            } else {
+                state.cr4 & CR4_PKS != 0 && key_denied(keys.pkrs, self.key, protected_write)
+            };
+        let denied =
+            user_request && !self.user || protected_write && !self.writable || protection_denied;
+        (denied || key_denied, key_denied)
+    }
 }
 
-fn key_denied(word: u32, key: u8, state: &State, request: Request) -> bool {
+fn key_denied(word: u32, key: u8, protected_write: bool) -> bool {
     let pair = word >> (u32::from(key & 15) * 2) & 3;
-    pair & 1 != 0
-        || request.access == Access::Write
-            && pair & 2 != 0
-            && (request.class.is_user() || state.cr0 & (1 << 16) != 0)
+    pair & 1 != 0 || protected_write && pair & 2 != 0
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
