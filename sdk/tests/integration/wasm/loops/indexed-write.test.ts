@@ -135,3 +135,66 @@ test('paired dword reads keep live aliases and retire before a split-page fault'
     prototype.artifactImports = imports;
   }
 });
+
+test('the paired read window sees intervening writes and respects a clipped backing', async () => {
+  // ADD EAX,[RBX]; ADD R12D,[RBX+4]; MOV [RSI],EAX; MOV EDI,[RBX-4].
+  const code = 'ffc9741103034403630489068b7bfc85ff74edebeb';
+  const data = PC + 0x1000n;
+  const ram = new Uint8Array(4092);
+  const words = new DataView(ram.buffer);
+  words.setUint32(4, 1, true);
+  words.setUint32(8, 7, true);
+
+  const prototype = Core.prototype as unknown as {
+    artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
+  };
+  const imports = prototype.artifactImports;
+  let hits = 0;
+  let clipped = 0;
+  prototype.artifactImports = function (observed) {
+    const env = imports.call(this, observed);
+    const readSpan = env.paged_loop_read_span;
+    if (typeof readSpan === 'function') {
+      env.paged_loop_read_span = (address: bigint, bytes: number, segment: number) => {
+        const result = readSpan(address, bytes, segment);
+        if (bytes === 4 && segment === 8) {
+          if (address === data + 4n && result !== 0) hits++;
+          if (address === data && result === 0) clipped++;
+        }
+        return result;
+      };
+    }
+    return env;
+  };
+  try {
+    await usingPaged(
+      compiler,
+      {
+        code,
+        words: [[0x4008n, 0xa067n]],
+        spans: [{ physical: 0xa004n, bytes: ram }],
+      },
+      async (cpu) => {
+        const stop = PC + BigInt(code.length / 2);
+        cpu.setState(initial(PC, { 0: 1n, 1: 17n, 3: data + 8n, 6: data + 4n, 12: 0n }));
+        const full = await cpu.run({ stop, budget: 200n });
+        assert.equal(full.reason, 'stop');
+        assert.equal(full.retired, 146n);
+        assert.equal(full.state.registers[0], 17n);
+        assert.equal(full.state.registers[7], 17n);
+        assert.equal(full.state.registers[12], 112n);
+        assert.ok(hits > 0, 'the same-page window read the changed dword');
+
+        cpu.setState(initial(PC, { 0: 1n, 1: 17n, 3: data + 4n, 6: data + 12n, 7: 23n, 12: 0n }));
+        const miss = await cpu.run({ stop, budget: 200n });
+        assert.equal(miss.reason, 'physical-memory-fault');
+        assert.equal(miss.retired, 5n);
+        assert.equal(miss.state.rip, PC + 12n);
+        assert.equal(miss.state.registers[7], 23n);
+        assert.ok(clipped > 0, 'the admitted pair left the separate operand out of bounds');
+      },
+    );
+  } finally {
+    prototype.artifactImports = imports;
+  }
+});

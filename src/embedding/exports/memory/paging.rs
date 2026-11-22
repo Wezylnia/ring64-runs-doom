@@ -809,7 +809,7 @@ fn paged_loop_read<const WIDTH: u32, const CAPTURE_SLOT: bool>(address: u64) -> 
 #[unsafe(no_mangle)]
 #[inline(never)]
 pub extern "C" fn core_paged_loop_read_span(address: u64, bytes: u32, segment: u32) -> u32 {
-    use crate::embedding::layout::{PAGED_PAIR_CONTINUE, PAGED_PAIR_START};
+    use crate::embedding::layout::{PAGED_PAIR_CONTINUE, PAGED_PAIR_START, PAGED_PAIR_WINDOW};
 
     if segment == Segment::Ds as u32 {
         return paged_loop_read_span::<false, false, false>(address, bytes, segment);
@@ -819,6 +819,9 @@ pub extern "C" fn core_paged_loop_read_span(address: u64, bytes: u32, segment: u
     }
     if bytes == 8 && matches!(segment, PAGED_PAIR_START | PAGED_PAIR_CONTINUE) {
         return paged_loop_read_paired_dwords(address, segment == PAGED_PAIR_CONTINUE);
+    }
+    if bytes == 4 && segment == PAGED_PAIR_WINDOW {
+        return paged_loop_read_pair_window(address);
     }
     0
 }
@@ -1228,6 +1231,34 @@ pub(super) struct GuardedDwordPair {
     address: u64,
     binding: (usize, u64),
     host: u32,
+    window_start: u16,
+    window_end: u16,
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[inline(never)]
+fn paged_loop_read_pair_window(address: u64) -> u32 {
+    BRIDGE.with_borrow(|bridge| {
+        let core = bridge.core.as_ref().unwrap();
+        let Some(pair) = core.guarded_dword_pair else {
+            return 0;
+        };
+        // This clone already resolved the binding. Clip reuse to the same 4KiB
+        // and readable physical extent, then retain the original access order.
+        let offset = address.wrapping_sub(pair.address & !4095);
+        if offset < u64::from(pair.window_start)
+            || offset > u64::from(pair.window_end - 4)
+            || offset & 3 != 0
+            || core
+                .translation_cache
+                .retouch_guarded_read_binding(pair.binding, address)
+                .is_none()
+        {
+            return 0;
+        }
+        pair.host
+            .wrapping_add(address.wrapping_sub(pair.address) as u32)
+    })
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -1266,7 +1297,7 @@ fn paged_loop_read_paired_dwords(address: u64, continuing: bool) -> u32 {
                     state.flags & crate::x86::flags::AC != 0,
                 ),
             };
-            let Some((binding, host)) = core
+            let Some((memo, host)) = core
                 .translation_cache
                 .data_translation_then_fetch::<false, _>(
                     paging,
@@ -1275,21 +1306,25 @@ fn paged_loop_read_paired_dwords(address: u64, continuing: bool) -> u32 {
                     BYTES,
                     true,
                     |slot, translation| {
-                        Some((
-                            translation.cache_id.map(|id| (slot, id)),
-                            core.image
-                                .physical_direct_read_pointer(translation.physical, BYTES)?,
-                        ))
+                        let physical = translation.physical;
+                        let span = core.image.physical_direct_read_span(physical, BYTES)?;
+                        let host = span.host + (physical - span.base) as u32;
+                        let page = physical & !4095;
+                        let memo = translation.cache_id.map(|id| GuardedDwordPair {
+                            address,
+                            binding: (slot, id),
+                            host,
+                            window_start: span.base.saturating_sub(page) as u16,
+                            window_end: (span.base + u64::from(span.length) - page).min(4096)
+                                as u16,
+                        });
+                        Some((memo, host))
                     },
                 )
             else {
                 return 0;
             };
-            core.guarded_dword_pair = binding.map(|binding| GuardedDwordPair {
-                address,
-                binding,
-                host,
-            });
+            core.guarded_dword_pair = memo;
             host
         };
         core.direct_span = crate::memory::DirectSpan {

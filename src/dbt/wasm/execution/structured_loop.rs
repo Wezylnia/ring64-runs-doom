@@ -826,7 +826,7 @@ impl StructuredLoop {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) fn paged_dword_read_pair(self, unit: &super::Unit) -> Option<(u32, u32)> {
+    pub(super) fn paged_dword_read_pair(self, unit: &super::Unit) -> Option<(u32, u32, u8)> {
         use crate::x86::{
             context::Segment,
             instruction::{AddressBase, MemoryAluOperands},
@@ -867,7 +867,7 @@ impl StructuredLoop {
             {
                 return None;
             }
-            Some((first, second))
+            Some((first, second, base))
         })
     }
 
@@ -1825,6 +1825,7 @@ impl Emitter {
                 crate::embedding::layout::PAGED_PAIR_START as i32,
             ))
             .op(Op::LocalSet(pair.resolver_mode));
+            self.op(Op::I32Const(0)).op(Op::LocalSet(pair.host));
         }
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         if let Some(window) = self.paged_copy_window {

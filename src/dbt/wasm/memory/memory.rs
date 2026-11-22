@@ -46,6 +46,7 @@ pub(super) struct VectorWindowRetouch {
 pub(super) struct PagedDwordReadPair {
     pub(super) first: u32,
     pub(super) second: u32,
+    pub(super) base: u8,
     pub(super) resolve: u32,
     pub(super) host: u32,
     pub(super) resolver_mode: u32,
@@ -399,6 +400,17 @@ impl Emitter {
         self.address(address, next_pc);
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         if width == Width::W32
+            && let Some(pair) = self.paged_dword_read_pair
+            && address.size == Width::W64
+            && address.segment == Segment::Ds
+            && address.base == AddressBase::Register(pair.base)
+            && address.index.is_none()
+        {
+            self.load_paged_pair_window(pair, read, exit_depth);
+            return true;
+        }
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if width == Width::W32
             && address.segment == Segment::Ds
             && let Some(window) = self.paged_dword_window
             && (self.paged_dword_window_touch.is_none()
@@ -432,6 +444,45 @@ impl Emitter {
                 .op(Op::LocalSet(VALUE));
         }
         true
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    fn load_paged_pair_window(&mut self, pair: PagedDwordReadPair, read: u32, exit_depth: u32) {
+        use wasm_encoder::ValType;
+
+        self.op(Op::LocalSet(ADDRESS))
+            .op(Op::LocalGet(pair.host))
+            .op(Op::If(BlockType::Result(ValType::I32)))
+            .op(Op::LocalGet(ADDRESS))
+            .op(Op::I32Const(4))
+            .op(Op::I32Const(
+                crate::embedding::layout::PAGED_PAIR_WINDOW as i32,
+            ))
+            .op(Op::Call(pair.resolve))
+            .op(Op::Else)
+            .op(Op::I32Const(0))
+            .op(Op::End)
+            .op(Op::I64ExtendI32U)
+            .op(Op::LocalTee(VALUE))
+            .op(Op::I32WrapI64)
+            .op(Op::If(BlockType::Result(ValType::I64)))
+            .op(Op::LocalGet(VALUE))
+            .op(Op::I32WrapI64)
+            .op(Op::I64Load32U(MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            }))
+            .op(Op::Else)
+            .op(Op::LocalGet(ADDRESS))
+            .op(Op::Call(read))
+            .op(Op::LocalTee(VALUE))
+            .op(Op::I64Const(-1))
+            .op(Op::I64Eq);
+        self.retry_guarded_paged_operand(exit_depth + 1, true);
+        self.op(Op::LocalGet(VALUE))
+            .op(Op::End)
+            .op(Op::LocalSet(VALUE));
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]

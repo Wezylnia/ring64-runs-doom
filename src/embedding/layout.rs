@@ -13,11 +13,13 @@ use crate::x86::x87::State as X87State;
 pub const TASK_CAPTURED: i32 = -2;
 pub const TASK_EVENT_BASE: i32 = -64;
 
-// Private tags of the guarded 8-byte read-span ABI.
+// Private tags of the guarded dword-pair read-span ABI.
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 pub(crate) const PAGED_PAIR_START: u32 = 6;
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 pub(crate) const PAGED_PAIR_CONTINUE: u32 = 7;
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+pub(crate) const PAGED_PAIR_WINDOW: u32 = 8;
 
 pub const DISPATCH: i32 = 0;
 pub const BUDGET: i32 = 1;

@@ -1545,16 +1545,16 @@ fn emit_body(
         )
     });
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    let paged_dword_read_pair =
-        paged_dword_read_pair
-            .zip(paged_dword_read_pair_type)
-            .map(|((first, second), index)| {
-                (
-                    first,
-                    second,
-                    import_function("paged_loop_read_span", index),
-                )
-            });
+    let paged_dword_read_pair = paged_dword_read_pair.zip(paged_dword_read_pair_type).map(
+        |((first, second, base), index)| {
+            (
+                first,
+                second,
+                base,
+                import_function("paged_loop_read_span", index),
+            )
+        },
+    );
     let paged_loop_write_byte = paged_loop_write_type
         .filter(|_| paged_write_byte)
         .map(|index| import_function("paged_loop_write_byte", index));
@@ -2158,13 +2158,14 @@ fn emit_body(
             (body, window, (guard, attempts), rearm)
         });
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    let paged_dword_read_pair = paged_dword_read_pair.map(|(first, second, resolve)| {
+    let paged_dword_read_pair = paged_dword_read_pair.map(|(first, second, base, resolve)| {
         let host = next_local;
         locals.push((2, ValType::I32));
         next_local += 2;
         memory::PagedDwordReadPair {
             first,
             second,
+            base,
             resolve,
             host,
             resolver_mode: host + 1,
