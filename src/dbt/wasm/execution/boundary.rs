@@ -1,7 +1,7 @@
 use super::{DIRECTION, Emitter, REASON, REPEAT_REMAINING, RIP, SHADOW, SYSTEM};
 use crate::embedding::layout::{DISPATCH, HALTED, RunState};
 #[cfg(not(feature = "parallel"))]
-use crate::x86::instruction::Width;
+use crate::x86::instruction::{Location, Width};
 use crate::x86::instruction::{Operation, ProtectionKind, Repeat, SystemFlagsKind};
 use std::mem::offset_of;
 use wasm_encoder::{BlockType, Instruction as Op, MemArg};
@@ -18,6 +18,45 @@ pub(super) fn ss_producer(operation: Operation) -> bool {
 }
 
 impl Emitter {
+    fn can_complete_paged_register(&self, operation: Operation) -> bool {
+        #[cfg(feature = "parallel")]
+        {
+            let _ = operation;
+            false
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            self.paged
+                && self.context.is_long64()
+                && matches!(
+                    operation,
+                    Operation::Alu { .. }
+                        | Operation::Lea { .. }
+                        | Operation::Mov { .. }
+                        | Operation::Shift {
+                            dst: Location::Register(_),
+                            ..
+                        }
+                        | Operation::Unary {
+                            dst: Location::Register(_),
+                            ..
+                        }
+                        | Operation::Extend {
+                            src: Location::Register(_),
+                            ..
+                        }
+                        | Operation::Cmov {
+                            src: Location::Register(_),
+                            ..
+                        }
+                        | Operation::Setcc {
+                            dst: Location::Register(_),
+                            ..
+                        }
+                )
+        }
+    }
+
     pub(super) fn external_boundary(&mut self, exit_depth: u32) {
         let Some(helper) = self.external_step else {
             return;
@@ -129,8 +168,14 @@ impl Emitter {
         self.full_flags();
         let debug_begin = self.debug_begin.expect("debug begin import");
         self.op(Op::LocalGet(SHADOW));
+        let register_completion = self.can_complete_paged_register(operation);
         #[cfg(not(feature = "parallel"))]
-        if self.paged
+        if register_completion {
+            self.op(Op::I32Const(
+                crate::embedding::layout::debug::PAGED_REGISTER_COMPLETION as i32,
+            ))
+            .op(Op::I32Or);
+        } else if self.paged
             && self.context.is_long64()
             && matches!(
                 operation,
@@ -148,9 +193,17 @@ impl Emitter {
             ))
             .op(Op::I32Or);
         }
-        self.op(Op::Call(debug_begin))
-            .op(Op::LocalTee(REASON))
-            .op(Op::BrIf(exit_depth));
+        self.op(Op::Call(debug_begin));
+        if register_completion {
+            let result = self.boundary_result.unwrap();
+            self.op(Op::LocalTee(REASON))
+                .op(Op::LocalTee(result))
+                .op(Op::I32Const(0))
+                .op(Op::I32GtS);
+        } else {
+            self.op(Op::LocalTee(REASON));
+        }
+        self.op(Op::BrIf(exit_depth));
         let sampled_tf = self.sampled_tf.unwrap();
         let incoming_shadow = self.incoming_shadow.unwrap();
         let next_shadow = self.next_shadow.unwrap();
@@ -206,6 +259,16 @@ impl Emitter {
         }
         let incoming = self.incoming_shadow.unwrap();
         let result = self.boundary_result.unwrap();
+        let register_completion =
+            completed && self.can_complete_paged_register(self.current_operation);
+        if register_completion {
+            self.op(Op::LocalGet(result))
+                .op(Op::I32Const(
+                    crate::embedding::layout::debug::CONTINUE_ACTIVE,
+                ))
+                .op(Op::I32Ne)
+                .op(Op::If(BlockType::Empty));
+        }
         let ss = if self.ss_producer() { 4 } else { 0 };
         let helper = self.debug_step.expect("debug boundary import");
         self.op(Op::I64Const(self.current_pc as i64))
@@ -238,10 +301,12 @@ impl Emitter {
             .op(Op::I32Const(0))
             .op(Op::LocalSet(SHADOW))
             .op(Op::End)
-            .op(Op::Br(exit_depth + 1))
-            .op(Op::End)
-            .op(Op::I32Const(0))
-            .op(Op::LocalSet(REASON));
+            .op(Op::Br(exit_depth + 1 + u32::from(register_completion)))
+            .op(Op::End);
+        if register_completion {
+            self.op(Op::End);
+        }
+        self.op(Op::I32Const(0)).op(Op::LocalSet(REASON));
     }
 
     pub(super) fn finish_instruction(&mut self, exit_depth: u32) -> bool {

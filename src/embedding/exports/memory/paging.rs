@@ -1633,9 +1633,13 @@ pub extern "C" fn core_paged_debug_begin(pc: u64, flags: u64, shadow: u32) -> i3
         let core = bridge.core.as_mut().unwrap();
         core.clear_paged_instruction();
         #[cfg(not(feature = "parallel"))]
-        let (near_transfer, shadow) = {
-            let bit = crate::embedding::layout::debug::PAGED_NEAR_TRANSFER;
-            (shadow & bit != 0, shadow & !bit)
+        let (near_transfer, register_completion, shadow) = {
+            use crate::embedding::layout::debug::{PAGED_NEAR_TRANSFER, PAGED_REGISTER_COMPLETION};
+            (
+                shadow & PAGED_NEAR_TRANSFER != 0,
+                shadow & PAGED_REGISTER_COMPLETION != 0,
+                shadow & !(PAGED_NEAR_TRANSFER | PAGED_REGISTER_COMPLETION),
+            )
         };
         let debug = core.debug_execute(pc, flags, shadow);
         if debug != 0 {
@@ -1644,6 +1648,18 @@ pub extern "C" fn core_paged_debug_begin(pc: u64, flags: u64, shadow: u32) -> i3
         #[cfg(not(feature = "parallel"))]
         if core.warm_guarded_code_page(pc, !near_transfer) {
             core.reconcile_translation_changes();
+            if register_completion
+                && core.paged_region_trace.is_none()
+                && flags & crate::x86::flags::TF == 0
+                && shadow != 2
+            {
+                let state = unsafe { &*core.state.get() };
+                if !state.debug.registers.has_enabled_slots()
+                    && state.debug.continuation == Default::default()
+                {
+                    return crate::embedding::layout::debug::CONTINUE_ACTIVE;
+                }
+            }
             return 0;
         }
         #[cfg(not(feature = "parallel"))]
