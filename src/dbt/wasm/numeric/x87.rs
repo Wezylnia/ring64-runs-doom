@@ -5,7 +5,75 @@ use crate::x86::instruction::X87Instruction;
 use std::mem::offset_of;
 use wasm_encoder::{Instruction as Wasm, MemArg};
 
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+use super::{REMAINING, RIP};
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+use crate::x86::{
+    instruction::{Instruction, Operation},
+    x87::{Op, REGISTER_PAIR_SEGMENT, register_load_arithmetic},
+};
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+use wasm_encoder::BlockType;
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+pub(super) fn register_pair(first: Instruction, second: Instruction) -> Option<(Op, Op)> {
+    let (Operation::X87(a), Operation::X87(b)) = (first.operation, second.operation) else {
+        return None;
+    };
+    (first.next_pc == second.pc
+        && a.address.is_none()
+        && b.address.is_none()
+        && register_load_arithmetic(a.op, b.op))
+    .then_some((a.op, b.op))
+}
+
 impl Emitter {
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn emit_x87_register_pair(
+        &mut self,
+        first: Instruction,
+        second: Instruction,
+        loop_depth: u32,
+        exit_depth: u32,
+    ) {
+        if !self.x87_register_pairs || self.structured_loop.is_some() {
+            return;
+        }
+        let Some((a, b)) = register_pair(first, second) else {
+            return;
+        };
+        // The first entry already passed its own gate. Keep the second entry
+        // for short budget, stop, alternate predecessors or a refused pair.
+        self.op(Wasm::LocalGet(REMAINING))
+            .op(Wasm::I64Const(2))
+            .op(Wasm::I64GeU)
+            .op(Wasm::LocalGet(3))
+            .op(Wasm::LocalGet(2))
+            .op(Wasm::I64Const(second.pc as i64))
+            .op(Wasm::I64Eq)
+            .op(Wasm::I32And)
+            .op(Wasm::I32Eqz)
+            .op(Wasm::I32And)
+            .op(Wasm::If(BlockType::Empty));
+        // The private discriminator is rejected by older cores. Both
+        // operands and PCs fit the existing x87 import without JS mediation.
+        let helper = self.x87.expect("x87 import");
+        self.op(Wasm::I32Const(a.encode() as i32))
+            .op(Wasm::I64Const(i64::from(b.encode())))
+            .op(Wasm::I32Const(REGISTER_PAIR_SEGMENT as i32))
+            .op(Wasm::I64Const(first.pc as i64))
+            .op(Wasm::I64Const(0))
+            .op(Wasm::I64Const(second.pc as i64))
+            .op(Wasm::Call(helper))
+            .op(Wasm::I32Eqz)
+            .op(Wasm::If(BlockType::Empty));
+        self.op(Wasm::I64Const(second.next_pc as i64))
+            .op(Wasm::LocalSet(RIP));
+        self.retire_instructions(2);
+        self.route(second.next_pc, loop_depth + 2, exit_depth + 2);
+        self.op(Wasm::End).op(Wasm::End);
+    }
+
     pub(super) fn x87(
         &mut self,
         instruction: X87Instruction,

@@ -295,6 +295,8 @@ fn emit_placement(
         inline_f32_packed: true,
         inline_cmpnleps: true,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        x87_register_pairs: true,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         direct_vector_loads: true,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         direct_vector_stores: true,
@@ -390,6 +392,8 @@ struct OptionalLowering {
     inline_f32_sub: bool,
     inline_f32_packed: bool,
     inline_cmpnleps: bool,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    x87_register_pairs: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     direct_vector_loads: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -561,6 +565,16 @@ fn emit_body(
         .instructions
         .iter()
         .any(|i| matches!(i.operation, Operation::X87(_)));
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let x87_register_pairs = optional.x87_register_pairs
+        && has_x87
+        && !observed
+        && !paged
+        && !mmio
+        && unit
+            .instructions
+            .windows(2)
+            .any(|pair| super::x87::register_pair(pair[0], pair[1]).is_some());
     let has_mmx = unit
         .instructions
         .iter()
@@ -1848,6 +1862,8 @@ fn emit_body(
         load_mxcsr,
         store_mxcsr,
         x87,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        x87_register_pairs,
         io,
         mmx,
         numeric_image,
@@ -2115,6 +2131,21 @@ fn emit_body(
     }
     let code_start = bytes.len();
     code.append_to(&mut bytes);
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    if bytes.len() > max_artifact_bytes && x87_register_pairs {
+        return emit_body(
+            unit,
+            observed,
+            (paged, mmio),
+            loop_body,
+            _guard_reads,
+            OptionalLowering {
+                x87_register_pairs: false,
+                ..optional
+            },
+            max_artifact_bytes,
+        );
+    }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if bytes.len() > max_artifact_bytes && paged_byte_write_pair.is_some() {
         return emit_body(

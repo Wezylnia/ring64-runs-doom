@@ -30,6 +30,74 @@ fn snapshot() -> X87State {
     BRIDGE.with_borrow(|bridge| unsafe { (*bridge.core.as_ref().unwrap().state.get()).x87 })
 }
 
+#[cfg(not(feature = "parallel"))]
+#[test]
+fn x87_register_pairs_keep_numeric_and_environment_effects_or_refuse_before_either() {
+    use crate::x86::x87::REGISTER_PAIR_SEGMENT;
+
+    initialize(0x1000, &[0xf4]);
+    let load = operation(Kind::Load, Format::Register, 0x1c0);
+    let multiply = Op {
+        index: 1,
+        ..operation(Kind::Mul, Format::Register, 0x0c9)
+    };
+    let pair = || {
+        x87::core_x87(
+            load.encode(),
+            u64::from(multiply.encode()),
+            REGISTER_PAIR_SEGMENT,
+            0x1000,
+            0,
+            0x1002,
+        )
+    };
+    let mut ordinary = X87State {
+        tag_word: 0xfffc,
+        opcode: 0x123,
+        data_pointer: 0x4000,
+        ..X87State::default()
+    };
+    ordinary.set_raw(0, 0x3fff_c000_0000_0000_0000);
+    let mut overflow = X87State {
+        control_word: 0x377,
+        ..ordinary
+    };
+    overflow.set_raw(0, 0x7ffe_ffff_ffff_ffff_ffff);
+    for prior in [ordinary, overflow] {
+        install(prior);
+        assert_eq!(invoke(load, 0, 0x1000, 0x8d7, 0), 0);
+        assert_eq!(invoke(multiply, 0, 0x1002, 0x8d7, 0), 0);
+        let expected = snapshot();
+        assert_eq!(expected.instruction_pointer, 0x1002);
+        assert_eq!(expected.data_pointer, 0x4000);
+        if prior.control_word == 0x377 {
+            assert_ne!(expected.pending(), 0);
+            assert_eq!(expected.opcode, 0x0c9);
+        }
+        install(prior);
+        assert_eq!(pair(), 0);
+        assert_eq!(snapshot(), expected);
+    }
+
+    let mut occupied = ordinary;
+    occupied.set_tag(7, 2);
+    let mut empty = ordinary;
+    empty.set_tag(0, 3);
+    let pending = X87State {
+        control_word: 0x37e,
+        status_word: 0x8081,
+        ..ordinary
+    };
+    assert_eq!(core_load(0x7000, 8), 0);
+    let diagnostic = metadata(DATA);
+    for prior in [occupied, empty, pending] {
+        install(prior);
+        assert_eq!(pair(), -1);
+        assert_eq!(snapshot(), prior);
+        assert_eq!(metadata(DATA), diagnostic);
+    }
+}
+
 #[test]
 fn x87_malformed_private_operations_reject_before_state_or_diagnostic_changes() {
     initialize(0x1000, &[0xf4]);

@@ -113,7 +113,13 @@ impl Emitter {
             Operation::NumericImage { op, address } => {
                 self.numeric_image(op, address, instruction.next_pc, exit_depth)
             }
-            Operation::X87(x87) => self.x87(x87, instruction.pc, instruction.next_pc, exit_depth),
+            Operation::X87(x87) => {
+                #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+                if let Some(second) = next {
+                    self.emit_x87_register_pair(instruction, *second, loop_depth, exit_depth);
+                }
+                self.x87(x87, instruction.pc, instruction.next_pc, exit_depth);
+            }
             Operation::Float(float) => self.float(float, instruction.next_pc, exit_depth),
             Operation::Mxcsr { address, store } => {
                 self.mxcsr(address, store, instruction.next_pc, exit_depth)

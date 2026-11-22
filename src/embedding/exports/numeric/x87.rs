@@ -41,6 +41,42 @@ fn saved_pointer(context: &ExecutionContext, offset: u64, segment: Segment) -> u
     }
 }
 
+fn x87_environment(
+    context: &ExecutionContext,
+    state: &mut x87::State,
+    operation: Op,
+    pc: u64,
+    data: Option<(u64, Segment)>,
+) {
+    if operation.updates_environment() {
+        state.instruction_pointer = saved_pointer(context, pc, Segment::Cs);
+        if let Some((offset, segment)) = data {
+            state.data_pointer = saved_pointer(context, offset, segment);
+        }
+        if state.pending() != 0 {
+            state.opcode = operation.encoding;
+        }
+    }
+}
+
+fn clear_x87_diagnostics(core: &mut Core) {
+    core.fault = None;
+    core.segment_fault = None;
+    core.alignment_fault = None;
+    core.alignment_check = None;
+    core.simd_exception = None;
+    core.numeric_fault = None;
+    core.general_protection = None;
+    core.protection_fault = None;
+    core.system_memory_fault = None;
+    core.divide_failed = false;
+    unsafe {
+        let state = &mut *core.state.get();
+        state.target = 0;
+        state.fault_segment = Segment::Cs as u32;
+    }
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn core_x87(
     operation: u32,
@@ -50,7 +86,47 @@ pub extern "C" fn core_x87(
     flags: u64,
     rax: u64,
 ) -> i32 {
+    #[cfg(not(feature = "parallel"))]
+    if segment == x87::REGISTER_PAIR_SEGMENT {
+        if flags != 0 {
+            return -1;
+        }
+        return core_x87_register_pair(operation, offset, instruction_pc, rax);
+    }
     core_x87_impl::<false, false>(operation, offset, segment, instruction_pc, flags, rax)
+}
+
+#[cfg(not(feature = "parallel"))]
+fn core_x87_register_pair(first: u32, second: u64, first_pc: u64, second_pc: u64) -> i32 {
+    let Ok(second) = u32::try_from(second) else {
+        return -1;
+    };
+    BRIDGE.with_borrow_mut(|bridge| {
+        let Some(first) = bridge.x87_operations.get(first) else {
+            return -1;
+        };
+        let Some(second) = bridge.x87_operations.get(second) else {
+            return -1;
+        };
+        if !x87::register_load_arithmetic(first, second) {
+            return -1;
+        }
+        let core = bridge.core.as_mut().unwrap();
+        if core.paging.is_some()
+            || !unsafe { (*core.state.get()).x87.can_load_register(first.index) }
+        {
+            return -1;
+        }
+        // A valid register FLD cannot raise a new exception. Both original
+        // numeric operations execute, including the second's exception response.
+        clear_x87_diagnostics(core);
+        let state = unsafe { &mut (*core.state.get()).x87 };
+        for (operation, pc) in [(first, first_pc), (second, second_pc)] {
+            x87::eval(state, operation, 0, 0);
+            x87_environment(&core.context, state, operation, pc, None);
+        }
+        0
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -81,22 +157,8 @@ fn core_x87_impl<const OBSERVED: bool, const PAGED: bool>(
             return -1;
         };
         let core = bridge.core.as_mut().unwrap();
-        core.fault = None;
-        core.segment_fault = None;
-        core.alignment_fault = None;
-        core.alignment_check = None;
-        core.simd_exception = None;
-        core.numeric_fault = None;
-        core.general_protection = None;
-        core.protection_fault = None;
-        core.system_memory_fault = None;
-        core.divide_failed = false;
-        let pending = unsafe {
-            let state = &mut *core.state.get();
-            state.target = 0;
-            state.fault_segment = Segment::Cs as u32;
-            state.x87.pending()
-        };
+        clear_x87_diagnostics(core);
+        let pending = unsafe { (*core.state.get()).x87.pending() };
         if operation.is_waiting() && pending != 0 {
             return core.pending_x87_reason();
         }
@@ -157,16 +219,13 @@ fn core_x87_impl<const OBSERVED: bool, const PAGED: bool>(
                 None => unsafe { &mut (*core.state.get()).x87 },
             };
             let effect = x87::eval(candidate, operation, source, flags);
-            if operation.updates_environment() {
-                candidate.instruction_pointer =
-                    saved_pointer(&core.context, instruction_pc, Segment::Cs);
-                if address.is_some() {
-                    candidate.data_pointer = saved_pointer(&core.context, offset, segment);
-                }
-                if candidate.pending() != 0 {
-                    candidate.opcode = operation.encoding;
-                }
-            }
+            x87_environment(
+                &core.context,
+                candidate,
+                operation,
+                instruction_pc,
+                address.map(|_| (offset, segment)),
+            );
             effect
         };
         match (effect.store, private_linear, linear_write) {

@@ -247,6 +247,8 @@ struct Emitter {
     load_mxcsr: Option<u32>,
     store_mxcsr: Option<u32>,
     x87: Option<u32>,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    x87_register_pairs: bool,
     io: Option<u32>,
     mmx: Option<u32>,
     numeric_image: Option<u32>,

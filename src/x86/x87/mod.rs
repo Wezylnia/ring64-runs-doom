@@ -157,6 +157,30 @@ pub struct Op {
     pub condition: u8,
     pub encoding: u16,
 }
+
+#[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+pub(crate) const REGISTER_PAIR_SEGMENT: u32 = u32::MAX;
+
+#[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+pub(crate) fn register_load_arithmetic(first: Op, second: Op) -> bool {
+    first.kind == Kind::Load
+        && first.format == Format::Register
+        && second.format == Format::Register
+        && matches!(
+            second.kind,
+            Kind::Add | Kind::Mul | Kind::Sub | Kind::SubReverse
+        )
+}
+
+#[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+impl State {
+    pub(crate) fn can_load_register(&self, index: u8) -> bool {
+        self.pending() == 0
+            && self.tag(self.physical(index)) != 3
+            && self.tag((self.top() + 7) & 7) == 3
+    }
+}
+
 impl Op {
     pub fn encode(self) -> u32 {
         self.kind as u32
