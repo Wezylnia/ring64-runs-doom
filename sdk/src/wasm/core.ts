@@ -1160,6 +1160,63 @@ export class Core {
     return this.isPaged && typeof this.#exports.core_compile_with_paged_entries === 'function';
   }
 
+  get supportsPagedRegionTrace(): boolean {
+    return (
+      this.isPaged &&
+      !this.mmio &&
+      !this.io?.present &&
+      this.#exports.core_supports_paged_region_trace?.() === 1 &&
+      typeof this.#exports.core_begin_paged_region_trace === 'function' &&
+      typeof this.#exports.core_finish_paged_region_trace === 'function' &&
+      typeof this.#exports.core_paged_region_debug_finish === 'function' &&
+      typeof this.#exports.core_paged_region_checked_guard === 'function' &&
+      typeof this.#exports.core_compile_with_paged_region_points === 'function'
+    );
+  }
+
+  beginPagedRegionTrace(pc: bigint): boolean {
+    return this.#exports.core_begin_paged_region_trace?.(pc) === 1;
+  }
+
+  finishPagedRegionTrace(maxPoints: number): { retired: number; points: bigint[] } {
+    const retired = this.#exports.core_finish_paged_region_trace?.(maxPoints) ?? 0;
+    if (maxPoints === 0) return { retired, points: [] };
+    const bytes = this.output();
+    if (
+      !Number.isInteger(retired) ||
+      retired < 0 ||
+      retired > 2048 ||
+      bytes.length > maxPoints * 8 ||
+      bytes.length % 8 !== 0
+    )
+      throw new Error('core returned an invalid paged region trace');
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const points = Array.from({ length: bytes.length / 8 }, (_, index) =>
+      view.getBigUint64(index * 8, true),
+    );
+    return { retired, points };
+  }
+
+  instantiatePagedRegionTrace(module: WebAssembly.Module, observed: boolean): GeneratedRun {
+    const finish = this.#exports.core_paged_region_debug_finish;
+    const guard = this.#exports.core_paged_region_checked_guard;
+    if (!finish || !guard) throw new Error('core does not support paged region tracing');
+    const env = this.artifactImports(observed);
+    env.debug_finish = finish;
+    for (const name of [
+      'paged_loop_guard',
+      'paged_walk_guard',
+      'paged_walk_loop_guard32',
+      'paged_read_loop_guard32',
+      'paged_write_loop_guard32',
+      'paged_sse_loop_guard',
+      'paged_sse_write_loop_guard32',
+    ]) {
+      if (env[name]) env[name] = guard;
+    }
+    return instantiateArtifact(module, env);
+  }
+
   get supportsLinearRegionCompilation(): boolean {
     return (
       !this.isPaged &&
@@ -1173,6 +1230,7 @@ export class Core {
     pc: bigint,
     limits: CompileLimits,
     seeds?: readonly bigint[],
+    regionPoints = false,
   ): { bytes: Uint8Array<ArrayBuffer>; metadata: CompiledUnitMetadata } | undefined {
     let compile = this.#exports.core_compile;
     if (this.isPaged && this.#exports.core_paged_loop_write_block) {
@@ -1181,9 +1239,11 @@ export class Core {
         compile = this.#exports.core_compile_with_paged_copy_spans ?? compile;
     }
     if (seeds?.length) {
-      const seeded = this.isPaged
-        ? this.#exports.core_compile_with_paged_entries
-        : this.#exports.core_compile_with_linear_entries;
+      const seeded = regionPoints
+        ? this.#exports.core_compile_with_paged_region_points
+        : this.isPaged
+          ? this.#exports.core_compile_with_paged_entries
+          : this.#exports.core_compile_with_linear_entries;
       if (!seeded) return undefined;
       const length = seeds.length * 8;
       const pointer = this.#exports.core_input(length) >>> 0;

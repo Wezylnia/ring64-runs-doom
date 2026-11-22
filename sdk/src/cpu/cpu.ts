@@ -36,7 +36,8 @@ import {
   type PageFault,
   type PhysicalMemoryFault,
 } from '../wasm/core.js';
-import { LinearRegionTrace, RegionTrace } from './regions.js';
+import type { GeneratedRun } from '../wasm/abi.js';
+import { LinearRegionTrace, PagedCorridor, RegionTrace } from './regions.js';
 import { Translations, type Artifact, type InstalledEntry } from './translations.js';
 import {
   captureState,
@@ -747,7 +748,14 @@ export class Cpu {
   }
 
   async #tryRegion(
-    region: RegionTrace | LinearRegionTrace,
+    region:
+      | RegionTrace
+      | LinearRegionTrace
+      | {
+          boundaryObserved: boolean;
+          points: bigint[];
+          entrances: Set<bigint>;
+        },
     resources: Pick<RunResult['resources'], 'compilations' | 'generatedBytes'>,
     timings: RunResult['timings'],
   ): Promise<void> {
@@ -769,20 +777,31 @@ export class Cpu {
     // Owners bound the sampling metadata. The compiler decodes each selected
     // target again against its current instruction-fetch authority.
     const limits = { ...this.#limits, maxArtifactBytes };
-    const selected = region.choose(limits, (owner) => engine.valid(owner));
+    const tracked = 'points' in region;
+    const anchor = tracked ? region.points.find((point) => region.entrances.has(point)) : undefined;
+    const selected = tracked
+      ? anchor === undefined
+        ? undefined
+        : { entry: anchor, seeds: region.points }
+      : region.choose(limits, (owner) => engine.valid(owner));
     if (!selected) return;
     resources.compilations++;
     const started = performance.now();
-    const output = engine.compile(selected.entry, limits, selected.seeds);
+    const output = engine.compile(selected.entry, limits, selected.seeds, tracked);
     timings.translationMs += performance.now() - started;
     if (!output) return;
     resources.generatedBytes += output.bytes.length;
     let installed = false;
     try {
+      const preferred = tracked
+        ? new Set(output.metadata.entries.filter((point) => region.entrances.has(point)))
+        : region instanceof LinearRegionTrace
+          ? new Set([selected.entry])
+          : undefined;
+      if (tracked && preferred!.size < 2) return;
       const began = performance.now();
       const module = await WebAssembly.compile(output.bytes);
       timings.browserCompileMs += performance.now() - began;
-      const preferred = region instanceof LinearRegionTrace ? new Set([selected.entry]) : undefined;
       const ready = this.#cache.installCompiled(
         engine,
         module,
@@ -791,6 +810,7 @@ export class Cpu {
         preferred,
       );
       installed = ready !== undefined && ready !== 'resource-limit';
+      if (tracked && ready && ready !== 'resource-limit') this.#sampledPagedCorridors.add(ready);
     } finally {
       if (!installed) engine.release(output.metadata.owner);
     }
@@ -798,6 +818,8 @@ export class Cpu {
 
   readonly #sampledLinearOwners = new WeakSet<Artifact>();
   #hasLinearCallOwner = false;
+  // Short frames can interrupt capture. An owner pays for one attempt per lifetime.
+  readonly #sampledPagedCorridors = new WeakSet<Artifact>();
 
   async run(options: RunOptions): Promise<RunResult> {
     const run = this[BEGIN_RUN](options);
@@ -805,6 +827,7 @@ export class Cpu {
     let remaining = budget;
     let remainingRepeatBudget = repeatBudget;
     let remainingDeliveryBudget = deliveryBudget;
+    let cancelPagedTrace: (() => void) | undefined;
     let admissionRestarts = 0;
     const restartAdmission = () => {
       if (admissionRestarts >= this.#limits.maxTranslationsPerRun) return false;
@@ -844,6 +867,26 @@ export class Cpu {
       const pagedRegionsSupported =
         deliveryBudget === undefined && !queuedInterrupts && engine.supportsRegionCompilation;
       let region: RegionTrace | undefined;
+      let corridor =
+        pagedRegionsSupported &&
+        this.#limits.maxInstructions >= 32 &&
+        engine.supportsPagedRegionTrace
+          ? new PagedCorridor()
+          : undefined;
+      let capture:
+        | {
+            page: bigint;
+            version: bigint;
+            retired: bigint;
+            entrances: Set<bigint>;
+            aliases: Map<Artifact, GeneratedRun>;
+          }
+        | undefined;
+      const abortCapture = () => {
+        cancelPagedTrace?.();
+        cancelPagedTrace = undefined;
+        capture = undefined;
+      };
       const linearRegionsSupported =
         deliveryBudget === undefined && !queuedInterrupts && engine.supportsLinearRegionCompilation;
       let sampling = pagedRegionsSupported
@@ -988,10 +1031,46 @@ export class Cpu {
         }
         const before = remaining;
         const repeatBefore = remainingRepeatBudget;
-        const reason = engine.execute(
-          entry.artifact.run,
+        let nativeBudget = before;
+        let withheld = 0n;
+        let native = entry.artifact.run;
+        if (capture) {
+          const artifact = entry.artifact;
+          let alias = capture.aliases.get(artifact);
+          const module =
+            alias === undefined && capture.aliases.size < 8
+              ? this.#cache.traceModule(artifact)
+              : undefined;
+          if (
+            pc >> 12n !== capture.page ||
+            engine.contextVersion() !== capture.version ||
+            (!alias && !module) ||
+            eventKind !== 'ready'
+          ) {
+            abortCapture();
+          } else {
+            if (!alias) {
+              const began = performance.now();
+              alias = engine.instantiatePagedRegionTrace(module!, boundaryObserved);
+              const elapsed = performance.now() - began;
+              timings.instantiationMs += elapsed;
+              executionBegan += elapsed;
+              capture.aliases.set(artifact, alias);
+              this.#sampledPagedCorridors.add(artifact);
+            }
+            capture.entrances.add(pc);
+            native = alias;
+            const sampleBudget = 2048n - capture.retired;
+            if (sampleBudget < nativeBudget) {
+              nativeBudget = sampleBudget;
+              withheld = before - sampleBudget;
+            }
+          }
+        }
+        const nativeReason = engine.execute(
+          native,
           entry.index,
-          remaining,
+          nativeBudget,
           stop,
           remainingRepeatBudget,
         );
@@ -1000,19 +1079,23 @@ export class Cpu {
         if (cached) resources.cacheHits++;
         resources.nativeEntries++;
         const current = engine.current();
-        remaining = current.remaining;
+        remaining = withheld === 0n ? current.remaining : current.remaining + withheld;
         remainingRepeatBudget = current.repeatRemaining;
+        // The alias may yield at the sample budget without ending the public run.
+        const traceYield = nativeReason === 'budget' && withheld > 0n;
+        const reason = traceYield ? 'dispatch' : nativeReason;
         if (
-          remaining > before ||
+          current.remaining > nativeBudget ||
           remainingRepeatBudget > repeatBefore ||
           (reason === 'dispatch' &&
             remaining === before &&
             remainingRepeatBudget === repeatBefore) ||
-          (reason === 'budget' && remaining !== 0n) ||
+          (nativeReason === 'budget' && current.remaining !== 0n) ||
           (reason === 'repeat-budget' && (remainingRepeatBudget !== 0n || remaining === 0n))
         ) {
           throw new Error('generated execution violated its progress contract');
         }
+        if (capture && reason !== 'dispatch') abortCapture();
         if (reason === 'paging-restart') {
           resources.pagingRestarts = (resources.pagingRestarts ?? 0) + 1;
           if (resources.pagingRestarts >= this.#limits.maxTranslationsPerRun)
@@ -1059,6 +1142,57 @@ export class Cpu {
         this.pruneTranslations();
         resources.dispatches++;
         dispatchedPc = current.rip;
+        if (resources.dispatches >= 512) corridor = undefined;
+        if (capture) {
+          capture.retired += before - remaining;
+          if (current.rip >> 12n !== capture.page || engine.contextVersion() !== capture.version) {
+            abortCapture();
+          } else if (capture.retired >= 2048n) {
+            const { retired, points } = engine.finishPagedRegionTrace(this.#limits.maxInstructions);
+            const { aliases, entrances } = capture;
+            capture = undefined;
+            cancelPagedTrace = undefined;
+            if (
+              retired === 2048 &&
+              points.length >= 16 &&
+              current.rip !== stop &&
+              [...aliases.keys()].every((artifact) => engine.valid(artifact.metadata.owner))
+            ) {
+              entrances.add(current.rip);
+              await this.#tryRegion({ boundaryObserved, points, entrances }, resources, timings);
+            }
+          }
+        } else if (
+          corridor &&
+          // Leave newly discovered code on the ordinary first-run path.
+          resources.compilations === 0 &&
+          remaining >= 2048n &&
+          !this.#sampledPagedCorridors.has(entry.artifact) &&
+          this.#cache.traceModule(entry.artifact) &&
+          corridor.sample(pc, current.rip, entry.artifact)
+        ) {
+          corridor = undefined;
+          const cache = this.#cache.resources();
+          if (
+            cache.cachedArtifacts < this.#limits.maxCachedArtifacts &&
+            cache.cachedBytes < this.#limits.maxCachedBytes &&
+            current.rip !== stop &&
+            engine.beginPagedRegionTrace(current.rip)
+          ) {
+            this.#sampledPagedCorridors.add(entry.artifact);
+            cancelPagedTrace = () => {
+              engine.finishPagedRegionTrace(0);
+            };
+            capture = {
+              page: current.rip >> 12n,
+              version: engine.contextVersion(),
+              retired: 0n,
+              entrances: new Set(),
+              aliases: new Map(),
+            };
+          }
+        }
+        if (traceYield) continue execution;
         if (sampling) {
           if (eventKind !== 'ready') {
             sampling = undefined;
@@ -1067,7 +1201,7 @@ export class Cpu {
             region ??= new RegionTrace(pc, metadata);
             if (region.sample(pc, current.rip, entry)) {
               sampling = undefined;
-              await this.#tryRegion(region, resources, timings);
+              if (!capture) await this.#tryRegion(region, resources, timings);
             }
           } else if (resources.dispatches >= 16) {
             if (boundaryObserved || this.#sampledLinearOwners.has(entry.artifact)) {
@@ -1090,6 +1224,7 @@ export class Cpu {
     } catch (cause) {
       return this[FAIL_RUN](cause);
     } finally {
+      cancelPagedTrace?.();
       this[LEAVE_RUN](deliveryBudget);
     }
   }

@@ -1,6 +1,28 @@
 import type { CompileLimits, UnitMetadata } from '../wasm/core.js';
 import type { Artifact, InstalledEntry } from './translations.js';
 
+export class PagedCorridor {
+  #page: bigint | undefined;
+  readonly #owners = new Set<Artifact>();
+  readonly #edges = new Map<string, number>();
+
+  sample(pc: bigint, next: bigint, artifact: Artifact): boolean {
+    const page = next >> 12n;
+    if (page !== this.#page || pc >> 12n !== page) {
+      this.#page = page;
+      this.#owners.clear();
+      this.#edges.clear();
+    }
+    if (pc >> 12n !== page || pc === next) return false;
+    const edge = `${artifact.metadata.owner}/${pc}/${next}`;
+    const visits = this.#edges.get(edge) ?? 0;
+    if (visits === 0 && this.#edges.size === 32) return false;
+    this.#edges.set(edge, visits + 1);
+    this.#owners.add(artifact);
+    return this.#owners.size > 1 && visits >= 3;
+  }
+}
+
 interface Edge {
   child: UnitMetadata;
   visits: number;

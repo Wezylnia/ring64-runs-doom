@@ -24,6 +24,7 @@ export class Translations {
   readonly #observedEntries = new Map<bigint, readonly InstalledEntry[]>();
   readonly #artifacts = new Map<Artifact, Recency>();
   readonly #preferred = new WeakMap<Artifact, ReadonlySet<bigint>>();
+  readonly #traceModules = new Map<Artifact, WebAssembly.Module>();
   #oldest: Recency | undefined;
   #newest: Recency | undefined;
   #bytes = 0;
@@ -96,7 +97,18 @@ export class Translations {
     };
     timings.instantiationMs += performance.now() - began;
     if (!core.publish(metadata.owner)) return undefined;
-    return this.install(artifact, preferred) ? artifact : 'resource-limit';
+    if (!this.install(artifact, preferred)) return 'resource-limit';
+    if (!preferred && core.supportsPagedRegionTrace) {
+      // Aliases reuse the compiled module. Retain only recent candidates.
+      this.#traceModules.set(artifact, module);
+      if (this.#traceModules.size > 8)
+        this.#traceModules.delete(this.#traceModules.keys().next().value!);
+    }
+    return artifact;
+  }
+
+  traceModule(artifact: Artifact): WebAssembly.Module | undefined {
+    return this.#traceModules.get(artifact);
   }
 
   install(artifact: Artifact, preferred?: ReadonlySet<bigint>): boolean {
@@ -154,6 +166,7 @@ export class Translations {
     const entry = this.#artifacts.get(artifact);
     if (!entry) return;
     this.#artifacts.delete(artifact);
+    this.#traceModules.delete(artifact);
     this.#detach(entry);
     this.#bytes -= artifact.metadata.byteLength;
     const entries = artifact.metadata.boundaryObserved ? this.#observedEntries : this.#entries;
