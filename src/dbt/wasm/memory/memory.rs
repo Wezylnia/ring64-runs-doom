@@ -1202,6 +1202,23 @@ impl Emitter {
     }
 
     pub(super) fn store_result(&mut self, width: Width, exit_depth: u32) {
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if self.linear_call_spans
+            && matches!(
+                self.current_operation,
+                crate::x86::instruction::Operation::Push { .. }
+                    | crate::x86::instruction::Operation::Call { .. }
+            )
+            && self.direct_access(
+                DirectOperand::ScalarStore(width),
+                exit_depth,
+                |emitter, depth| {
+                    emitter.store_result_slow(width, depth);
+                },
+            )
+        {
+            return;
+        }
         #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
         if self.parallel_store(width, exit_depth) {
             return;

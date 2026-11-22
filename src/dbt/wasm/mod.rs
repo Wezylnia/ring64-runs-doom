@@ -142,6 +142,8 @@ struct Emitter {
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     write_spans: [Option<memory::SpanCache>; 2],
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    linear_call_spans: bool,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     proved_stack: Option<(stack_slots::StackSlots, u32)>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     indexed_read_window: Option<read_loop::IndexedReadWindow>,

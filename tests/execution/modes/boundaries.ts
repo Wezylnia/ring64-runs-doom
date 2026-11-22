@@ -21,6 +21,112 @@ function segmentFault(result: RunResult, expected: SegmentFault): void {
 export function boundaryScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [
     {
+      name: 'linear indirect call spans keep stack admission and source observation exact',
+      async run() {
+        const head = 0x1000n;
+        const stop = head + 14n;
+        const stack = 0x3040n;
+        const destination = 0x2000n;
+        // TEST EBX,EBX; JZ child; MOV ECX,2; again: CALL EAX; DEC ECX; JNZ again; HLT.
+        // child: PUSH EBX; MOV EBX,[ESP+4]; MOV [EDI],EBX; POP EBX; RET.
+        const code = '85db741cb902000000ffd04975fbf4'.padEnd(0x40, '90') + '538b5c2404891f5bc3';
+        let checkedWrites = 0;
+        let admittedSpans = 0;
+        const create = Core.create;
+        Core.create = async (...args) => {
+          const core = await create(...args);
+          const imports = Reflect.get(core, 'artifactImports') as (
+            observed: boolean,
+          ) => Record<string, WebAssembly.ImportValue>;
+          Reflect.set(core, 'artifactImports', (observed: boolean) => {
+            const env = imports.call(core, observed);
+            const store = env.segmented_store;
+            const span = env.write_span;
+            if (typeof store === 'function') {
+              env.segmented_store = (
+                address: bigint,
+                width: number,
+                value: bigint,
+                segment: number,
+              ) => {
+                if (segment === 1) checkedWrites++;
+                return store(address, width, value, segment);
+              };
+            }
+            if (typeof span === 'function') {
+              env.write_span = (address: bigint, width: number, segment: number) => {
+                const result = span(address, width, segment);
+                if (segment === 1 && result !== 0) admittedSpans++;
+                return result;
+              };
+            }
+            return env;
+          });
+          return core;
+        };
+        try {
+          for (const form of ['private', 'executable', 'readonly', 'segment']) {
+            checkedWrites = admittedSpans = 0;
+            const ctx = context();
+            if (form === 'segment') ctx.segments.ss.limit = 0x303a;
+            await using(
+              compiler,
+              code,
+              ctx,
+              async (cpu) => {
+                const start = input(head, { 0: head + 0x20n, 3: 1n, 4: stack, 7: destination }, 2n);
+                cpu.setState(start);
+                const result = await cpu.run({ stop, budget: 40n });
+                equal(result.state.registers[4], stack, `${form}: the stack pointer is precise`);
+                if (form === 'readonly' || form === 'segment') {
+                  equal(result.reason, form === 'readonly' ? 'data-fault' : 'segment-fault', form);
+                  equal(result.state.rip, head + 9n, `${form}: the refused CALL is unstarted`);
+                  equal(result.retired, 3n, `${form}: only the caller's original prefix retires`);
+                  equal(admittedSpans, 0, `${form}: refused write span`);
+                } else {
+                  equal(result.reason, 'stop', form);
+                  equal(result.retired, 19n, `${form}: both calls and returns retire`);
+                  equal(
+                    result.state.registers[3],
+                    1n,
+                    `${form}: the child pops the saved register`,
+                  );
+                  equal(
+                    (await cpu.readMemory(destination, 4))[0],
+                    11,
+                    `${form}: the return PC is readable`,
+                  );
+                  equal(
+                    checkedWrites,
+                    form === 'private' ? 0 : 4,
+                    `${form}: source-aware stack writes`,
+                  );
+                  equal(
+                    admittedSpans,
+                    form === 'private' ? 1 : 0,
+                    `${form}: a retained private span`,
+                  );
+                }
+              },
+              {
+                data: [
+                  { base: destination, bytes: '00000000' },
+                  {
+                    base: 0x3000n,
+                    bytes: '00'.repeat(64),
+                    write: form !== 'readonly',
+                    execute: form === 'executable',
+                  },
+                ],
+              },
+            );
+          }
+        } finally {
+          Core.create = create;
+        }
+      },
+    },
+    {
       name: 'flat regions admit returning branches after a different preamble owner',
       async run() {
         const head = 0x1000n;
