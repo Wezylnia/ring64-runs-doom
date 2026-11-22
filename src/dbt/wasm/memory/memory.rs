@@ -776,11 +776,13 @@ impl Emitter {
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     pub(super) fn checked_paged_read_rearm(&self, width: Width) -> Option<u32> {
         let (ready, order) = self.paged_read_rearm?;
-        (!self.guarded_paged_lap
-            && self.segment == Segment::Ds
-            && matches!(width, Width::W8 | Width::W32)
-            && order.position(self.current_index).is_some())
-        .then_some(ready)
+        let segment = match (width, self.segment) {
+            (Width::W8 | Width::W32, Segment::Ds) => true,
+            (Width::W32, Segment::Ss) => self.paged_loop_write_dword.is_some(),
+            _ => false,
+        };
+        (!self.guarded_paged_lap && segment && order.position(self.current_index).is_some())
+            .then_some(ready)
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]

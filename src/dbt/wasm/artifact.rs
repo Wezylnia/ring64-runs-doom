@@ -783,12 +783,13 @@ fn emit_body(
         .filter(|body| {
             let dword_replay = paged_read_dword
                 && (body.forward_edges() || body.paged_sse() && body.paged_read_span.is_some());
+            let read_only_replay =
+                !paged_write_byte && !paged_write_dword && (dword_replay || paged_dense_bytes);
+            let writable_byte_replay = paged_write_byte && paged_read_byte;
             optional.paged_read_rearm
                 && !mmio
-                && !paged_write_byte
-                && !paged_write_dword
                 && body.paged_fetch_bytes.is_some()
-                && (dword_replay || paged_dense_bytes)
+                && (read_only_replay || writable_byte_replay)
         })
         .map(|body| {
             (

@@ -17,6 +17,9 @@ import {
 // MOV EAX,[ESP+4]; CMP EAX,[ESP+8]; JBE spill; INC EAX; MOV [ESP+4],EAX;
 // MOVZX EDX,[EDI]; ADD EDX,EAX; MOV [ESI],DL; INC ESI; INC EDI; DEC ECX; JNZ head.
 const PAGED_STACK_SPILL_LOOP = '8b4424043b442408760140894424040fb61701c2881646474975e5';
+// MOVZX EAX,[RDI]; CMP AL,40h; JBE store; INC AL; MOV [RSI],AL;
+// INC RDI; INC RSI; DEC ECX; JNZ head.
+const PAGED_BYTE_STORE_LOOP = '0fb6073c407602fec0880648ffc748ffc6ffc975eb';
 
 export function pagingBoundaryReviewScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [
@@ -248,15 +251,12 @@ export function pagingBoundaryReviewScenarios(compiler: WebAssembly.Module): Sce
         const head = 0x400000n;
         const input = 0x401000n;
         const output = 0x402000n;
-        // MOVZX EAX,[RDI]; CMP AL,40h; JBE store; INC AL; MOV [RSI],AL;
-        // INC RDI; INC RSI; DEC ECX; JNZ head.
-        const code = '0fb6073c407602fec0880648ffc748ffc6ffc975eb';
         const data = new Uint8Array(0x1000);
         data.set([0x20, 0x44, 0x41, 0x17]);
         await usingPaged(
           compiler,
           {
-            code,
+            code: PAGED_BYTE_STORE_LOOP,
             bank: { ...BANK, cr0: BANK.cr0 | 0x10000n },
             words: [
               [0x4008n, 0xa067n],
@@ -337,6 +337,92 @@ export function pagingBoundaryReviewScenarios(compiler: WebAssembly.Module): Sce
             equal(word(cpu, 0x4018n), 0xc025n, 'the refused store does not set guest dirty state');
           },
         );
+      },
+    },
+    {
+      name: 'paged byte store loop re-enters after a fresh read and preserves a later write fault',
+      async run() {
+        const head = 0x400000n;
+        const src = 0x401fffn;
+        const denied = 0x404000n;
+        const first = new Uint8Array(0x1000);
+        first[0xfff] = 0x20;
+        const second = new Uint8Array(32).fill(0x41);
+        let replayReady = false;
+        let guardedWrites = 0;
+        const guardRefusals: bigint[] = [];
+        const create = Core.create;
+        Core.create = async (...args) => {
+          const core = await create(...args);
+          const imports = Reflect.get(core, 'artifactImports') as (
+            observed: boolean,
+          ) => Record<string, WebAssembly.ImportValue>;
+          Reflect.set(core, 'artifactImports', (observed: boolean) => {
+            const env = imports.call(core, observed);
+            const ready = env.paged_loop_read_ready;
+            const write = env.paged_loop_write_byte;
+            if (typeof ready === 'function' && typeof write === 'function') {
+              env.paged_loop_read_ready = (address: bigint, width: number) => {
+                const result = ready(address, width);
+                if (result === 1) replayReady = true;
+                return result;
+              };
+              env.paged_loop_write_byte = (address: bigint, value: number) => {
+                const result = write(address, value);
+                if (replayReady && result === 1) guardedWrites++;
+                if (replayReady && result === 0) guardRefusals.push(address);
+                return result;
+              };
+            }
+            return env;
+          });
+          return core;
+        };
+        try {
+          await usingPaged(
+            compiler,
+            {
+              code: PAGED_BYTE_STORE_LOOP,
+              bank: { ...BANK, cr0: BANK.cr0 | 0x10000n },
+              words: [
+                [0x4008n, 0xa027n],
+                [0x4010n, 0xb007n],
+                [0x4018n, 0xc067n],
+                [0x4020n, 0xd025n],
+              ],
+              spans: [
+                { physical: 0xa000n, bytes: first },
+                { physical: 0xb000n, bytes: second },
+                { physical: 0xc000n, bytes: new Uint8Array(0x1000) },
+                { physical: 0xd000n, bytes: Uint8Array.of(0xa5) },
+              ],
+            },
+            async (cpu) => {
+              cpu.setState(initial(head, { 1: 20n, 6: denied - 16n, 7: src }, 2n));
+              const fault = await cpu.run({ budget: 200n });
+              check(replayReady, 'the cold source page arms re-entry after its checked read');
+              check(guardedWrites > 0, 'the reentered guard writes to the retained destination');
+              same(guardRefusals, [denied], 'the later write exits the guarded path once');
+              equal(fault.reason, 'page-fault', 'the checked write reports protection');
+              equal(fault.retired, 147n, 'only the completed laps and faulting prefix retire');
+              equal(fault.state.rip, head + 9n, 'the refused store remains unretired');
+              equal(fault.state.registers[0], 0x42n, 'the faulting prefix computes its value');
+              equal(fault.state.registers[1], 4n, 'only completed laps decrement the count');
+              equal(fault.state.flags, 6n, 'replay preserves the preceding increment flags');
+              equal(fault.pageFault?.address, denied, 'the checked write publishes its address');
+              same(
+                [...cpu.readPhysicalMemory(0xcff0n, 16)],
+                [0x20, ...Array<number>(15).fill(0x42)],
+                'all successful bytes commit before the fault',
+              );
+              equal(cpu.readPhysicalMemory(0xd000n, 1)[0], 0xa5, 'the denied byte is untouched');
+              equal(word(cpu, 0x4010n), 0xb027n, 'the source read sets only the accessed bit');
+              equal(word(cpu, 0x4020n), 0xd025n, 'the denied write leaves the PTE intact');
+            },
+          );
+        } finally {
+          Core.create = create;
+        }
       },
     },
     {
