@@ -546,6 +546,66 @@ pub extern "C" fn core_paged_loop_read_byte_for_store(address: u64) -> u64 {
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 #[unsafe(no_mangle)]
+pub extern "C" fn core_paged_loop_read_byte_write_pointer(address: u64) -> u64 {
+    if !crate::memory::canonical48(address) {
+        return u64::MAX;
+    }
+    BRIDGE.with_borrow_mut(|bridge| {
+        let core = bridge.core.as_mut().unwrap();
+        let mut read = || {
+            if !core
+                .active_owner
+                .is_some_and(|owner| core.image.source_is_active(owner))
+            {
+                return None;
+            }
+            let paging = core.paging.as_ref()?;
+            let state = unsafe { &*core.state.get() };
+            let request = paging::walk::Request {
+                linear: address,
+                access: Access::Read,
+                class: paging::walk::AccessClass::operand(
+                    core.context.cpl(),
+                    state.flags & crate::x86::flags::AC != 0,
+                ),
+            };
+            core.translation_cache.data_byte_then_fetch::<false, _>(
+                paging,
+                request,
+                &state.protection_keys,
+                None,
+                |index, translation| {
+                    let value = core.image.physical_read_mapped_byte(translation.physical)?;
+                    let write = paging::walk::Request {
+                        access: Access::Write,
+                        ..request
+                    };
+                    // The same local slot is already second-newest (or the fetch
+                    // itself) after this read. Its paired store adds no touch.
+                    let mut host = 0;
+                    if !translation.global
+                        && !translation.dirty
+                        && translation
+                            .rights
+                            .authorize(paging, write, &state.protection_keys)
+                            .is_ok()
+                        && let Some(pointer) = core
+                            .image
+                            .physical_direct_write_byte_pointer(translation.physical)
+                    {
+                        host = pointer as u32;
+                    }
+                    let slot_and_value = ((index as u32 + 1) << 8) | u32::from(value);
+                    Some((u64::from(host) << 32) | u64::from(slot_and_value))
+                },
+            )
+        };
+        read().unwrap_or(u64::MAX)
+    })
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[unsafe(no_mangle)]
 pub extern "C" fn core_paged_loop_read_ready(address: u64, width: u32) -> i32 {
     let supported = match width {
         1 | 4 => address & u64::from(width - 1) == 0 && crate::memory::canonical48(address),

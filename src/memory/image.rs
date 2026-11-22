@@ -427,6 +427,24 @@ impl Image {
     }
 
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    pub(crate) fn physical_direct_write_byte_pointer(&mut self, address: u64) -> Option<*mut u8> {
+        if !self.physical {
+            return None;
+        }
+        let (mapping, relative) = self.writable_direct_mapping(address, 1)?;
+        let backing = mapping.backing;
+        let index = mapping.offset as usize + relative as usize;
+        // The synchronous guarded clone consumes the pointer before any host
+        // call or another guest memory operation.
+        Some(
+            self.backings[backing]
+                .bytes
+                .as_mut_ptr()
+                .wrapping_add(index),
+        )
+    }
+
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
     fn writable_direct_mapping(&self, address: u64, width: u32) -> Option<(&Mapping, u64)> {
         let mapping = &self.mappings[self.locate_index(address)?];
         let relative = address - mapping.base;

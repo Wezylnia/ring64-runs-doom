@@ -95,12 +95,24 @@ fn direct_physical_byte_store_requires_plain_writable_ram() {
     let alias = mapping(HOLE + 0x1000, 5, 1, all());
     let mut image = physical((0..8).collect(), vec![data.clone(), alias]);
     assert_eq!(image.physical_direct_write(HOLE + 1, [0xaa]), None);
+    assert!(image.physical_direct_write_byte_pointer(HOLE + 1).is_none());
     assert_eq!(image.physical_read(HOLE + 1, 1), Ok(2));
 
     image.set_mappings(vec![data.clone()]).unwrap();
     assert_eq!(image.physical_direct_write(HOLE + 1, [0xaa]), Some(()));
     assert_eq!(image.physical_read(HOLE + 1, 1), Ok(0xaa));
     assert_eq!(image.physical_direct_write(HOLE + 4, [0xbb]), None);
+    assert!(image.physical_direct_write_byte_pointer(HOLE + 4).is_none());
+
+    let owner = image.register_dependencies([], [(HOLE, 4)]).unwrap();
+    assert!(image.activate(owner));
+    assert!(image.physical_direct_write_byte_pointer(HOLE + 1).is_none());
+    assert!(image.owner_valid(owner));
+    image.release(owner);
+    let pointer = image.physical_direct_write_byte_pointer(HOLE + 1).unwrap();
+    // This is the direct store's entire lease, with no intervening Image use.
+    unsafe { pointer.write(0x5c) };
+    assert_eq!(image.physical_read(HOLE + 1, 1), Ok(0x5c));
 
     let denied = MappingInput {
         permissions: Permissions { write: false, ..rw },
@@ -108,7 +120,8 @@ fn direct_physical_byte_store_requires_plain_writable_ram() {
     };
     image.set_mappings(vec![denied]).unwrap();
     assert_eq!(image.physical_direct_write(HOLE + 1, [0xbb]), None);
-    assert_eq!(image.physical_read(HOLE + 1, 1), Ok(0xaa));
+    assert!(image.physical_direct_write_byte_pointer(HOLE + 1).is_none());
+    assert_eq!(image.physical_read(HOLE + 1, 1), Ok(0x5c));
 }
 
 #[cfg(not(feature = "parallel"))]

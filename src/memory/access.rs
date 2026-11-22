@@ -45,6 +45,7 @@ impl Image {
     }
 
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    #[inline(always)]
     pub(crate) fn physical_read_mapped_byte(&self, address: u64) -> Option<u8> {
         if !self.physical {
             return None;

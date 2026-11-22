@@ -312,6 +312,9 @@ fn emit_placement(
         paged_read_rearm: true,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_byte_write_pair: true,
+        // Smaller caller budgets immediately use the original paired lowering.
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        paged_byte_write_pointer: max_artifact_bytes >= 256 * 1024,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_split_vectors: true,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -410,6 +413,8 @@ struct OptionalLowering {
     paged_read_rearm: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_byte_write_pair: bool,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    paged_byte_write_pointer: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_split_vectors: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -1174,10 +1179,12 @@ fn emit_body(
         paged_byte_write_pair
             .zip(paged_byte_write_pair_type)
             .map(|((load, store), write_type)| {
-                let read = import_function(
-                    "paged_loop_read_byte_for_store",
-                    paged_loop_read_type.unwrap(),
-                );
+                let read = if optional.paged_byte_write_pointer {
+                    "paged_loop_read_byte_write_pointer"
+                } else {
+                    "paged_loop_read_byte_for_store"
+                };
+                let read = import_function(read, paged_loop_read_type.unwrap());
                 let write = import_function("paged_loop_write_byte_after_read", write_type);
                 (load, store, read, write)
             });
@@ -1653,14 +1660,17 @@ fn emit_body(
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let paged_byte_write_pair = paged_byte_write_pair.map(|(load, store, read, write)| {
         let slot = next_local;
-        locals.push((1, ValType::I32));
-        next_local += 1;
+        let host = optional.paged_byte_write_pointer.then_some(slot + 1);
+        let count = 1 + u32::from(host.is_some());
+        locals.push((count, ValType::I32));
+        next_local += count;
         memory::PagedByteWritePair {
             load,
             store,
             read,
             write,
             slot,
+            host,
         }
     });
     let boundary_locals = observed.then(|| {
@@ -2157,7 +2167,8 @@ fn emit_body(
             loop_body,
             _guard_reads,
             OptionalLowering {
-                paged_byte_write_pair: false,
+                paged_byte_write_pair: optional.paged_byte_write_pointer,
+                paged_byte_write_pointer: false,
                 ..optional
             },
             max_artifact_bytes,
