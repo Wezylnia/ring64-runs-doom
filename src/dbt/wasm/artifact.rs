@@ -1901,6 +1901,17 @@ fn emit_body(
         .then(|| flat_integer_groups(unit, loop_body))
         .filter(|groups| groups.iter().any(Option::is_some));
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let flat_dense_dispatch = if unit.sampled && linear_call_spans && loop_body.is_none() {
+        let first = unit.instructions.first().unwrap().pc;
+        let span = unit.instructions.last().unwrap().pc - first + 1;
+        (span <= (unit.instructions.len() as u64 * 6).min(1024)).then_some((first, span))
+    } else {
+        None
+    };
+    #[cfg(any(feature = "parallel", not(target_arch = "wasm32")))]
+    let flat_dense_dispatch: Option<(u64, u64)> = None;
+    let target_lookup = dynamic_targets && flat_dense_dispatch.is_none();
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let mut span_import = |name| {
         let signature = add_function_type(
             &mut types,
@@ -1992,7 +2003,7 @@ fn emit_body(
         .and_then(|body| body.linear_recurrence(unit));
     let mut functions = FunctionSection::new();
     functions.function(3);
-    if dynamic_targets {
+    if target_lookup {
         functions.function(4);
     }
     let mut exports = ExportSection::new();
@@ -2457,7 +2468,7 @@ fn emit_body(
                     proof,
                     first_bias,
                     vector_registers,
-                    run_index + 1 + u32::from(dynamic_targets),
+                    run_index + 1 + u32::from(target_lookup),
                     &mut types,
                 )?;
                 if sticky {
@@ -2708,7 +2719,8 @@ fn emit_body(
         omit_result_status: false,
         flags_on_read_fault: None,
         instruction_retirement: control::InstructionRetirement::One,
-        entry_lookup: dynamic_targets.then_some(run_index + 1),
+        entry_lookup: target_lookup.then_some(run_index + 1),
+        flat_dense_dispatch: flat_dense_dispatch.is_some(),
         multiply_high,
         divide,
         divide_failed,
@@ -2812,18 +2824,40 @@ fn emit_body(
     let count = unit.instructions.len() as u32;
     // The owner selects the entry ordinal for the loaded RIP. Every in-unit
     // edge commits its destination RIP before routing to the next instruction.
-    emitter
-        .op(Op::LocalGet(ENTRY_INDEX))
-        .op(Op::LocalSet(ENTRY));
+    if flat_dense_dispatch.is_none() {
+        emitter
+            .op(Op::LocalGet(ENTRY_INDEX))
+            .op(Op::LocalSet(ENTRY));
+    }
     emitter
         .op(Op::Loop(BlockType::Empty))
         .op(Op::Block(BlockType::Empty));
     for _ in &unit.instructions {
         emitter.op(Op::Block(BlockType::Empty));
     }
-    emitter
-        .op(Op::LocalGet(ENTRY))
-        .op(Op::BrTable((0..count).collect::<Vec<_>>().into(), count));
+    if let Some((base, span)) = flat_dense_dispatch {
+        use super::{ADDRESS, RIP};
+        // Use the committed guest IP directly, including on dynamic transfers.
+        let mut labels = vec![count; span as usize];
+        for (index, instruction) in unit.instructions.iter().enumerate() {
+            labels[(instruction.pc - base) as usize] = index as u32;
+        }
+        emitter
+            .op(Op::LocalGet(RIP))
+            .op(Op::I64Const(base as i64))
+            .op(Op::I64Sub)
+            .op(Op::LocalTee(ADDRESS))
+            .op(Op::I64Const(span as i64))
+            .op(Op::I64GeU)
+            .op(Op::BrIf(count))
+            .op(Op::LocalGet(ADDRESS))
+            .op(Op::I32WrapI64)
+            .op(Op::BrTable(labels.into(), count));
+    } else {
+        emitter
+            .op(Op::LocalGet(ENTRY))
+            .op(Op::BrTable((0..count).collect::<Vec<_>>().into(), count));
+    }
     for (index, instruction) in unit.instructions.iter().enumerate() {
         emitter.op(Op::End);
         emitter.current_index = index as u32;
@@ -3085,7 +3119,7 @@ fn emit_body(
     emitter.op(Op::LocalGet(REASON)).op(Op::End);
     let mut code = CodeSection::new();
     code.function(&emitter.body);
-    if dynamic_targets {
+    if target_lookup {
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         let dense = linear_call_spans;
         #[cfg(not(all(not(feature = "parallel"), target_arch = "wasm32")))]

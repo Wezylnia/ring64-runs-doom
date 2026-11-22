@@ -8,9 +8,11 @@ import { compiler } from './fixture.js';
 
 test('flat sampled integer groups preserve precise budgets, stops, and interior entries', async () => {
   const head = 0x31000n;
-  // ADD EAX,1; XOR EAX,2; ADD EAX,4; CALL EBX; DEC EDX; JNZ head; HLT; RET.
-  const code = hex('83c00183f00283c004ffd34a75f2f4c3');
-  const seeds = [0n, 3n, 6n, 9n, 11n, 12n, 14n, 15n].map((offset) => head + offset);
+  const stack = 0x32000n;
+  // ADD EAX,1; XOR EAX,2; ADD EAX,4; CALL EBX; DEC EDX; JNZ head; HLT; RET;
+  // MOV AL,0xF4; HLT. The MOV immediate also decodes as HLT at the interior entry.
+  const code = hex('83c00183f00283c004ffd34a75f2f4c3b0f4f4');
+  const seeds = [0n, 3n, 6n, 9n, 11n, 12n, 14n, 15n, 16n, 18n].map((offset) => head + offset);
   const mapping = {
     base: head,
     backing: 'code',
@@ -28,8 +30,23 @@ test('flat sampled integer groups preserve precise budgets, stops, and interior 
     entry: head,
     limits: LIMITS,
     context: protectedSnapshot(),
-    memory: { backings: [{ id: 'code', bytes: code }], mappings: [mapping] },
-    memoryLimits: { maxBackings: 1, maxMappings: 1, maxBackingBytes: code.length },
+    memory: {
+      backings: [
+        { id: 'code', bytes: code },
+        { id: 'stack', bytes: new Uint8Array(16) },
+      ],
+      mappings: [
+        mapping,
+        {
+          base: stack,
+          backing: 'stack',
+          offset: 0,
+          length: 16,
+          permissions: { read: true, write: true, execute: false },
+        },
+      ],
+    },
+    memoryLimits: { maxBackings: 2, maxMappings: 2, maxBackingBytes: code.length + 16 },
   };
   try {
     const cpu = await createCpu(options);
@@ -51,6 +68,21 @@ test('flat sampled integer groups preserve precise budgets, stops, and interior 
         assert.equal(result.state.flags, flags);
       }
       groupedBytes = cpu.inspectTranslations()[0]!.byteLength;
+      assert.ok(!cpu.inspectTranslations()[0]!.entries.includes(head + 17n));
+      for (const [target, stop, reason, retired, rip, sp] of [
+        [15n, head + 11n, 'stop', 2n, 11n, stack + 16n],
+        [17n, head + 17n, 'stop', 1n, 17n, stack + 12n],
+        [17n, undefined, 'halted', 2n, 18n, stack + 12n],
+        [19n, undefined, 'fetch-fault', 1n, 19n, stack + 12n],
+      ] as const) {
+        cpu.setState(initial(head + 9n, { 0: 2n, 3: head + target, 4: stack + 16n }));
+        const result = await cpu.run({ budget: 8n, stop });
+        assert.equal(result.reason, reason);
+        assert.equal(result.retired, retired);
+        assert.equal(result.state.rip, head + rip);
+        assert.equal(result.state.registers[0], 2n);
+        assert.equal(result.state.registers[4], sp);
+      }
     } finally {
       cpu.dispose();
     }

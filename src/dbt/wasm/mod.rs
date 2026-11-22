@@ -277,6 +277,7 @@ struct Emitter {
     flags_on_read_fault: Option<loop_cfg::ReadFaultFlags>,
     instruction_retirement: control::InstructionRetirement,
     entry_lookup: Option<u32>,
+    flat_dense_dispatch: bool,
     multiply_high: Option<u32>,
     divide: Option<u32>,
     divide_failed: Option<u32>,
