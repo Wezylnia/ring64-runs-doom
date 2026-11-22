@@ -163,6 +163,40 @@ fn physical_mapping_replacement_rejects_domain_overflow_atomically() {
     );
 }
 
+#[cfg(not(feature = "parallel"))]
+#[test]
+fn mapped_byte_probe_covers_only_readable_physical_ram() {
+    let unreadable = Permissions {
+        read: false,
+        ..all()
+    };
+    let mut image = physical(
+        (0..8).collect(),
+        vec![
+            mapping(HOLE, 0, 4, all()),
+            mapping(HOLE + 4, 4, 2, unreadable),
+            mapping(END - 1, 7, 1, all()),
+        ],
+    );
+    image
+        .install_mmio(vec![crate::memory::MmioRange {
+            base: HOLE + 6,
+            length: 1,
+        }])
+        .unwrap();
+    for address in [HOLE - 1, HOLE, HOLE + 3, HOLE + 4, HOLE + 6, END - 1, END] {
+        assert_eq!(
+            image.physical_read_mapped_byte(address),
+            image
+                .physical_read(address, 1)
+                .ok()
+                .map(|value| value as u8)
+        );
+    }
+    let linear = Image::new(0x1000, vec![0x90], 0x2000, vec![1]).unwrap();
+    assert_eq!(linear.physical_read_mapped_byte(0x2000), None);
+}
+
 #[test]
 fn physical_alias_writes_preserve_backing_offsets_and_source_invalidation() {
     let mut image = physical(

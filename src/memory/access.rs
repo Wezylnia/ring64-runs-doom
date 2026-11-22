@@ -44,6 +44,20 @@ impl Image {
             .then(|| self.scalar_after_preflight(address, 4, first) as u32)
     }
 
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    pub(crate) fn physical_read_mapped_byte(&self, address: u64) -> Option<u8> {
+        if !self.physical {
+            return None;
+        }
+        let index = self.locate_index(address)?;
+        // The validated mapping bounds both the physical address and the byte
+        // in RAM. The checked caller handles missing and inaccessible mappings.
+        self.mappings[index]
+            .permissions
+            .read
+            .then(|| self.byte_after_preflight(address, index))
+    }
+
     pub fn physical_read_for_write(&self, address: u64, width: u32) -> Result<u64, Fault> {
         assert!(
             matches!(width, 1 | 2 | 4 | 8),

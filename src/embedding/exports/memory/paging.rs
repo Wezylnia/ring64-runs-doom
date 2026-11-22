@@ -678,7 +678,9 @@ fn paged_loop_read<const WIDTH: u32, const CAPTURE_SLOT: bool>(address: u64) -> 
                     &state.protection_keys,
                     None,
                     |index, translation| {
-                        read(translation.physical).map(|value| ((index as u32 + 1) << 8) | value)
+                        core.image
+                            .physical_read_mapped_byte(translation.physical)
+                            .map(|value| ((index as u32 + 1) << 8) | u32::from(value))
                     },
                 );
             }

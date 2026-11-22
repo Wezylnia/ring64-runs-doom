@@ -48,7 +48,7 @@ pub struct Image {
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
     pub(super) mmio: Vec<super::MmioRange>,
     limits: MemoryLimits,
-    physical: bool,
+    pub(super) physical: bool,
     pub(super) validity: Validity,
     pub(super) last_mapping: Cell<usize>,
     pub(super) previous_mapping: Cell<usize>,
