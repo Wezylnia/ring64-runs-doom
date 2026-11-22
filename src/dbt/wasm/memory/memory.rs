@@ -868,6 +868,10 @@ impl Emitter {
             }
             Some(i64::from(self.context.segment(self.segment).limit) + 1 - i64::from(bytes))
         };
+        let flat32 = last_offset.is_some()
+            && self.context.mode() == crate::x86::context::Mode::Protected
+            && self.context.code32()
+            && self.context.segment(self.segment).limit == u32::MAX;
         if matches!(
             operand,
             DirectOperand::VectorDword(_) | DirectOperand::VectorBlock(_)
@@ -884,24 +888,39 @@ impl Emitter {
         }
         self.op(Op::Block(BlockType::Empty));
         self.linear_address();
-        self.op(Op::LocalGet(span.base))
-            .op(Op::I64Sub)
-            .op(Op::LocalTee(VALUE))
-            .op(Op::LocalGet(span.length))
-            .op(Op::I64LtU);
-        if bytes > 1 {
-            self.op(Op::LocalGet(VALUE))
-                .op(Op::I64Const(i64::from(bytes - 1)))
-                .op(Op::I64Add)
+        if flat32 {
+            // A retained span cannot cross 4 GiB. An offset below its base
+            // wraps to an unsigned delta at or beyond the end of that span.
+            self.op(Op::I32WrapI64)
+                .op(Op::LocalGet(span.base))
+                .op(Op::I32WrapI64)
+                .op(Op::I32Sub)
+                .op(Op::I64ExtendI32U)
+                .op(Op::LocalTee(VALUE));
+            if bytes > 1 {
+                self.op(Op::I64Const(i64::from(bytes - 1))).op(Op::I64Add);
+            }
+            self.op(Op::LocalGet(span.length)).op(Op::I64LtU);
+        } else {
+            self.op(Op::LocalGet(span.base))
+                .op(Op::I64Sub)
+                .op(Op::LocalTee(VALUE))
                 .op(Op::LocalGet(span.length))
-                .op(Op::I64LtU)
-                .op(Op::I32And);
-        }
-        if let Some(limit) = last_offset {
-            self.op(Op::LocalGet(ADDRESS))
-                .op(Op::I64Const(limit))
-                .op(Op::I64LeU)
-                .op(Op::I32And);
+                .op(Op::I64LtU);
+            if bytes > 1 {
+                self.op(Op::LocalGet(VALUE))
+                    .op(Op::I64Const(i64::from(bytes - 1)))
+                    .op(Op::I64Add)
+                    .op(Op::LocalGet(span.length))
+                    .op(Op::I64LtU)
+                    .op(Op::I32And);
+            }
+            if let Some(limit) = last_offset {
+                self.op(Op::LocalGet(ADDRESS))
+                    .op(Op::I64Const(limit))
+                    .op(Op::I64LeU)
+                    .op(Op::I32And);
+            }
         }
         self.op(Op::I32Eqz).unlikely(Op::If(BlockType::Empty));
         let segment = last_offset.map_or(-1, |_| self.segment as i32);

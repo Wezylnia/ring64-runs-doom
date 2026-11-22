@@ -513,6 +513,102 @@ export function boundaryScenarios(compiler: WebAssembly.Module): Scenario[] {
       },
     },
     {
+      name: 'flat direct spans check both ends after caching the first byte',
+      async run() {
+        for (const scenario of [
+          'last-dword',
+          'crossing-read',
+          'below-low-span',
+          'wrapped-below-span',
+          'crossing-write',
+        ] as const) {
+          const low = scenario === 'below-low-span';
+          const below = low || scenario === 'wrapped-below-span';
+          const store = scenario === 'crossing-write';
+          const valid = scenario === 'last-dword';
+          const base = low ? 0x3000n : 0xfffffffcn;
+          const offset = valid || below ? base : 0xffffffffn;
+          const stop = 0x1004n;
+          const before = input(0x1000n, { 3: offset, 6: low ? base - 1n : 0n }, 2n);
+          const warmed = store
+            ? before.registers[0]
+            : 0x1122334455667700n | (low ? 0x92n : below ? 0x91n : 0x94n);
+          const code = store
+            ? '88038903ebfa'
+            : low
+              ? '8a038a43018a06ebf7'
+              : below
+                ? '8a038a06ebfa'
+                : '8a038b03ebfa';
+          // The low span's second load must hit in the already retained span.
+          const failPc = low ? 0x1005n : 0x1002n;
+          await using(
+            compiler,
+            code,
+            context(),
+            async (cpu) => {
+              cpu.setState(before);
+              const result = await cpu.run({ stop, budget: 20n });
+              if (valid) {
+                exit(result, 'stop', 20n, 2n, changed(before, stop, { 0: 0x1122334494939291n }));
+                return;
+              }
+              exit(
+                result,
+                below ? 'data-fault' : 'segment-fault',
+                20n,
+                low ? 2n : 1n,
+                changed(before, failPc, { 0: warmed }),
+              );
+              if (below) {
+                fault(result, {
+                  instructionPc: failPc,
+                  address: low ? base - 1n : 0n,
+                  width: 1,
+                  access: 'read',
+                  cause: 'unmapped',
+                  failingAddress: low ? base - 1n : 0n,
+                  segment: 'ds',
+                });
+              } else {
+                segmentFault(result, {
+                  instructionPc: failPc,
+                  segment: 'ds',
+                  offset,
+                  width: 4,
+                  access: store ? 'write' : 'read',
+                  cause: 'limit',
+                  failingOffset: 0x1_0000_0000n,
+                });
+              }
+              memory(cpu, base, store ? '9192938895969798' : '9192939495969798');
+            },
+            { data: [{ base, bytes: '9192939495969798' }] },
+          );
+        }
+        const nonflat = context();
+        nonflat.segments.ds.base = 0x2000n;
+        const before = input(0x1000n, { 3: 0x1000n }, 2n);
+        const stop = 0x1004n;
+        await using(
+          compiler,
+          '8a038b03ebfa',
+          nonflat,
+          async (cpu) => {
+            cpu.setState(before);
+            exit(
+              await cpu.run({ stop, budget: 20n }),
+              'stop',
+              20n,
+              2n,
+              changed(before, stop, { 0: 0x1122334494939291n }),
+            );
+          },
+          { data: [{ base: 0x3000n, bytes: '91929394' }] },
+        );
+      },
+    },
+    {
       name: 'segment usability and type precede bounds and mapping checks',
       async run() {
         for (const row of [

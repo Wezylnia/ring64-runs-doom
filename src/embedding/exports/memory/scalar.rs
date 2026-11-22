@@ -44,9 +44,14 @@ fn core_direct_span(address: u64, width: u32, segment: i32, access: Access) -> u
         } else {
             core.image.direct_read_span(address, width)
         };
-        let Some(span) = span else {
+        let Some(mut span) = span else {
             return 0;
         };
+        if segment >= 0 && !core.context.is_long64() {
+            const END32: u64 = 1u64 << 32;
+            let available = END32.saturating_sub(span.base);
+            span.length = u64::from(span.length).min(available) as u32;
+        }
         core.direct_span = span;
         &raw const core.direct_span as u32
     })
