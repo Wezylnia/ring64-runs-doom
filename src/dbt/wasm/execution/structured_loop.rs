@@ -1094,8 +1094,30 @@ impl Emitter {
             .op(Op::I32Const(0))
             .op(Op::LocalSet(REASON))
             .op(Op::End)
-            .op(Op::End)
             .op(Op::End);
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if self.paged_read_rearm.is_some() {
+            use super::memory::PAGED_READ_REPLAY;
+            // Only checked entries count down. Warm admission executes
+            // the original guard sequence and pays no cooldown test.
+            self.op(Op::Else)
+                .op(Op::LocalGet(attempts))
+                .op(Op::I32Const(PAGED_READ_REPLAY))
+                .op(Op::I32LtS)
+                .op(Op::If(BlockType::Empty))
+                .op(Op::LocalGet(attempts))
+                .op(Op::I32Const(1))
+                .op(Op::I32Add)
+                .op(Op::LocalTee(attempts))
+                .op(Op::I32Const(PAGED_READ_REPLAY))
+                .op(Op::I32Eq)
+                .op(Op::If(BlockType::Empty))
+                .op(Op::I32Const(0))
+                .op(Op::LocalSet(attempts))
+                .op(Op::End)
+                .op(Op::End);
+        }
+        self.op(Op::End);
     }
 
     pub(super) fn emit_prechecked_body(

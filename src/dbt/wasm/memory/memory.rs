@@ -5,6 +5,12 @@ use crate::x86::instruction::{Address, AddressBase, DataOperand, RegisterView, W
 use wasm_encoder::{BlockType, Instruction as Op, MemArg};
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+pub(super) const PAGED_READ_REPLAY: i32 = -1;
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+// The replayed lap counts first; the next seven headers run checked.
+const PAGED_READ_COOLDOWN: i32 = PAGED_READ_REPLAY - 7;
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 #[derive(Clone, Copy)]
 // Mapping edits and source publication happen between invocations, so spans live in Wasm locals.
 pub(super) struct SpanCache {
@@ -283,7 +289,7 @@ impl Emitter {
             .op(Op::LocalTee(VALUE))
             .op(Op::I64Const(-1))
             .op(Op::I64Eq);
-        self.retry_guarded_paged_operand(exit_depth);
+        self.retry_guarded_paged_operand(exit_depth, true);
         true
     }
 
@@ -325,7 +331,7 @@ impl Emitter {
             .op(Op::LocalTee(VALUE))
             .op(Op::I64Const(-1))
             .op(Op::I64Eq);
-        self.retry_guarded_paged_operand(exit_depth + 2);
+        self.retry_guarded_paged_operand(exit_depth + 2, true);
         self.op(Op::LocalGet(VALUE))
             .op(Op::Else)
             .op(Op::LocalGet(STORE_STATUS))
@@ -367,14 +373,22 @@ impl Emitter {
             }));
     }
 
-    fn retry_guarded_paged_operand(&mut self, exit_depth: u32) {
+    fn retry_guarded_paged_operand(&mut self, exit_depth: u32, _read: bool) {
         let entry = self.current_index as i32;
         let (_, attempts) = self.paged_loop_guard.expect("paged loop guard");
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        let status = if _read && self.paged_read_rearm.is_some() {
+            PAGED_READ_REPLAY
+        } else {
+            2
+        };
+        #[cfg(any(feature = "parallel", not(target_arch = "wasm32")))]
+        let status = 2;
         // The probe left this instruction unstarted. Settle the preceding
         // instructions before entering its checked label.
         self.op(Op::If(BlockType::Empty));
         self.restore_preceding_read_state();
-        self.op(Op::I32Const(2))
+        self.op(Op::I32Const(status))
             .op(Op::LocalSet(attempts))
             .op(Op::I32Const(entry))
             .op(Op::LocalSet(super::ENTRY))
@@ -732,6 +746,28 @@ impl Emitter {
             .op(Op::If(BlockType::Empty));
         self.memory_failure(exit_depth + 1);
         self.op(Op::End);
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if !for_write
+            && !self.guarded_paged_lap
+            && self.segment == Segment::Ds
+            && matches!(width, Width::W8 | Width::W32)
+            && let Some((ready, order)) = self.paged_read_rearm
+            && order.position(self.current_index).is_some()
+        {
+            let (_, attempts) = self.paged_loop_guard.expect("paged loop guard");
+            self.op(Op::LocalGet(attempts))
+                .op(Op::I32Const(PAGED_READ_REPLAY))
+                .op(Op::I32Eq)
+                .op(Op::If(BlockType::Empty))
+                .op(Op::I32Const(PAGED_READ_COOLDOWN))
+                .op(Op::I32Const(2));
+            self.linear_address();
+            self.op(Op::I32Const(i32::from(width.bytes())))
+                .op(Op::Call(ready))
+                .op(Op::Select)
+                .op(Op::LocalSet(attempts))
+                .op(Op::End);
+        }
     }
 
     pub(super) fn store_result(&mut self, width: Width, exit_depth: u32) {
@@ -783,7 +819,7 @@ impl Emitter {
             self.data_operand(src, width);
             // The helper admits only writes that leave the active source valid.
             self.op(Op::I32WrapI64).op(Op::Call(write)).op(Op::I32Eqz);
-            self.retry_guarded_paged_operand(exit_depth);
+            self.retry_guarded_paged_operand(exit_depth, false);
             return;
         }
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]

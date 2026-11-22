@@ -21,6 +21,63 @@ const PAGED_STACK_SPILL_LOOP = '8b4424043b442408760140894424040fb61701c288164647
 export function pagingBoundaryReviewScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [
     {
+      name: 'paged scalar replay qualifies only a successful ordinary checked read',
+      async run() {
+        const head = 0x400000n;
+        const data = head + 0x1000n;
+        const oldCr2 = 0x1234n;
+        const code = '83c3018b1685d2740190ffc975f2';
+        for (const kind of ['aligned', 'unaligned', 'split-ram', 'fault', 'partial'] as const) {
+          const address = data + (kind === 'unaligned' ? 1n : 0n);
+          await usingPaged(
+            compiler,
+            {
+              code,
+              bank: { ...BANK, cr2: oldCr2 },
+              ...(kind === 'fault' ? {} : { words: [[0x4008n, 0xa007n]] }),
+              spans:
+                kind === 'split-ram'
+                  ? [
+                      { physical: 0xa000n, bytes: Uint8Array.of(0x78, 0x56) },
+                      { physical: 0xa002n, bytes: Uint8Array.of(0x34, 0x12) },
+                    ]
+                  : [{ physical: 0xa000n, bytes: little([0x12345678n, 0n], 4) }],
+            },
+            async (cpu) => {
+              cpu.setState(initial(head, { 1: 20n, 2: 0x4242n, 3: 0x7fffffffn, 6: address }, 2n));
+              const result = await cpu.run({
+                budget: kind === 'partial' ? 2n : 160n,
+                stop: head + 14n,
+              });
+              if (kind === 'fault') {
+                equal(result.reason, 'page-fault', 'original checked access reports PF');
+                equal(result.retired, 1n, 'the preceding addition alone retires');
+                equal(result.state.rip, head + 3n, 'the failed read remains the next instruction');
+                equal(result.state.flags & 0x8d7n, 0x896n, 'the preceding addition flags survive');
+                equal(result.state.registers[2], 0x4242n, 'the destination is unchanged');
+                equal(cpu.readPagingState().cr2, address, 'CR2 comes from the checked exception');
+                return;
+              }
+              equal(result.reason, kind === 'partial' ? 'budget' : 'stop', 'ordinary run boundary');
+              equal(
+                result.retired,
+                kind === 'partial' ? 2n : 140n,
+                'each instruction retires once',
+              );
+              equal(result.state.rip, head + (kind === 'partial' ? 5n : 14n), 'exact resume PC');
+              equal(
+                result.state.registers[2],
+                kind === 'unaligned' ? 0x123456n : 0x12345678n,
+                'the checked or retained value commits once',
+              );
+              equal(word(cpu, 0x4008n), 0xa027n, 'only the ordinary read marks the leaf accessed');
+              equal(cpu.readPagingState().cr2, oldCr2, 'successful reads leave prior CR2');
+            },
+          );
+        }
+      },
+    },
+    {
       name: 'paged 32-bit stack spills preserve dirty, segment, and partial budget boundaries',
       async run() {
         const head = 0x400000n;
