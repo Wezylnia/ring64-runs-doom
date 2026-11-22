@@ -583,6 +583,15 @@ impl Emitter {
             .unlikely(Op::BrIf(0));
     }
 
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn nearest_with_sticky_precision(&mut self) {
+        self.load_float_mxcsr();
+        self.op(Op::I32Const(ROUNDING_CONTROL | MASKED_STICKY_PRECISION))
+            .op(Op::I32And)
+            .op(Op::I32Const(MASKED_STICKY_PRECISION))
+            .op(Op::I32Eq);
+    }
+
     fn float_f64(&mut self, bits: u32) {
         self.op(Op::LocalGet(bits)).op(Op::F64ReinterpretI64);
     }

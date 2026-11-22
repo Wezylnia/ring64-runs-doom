@@ -439,6 +439,8 @@ fn emit_placement_with_copy(
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_float_dyadic: true,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        paged_float_sticky: true,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_f32_read_pair: true,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_f32_split_pair: true,
@@ -557,6 +559,8 @@ struct OptionalLowering {
     direct_vector_stores: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_float_dyadic: bool,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    paged_float_sticky: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_f32_read_pair: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -2184,6 +2188,9 @@ fn emit_body(
             Some(reduction)
         });
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let paged_float_sticky =
+        optional.paged_float_sticky && !unit.context.is_long64() && paged_float_dyadic.is_some();
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let mut outlined_functions = Vec::new();
     let mut emitter = Emitter {
         paged,
@@ -2221,6 +2228,8 @@ fn emit_body(
         float_dyadic: None,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_float_dyadic,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        paged_float_sticky,
         #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
         parallel_atomic,
         #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
@@ -2810,6 +2819,21 @@ fn emit_body(
         && paged_read_span.is_some_and(|(proof, _, _)| proof.is_countdown())
     {
         return (bytes, false);
+    }
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    if bytes.len() > max_artifact_bytes && paged_float_sticky {
+        return emit_body(
+            unit,
+            observed,
+            (paged, mmio),
+            loop_body,
+            _guard_reads,
+            OptionalLowering {
+                paged_float_sticky: false,
+                ..optional
+            },
+            max_artifact_bytes,
+        );
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if bytes.len() > max_artifact_bytes

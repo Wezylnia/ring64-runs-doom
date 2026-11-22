@@ -1877,7 +1877,20 @@ impl Emitter {
             }
             self.op(Op::If(BlockType::Empty));
             self.float_dyadic = self.paged_float_dyadic;
-            self.emit_prechecked_body(instructions, body, loop_depth + 4, None);
+            if self.paged_float_sticky {
+                // The live SSE guard masks every exception. In a nearest
+                // reduction with no MXCSR writes, sticky precision stays set.
+                self.nearest_with_sticky_precision();
+                self.op(Op::If(BlockType::Empty));
+                self.float_raw_sticky = true;
+                self.emit_prechecked_body(instructions, body, loop_depth + 5, None);
+                self.float_raw_sticky = false;
+                self.op(Op::Else);
+                self.emit_prechecked_body(instructions, body, loop_depth + 5, None);
+                self.op(Op::End);
+            } else {
+                self.emit_prechecked_body(instructions, body, loop_depth + 4, None);
+            }
             self.float_dyadic = None;
             self.proved_reads = None;
             self.paged_proved_f32_reads = None;

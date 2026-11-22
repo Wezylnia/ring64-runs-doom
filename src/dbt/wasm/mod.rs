@@ -167,6 +167,8 @@ struct Emitter {
     float_dyadic: Option<float_dyadic::DyadicReduction>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_float_dyadic: Option<float_dyadic::DyadicReduction>,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    paged_float_sticky: bool,
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     parallel_atomic: Option<parallel::Atomic>,
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
