@@ -711,3 +711,77 @@ test('sampled stack comparisons retire with their branch and replay an unavailab
     Core.prototype.compile = compile;
   }
 });
+
+test('a short indexed handler prefix preserves interior stops and operand faults', async () => {
+  // CALL RAX; INC ECX; CMP ECX,4; JB start; HLT.
+  // Handler: MOV EDX,ECX; ADD EDX,[RDI]; OR EDX,1; MOV [RSI],EDX; RET.
+  const code = 'ffd0ffc183f90472f7f490909090909089ca031783ca018916c3';
+  const target = PC + 16n;
+  const read = target + 2n;
+  const stop = PC + 9n;
+  const page = PC + 0x1000n;
+  const ram = new Uint8Array(4096);
+  ram[0x40] = 2;
+
+  const prototype = Core.prototype as unknown as {
+    artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
+  };
+  const imports = prototype.artifactImports;
+  const compile = Core.prototype.compile;
+  let prefixBegins = 0;
+  Core.prototype.compile = function (pc, limits, seeds, regionPoints) {
+    if (pc === PC && !seeds?.length) return compile.call(this, pc, limits, [target, stop], false);
+    return compile.call(this, pc, limits, seeds, regionPoints);
+  };
+  prototype.artifactImports = function (observed) {
+    const env = imports.call(this, observed);
+    const begin = env.debug_begin;
+    if (typeof begin === 'function') {
+      env.debug_begin = (pc: bigint, flags: bigint, shadow: number) => {
+        if (pc === target || pc === read) prefixBegins++;
+        return begin(pc, flags, shadow);
+      };
+    }
+    return env;
+  };
+  try {
+    await usingPaged(
+      compiler,
+      { code, words: [[0x4008n, 0xa003n]], spans: [{ physical: 0xa000n, bytes: ram }] },
+      async (cpu) => {
+        const enter = (source = page + 0x40n) =>
+          cpu.setState(initial(PC, { 0: target, 1: 0n, 4: page + 8n, 6: page + 0x48n, 7: source }));
+        for (let wave = 0; wave < 3; wave++) {
+          prefixBegins = 0;
+          enter();
+          const full = await cpu.run({ stop, budget: 40n });
+          assert.equal(full.reason, 'stop');
+          assert.equal(full.retired, 36n);
+          assert.equal(full.state.registers[2], 5n);
+          assert.deepEqual(cpu.readPhysicalMemory(0xa048n, 4), little([5n], 4));
+        }
+        assert.equal(prefixBegins, 0, 'warm handler enters the short indexed prefix');
+
+        enter();
+        const inside = await cpu.run({ stop: target + 4n, budget: 40n });
+        assert.equal(inside.reason, 'stop');
+        assert.equal(inside.retired, 3n);
+        assert.equal(inside.state.rip, target + 4n);
+        assert.equal(inside.state.registers[2], 2n);
+
+        const end = page + 4096n;
+        enter(end - 2n);
+        const split = await cpu.run({ stop, budget: 40n });
+        assert.equal(split.reason, 'page-fault');
+        assert.equal(split.pageFault?.address, end);
+        assert.equal(split.retired, 2n);
+        assert.equal(split.state.rip, read);
+        assert.equal(split.state.registers[2], 0n);
+        assert.deepEqual(cpu.readPhysicalMemory(0xa048n, 4), little([5n], 4));
+      },
+    );
+  } finally {
+    prototype.artifactImports = imports;
+    Core.prototype.compile = compile;
+  }
+});
