@@ -31,8 +31,8 @@ fn fixture(first: u64, second: u64) -> (Image, State, AccessState, Cache) {
             },
         }],
         MemoryLimits {
-            max_backing_bytes: 0x10000,
-            max_backings: 1,
+            max_backing_bytes: 0x10002,
+            max_backings: 2,
             max_mappings: 3,
         },
     )
@@ -53,6 +53,112 @@ fn request(linear: u64) -> Request {
         linear,
         access: Access::Read,
         class: AccessClass::User,
+    }
+}
+
+#[test]
+fn cold_scalar_read_matches_full_transaction_across_physical_backings() {
+    for readable in [true, false] {
+        let run = |use_transaction| {
+            let (mut image, state, mut work, cache) = fixture(0x9007, 0);
+            image.physical_write(0x9001, 1, 0x22).unwrap();
+            image.add_backing("tail".into(), vec![0x33, 0x44]).unwrap();
+            let mapping = |base, offset, length, backing: &str, read| MappingInput {
+                base,
+                backing: backing.into(),
+                offset,
+                length,
+                permissions: Permissions {
+                    read,
+                    write: true,
+                    execute: false,
+                },
+            };
+            image
+                .set_mappings(vec![
+                    mapping(0, 0, 0x9002, "ram", true),
+                    mapping(0x9002, 0, 2, "tail", readable),
+                ])
+                .unwrap();
+            let memory =
+                Memory::new(&mut image, &state, 3, 2, &mut work, &Keys::ZERO).with_cache(&cache);
+            let result = if use_transaction {
+                memory
+                    .prepare_aligned(
+                        0x1000,
+                        4,
+                        Access::Read,
+                        false,
+                        AccessClass::User,
+                        Intent::Exempt,
+                    )
+                    .map(|prepared| {
+                        let mut bytes = [0; 16];
+                        memory.read_prepared(&prepared, &mut bytes);
+                        u64::from_le_bytes(bytes[..8].try_into().unwrap())
+                    })
+            } else {
+                memory.read(0x1000, 4)
+            };
+            let retained = cache
+                .observe(&state, request(0x1000), &Keys::ZERO)
+                .unwrap()
+                .map(|entry| (entry.physical, entry.cache_id, entry.dirty));
+            (result, retained, image.physical_read(0x4008, 8).unwrap())
+        };
+        let actual = run(false);
+        assert_eq!(actual, run(true));
+        assert_eq!(actual.2, 0x9027);
+        if readable {
+            assert_eq!(actual.0, Ok(0x4433_22a1));
+            assert!(matches!(actual.1, Some((0x9000, Some(_), true))));
+        } else {
+            let AccessFailure::Paging(Failure::Physical(fault)) = actual.0.unwrap_err() else {
+                panic!("private physical permission fault required");
+            };
+            assert_eq!(
+                (fault.linear, fault.phase),
+                (0x1000, PhysicalPhase::FinalAccess)
+            );
+            assert_eq!(fault.physical.failing, 0x9002);
+            assert_eq!(fault.physical.cause, crate::memory::Cause::Permission);
+            assert!(actual.1.is_none());
+        }
+    }
+}
+
+#[test]
+fn cold_unaligned_scalar_keeps_page_fault_and_accessed_before_alignment() {
+    for pte in [0, 0x9007] {
+        let (mut image, mut state, mut work, cache) = fixture(pte, 0);
+        state.cr0 |= 1 << 18;
+        let failure = Memory::new(&mut image, &state, 3, 0x40002, &mut work, &Keys::ZERO)
+            .with_cache(&cache)
+            .read_aligned(0x1001, 4, Intent::Natural(4))
+            .unwrap_err();
+        if pte == 0 {
+            assert_eq!(
+                failure,
+                AccessFailure::Paging(Failure::Page(walk::PageFault {
+                    address: 0x1001,
+                    access: Access::Read,
+                    error_code: 4,
+                }))
+            );
+            assert_eq!(image.physical_read(0x4008, 8).unwrap(), 0);
+        } else {
+            assert!(matches!(
+                failure,
+                AccessFailure::AlignmentCheck(fault) if fault.address == 0x1001 && fault.width == 4
+            ));
+            assert_eq!(image.physical_read(0x4008, 8).unwrap(), 0x9027);
+        }
+        assert!(
+            cache
+                .observe(&state, request(0x1001), &Keys::ZERO)
+                .unwrap()
+                .is_none()
+        );
     }
 }
 

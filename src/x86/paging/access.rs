@@ -444,6 +444,33 @@ impl<'a> Memory<'a> {
         intent: Intent,
         bytes: &mut [u8; 16],
     ) -> Result<(), AccessFailure> {
+        // Every paging leaf contains whole aligned 4 KiB pages.
+        if matches!(width, 1 | 2 | 4 | 8) && ((address as u32) & 0xfff) + width <= 0x1000 {
+            let request = Request {
+                linear: address,
+                access: Access::Read,
+                class,
+            };
+            let mut storage = self.storage.borrow_mut();
+            let translation = self.walk_translation(storage.image, request)?;
+            debug_assert!(u64::from(width) <= translation.remaining);
+            storage
+                .image
+                .physical_check_access(translation.physical, width, Access::Read, false)
+                .map_err(|fault| {
+                    AccessFailure::Paging(
+                        request.physical_failure(fault, PhysicalPhase::FinalAccess),
+                    )
+                })?;
+            if let Some(cache) = self.cache {
+                cache.fill(self.paging, request, translation);
+            }
+            storage
+                .image
+                .physical_read_into(translation.physical, &mut bytes[..width as usize])
+                .expect("captured physical read admission");
+            return Ok(());
+        }
         let prepared = self.prepare::<false, true>(
             (address, width),
             Access::Read,
