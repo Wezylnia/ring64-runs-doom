@@ -544,3 +544,49 @@ fn warmed_translation_rechecks_implicit_and_prospective_classes_then_keeps_captu
             .is_none()
     );
 }
+
+#[cfg(not(feature = "parallel"))]
+#[test]
+fn retained_vector_store_skips_preflight_only_for_one_dirty_unwatched_span() {
+    let payload = [0x39; 16];
+    for (pte, executable, crossing) in [
+        (0x9067, false, false),
+        (0x9027, false, false),
+        (0x9067, true, false),
+        (0x9067, false, true),
+    ] {
+        let (mut image, state, mut work, cache) = fixture(pte, 0xa067);
+        image
+            .set_mappings(vec![MappingInput {
+                base: 0,
+                backing: "ram".into(),
+                offset: 0,
+                length: 0x10000,
+                permissions: Permissions {
+                    read: true,
+                    write: true,
+                    execute: executable,
+                },
+            }])
+            .unwrap();
+        let mut memory =
+            Memory::new(&mut image, &state, 3, 2, &mut work, &Keys::ZERO).with_cache(&cache);
+        let address = if crossing { 0x1ff8 } else { 0x1001 };
+        memory
+            .read_vector_aligned(address, 16, Intent::Exempt)
+            .unwrap();
+        Image::take_physical_preflight_count();
+        memory
+            .write_bytes_aligned(address, &payload, Intent::Exempt)
+            .unwrap();
+        assert_eq!(
+            Image::take_physical_preflight_count() == 0,
+            pte == 0x9067 && !executable && !crossing
+        );
+        assert_eq!(
+            image.physical_read_bytes(address + 0x8000, 16).unwrap(),
+            payload,
+        );
+        assert_eq!(image.physical_read(0x4008, 8), Ok(0x9067));
+    }
+}

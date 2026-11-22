@@ -404,6 +404,32 @@ impl Cache {
     }
 
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    pub(super) fn write_retained_span(
+        &self,
+        state: &State,
+        request: Request,
+        keys: &ProtectionKeys,
+        width: u32,
+        write: impl FnOnce(u64) -> Option<()>,
+    ) -> bool {
+        let mut entries = self.entries.borrow_mut();
+        // The stock path renumbers entries before publishing any payload.
+        if entries.clock == u64::MAX {
+            return false;
+        }
+        let Some((slot, translation)) =
+            entries.retained_data_span::<true>(state, request, keys, width)
+        else {
+            return false;
+        };
+        if write(translation.physical).is_none() {
+            return false;
+        }
+        entries.touch(slot);
+        true
+    }
+
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
     pub(crate) fn data_then_fetch<const WRITE: bool, T>(
         &self,
         state: &State,

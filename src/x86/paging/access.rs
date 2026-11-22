@@ -584,6 +584,16 @@ impl<'a> Memory<'a> {
                 .pending
                 .iter()
                 .position(|p| p.address == address && p.width == width);
+            #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+            if index.is_none()
+                && width == 16
+                && fields == [(0, 16)]
+                && intent == Intent::Exempt
+                && class != AccessClass::ImplicitSupervisor
+                && self.try_retained_vector_write(storage.image, address, class, bytes)
+            {
+                return Ok(());
+            }
             index.map(|i| storage.work.pending.remove(i))
         };
         let prepared = match captured {
@@ -593,6 +603,31 @@ impl<'a> Memory<'a> {
         self.publish_write_metadata(&prepared, fields)?;
         self.publish_write_payload(&prepared, fields, bytes);
         Ok(())
+    }
+
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    #[inline(never)]
+    fn try_retained_vector_write(
+        &self,
+        image: &mut Image,
+        address: u64,
+        class: AccessClass,
+        bytes: &[u8],
+    ) -> bool {
+        let Some(cache) = self.cache else {
+            return false;
+        };
+        if address & 4095 > 4096 - 16 || check_span(address, 16, Access::Write).is_err() {
+            return false;
+        }
+        let request = Request {
+            linear: address,
+            access: Access::Write,
+            class,
+        };
+        cache.write_retained_span(self.paging, request, self.keys, 16, |physical| {
+            image.physical_direct_write::<16>(physical, bytes[..16].try_into().unwrap())
+        })
     }
 
     fn publish_write_metadata(
