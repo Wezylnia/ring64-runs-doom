@@ -173,6 +173,30 @@ fn a_local_large_page_fill_signals_when_it_shadows_a_smaller_global() {
             .physical,
         0xa234
     );
+    #[cfg(not(feature = "parallel"))]
+    {
+        let local = cache
+            .data_translation_then_fetch::<false, _>(&current, read, &Keys::ZERO, 4, true, Some)
+            .unwrap();
+        assert_eq!(
+            (local.linear_base, local.physical_base, local.span),
+            (0, 0, 0x20_0000)
+        );
+        let old_clock = cache.entries.borrow().clock;
+        assert!(
+            cache
+                .data_translation_then_fetch::<false, _>(
+                    &origin,
+                    read,
+                    &Keys::ZERO,
+                    4,
+                    true,
+                    |_| { Some(()) }
+                )
+                .is_none(),
+        );
+        assert_eq!(cache.entries.borrow().clock, old_clock);
+    }
 }
 
 #[test]

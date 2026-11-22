@@ -489,6 +489,65 @@ pub extern "C" fn core_paged_loop_read_span(address: u64, bytes: u32, segment: u
     })
 }
 
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[unsafe(no_mangle)]
+pub extern "C" fn core_paged_loop_read_dword_window(address: u64) -> u32 {
+    use crate::memory::DirectSpan;
+
+    if address & 3 != 0 || !crate::memory::canonical48(address) {
+        return 0;
+    }
+    BRIDGE.with_borrow_mut(|bridge| {
+        let core = bridge.core.as_mut().unwrap();
+        let Some(paging) = core.paging.as_ref() else {
+            return 0;
+        };
+        let state = unsafe { &*core.state.get() };
+        let request = paging::walk::Request {
+            linear: address,
+            access: Access::Read,
+            class: paging::walk::AccessClass::operand(
+                core.context.cpl(),
+                state.flags & crate::x86::flags::AC != 0,
+            ),
+        };
+        let Some(window) = core
+            .translation_cache
+            .data_translation_then_fetch::<false, _>(
+                paging,
+                request,
+                &state.protection_keys,
+                4,
+                true,
+                |translation| {
+                    let span = core
+                        .image
+                        .physical_direct_read_span(translation.physical, 4)?;
+                    let first = span.base.max(translation.physical_base).next_multiple_of(4);
+                    let end = (span.base + u64::from(span.length))
+                        .min(translation.physical_base + translation.span);
+                    let length = u32::try_from(end - first).ok()?;
+                    let base = translation.linear_base + (first - translation.physical_base);
+                    if !core.context.is_long64()
+                        && !core.context.flat_paged_read_span32(base, length)
+                    {
+                        return None;
+                    }
+                    Some(DirectSpan {
+                        base,
+                        length,
+                        host: span.host + (first - span.base) as u32,
+                    })
+                },
+            )
+        else {
+            return 0;
+        };
+        core.direct_span = window;
+        &raw const core.direct_span as u32
+    })
+}
+
 #[cfg(not(feature = "parallel"))]
 #[unsafe(no_mangle)]
 pub extern "C" fn core_paged_loop_write_byte(address: u64, value: u32) -> i32 {

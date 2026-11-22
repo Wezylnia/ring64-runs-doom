@@ -185,6 +185,8 @@ struct Emitter {
     paged_loop_guard: Option<(u32, u32)>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_read_span: Option<(read_loop::ReadLoop, u32, u32)>,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    paged_dword_window: Option<memory::PagedDwordWindow>,
     paged_loop_read_byte: Option<u32>,
     paged_loop_read_dword: Option<u32>,
     paged_loop_write_byte: Option<u32>,

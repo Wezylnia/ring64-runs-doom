@@ -484,6 +484,70 @@ export function pagingBoundaryReviewScenarios(compiler: WebAssembly.Module): Sce
       },
     },
     {
+      name: 'paged dword graph crosses retained leaves and physical slices before exact refusal',
+      async run() {
+        const head = 0x400000n;
+        const first = 0x401ff4n;
+        const second = 0x402000n;
+        // CMP EAX,[EDI]; JBE skip; ADD EBX,1; ADD EDI,4; DEC ECX; JNZ head.
+        const code = '3b07760383c30183c704ffc975f2';
+        for (const layout of ['local', 'global', 'split-backing'] as const) {
+          const previous = new Uint8Array(15);
+          previous.set(little([1n, 3n, 5n], 4), 3);
+          const next = little([0xffffffffn, 1n], 4);
+          await usingPaged(
+            compiler,
+            {
+              code,
+              context: context('compatibility'),
+              bank: { ...BANK, cr4: BANK.cr4 | 0x80n },
+              words: [
+                [0x4008n, 0xa027n],
+                [0x4010n, layout === 'global' ? 0xb127n : 0xb027n],
+              ],
+              spans: [
+                { physical: 0xaff1n, bytes: previous },
+                ...(layout === 'split-backing'
+                  ? [
+                      { physical: 0xb000n, bytes: next.slice(0, 2) },
+                      { physical: 0xb002n, bytes: next.slice(2) },
+                    ]
+                  : [{ physical: 0xb000n, bytes: next }]),
+              ],
+            },
+            async (cpu) => {
+              const start = (source: bigint) =>
+                initial(head, { 0: 4n, 1: 6n, 3: 0n, 7: source }, 2n);
+              for (const address of [second, first]) {
+                cpu.setState(start(address));
+                const warm = await cpu.run({ budget: 1n });
+                equal(warm.reason, 'budget', 'both data leaves are retained by the checked reads');
+              }
+              cpu.setState(start(first));
+              const partial = await cpu.run({ budget: 7n });
+              equal(partial.reason, 'budget', layout);
+              equal(partial.retired, 7n, 'one full lap and the next checked CMP retire');
+              equal(partial.state.rip, head + 2n, 'the partial lap resumes at its JBE');
+              cpu.setState(start(first));
+              const result = await cpu.run({ budget: 40n });
+              equal(result.reason, 'physical-memory-fault', layout);
+              equal(result.retired, 28n, 'failure excludes the sixth compare');
+              equal(result.state.rip, head, 'the exact checked entry retries the compare');
+              equal(result.state.registers[1], 1n, 'five laps retired before the refusal');
+              equal(result.state.registers[3], 3n, 'all three unsigned matches committed');
+              equal(result.state.registers[7], second + 8n, 'the faulting offset stays live');
+              equal(result.state.flags, 2n, 'incoming decrement flags survive the failing compare');
+              equal(
+                result.physicalMemoryFault?.phase,
+                'final-access',
+                'the fault follows the walk',
+              );
+            },
+          );
+        }
+      },
+    },
+    {
       name: 'paged compatibility rotated memory compare preserves exact branch and fault state',
       async run() {
         const prefix = 0x3fffd0n;

@@ -16,6 +16,15 @@ pub(super) struct SpanCache {
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[derive(Clone, Copy)]
+pub(super) struct PagedDwordWindow {
+    pub(super) resolve: u32,
+    pub(super) base: u32,
+    pub(super) limit: u32,
+    pub(super) host: u32,
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 impl SpanCache {
     pub(super) fn new(resolve: u32, first: u32) -> Self {
         Self {
@@ -258,12 +267,100 @@ impl Emitter {
             return false;
         };
         self.address(address, next_pc);
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if width == Width::W32
+            && address.segment == Segment::Ds
+            && let Some(window) = self.paged_dword_window
+        {
+            self.load_windowed_paged_dword(window, read, exit_depth);
+            return true;
+        }
         self.op(Op::Call(read))
             .op(Op::LocalTee(VALUE))
             .op(Op::I64Const(-1))
             .op(Op::I64Eq);
         self.retry_guarded_paged_operand(exit_depth);
         true
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    fn load_windowed_paged_dword(&mut self, window: PagedDwordWindow, read: u32, exit_depth: u32) {
+        use crate::memory::DirectSpan;
+
+        let field = |offset: usize, align| MemArg {
+            offset: offset as u64,
+            align,
+            memory_index: 0,
+        };
+        self.op(Op::LocalTee(ADDRESS))
+            .op(Op::LocalGet(window.base))
+            .op(Op::I64Sub)
+            .op(Op::LocalTee(VALUE))
+            .op(Op::LocalGet(window.limit))
+            .op(Op::I64LtU)
+            .op(Op::LocalGet(ADDRESS))
+            .op(Op::I32WrapI64)
+            .op(Op::I32Const(3))
+            .op(Op::I32And)
+            .op(Op::I32Eqz)
+            .op(Op::I32And)
+            .op(Op::If(BlockType::Result(wasm_encoder::ValType::I64)))
+            .op(Op::LocalGet(VALUE));
+        self.paged_dword_window_load(window.host);
+        self.op(Op::Else)
+            .op(Op::LocalGet(ADDRESS))
+            .op(Op::Call(window.resolve))
+            .op(Op::LocalTee(STORE_STATUS))
+            .op(Op::I32Eqz)
+            .op(Op::If(BlockType::Result(wasm_encoder::ValType::I64)))
+            // The scalar fallback may touch a different retained entry.
+            .op(Op::I64Const(0))
+            .op(Op::LocalSet(window.limit))
+            .op(Op::LocalGet(ADDRESS))
+            .op(Op::Call(read))
+            .op(Op::LocalTee(VALUE))
+            .op(Op::I64Const(-1))
+            .op(Op::I64Eq);
+        self.retry_guarded_paged_operand(exit_depth + 2);
+        self.op(Op::LocalGet(VALUE))
+            .op(Op::Else)
+            .op(Op::LocalGet(STORE_STATUS))
+            .op(Op::I64Load(field(
+                std::mem::offset_of!(DirectSpan, base),
+                3,
+            )))
+            .op(Op::LocalSet(window.base))
+            .op(Op::LocalGet(STORE_STATUS))
+            .op(Op::I64Load32U(field(
+                std::mem::offset_of!(DirectSpan, length),
+                2,
+            )))
+            .op(Op::I64Const(3))
+            .op(Op::I64Sub)
+            .op(Op::LocalSet(window.limit))
+            .op(Op::LocalGet(STORE_STATUS))
+            .op(Op::I32Load(field(
+                std::mem::offset_of!(DirectSpan, host),
+                2,
+            )))
+            .op(Op::LocalSet(window.host))
+            .op(Op::LocalGet(ADDRESS))
+            .op(Op::LocalGet(window.base))
+            .op(Op::I64Sub);
+        self.paged_dword_window_load(window.host);
+        self.op(Op::End).op(Op::End).op(Op::LocalSet(VALUE));
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    fn paged_dword_window_load(&mut self, host: u32) {
+        self.op(Op::I32WrapI64)
+            .op(Op::LocalGet(host))
+            .op(Op::I32Add)
+            .op(Op::I64Load32U(MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            }));
     }
 
     fn retry_guarded_paged_operand(&mut self, exit_depth: u32) {

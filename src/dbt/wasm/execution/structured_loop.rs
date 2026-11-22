@@ -43,6 +43,8 @@ pub(super) struct StructuredLoop {
     pub(super) paged_stack_writes: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     pub(super) paged_read_span: Option<super::read_loop::ReadLoop>,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) paged_dword_window: bool,
 }
 
 impl StructuredLoop {
@@ -377,6 +379,26 @@ impl StructuredLoop {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn with_paged_dword_window(mut self, unit: &super::Unit) -> Option<Self> {
+        if !self.forward_edges()
+            || self.paged_fetch_bytes.is_none()
+            || self.has_paged_byte_store(unit)
+        {
+            return None;
+        }
+        let mut reads = unit.instructions[self.earlier as usize..self.tail as usize]
+            .iter()
+            .filter_map(|instruction| paged_read_width(instruction.operation, None));
+        // Repeating the only data touch cannot change its ordering relative to
+        // the retained code page. A miss always re-arms through the cache.
+        if (reads.next(), reads.next()) != (Some(Width::W32), None) {
+            return None;
+        }
+        self.paged_dword_window = true;
+        Some(self)
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     pub(super) fn with_paged_f32_read_span(mut self, unit: &super::Unit) -> Option<Self> {
         debug_assert!(self.paged_sse());
         self.paged_read_span = Some(super::read_loop::ReadLoop::recognize_paged_f32(
@@ -505,6 +527,8 @@ impl StructuredLoop {
             paged_stack_writes: false,
             #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
             paged_read_span: None,
+            #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+            paged_dword_window: false,
         }
     }
 
@@ -569,6 +593,8 @@ impl StructuredLoop {
                         paged_stack_writes: false,
                         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
                         paged_read_span: None,
+                        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+                        paged_dword_window: false,
                     });
                 }
             }
@@ -1014,6 +1040,10 @@ impl Emitter {
             .op(Op::I32Const(0))
             .op(Op::LocalSet(REASON));
         self.guarded_paged_lap = true;
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if let Some(window) = self.paged_dword_window {
+            self.op(Op::I64Const(0)).op(Op::LocalSet(window.limit));
+        }
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         if let Some((proof, resolve, bias)) = self.paged_read_span {
             if body.paged_sse() {

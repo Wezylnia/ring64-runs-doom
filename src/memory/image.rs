@@ -341,11 +341,16 @@ impl Image {
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     pub(crate) fn physical_direct_read_pointer(&self, address: u64, width: u32) -> Option<u32> {
+        let span = self.physical_direct_read_span(address, width)?;
+        Some(span.host + (address - span.base) as u32)
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(crate) fn physical_direct_read_span(&self, address: u64, width: u32) -> Option<DirectSpan> {
         if !self.physical {
             return None;
         }
-        let span = self.readable_direct_span(address, width)?;
-        Some(span.host + (address - span.base) as u32)
+        self.readable_direct_span(address, width)
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]

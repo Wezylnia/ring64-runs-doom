@@ -61,6 +61,20 @@ pub(crate) fn emit_profile(
     #[cfg(not(feature = "parallel"))]
     if paged && let Some(body) = StructuredLoop::select_paged_reads(unit) {
         #[cfg(target_arch = "wasm32")]
+        if let Some(window) = body.with_paged_dword_window(unit) {
+            let bytes = emit_placement(
+                unit,
+                observed,
+                (paged, false),
+                Some(window),
+                false,
+                max_artifact_bytes,
+            );
+            if bytes.len() <= max_artifact_bytes {
+                return bytes;
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
         if let Some(span) = body.with_paged_read_span(unit) {
             let bytes = emit_placement(
                 unit,
@@ -721,6 +735,10 @@ fn emit_body(
     let [paged_read_byte, paged_read_dword] = [false; 2];
     let paged_loop_read_type = (paged_read_byte || paged_read_dword)
         .then(|| add_function_type(&mut types, [ValType::I64], [ValType::I64]));
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let paged_dword_window_type = loop_body
+        .is_some_and(|body| body.paged_dword_window)
+        .then(|| add_function_type(&mut types, [ValType::I64], [ValType::I32]));
     #[cfg(not(feature = "parallel"))]
     let paged_write_byte = loop_body.is_some_and(|body| body.has_paged_byte_store(unit));
     #[cfg(feature = "parallel")]
@@ -949,6 +967,9 @@ fn emit_body(
     let paged_loop_read_dword = paged_loop_read_type
         .filter(|_| paged_read_dword)
         .map(|index| import_function("paged_loop_read_dword", index));
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let paged_dword_window =
+        paged_dword_window_type.map(|index| import_function("paged_loop_read_dword_window", index));
     let paged_loop_write_byte = paged_loop_write_type
         .filter(|_| paged_write_byte)
         .map(|index| import_function("paged_loop_write_byte", index));
@@ -1352,6 +1373,18 @@ fn emit_body(
         next_local += biases;
         (proof, resolve, bias)
     });
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let paged_dword_window = paged_dword_window.map(|resolve| {
+        let first = next_local;
+        locals.extend([(2, ValType::I64), (1, ValType::I32)]);
+        next_local += 3;
+        memory::PagedDwordWindow {
+            resolve,
+            base: first,
+            limit: first + 1,
+            host: first + 2,
+        }
+    });
     let boundary_locals = observed.then(|| {
         let result = [next_local, next_local + 1, next_local + 2, next_local + 3];
         locals.push((4, ValType::I32));
@@ -1475,6 +1508,8 @@ fn emit_body(
         paged_loop_guard,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_read_span,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        paged_dword_window,
         paged_loop_read_byte,
         paged_loop_read_dword,
         paged_loop_write_byte,
