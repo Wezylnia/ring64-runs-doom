@@ -72,3 +72,55 @@ test('a packed SSE loop preserves an interior stop, a partial lap, and a later r
     }
   }
 });
+
+test('a packed SSE loop publishes the zero test flags before a denied store', async () => {
+  // JMP head; INC EBX; ADD ESI,16; CMP EBX,3; JAE done.
+  // head: MOVUPS; CMPNLEPS; MOVMSKPS; TEST; JNZ earlier; MOV store; MOV load; JMP earlier.
+  const code = hex('eb0affc383c61083fb0373140f100e0fc2c8060f50c185c075e8890f8b17ebe290');
+  const data = new Uint8Array(32);
+  const lanes = new DataView(data.buffer);
+  for (let offset = 0; offset < 16; offset += 4) lanes.setFloat32(offset, 1, true);
+  const cpu = await createCpu({
+    compiler,
+    entry: head,
+    context: protectedSnapshot(),
+    limits: LIMITS,
+    memory: {
+      backings: [
+        { id: 'code', bytes: code },
+        { id: 'source', bytes: data },
+        { id: 'output', bytes: new Uint8Array(4) },
+      ],
+      mappings: [
+        { ...mapping(head, 'code', code.length), permissions: { ...readOnly, execute: true } },
+        mapping(row, 'source', data.length),
+        mapping(column, 'output', 4),
+      ],
+    },
+    memoryLimits: {
+      maxBackings: 3,
+      maxMappings: 3,
+      maxBackingBytes: code.length + data.length + 4,
+    },
+  });
+  try {
+    cpu.setState(initial(head, { 1: 0x1234n, 3: 0n, 6: row, 7: column }));
+    const denied = await cpu.run({ budget: 60n });
+    assert.equal(denied.reason, 'data-fault');
+    assert.equal(denied.retired, 15n);
+    assert.equal(denied.state.rip, head + 26n);
+    assert.equal(denied.state.flags, 0x46n);
+    assert.deepEqual(cpu.readMemory(column, 4), new Uint8Array(4));
+    fault(denied, {
+      instructionPc: head + 26n,
+      address: column,
+      width: 4,
+      access: 'write',
+      cause: 'permission',
+      failingAddress: column,
+      segment: 'ds',
+    });
+  } finally {
+    cpu.dispose();
+  }
+});

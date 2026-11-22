@@ -598,8 +598,18 @@ impl Emitter {
                 return;
             }
             Operation::Jcc { condition, target } => {
+                use crate::x86::instruction::Condition;
+                let zero_flags = matches!(
+                    compare_source,
+                    Some(loop_cfg::ConditionSource::TestZero {
+                        publish_zero_flags: true,
+                    })
+                );
                 self.cloned_condition(condition, compare_source);
                 self.op(Op::If(BlockType::Empty));
+                if zero_flags && condition == Condition::Equal {
+                    self.op(Op::I64Const(0x46)).op(Op::LocalSet(super::FLAGS));
+                }
                 if let Some(loop_cfg::ConditionSource::OperandsWithTakenFlags(width)) =
                     compare_source
                 {
@@ -615,6 +625,10 @@ impl Emitter {
                 }
                 self.target(target, loop_depth + 1, exit_depth + 1);
                 self.op(Op::End);
+                if zero_flags && condition == Condition::NotEqual {
+                    // TEST's zero result publishes ZF and PF before the next boundary.
+                    self.op(Op::I64Const(0x46)).op(Op::LocalSet(super::FLAGS));
+                }
                 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
                 if let Some((tail, retry)) = self.proved_read_retry
                     && self.current_index == tail

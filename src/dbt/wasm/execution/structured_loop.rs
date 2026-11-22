@@ -2273,6 +2273,8 @@ impl Emitter {
                     order,
                     &self.context,
                     !self.paged,
+                    (!self.paged && !self.context.is_long64() && self.context.code32())
+                        .then_some(body.max_lap_len),
                 ),
                 read_prefix_len,
             )

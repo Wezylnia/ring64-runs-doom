@@ -192,6 +192,12 @@ impl Emitter {
             Some(
                 ConditionSource::Operands(width) | ConditionSource::OperandsWithTakenFlags(width),
             ) => self.compare_condition(condition, width),
+            Some(ConditionSource::TestZero { .. }) => {
+                self.op(Op::LocalGet(RESULT)).op(Op::I64Eqz);
+                if condition == Condition::NotEqual {
+                    self.op(Op::I32Eqz);
+                }
+            }
             Some(ConditionSource::ResultSign(width)) => {
                 self.op(Op::LocalGet(super::RESULT));
                 if width == Width::W32 {

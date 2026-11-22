@@ -442,6 +442,7 @@ pub(super) enum ConditionSource {
     Operands(Width),
     OperandsWithTakenFlags(Width),
     ResultSign(Width),
+    TestZero { publish_zero_flags: bool },
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -465,6 +466,7 @@ pub(super) fn compare_predicates(
     order: LoopOrder,
     context: &ExecutionContext,
     omit_dead_status: bool,
+    flat_test_lap_len: Option<u32>,
 ) -> Vec<CompareAction> {
     let source = &instructions[order.earlier as usize..=order.tail as usize];
     let position_at = |pc| {
@@ -486,6 +488,50 @@ pub(super) fn compare_predicates(
             ..
         } => omit_dead_status,
         _ => false,
+    };
+    let preserves_until_next = |operation| {
+        matches!(
+            operation,
+            Operation::Mov { .. }
+                | Operation::Lea { .. }
+                | Operation::Extend {
+                    src: Location::Register(_),
+                    ..
+                }
+                | Operation::Nop
+        ) || (flat_test_lap_len.is_some()
+            && matches!(
+                operation,
+                Operation::Unary {
+                    kind: Unary::Inc | Unary::Dec,
+                    dst: Location::Register(_),
+                    ..
+                }
+            ))
+    };
+    let funded_backedge_overwrites = |target, retired: usize| {
+        if target != instructions[order.head as usize].pc {
+            return false;
+        }
+        // Budget remains sufficient to reach the first full FLAGS writer,
+        // even when the next lap needs to return to its ordinary entry.
+        let remaining = flat_test_lap_len
+            .unwrap_or(0)
+            .saturating_sub(retired as u32)
+            .min(order.len());
+        for position in 0..remaining {
+            let instruction = instructions[order.at(position) as usize];
+            if writes_status(instruction.operation) {
+                return true;
+            }
+            if !preserves_until_next(instruction.operation)
+                || position + 1 == order.len()
+                || instructions[order.at(position + 1) as usize].pc != instruction.next_pc
+            {
+                break;
+            }
+        }
+        false
     };
     let len = order.len() as usize;
     let mut explicit_entry = vec![false; len];
@@ -584,13 +630,9 @@ pub(super) fn compare_predicates(
             }
             replaces[position] = match instruction.operation {
                 operation if writes_status(operation) => true,
-                Operation::Mov { .. }
-                | Operation::Lea { .. }
-                | Operation::Extend {
-                    src: Location::Register(_),
-                    ..
+                operation if preserves_until_next(operation) => {
+                    next_overwrites(instruction.next_pc)
                 }
-                | Operation::Nop => next_overwrites(instruction.next_pc),
                 Operation::Jump { target }
                     if order.earlier == order.head && valid_jump_target(target) =>
                 {
@@ -616,6 +658,29 @@ pub(super) fn compare_predicates(
         }
         let producer = instructions[order.at(position as u32 - 1) as usize];
         if producer.next_pc != instruction.pc {
+            continue;
+        }
+        if flat_test_lap_len.is_some()
+            && matches!(
+                producer.operation,
+                Operation::Alu {
+                    kind: Alu::Test,
+                    ..
+                }
+            )
+            && matches!(condition, Condition::Equal | Condition::NotEqual)
+        {
+            let (zero, nonzero) = if condition == Condition::Equal {
+                (target, instruction.next_pc)
+            } else {
+                (instruction.next_pc, target)
+            };
+            if next_overwrites(nonzero) || funded_backedge_overwrites(nonzero, position + 1) {
+                predicates[position - 1] = CompareAction::SkipStatus;
+                predicates[position] = CompareAction::Condition(ConditionSource::TestZero {
+                    publish_zero_flags: !next_overwrites(zero),
+                });
+            }
             continue;
         }
         let width = match producer.operation {
