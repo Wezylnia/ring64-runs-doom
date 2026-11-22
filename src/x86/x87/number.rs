@@ -205,7 +205,14 @@ fn round_num(n: Num, p: u32, target: Format, cw: u16) -> Result {
     let b = 127 - n.sig.leading_zeros() as i32;
     let mut e = n.scale + b;
     let (mut q, inexact, up) = quantize(n.sig, b + 1 - p as i32, n.negative, rc(cw));
-    if q == 1u128 << p {
+    // Quantizing to p bits can round up to exactly 2^p. At full precision
+    // this is the only result with a nonzero high word.
+    let carry = if p == 64 {
+        q >> 64 != 0
+    } else {
+        q as u64 == 1u64 << p
+    };
+    if carry {
         q >>= 1;
         e += 1
     }
@@ -319,6 +326,49 @@ fn binary80_full_precision_packs_rounding_carry_and_underflow_promotion() {
             ),
             (value, 0, post, up, false)
         );
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn reduced_precision_carry_matches_binary80_and_float_stores() {
+    for (p, format, below80, below_store, carry_store) in [
+        (
+            24,
+            Format::F32,
+            0x3fff_ffff_ff00_0000_0000,
+            0x3fff_ffff,
+            0x4000_0000,
+        ),
+        (
+            53,
+            Format::F64,
+            0x3fff_ffff_ffff_ffff_f800,
+            0x3fff_ffff_ffff_ffff,
+            0x4000_0000_0000_0000,
+        ),
+    ] {
+        let midpoint = (0x3fffu128 << 64) | (((1u128 << (p + 1)) - 1) << (63 - p));
+        for (cw, up, want80, want_store) in [
+            (0x037f, true, 0x4000_8000_0000_0000_0000, carry_store),
+            (0x0f7f, false, below80, below_store),
+        ] {
+            for (result, value) in [
+                (round_num(num(midpoint), p, Format::F80, cw), want80),
+                (store(midpoint, format, cw), want_store),
+            ] {
+                assert_eq!(
+                    (
+                        result.value,
+                        result.pre,
+                        result.post,
+                        result.up,
+                        result.suppress
+                    ),
+                    (value, 0, 32, up, false)
+                );
+            }
+        }
     }
 }
 
