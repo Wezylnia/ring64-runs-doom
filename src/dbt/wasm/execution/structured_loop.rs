@@ -687,6 +687,16 @@ impl StructuredLoop {
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     pub(super) fn select_paged_vector_copy(unit: &super::Unit) -> Option<Self> {
+        Self::select_vector_copy(unit, None)
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn select_additional_paged_copy(unit: &super::Unit, occupied: Self) -> Option<Self> {
+        Self::select_vector_copy(unit, Some(occupied))
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    fn select_vector_copy(unit: &super::Unit, occupied: Option<Self>) -> Option<Self> {
         use crate::x86::{context::Segment, instruction::VectorOperand};
 
         if !unit.context.is_long64() {
@@ -706,12 +716,29 @@ impl StructuredLoop {
             }) => Some(store),
             _ => None,
         };
+        let kind = if occupied.is_some() {
+            LoopKind::PagedVectorCopySpans
+        } else {
+            LoopKind::PagedVectorCopy
+        };
         Self::select_straight_body(
             &unit.instructions,
-            LoopKind::PagedVectorCopy,
+            kind,
             |operation| inside_register_body(operation) || vector_move(operation).is_some(),
             |instructions| {
                 instructions.len() <= 32
+                    && occupied.is_none_or(|existing| {
+                        let first = instructions.first().unwrap();
+                        let last = instructions.last().unwrap();
+                        let occupied_first = unit.instructions[existing.earlier as usize].pc;
+                        let occupied_last = unit.instructions[existing.tail as usize].pc;
+                        (last.pc < occupied_first || first.pc > occupied_last)
+                            && last.next_pc.checked_sub(first.pc).is_some_and(|bytes| {
+                                bytes <= 4096
+                                    && unit.context.single_page_code_span(first.pc, bytes as u32)
+                            })
+                            && super::paged_copy::CopyGroup::recognize(instructions).is_some()
+                    })
                     && instructions
                         .iter()
                         .any(|i| vector_move(i.operation) == Some(false))

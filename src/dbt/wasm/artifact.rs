@@ -19,7 +19,7 @@ use wasm_encoder::{
 // A clone can touch the executable leaf once when every admitted instruction
 // stays on that leaf and can neither access memory nor change the controls.
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-fn paged_register_prefixes(unit: &Unit, loop_body: Option<StructuredLoop>) -> Vec<Option<usize>> {
+fn paged_register_prefixes(unit: &Unit, loops: [Option<StructuredLoop>; 2]) -> Vec<Option<usize>> {
     let instructions = &unit.instructions;
     let is_register_only = |instruction: &Instruction| {
         super::structured_loop::inside_register_body(instruction.operation)
@@ -38,7 +38,10 @@ fn paged_register_prefixes(unit: &Unit, loop_body: Option<StructuredLoop>) -> Ve
         let mut end = first;
         while let Some(instruction) = instructions.get(end)
             && end - first < 8
-            && !loop_body.is_some_and(|body| body.order().position(end as u32).is_some())
+            && !loops
+                .into_iter()
+                .flatten()
+                .any(|body| body.order().position(end as u32).is_some())
             && (is_register_only(instruction)
                 || (end == first
                     && unit.context.is_long64()
@@ -293,14 +296,21 @@ pub(crate) fn emit_paged_vector_copy(
     copy_spans: bool,
 ) -> Option<Vec<u8>> {
     let body = StructuredLoop::select_paged_vector_copy(unit)?;
-    if copy_spans && let Some(span) = body.with_paged_copy_spans(unit) {
-        let bytes = emit_placement(
+    let windowed = copy_spans
+        .then(|| body.with_paged_copy_spans(unit))
+        .flatten();
+    let additional = copy_spans
+        .then(|| StructuredLoop::select_additional_paged_copy(unit, body))
+        .flatten();
+    if windowed.is_some() || additional.is_some() {
+        let bytes = emit_placement_with_copy(
             unit,
             true,
             (true, false),
-            Some(span),
+            Some(windowed.unwrap_or(body)),
             false,
             max_artifact_bytes,
+            additional,
         );
         if bytes.len() <= max_artifact_bytes {
             return Some(bytes);
@@ -349,6 +359,26 @@ fn emit_placement(
     loop_body: Option<StructuredLoop>,
     guard_reads: bool,
     max_artifact_bytes: usize,
+) -> Vec<u8> {
+    emit_placement_with_copy(
+        unit,
+        observed,
+        (paged, mmio),
+        loop_body,
+        guard_reads,
+        max_artifact_bytes,
+        None,
+    )
+}
+
+fn emit_placement_with_copy(
+    unit: &Unit,
+    observed: bool,
+    (paged, mmio): (bool, bool),
+    loop_body: Option<StructuredLoop>,
+    guard_reads: bool,
+    max_artifact_bytes: usize,
+    _additional_copy: Option<StructuredLoop>,
 ) -> Vec<u8> {
     let reads = if cfg!(all(feature = "parallel", target_arch = "wasm32")) {
         let indexed = !observed
@@ -400,6 +430,8 @@ fn emit_placement(
         x87_register_pairs: true,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_register_prefixes: true,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        additional_copy: _additional_copy,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         linear_recurrence: max_artifact_bytes >= 64 * 1024,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -513,6 +545,8 @@ struct OptionalLowering {
     x87_register_pairs: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_register_prefixes: bool,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    additional_copy: Option<StructuredLoop>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     linear_recurrence: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -929,7 +963,7 @@ fn emit_body(
         && !mmio
         && loop_body.is_none_or(StructuredLoop::paged_vector_copy)
         && optional.paged_register_prefixes)
-        .then(|| paged_register_prefixes(unit, loop_body))
+        .then(|| paged_register_prefixes(unit, [loop_body, optional.additional_copy]))
         .filter(|prefixes| prefixes.iter().any(Option::is_some));
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let register_prefix_guard_type = register_prefixes.as_ref().map(|_| {
@@ -979,16 +1013,19 @@ fn emit_body(
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let paged_vector_copy = loop_body.is_some_and(StructuredLoop::paged_vector_copy);
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    let paged_copy_resolver = loop_body
-        .and_then(|body| body.paged_copy_group(unit))
-        .map(|group| {
-            let signature = add_function_type(
-                &mut types,
-                [ValType::I64, ValType::I64, ValType::I32],
-                [ValType::I32],
-            );
-            (group, signature)
-        });
+    let copy_group = loop_body.and_then(|body| body.paged_copy_group(unit));
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let additional_copy_group = optional
+        .additional_copy
+        .and_then(|body| body.paged_copy_group(unit));
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let paged_copy_resolver = copy_group.or(additional_copy_group).map(|_| {
+        add_function_type(
+            &mut types,
+            [ValType::I64, ValType::I64, ValType::I32],
+            [ValType::I32],
+        )
+    });
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let paged_scalar_writes = loop_body.is_some_and(StructuredLoop::paged_scalar_writes);
     #[cfg(not(all(not(feature = "parallel"), target_arch = "wasm32")))]
@@ -1365,8 +1402,8 @@ fn emit_body(
     let paged_loop_write_block =
         paged_vector_write_type.map(|index| import_function("paged_loop_write_block", index));
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    let paged_copy_resolver = paged_copy_resolver
-        .map(|(group, signature)| (group, import_function("paged_loop_copy_window", signature)));
+    let paged_copy_resolver =
+        paged_copy_resolver.map(|signature| import_function("paged_loop_copy_window", signature));
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let paged_read_rearm = paged_read_rearm_type.map(|(index, order)| {
         let name = if paged_split_vectors {
@@ -1925,10 +1962,10 @@ fn emit_body(
         paged_vector_window.map(|resolve| read_window(resolve, paged_vector_rearm)),
     );
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    let paged_copy_window = paged_copy_resolver.map(|(group, resolve)| {
-        let first = next_local;
+    let copy_window = |group, resolve, locals: &mut Vec<(u32, ValType)>, next_local: &mut u32| {
+        let first = *next_local;
         locals.extend([(3, ValType::I64), (2, ValType::I32)]);
-        next_local += 5;
+        *next_local += 5;
         super::paged_copy::CopyWindow {
             group,
             resolve,
@@ -1938,7 +1975,25 @@ fn emit_body(
             source_host: first + 3,
             destination_host: first + 4,
         }
-    });
+    };
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let paged_copy_window = copy_group
+        .zip(paged_copy_resolver)
+        .map(|(group, resolve)| copy_window(group, resolve, &mut locals, &mut next_local));
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let additional_copy = optional
+        .additional_copy
+        .zip(additional_copy_group.zip(paged_copy_resolver))
+        .map(|(body, (group, resolve))| {
+            let window = copy_window(group, resolve, &mut locals, &mut next_local);
+            let (guard, _) =
+                paged_loop_guard.expect("additional copy requires a vector loop guard");
+            let attempts = next_local;
+            locals.push((1, ValType::I32));
+            next_local += 1;
+            let rearm = paged_read_rearm.map(|(read, _)| (read, body.order()));
+            (body, window, (guard, attempts), rearm)
+        });
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let paged_dword_read_pair = paged_dword_read_pair.map(|(first, second, resolve)| {
         let host = next_local;
@@ -2265,6 +2320,19 @@ fn emit_body(
         }
         let loop_depth = count - index as u32;
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        let additional =
+            additional_copy.filter(|(body, _, _, _)| body.order().position(index as u32).is_some());
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        {
+            // Keep the replay state of the two disjoint loops independent.
+            emitter.paged_loop_guard =
+                additional.map_or(paged_loop_guard, |(_, _, guard, _)| Some(guard));
+            emitter.paged_read_rearm =
+                additional.map_or(paged_read_rearm, |(_, _, _, rearm)| rearm);
+            emitter.paged_copy_window =
+                additional.map_or(paged_copy_window, |(_, window, _, _)| Some(window));
+        }
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         if let Some((end, guard)) = register_prefixes
             .as_ref()
             .and_then(|p| p[index])
@@ -2291,6 +2359,10 @@ fn emit_body(
             );
         }
         let head = loop_body.filter(|body| body.head == index as u32);
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        let head = head.or(additional
+            .map(|(body, _, _, _)| body)
+            .filter(|body| body.head == index as u32));
         let canonical_checked = |body: &StructuredLoop| {
             let natural = body.natural_forward_loop();
             #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -2300,7 +2372,7 @@ fn emit_body(
                     && (!unit.context.is_long64() || body.paged_source_is_4k(unit)));
             natural
         };
-        if let Some((body, guard)) = head.filter(canonical_checked).zip(paged_loop_guard) {
+        if let Some((body, guard)) = head.filter(canonical_checked).zip(emitter.paged_loop_guard) {
             // The canonical entries cover the checked fallback. Dense straight
             // reads reach the same head on a checked backedge through dispatch.
             emitter.emit_guarded_paged_loop(&unit.instructions, body, loop_depth, guard);
@@ -2463,6 +2535,21 @@ fn emit_body(
     }
     let code_start = bytes.len();
     code.append_to(&mut bytes);
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    if bytes.len() > max_artifact_bytes && additional_copy.is_some() {
+        return emit_body(
+            unit,
+            observed,
+            (paged, mmio),
+            loop_body,
+            _guard_reads,
+            OptionalLowering {
+                additional_copy: None,
+                ..optional
+            },
+            max_artifact_bytes,
+        );
+    }
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     if bytes.len() > max_artifact_bytes && parallel_native_lock_memo.is_some() {
         return emit_body(
