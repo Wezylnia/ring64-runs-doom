@@ -3,12 +3,19 @@ use crate::embedding::layout::X87_EXCEPTION;
 use crate::x86::context::Mode;
 use crate::x86::x87::{self, Op};
 
-#[derive(Default)]
-pub(super) struct DecodedOperations([Option<(u32, Op)>; 32]);
+const DECODED_OPERATION_CAPACITY: usize = 128;
+
+pub(super) struct DecodedOperations([Option<(u32, Op)>; DECODED_OPERATION_CAPACITY]);
+
+impl Default for DecodedOperations {
+    fn default() -> Self {
+        Self([None; DECODED_OPERATION_CAPACITY])
+    }
+}
 
 impl DecodedOperations {
     fn index(word: u32) -> usize {
-        (word.wrapping_mul(0x9e37_79b9) >> 27) as usize
+        (word.wrapping_mul(0x9e37_79b9) >> (32 - DECODED_OPERATION_CAPACITY.ilog2())) as usize
     }
 
     fn get(&mut self, word: u32) -> Option<Op> {
