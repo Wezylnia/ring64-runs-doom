@@ -1925,6 +1925,16 @@ fn emit_body(
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let read_span = read_span.map(&mut span_cache);
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let flat_stack_pointer_span = stack_read_span
+        .filter(|_| {
+            !paged
+                && !mmio
+                && unit.sampled
+                && unit.context.mode() == crate::x86::context::Mode::Protected
+                && unit.context.code32()
+        })
+        .map(&mut span_cache);
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let stack_read_span = stack_read_span.map(&mut span_cache);
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let write_caches = write_segments.map(|used| write_span.filter(|_| used).map(&mut span_cache));
@@ -2388,6 +2398,10 @@ fn emit_body(
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         stack_read_span: None,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        flat_stack_pointer_span,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        stack_pointer_relative: false,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         read_loop_diamond,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         write_spans: [None; 2],
@@ -2587,7 +2601,7 @@ fn emit_body(
         && unit.context.code32()
     {
         emitter.load_retained_flat_spans(
-            [read_span, stack_read_span],
+            [read_span, stack_read_span, flat_stack_pointer_span],
             write_caches[0].filter(|_| cyclic_vector_store),
         );
     }
@@ -2621,6 +2635,7 @@ fn emit_body(
                     .any(|range| range.contains(&instruction.pc));
             emitter.read_span = read_span.filter(|_| in_cycle);
             emitter.stack_read_span = stack_read_span.filter(|_| in_cycle);
+            emitter.stack_pointer_relative = false;
             emitter.write_spans = if in_cycle { write_caches } else { [None; 2] };
         }
         #[cfg(all(feature = "parallel", target_arch = "wasm32"))]

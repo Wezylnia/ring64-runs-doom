@@ -110,6 +110,7 @@ impl Core {
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         {
             self.state.flat_reads = Default::default();
+            self.state.flat_stack_pointer_read = Default::default();
             self.state.flat_data_write = Default::default();
         }
         self.translation_cache.clear();
@@ -122,6 +123,7 @@ impl Core {
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         {
             self.state.flat_reads = Default::default();
+            self.state.flat_stack_pointer_read = Default::default();
             self.state.flat_data_write = Default::default();
         }
         self.paging_work.clear();

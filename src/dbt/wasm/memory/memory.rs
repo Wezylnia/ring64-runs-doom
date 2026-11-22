@@ -108,6 +108,11 @@ impl Emitter {
         pending_stack: Option<u32>,
     ) {
         self.segment = address.segment;
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        {
+            self.stack_pointer_relative =
+                matches!(address.base, AddressBase::Register(4)) && address.index.is_none();
+        }
         #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
         {
             self.parallel_memo_address = address.index.is_none()
@@ -882,7 +887,7 @@ impl Emitter {
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     pub(super) fn load_retained_flat_spans(
         &mut self,
-        reads: [Option<SpanCache>; 2],
+        reads: [Option<SpanCache>; 3],
         data_write: Option<SpanCache>,
     ) {
         use crate::embedding::layout::StateStorage;
@@ -893,6 +898,7 @@ impl Emitter {
         for (slot, cache) in [
             (read_offset, reads[0]),
             (read_offset + size_of::<DirectSpan>(), reads[1]),
+            (offset_of!(StateStorage, flat_stack_pointer_read), reads[2]),
             (offset_of!(StateStorage, flat_data_write), data_write),
         ] {
             let Some(cache) = cache else {
@@ -930,13 +936,21 @@ impl Emitter {
             DirectOperand::VectorDword(_) => 4,
             DirectOperand::VectorBlock(_) | DirectOperand::VectorBlockStore { .. } => 16,
         };
-        let (span, access) = if matches!(
+        let store = matches!(
             operand,
             DirectOperand::ScalarStore(_) | DirectOperand::VectorBlockStore { .. }
-        ) {
+        );
+        let stack_pointer = !store
+            && self.segment == Segment::Ss
+            && self.stack_pointer_relative
+            && self.stack_read_span.is_some()
+            && self.flat_stack_pointer_span.is_some();
+        let (span, access) = if store {
             (self.write_span(), Access::Write)
         } else {
-            let span = if self.segment == Segment::Ss {
+            let span = if stack_pointer {
+                self.flat_stack_pointer_span
+            } else if self.segment == Segment::Ss {
                 self.stack_read_span.or(self.read_span)
             } else {
                 self.read_span
@@ -1017,7 +1031,11 @@ impl Emitter {
             }
         }
         self.op(Op::I32Eqz).unlikely(Op::If(BlockType::Empty));
-        let segment = last_offset.map_or(-1, |_| self.segment as i32);
+        let segment = if stack_pointer {
+            crate::embedding::layout::FLAT_STACK_POINTER_READ
+        } else {
+            last_offset.map_or(-1, |_| self.segment as i32)
+        };
         self.linear_address();
         self.op(Op::I32Const(bytes as i32))
             .op(Op::I32Const(segment))

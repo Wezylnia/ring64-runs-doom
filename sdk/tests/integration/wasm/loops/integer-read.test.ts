@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createCpu } from '../../../../src/index.js';
+import { Core } from '../../../../src/wasm/core.js';
 import { protectedSnapshot } from '../../../../../tests/support/context.js';
 import {
   LIMITS,
@@ -387,5 +388,93 @@ test('rotated read branches publish the selected CMP at exits and partial laps',
     assert.deepEqual(cpu.readTimeState(), { tsc: 6n, tscAux: 19 });
   } finally {
     cpu.dispose();
+  }
+});
+
+test('sampled flat SS reads keep separate ESP and EBP mappings through remaps', async () => {
+  const code = hex('0fb64500368b1c244975f5f4'); // MOVZX EAX,[EBP]; MOV EBX,SS:[ESP]; DEC ECX; JNE head
+  const data = 0x49000n;
+  const stack = 0x70000n;
+  const stop = head + 11n;
+  const codeMap = {
+    ...mapping(head, 'code', code.length),
+    permissions: { ...readOnly, execute: true },
+  };
+  const dataMap = mapping(data, 'data', 1);
+  const compile = Core.prototype.compile;
+  const prototype = Core.prototype as unknown as {
+    artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
+  };
+  const imports = prototype.artifactImports;
+  const calls: number[] = [];
+  Core.prototype.compile = function (pc, limits, points, route) {
+    if (pc !== head || route) return compile.call(this, pc, limits, points, route);
+    return compile.call(this, pc, limits, [head, head + 4n, head + 8n, head + 9n], true);
+  };
+  prototype.artifactImports = function (observed) {
+    const env = imports.call(this, observed);
+    const read = env.read_span;
+    if (typeof read === 'function') {
+      env.read_span = (address: bigint, width: number, segment: number) => {
+        calls.push(segment);
+        return read(address, width, segment);
+      };
+    }
+    return env;
+  };
+  const context = protectedSnapshot();
+  const cpu = await createCpu({
+    compiler,
+    entry: head,
+    limits: LIMITS,
+    context,
+    memory: {
+      backings: [
+        { id: 'code', bytes: code },
+        { id: 'data', bytes: hex('aa') },
+        { id: 'first', bytes: hex('78563412') },
+        { id: 'second', bytes: hex('efcdab90') },
+      ],
+      mappings: [codeMap, dataMap, mapping(stack, 'first', 4)],
+    },
+    memoryLimits: { maxBackings: 4, maxMappings: 3, maxBackingBytes: code.length + 9 },
+  });
+  try {
+    const input = initial(head, { 0: 0n, 1: 8n, 3: 0n, 4: stack, 5: data });
+    cpu.setState(input);
+    const first = await cpu.run({ budget: 40n, stop });
+    assert.equal(first.reason, 'stop');
+    assert.equal(first.retired, 32n);
+    assert.equal(first.state.registers[0], 0xaan);
+    assert.equal(first.state.registers[3], 0x12345678n);
+    assert.deepEqual(calls, [1, 0x101]);
+
+    cpu.setMappings([codeMap, dataMap, mapping(stack, 'second', 4)]);
+    cpu.setState(input);
+    const second = await cpu.run({ budget: 40n, stop });
+    assert.equal(second.reason, 'stop');
+    assert.equal(second.state.registers[3], 0x90abcdefn);
+    assert.deepEqual(calls, [1, 0x101, 1, 0x101]);
+
+    for (const [base, retired, offset, eax] of [
+      [stack, 1n, 4n, 0xaan],
+      [data, 0n, 0n, 0n],
+    ] as const) {
+      const bounded = protectedSnapshot();
+      bounded.segments.ss.limit = Number(base - 1n);
+      bounded.segments.ss.granularity = false;
+      cpu.setContext(bounded);
+      cpu.setState(input);
+      const denied = await cpu.run({ budget: 40n, stop });
+      assert.equal(denied.reason, 'segment-fault');
+      assert.equal(denied.retired, retired);
+      assert.equal(denied.state.rip, head + offset);
+      assert.equal(denied.state.registers[0], eax);
+      assert.equal(denied.state.registers[3], 0n);
+    }
+  } finally {
+    cpu.dispose();
+    Core.prototype.compile = compile;
+    prototype.artifactImports = imports;
   }
 });

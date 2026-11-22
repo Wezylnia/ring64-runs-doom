@@ -149,6 +149,10 @@ struct Emitter {
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     stack_read_span: Option<memory::SpanCache>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    flat_stack_pointer_span: Option<memory::SpanCache>,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    stack_pointer_relative: bool,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     read_loop_diamond: Option<loop_cfg::ReadLoopDiamond>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     write_spans: [Option<memory::SpanCache>; 2],

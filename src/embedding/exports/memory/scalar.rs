@@ -22,6 +22,13 @@ pub extern "C" fn core_write_span(address: u64, width: u32, segment: i32) -> u32
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 fn core_direct_span(address: u64, width: u32, segment: i32, access: Access) -> u32 {
+    let stack_pointer =
+        access == Access::Read && segment == super::super::layout::FLAT_STACK_POINTER_READ;
+    let segment = if stack_pointer {
+        Segment::Ss as i32
+    } else {
+        segment
+    };
     BRIDGE.with_borrow_mut(|bridge| {
         let core = bridge.core.as_mut().unwrap();
         if segment >= 0
@@ -57,7 +64,11 @@ fn core_direct_span(address: u64, width: u32, segment: i32, access: Access) -> u
             && core.context.code32()
             && (segment == Segment::Ds as i32 || segment == Segment::Ss as i32)
         {
-            let slot = &mut core.state.flat_reads[usize::from(segment == Segment::Ss as i32)];
+            let slot = if stack_pointer {
+                &mut core.state.flat_stack_pointer_read
+            } else {
+                &mut core.state.flat_reads[usize::from(segment == Segment::Ss as i32)]
+            };
             *slot = span;
             return slot as *const crate::memory::DirectSpan as u32;
         }
