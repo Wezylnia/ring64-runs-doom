@@ -89,6 +89,44 @@ fn guarded_upper_walk_scratch_is_independent_and_leaves_the_leaf_live() {
     assert_eq!(physical_counts::take(), [2, 16, 0, 0, 0, 0]);
 }
 
+#[cfg(not(feature = "parallel"))]
+#[test]
+fn guarded_leaf_table_matches_independent_walks_for_live_leaf_changes() {
+    let (mut image, state) = fixture();
+    image.physical_write(0x1000, 8, 0x2025).unwrap();
+    image.physical_write(0x2000, 8, 0x3027).unwrap();
+    image.physical_write(0x3000, 8, 0x4027).unwrap();
+    let read = Request {
+        linear: 0x1234,
+        access: Access::Read,
+        class: AccessClass::User,
+    };
+    for efer in [state.efer, state.efer | (1 << 11)] {
+        let state = State { efer, ..state };
+        let mut words = UpperWords::default();
+        let keys = &ProtectionKeys::ZERO;
+        assert_eq!(
+            words.peek(&image, &state, read, keys),
+            peek(&image, &state, read, keys)
+        );
+        assert!(words.ia32e.is_some());
+        for leaf in [0u64, 0xb001, 0xb125, 0xb167, (1 << 63) | 0xb027] {
+            image.physical_write(0x4010, 8, leaf).unwrap();
+            for access in [Access::Read, Access::Write, Access::Execute] {
+                let request = Request {
+                    linear: 0x2345,
+                    access,
+                    ..read
+                };
+                assert_eq!(
+                    words.peek(&image, &state, request, keys),
+                    peek(&image, &state, request, keys)
+                );
+            }
+        }
+    }
+}
+
 #[test]
 fn literal_nonidentity_walk_peeks_without_accessed_effects() {
     let (image, state) = fixture();

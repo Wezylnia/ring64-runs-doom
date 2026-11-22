@@ -274,6 +274,7 @@ fn peek_with_reader(
 #[derive(Default)]
 pub(crate) struct UpperWords {
     words: [WalkWord; 3],
+    ia32e: Option<LeafTable>,
 }
 
 #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
@@ -282,6 +283,79 @@ struct WalkWord {
     address: u64,
     value: u64,
     width: u32,
+}
+
+// Decoded parents of a 4 KiB leaf. The same read-only guarded visit that
+// retains raw walk words also keeps these inherited rights and path addresses.
+#[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+struct LeafTable {
+    linear_prefix: u64,
+    cr3: u64,
+    efer: u64,
+    table: u64,
+    parents: [u64; 3],
+    common: u64,
+    any: u64,
+}
+
+#[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+impl LeafTable {
+    fn from_walk(words: &[WalkWord; 3], state: &State, linear: u64) -> Self {
+        Self {
+            linear_prefix: linear >> 21,
+            cr3: state.cr3,
+            efer: state.efer,
+            table: words[2].value & ADDRESS,
+            parents: std::array::from_fn(|index| words[index].address),
+            common: words[0].value & words[1].value & words[2].value,
+            any: words[0].value | words[1].value | words[2].value,
+        }
+    }
+
+    fn peek(
+        &self,
+        image: &Image,
+        state: &State,
+        request: Request,
+        keys: &ProtectionKeys,
+    ) -> Result<Translation, Failure> {
+        let address = self.table + (request.linear >> 12 & 511) * 8;
+        let entry = read_walk_word(image, address, 8)
+            .map_err(|fault| request.physical_failure(fault, PhysicalPhase::WalkRead))?;
+        if entry & 1 == 0 {
+            return Err(request.page_fault(state, false, false, false));
+        }
+        if state.efer & (1 << 11) == 0 && entry & (1 << 63) != 0 {
+            return Err(request.page_fault(state, true, true, false));
+        }
+        let common = self.common & entry;
+        let rights = Rights {
+            user: common & 4 != 0,
+            writable: common & 2 != 0,
+            executable: (self.any | entry) & (1 << 63) == 0,
+            key: ((entry >> 59) & 15) as u8,
+        };
+        rights.authorize(state, request, keys)?;
+        let offset = request.linear & 4095;
+        let physical_base = entry & ADDRESS;
+        let [top, upper, directory] = self.parents;
+        Ok(Translation {
+            physical: physical_base | offset,
+            leaf: address,
+            dirty: entry & DIRTY == 0,
+            remaining: 4096 - offset,
+            entry_width: 8,
+            linear_base: request.linear & !4095,
+            physical_base,
+            span: 4096,
+            rights,
+            global: entry & (1 << 8) != 0,
+            accessed: common & ACCESSED != 0,
+            cache_id: None,
+            entries: [top, upper, directory, address],
+            count: 4,
+        })
+    }
 }
 
 #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
@@ -296,9 +370,19 @@ impl UpperWords {
         // The pure walker reads once per visited level. Only the possible
         // ancestors of a 4 KiB leaf are eligible. An early large-leaf result
         // is refused by the caller, which drops this visit's scratch.
-        let upper = if state.efer & (1 << 10) != 0 { 3 } else { 1 };
+        let long = state.efer & (1 << 10) != 0;
+        if let Some(table) = self.ia32e.as_ref()
+            && long
+            && state.cr0 & (1 << 31) != 0
+            && state.cr3 == table.cr3
+            && state.efer == table.efer
+            && request.linear >> 21 == table.linear_prefix
+        {
+            return table.peek(image, state, request, keys);
+        }
+        let upper = if long { 3 } else { 1 };
         let mut level = 0;
-        peek_with_reader(state, request, keys, |address, width| {
+        let translation = peek_with_reader(state, request, keys, |address, width| {
             let index = level;
             level += 1;
             if index >= upper {
@@ -315,7 +399,11 @@ impl UpperWords {
                 width,
             };
             Ok(value)
-        })
+        })?;
+        if long && translation.entry_width == 8 && translation.span == 4096 {
+            self.ia32e = Some(LeafTable::from_walk(&self.words, state, request.linear));
+        }
+        Ok(translation)
     }
 }
 
