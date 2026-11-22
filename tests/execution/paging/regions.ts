@@ -9,17 +9,18 @@ export function pagedRegionScenarios(compiler: WebAssembly.Module): Scenario[] {
         const stack = PC + 0x2ff0n;
         const left = PC + 0x40n;
         const right = PC + 0x50n;
-        const stop = PC + 14n;
-        // MOV ECX,640; loop: MOV RAX,[RSI]; CALL RAX; DEC ECX; JNZ loop; NOP.
+        const stop = PC + 19n;
+        // MOV ECX,640; loop: MOV RAX,[RSI]; CALL RAX; DEC ECX; JNZ loop; INC EDX; three NOPs.
         // Two independent ADD EDI,imm8; RET handlers on the same code page.
         const code =
-          'b980020000488b06ffd0ffc975f790'.padEnd(0x80, '82') +
+          'b980020000488b06ffd0ffc975f7ffc2909090'.padEnd(0x80, '82') +
           '83c701c3'.padEnd(0x20, '82') +
           '83c702c3';
         await usingPaged(
           compiler,
           {
             code,
+            limits: { maxInstructions: 8 },
             words: [
               [0x4008n, 0xa007n],
               [0x4010n, 0xb007n],
@@ -30,12 +31,17 @@ export function pagedRegionScenarios(compiler: WebAssembly.Module): Scenario[] {
             ],
           },
           async (cpu) => {
-            const starting = initial(PC, { 4: stack, 6: data, 7: 0n }, 2n);
+            const starting = initial(PC, { 2: 0n, 4: stack, 6: data, 7: 0n }, 2n);
             const execute = async (value: bigint) => {
               cpu.setState(starting);
               const result = await cpu.run({ stop, budget: 4000n });
               equal(result.reason, 'stop', 'the guest reaches its own stop');
-              equal(result.retired, 3841n, 'all CALL and RET instructions retire once');
+              equal(
+                result.retired,
+                3845n,
+                'all CALL, RET and cold fallthrough instructions retire',
+              );
+              equal(result.state.registers[2], 1n, 'the cold fallthrough executes exactly once');
               equal(result.state.registers[4], stack, 'stack returns to its starting address');
               equal(result.state.registers[7], value, 'the observed target actually executed');
               return result.resources.dispatches;
@@ -44,7 +50,7 @@ export function pagedRegionScenarios(compiler: WebAssembly.Module): Scenario[] {
             if (first > 520)
               throw new Error('the learned run exceeded its dispatch training window');
             const warmed = await execute(640n);
-            if (warmed > 2) throw new Error('the selected hot region still exits on return');
+            if (warmed > 3) throw new Error(`the selected hot region dispatched ${warmed} times`);
             cpu.writePhysicalMemory(0xa000n, little([right]));
             await execute(1280n);
             cpu.writePhysicalMemory(0xa000n, little([left]));

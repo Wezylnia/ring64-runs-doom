@@ -57,6 +57,8 @@ pub(super) fn discover_with_entry_seeds(
         pending.extend(seeds);
     }
     let mut seeds_to_visit = seeds.iter().copied().filter(|_| !linear_region);
+    let paged_region = paging.is_some() && !seeds.is_empty() && context.is_long64();
+    let mut loop_exits = VecDeque::new();
     let mut visited = BTreeSet::new();
     let mut instructions = BTreeMap::new();
     let mut source = BTreeSet::new();
@@ -64,7 +66,11 @@ pub(super) fn discover_with_entry_seeds(
     let mut fetch_pages = BTreeMap::new();
     let mut instruction_pages = Vec::new();
     let identity_source = context.is_long64() && paging.is_none();
-    while let Some(pc) = pending.pop_front().or_else(|| seeds_to_visit.next()) {
+    while let Some(pc) = pending
+        .pop_front()
+        .or_else(|| seeds_to_visit.next())
+        .or_else(|| loop_exits.pop_front())
+    {
         if instructions.len() >= limits.max_instructions as usize {
             break;
         }
@@ -156,7 +162,12 @@ pub(super) fn discover_with_entry_seeds(
                 }
             }
             Operation::Jcc { target, .. } | Operation::CountBranch { target, .. } => {
-                pending.push_back(instruction.next_pc);
+                if paged_region && target <= entry && entry <= pc && target >> 12 == pc >> 12 {
+                    // Fit the observed targets before the fallthrough of their root loop.
+                    loop_exits.push_back(instruction.next_pc);
+                } else {
+                    pending.push_back(instruction.next_pc);
+                }
                 if !context.is_long64() || canonical48(target) {
                     pending.push_back(target);
                 }
