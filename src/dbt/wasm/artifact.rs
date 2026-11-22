@@ -2476,6 +2476,15 @@ fn emit_body(
             .collect(),
     };
     emitter.load_state();
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    if !paged
+        && !observed
+        && !mmio
+        && unit.context.mode() == crate::x86::context::Mode::Protected
+        && unit.context.code32()
+    {
+        emitter.load_retained_flat_reads([read_span, stack_read_span]);
+    }
     emitter.op(Op::Block(BlockType::Empty));
     emitter.gates(0);
     emitter.profile_guard(0);

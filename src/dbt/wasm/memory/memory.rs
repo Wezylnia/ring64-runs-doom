@@ -12,7 +12,7 @@ const PAGED_READ_COOLDOWN: i32 = PAGED_READ_REPLAY - 7;
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 #[derive(Clone, Copy)]
-// Mapping edits and source publication happen between invocations, so spans live in Wasm locals.
+// Hot hits use Wasm locals. An active flat read can seed the next invocation.
 pub(super) struct SpanCache {
     pub(super) resolve: u32,
     base: u32,
@@ -819,6 +819,34 @@ impl Emitter {
             return;
         }
         self.load_address_slow(width, for_write, exit_depth);
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn load_retained_flat_reads(&mut self, spans: [Option<SpanCache>; 2]) {
+        use crate::embedding::layout::StateStorage;
+        use crate::memory::DirectSpan;
+        use std::mem::{offset_of, size_of};
+
+        for (index, cache) in spans.into_iter().enumerate() {
+            let Some(cache) = cache else {
+                continue;
+            };
+            let slot = offset_of!(StateStorage, flat_reads) + index * size_of::<DirectSpan>();
+            let field = |offset, align| MemArg {
+                offset: (slot + offset) as u64,
+                align,
+                memory_index: 0,
+            };
+            self.op(Op::LocalGet(0))
+                .op(Op::I64Load(field(offset_of!(DirectSpan, base), 3)))
+                .op(Op::LocalSet(cache.base))
+                .op(Op::LocalGet(0))
+                .op(Op::I64Load32U(field(offset_of!(DirectSpan, length), 2)))
+                .op(Op::LocalSet(cache.length))
+                .op(Op::LocalGet(0))
+                .op(Op::I32Load(field(offset_of!(DirectSpan, host), 2)))
+                .op(Op::LocalSet(cache.host));
+        }
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]

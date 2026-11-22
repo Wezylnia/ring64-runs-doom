@@ -609,6 +609,70 @@ export function boundaryScenarios(compiler: WebAssembly.Module): Scenario[] {
       },
     },
     {
+      name: 'flat reads across two owners follow remapping, replacement, and permission revocation',
+      async run() {
+        const first = 0x1000n;
+        const second = 0x2000n;
+        const data = 0x3000n;
+        const code = '8b03ebfc'; // MOV EAX,[EBX]; JMP back
+        const codeMap = (pc: bigint, backing: string) => ({
+          base: pc,
+          backing,
+          offset: 0,
+          length: 4,
+          permissions: { read: true, write: false, execute: true },
+        });
+        const dataMap = (read: boolean) => ({
+          base: data,
+          backing: 'data2',
+          offset: 0,
+          length: 4,
+          permissions: { read, write: true, execute: false },
+        });
+        const remap = [codeMap(first, 'code'), codeMap(second, 'data0')];
+        await using(
+          compiler,
+          code,
+          context(),
+          async (cpu) => {
+            const read = async (pc: bigint, value: bigint) => {
+              const before = input(pc, { 3: data }, 2n);
+              cpu.setState(before);
+              const result = await cpu.run({ stop: pc + 2n, budget: 20n });
+              exit(result, 'stop', 20n, 1n, changed(before, pc + 2n, { 0: value }));
+            };
+            await read(first, 0x1122334444332211n);
+            await read(second, 0x1122334444332211n);
+            cpu.setMappings([...remap, dataMap(true)]);
+            cpu.removeBacking('data1');
+            await read(first, 0x11223344ddccbbaan);
+            await read(second, 0x11223344ddccbbaan);
+            cpu.setMappings([...remap, dataMap(false)]);
+            const before = input(second, { 3: data }, 2n);
+            cpu.setState(before);
+            const denied = await cpu.run({ stop: second + 2n, budget: 20n });
+            exit(denied, 'data-fault', 20n, 0n, before);
+            fault(denied, {
+              instructionPc: second,
+              address: data,
+              width: 4,
+              access: 'read',
+              cause: 'permission',
+              failingAddress: data,
+              segment: 'ds',
+            });
+          },
+          {
+            data: [
+              { base: second, bytes: code, write: false, execute: true },
+              { base: data, bytes: '11223344' },
+              { base: 0x4000n, bytes: 'aabbccdd' },
+            ],
+          },
+        );
+      },
+    },
+    {
       name: 'segment usability and type precede bounds and mapping checks',
       async run() {
         for (const row of [

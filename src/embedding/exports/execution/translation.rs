@@ -107,6 +107,10 @@ impl Core {
     }
 
     pub(super) fn revoke_host_translations(&mut self) {
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        {
+            self.state.flat_reads = Default::default();
+        }
         self.translation_cache.clear();
         self.paging_work.clear();
         self.retire_translations();
@@ -114,6 +118,10 @@ impl Core {
     }
 
     pub(super) fn memory_admin_changed(&mut self) {
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        {
+            self.state.flat_reads = Default::default();
+        }
         self.paging_work.clear();
         if self.paging.is_some() {
             self.translation_cache.clear();

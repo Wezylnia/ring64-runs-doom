@@ -266,6 +266,31 @@ pub struct RunState {
     pub xcr0: u64,
 }
 
+// Share the existing state pointer with compiler-private caches without
+// putting their backing pointers in the SDK-visible RunState layout.
+#[cfg(any(test, target_arch = "wasm32"))]
+#[repr(C)]
+pub(crate) struct StateStorage {
+    run: std::cell::UnsafeCell<RunState>,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(crate) flat_reads: [crate::memory::DirectSpan; 2],
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+impl StateStorage {
+    pub(crate) fn new(run: RunState) -> Self {
+        Self {
+            run: std::cell::UnsafeCell::new(run),
+            #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+            flat_reads: Default::default(),
+        }
+    }
+
+    pub(crate) fn get(&self) -> *mut RunState {
+        self.run.get()
+    }
+}
+
 impl Default for RunState {
     fn default() -> Self {
         Self {

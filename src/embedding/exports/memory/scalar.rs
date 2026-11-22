@@ -52,6 +52,15 @@ fn core_direct_span(address: u64, width: u32, segment: i32, access: Access) -> u
             let available = END32.saturating_sub(span.base);
             span.length = u64::from(span.length).min(available) as u32;
         }
+        if access == Access::Read
+            && core.context.mode() == crate::x86::context::Mode::Protected
+            && core.context.code32()
+            && (segment == Segment::Ds as i32 || segment == Segment::Ss as i32)
+        {
+            let slot = &mut core.state.flat_reads[usize::from(segment == Segment::Ss as i32)];
+            *slot = span;
+            return slot as *const crate::memory::DirectSpan as u32;
+        }
         core.direct_span = span;
         &raw const core.direct_span as u32
     })

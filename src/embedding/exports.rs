@@ -1,7 +1,8 @@
-use std::cell::{RefCell, UnsafeCell};
+use std::cell::RefCell;
 
 use super::layout::{
-    DATA, FETCH, INVALID, RESOURCE, RawInterruptState, RunState, SEGMENT, TARGET, UNSUPPORTED,
+    DATA, FETCH, INVALID, RESOURCE, RawInterruptState, RunState, SEGMENT, StateStorage, TARGET,
+    UNSUPPORTED,
 };
 use crate::dbt::{self, CompileError, Limits};
 use crate::memory::{Access, Cause, Fault, Image};
@@ -135,7 +136,7 @@ struct Core {
     paging_failure: Option<crate::x86::paging::walk::Failure>,
     pdpte_load_fault: Option<(u8, u8, Fault)>,
     paging_system: Option<crate::x86::protection::SystemPagingFault>,
-    state: Box<UnsafeCell<RunState>>,
+    state: Box<StateStorage>,
     fault: Option<Fault>,
     divide_failed: bool,
     decode_fault: Option<decode::DecodeFault>,
@@ -218,7 +219,7 @@ impl Bridge {
             paging_failure: None,
             pdpte_load_fault: None,
             paging_system: None,
-            state: Box::new(UnsafeCell::new(RunState {
+            state: Box::new(StateStorage::new(RunState {
                 rip: entry,
                 ..RunState::default()
             })),
