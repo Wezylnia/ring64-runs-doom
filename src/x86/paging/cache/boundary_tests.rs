@@ -145,6 +145,67 @@ fn guarded_read_ages_data_then_code_only_on_success() {
 
 #[cfg(not(feature = "parallel"))]
 #[test]
+fn guarded_hits_on_the_newest_pair_preserve_all_victims_through_rollover() {
+    for overflow in [false, true] {
+        let (mut image, state, data) = fixture();
+        for leaf in 2..=6 {
+            image
+                .physical_write(0x4000 + 8 * leaf, 8, ((0x9 + leaf) << 12) | 0x67)
+                .unwrap();
+        }
+        let at = |page: u64| Request {
+            linear: (page << 12) | 0x234,
+            ..data
+        };
+        let code = Request {
+            access: Access::Execute,
+            ..at(2)
+        };
+        let oldest = at(3);
+        let cache = Cache::with_capacity(3);
+        for request in [oldest, data, code] {
+            insert(&cache, &mut image, &state, request);
+        }
+        if overflow {
+            let mut entries = cache.entries.borrow_mut();
+            let offset = u64::MAX - entries.clock;
+            for entry in entries.slots.iter_mut().flatten() {
+                entry.used += offset;
+            }
+            entries.clock = u64::MAX;
+        }
+        let clock = cache.entries.borrow().clock;
+        for operand in [at(2), data, at(2), data] {
+            assert!(
+                cache
+                    .data_then_fetch::<false, _>(
+                        &state,
+                        operand,
+                        &ProtectionKeys::ZERO,
+                        4,
+                        false,
+                        Some,
+                    )
+                    .is_some()
+            );
+        }
+        assert_eq!(cache.entries.borrow().clock, clock);
+        assert!(!cache.take_changed());
+        for (page, victim) in (4..=6).zip([oldest, data, code]) {
+            insert(&cache, &mut image, &state, at(page));
+            assert!(
+                cache
+                    .observe(&state, victim, &ProtectionKeys::ZERO)
+                    .unwrap()
+                    .is_none()
+            );
+            assert!(cache.take_changed());
+        }
+    }
+}
+
+#[cfg(not(feature = "parallel"))]
+#[test]
 fn guarded_read_span_rejects_global_or_split_without_touching_retained_ages() {
     let (mut image, mut state, data) = fixture();
     state.cr4 |= 1 << 7;

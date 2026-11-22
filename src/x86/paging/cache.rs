@@ -242,8 +242,10 @@ impl Cache {
             return None;
         }
         let value = access(translation)?;
-        entries.touch(data);
-        if fetch != data {
+        // A live hint is the entry last touched. The same entry or the two
+        // already newest entries would keep their relative order.
+        if data != fetch && entries.slots[data].as_ref().unwrap().used != entries.clock - 1 {
+            entries.touch(data);
             entries.touch(fetch);
         }
         Some(value)
