@@ -55,7 +55,7 @@ pub(crate) fn discover_with_profile(
         let mut fetched = Vec::new();
         instruction_pages.clear();
         let Ok(instruction) =
-            crate::x86::decode::decode_with_profile(pc, context, paging.is_some(), |offset| {
+            crate::x86::decode::decode_for_translation(pc, context, paging.is_some(), |offset| {
                 // Long64 CS offsets are linear; fetch already checks the full byte span.
                 if identity_source {
                     return image.fetch(offset).map_err(DecodeError::Fetch);

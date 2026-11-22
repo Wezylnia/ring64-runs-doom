@@ -109,6 +109,36 @@ where
     })
 }
 
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[inline]
+pub(crate) fn decode_for_translation<F>(
+    pc: u64,
+    context: &ExecutionContext,
+    paged: bool,
+    mut read: F,
+) -> Result<Instruction, DecodeError>
+where
+    F: FnMut(u64) -> Result<u8, DecodeError>,
+{
+    decode_with_shared_reader(pc, context, paged, &mut read)
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[inline(never)]
+fn decode_with_shared_reader(
+    pc: u64,
+    context: &ExecutionContext,
+    paged: bool,
+    read: &mut dyn FnMut(u64) -> Result<u8, DecodeError>,
+) -> Result<Instruction, DecodeError> {
+    // Standalone admission and discovery can use the same decoder body.
+    // Reached paged decoding keeps its specialized reader.
+    decode_with_profile(pc, context, paged, read)
+}
+
+#[cfg(not(all(not(feature = "parallel"), target_arch = "wasm32")))]
+pub(crate) use decode_with_profile as decode_for_translation;
+
 #[cfg(test)]
 mod tests;
 

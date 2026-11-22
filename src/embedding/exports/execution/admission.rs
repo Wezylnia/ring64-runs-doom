@@ -93,7 +93,7 @@ pub extern "C" fn core_probe(pc: u64) -> i32 {
         let decoded = if core.paging.is_some() {
             core.paged_decode(pc)
         } else {
-            decode::decode_with_context(pc, &core.context, |offset| {
+            decode::decode_for_translation(pc, &core.context, false, |offset| {
                 core.context
                     .fetch(&core.image, offset)
                     .map_err(|failure| match failure {
