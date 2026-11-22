@@ -1181,7 +1181,70 @@ pub(super) fn store(raw: u128, format: Format, cw: u16) -> Result {
     if format == Format::F80 || format == Format::Register {
         return Result::raw(raw);
     }
+    if format == Format::F64
+        && let Some(result) = normal_f64_store(raw, cw)
+    {
+        return result;
+    }
     store_converted(raw, format, cw)
+}
+
+fn normal_f64_store(raw: u128, cw: u16) -> Option<Result> {
+    let exponent_sign = (raw >> 64) as u16;
+    let exponent = (exponent_sign & 0x7fff).wrapping_sub(0x3c00);
+    let significand = raw as u64;
+    // Both the truncated result and a possible rounding carry remain normal.
+    if !(1..0x7fe).contains(&exponent) || significand >> 63 == 0 {
+        return None;
+    }
+    let retained = significand >> 11;
+    let tail = significand & 0x7ff;
+    let negative = exponent_sign >> 15 != 0;
+    let up = tail != 0
+        && match rc(cw) {
+            0 => tail + (retained & 1) > 0x400,
+            1 => negative,
+            2 => !negative,
+            _ => false,
+        };
+    let magnitude = (u64::from(exponent - 1) << 52) + retained + u64::from(up);
+    let value = (u64::from(negative) << 63) | magnitude;
+    Some(Result {
+        post: if tail == 0 { 0 } else { 32 },
+        up,
+        ..Result::raw(u128::from(value))
+    })
+}
+
+#[cfg(test)]
+#[test]
+fn normal_binary64_store_matches_general_rounding() {
+    let fields = |r: Result| (r.value, r.pre, r.post, r.up, r.suppress);
+    for exponent in [0x3c01u16, 0x3fff, 0x4000, 0x43fd] {
+        for sign in [0, 0x8000] {
+            for round in 0..4 {
+                for masks in [0, 63] {
+                    let cw = (round << 10) | masks;
+                    for retained in [1 << 63, (1 << 63) | (1 << 11), u64::MAX & !0x7ff] {
+                        for tail in 0..=0x7ff {
+                            let raw =
+                                (u128::from(exponent | sign) << 64) | u128::from(retained | tail);
+                            assert_eq!(
+                                fields(normal_f64_store(raw, cw).unwrap()),
+                                fields(store_converted(raw, Format::F64, cw)),
+                                "{raw:#x}, {cw:#x}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+    for exponent in [0, 0x3c00u16, 0x43fe, 0x7fff] {
+        let raw = (u128::from(exponent) << 64) | (1 << 63);
+        assert!(normal_f64_store(raw, 0x037f).is_none());
+    }
+    assert!(normal_f64_store(0x3fff_4000_0000_0000_0000, 0x037f).is_none());
 }
 
 fn store_converted(raw: u128, format: Format, cw: u16) -> Result {
