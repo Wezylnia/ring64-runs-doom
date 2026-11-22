@@ -124,7 +124,6 @@ fn quantize(sig: u128, shift: i32, negative: bool, round: u16) -> (u128, bool, b
         };
     (q + u128::from(up), inexact, up)
 }
-
 #[cfg(test)]
 #[test]
 fn rounding_bits_at_and_beyond_the_full_significand_width() {
@@ -139,31 +138,24 @@ fn rounding_bits_at_and_beyond_the_full_significand_width() {
     assert_eq!(quantize(5u128 << 63, 64, false, 0), (2, true, false));
 }
 
-fn pack(negative: bool, q: u128, e: i32, p: u32, target: Format, normal: bool) -> u128 {
-    let sign = if negative {
-        if target == Format::F32 {
-            1 << 31
-        } else if target == Format::F64 {
-            1 << 63
-        } else {
-            SIGN
-        }
-    } else {
-        0
-    };
+fn pack(negative: bool, q: u64, e: i32, p: u32, target: Format, normal: bool) -> u128 {
     if target == Format::F32 || target == Format::F64 {
-        let bias = if target == Format::F32 { 127 } else { 1023 };
-        sign | if normal {
-            (((e + bias) as u128) << (p - 1)) | (q - (1u128 << (p - 1)))
+        let (sign_bit, bias) = if target == Format::F32 {
+            (31, 127)
+        } else {
+            (63, 1023)
+        };
+        let sign = u64::from(negative) << sign_bit;
+        let payload = if normal {
+            (((e + bias) as u64) << (p - 1)) | (q - (1u64 << (p - 1)))
         } else {
             q
-        }
+        };
+        u128::from(sign | payload)
     } else {
-        sign | if normal {
-            (((e + 16383) as u128) << 64) | (q << (64 - p))
-        } else {
-            q << (64 - p)
-        }
+        let exponent = if normal { (e + 16383) as u16 } else { 0 };
+        let sign_exponent = (u16::from(negative) << 15) | exponent;
+        (u128::from(sign_exponent) << 64) | u128::from(q << (64 - p))
     }
 }
 fn round_num(n: Num, p: u32, target: Format, cw: u16) -> Result {
@@ -191,6 +183,8 @@ fn round_num(n: Num, p: u32, target: Format, cw: u16) -> Result {
         q >>= 1;
         e += 1
     }
+    debug_assert!(q < 1u128 << p);
+    let q = q as u64;
     if e > emax {
         let masked = cw & 8 != 0;
         let post = 8 | if masked || inexact { 32 } else { 0 };
@@ -221,7 +215,7 @@ fn round_num(n: Num, p: u32, target: Format, cw: u16) -> Result {
                 INFINITY | if n.negative { SIGN } else { 0 }
             }
         } else {
-            pack(n.negative, (1u128 << p) - 1, emax, p, target, true)
+            pack(n.negative, u64::MAX >> (64 - p), emax, p, target, true)
         };
         return Result {
             value,
@@ -250,8 +244,10 @@ fn round_num(n: Num, p: u32, target: Format, cw: u16) -> Result {
             };
         }
         let (q, inexact, up) = quantize(n.sig, emin - (p as i32 - 1) - n.scale, n.negative, rc(cw));
+        debug_assert!(q <= 1u128 << (p - 1));
+        let q = q as u64;
         return Result {
-            value: pack(n.negative, q, emin, p, target, q >= 1u128 << (p - 1)),
+            value: pack(n.negative, q, emin, p, target, q >= 1u64 << (p - 1)),
             pre: 0,
             post: if inexact { 48 } else { 0 },
             up,
@@ -266,6 +262,40 @@ fn round_num(n: Num, p: u32, target: Format, cw: u16) -> Result {
         suppress: false,
     }
 }
+
+#[cfg(test)]
+#[test]
+fn binary80_full_precision_packs_rounding_carry_and_underflow_promotion() {
+    let carry = Num {
+        negative: false,
+        sig: (1u128 << 65) - 1,
+        scale: -64,
+    };
+    let underflow = Num {
+        negative: true,
+        sig: u64::MAX as u128,
+        scale: -16446,
+    };
+    for (input, cw, value, post, up) in [
+        (carry, 0x037f, 0x4000_8000_0000_0000_0000, 32, true),
+        (carry, 0x0f7f, 0x3fff_ffff_ffff_ffff_ffff, 32, false),
+        (underflow, 0x037f, 0x8001_8000_0000_0000_0000, 48, true),
+        (underflow, 0x0f7f, 0x8000_7fff_ffff_ffff_ffff, 48, false),
+    ] {
+        let result = round_num(input, 64, Format::F80, cw);
+        assert_eq!(
+            (
+                result.value,
+                result.pre,
+                result.post,
+                result.up,
+                result.suppress
+            ),
+            (value, 0, post, up, false)
+        );
+    }
+}
+
 fn jam(x: u128, n: u32) -> u128 {
     if n == 0 {
         x
@@ -532,7 +562,14 @@ pub(super) fn unary(kind: Kind, raw: u128, cw: u16) -> Result {
         Result {
             post: if inexact { 32 } else { 0 },
             up,
-            ..Result::raw(pack(n.negative, sig, exponent, 64, Format::F80, q != 0))
+            ..Result::raw(pack(
+                n.negative,
+                sig as u64,
+                exponent,
+                64,
+                Format::F80,
+                q != 0,
+            ))
         }
     };
     r.pre = pre;
