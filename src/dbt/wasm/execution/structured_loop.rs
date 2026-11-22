@@ -586,7 +586,7 @@ impl StructuredLoop {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) fn select_paged_sse_write(unit: &super::Unit) -> Option<Self> {
+    pub(super) fn select_sse_write(unit: &super::Unit, paged: bool) -> Option<Self> {
         use crate::x86::{
             context::Segment,
             instruction::{AddressBase, VectorMask, VectorOperand},
@@ -598,7 +598,7 @@ impl StructuredLoop {
         let data = |address: Address| {
             address.segment == Segment::Ds && (long64 || address.size == Width::W32)
         };
-        let graph = super::loop_cfg::select_paged_sse_write_graph(&unit.instructions, |body| {
+        let graph = super::loop_cfg::select_sse_write_graph(&unit.instructions, |body| {
             let mut vector_load = false;
             let mut compare = false;
             let mut mask = false;
@@ -668,6 +668,9 @@ impl StructuredLoop {
                 && dword_store
         })?;
         let mut body = Self::forward(graph).without_dword_projection();
+        if !paged {
+            return Some(body);
+        }
         body.kind = LoopKind::PagedSseWrite;
         let body = body.within_paged_fetch(unit)?;
         if unit.context.mode() == Mode::Protected {
@@ -1151,7 +1154,8 @@ impl StructuredLoop {
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         let existing = existing
             .or_else(|| Self::select_increment_reads(unit))
-            .or_else(|| Self::select_rotated_stack(unit));
+            .or_else(|| Self::select_rotated_stack(unit))
+            .or_else(|| Self::select_sse_write(unit, false));
         existing.or_else(|| {
             super::loop_cfg::select_natural_read_shifts(instructions).map(Self::forward)
         })

@@ -91,7 +91,7 @@ pub(super) fn select_paged_write_graph(
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-pub(super) fn select_paged_sse_write_graph(
+pub(super) fn select_sse_write_graph(
     instructions: &[Instruction],
     admit: impl Fn(&[Instruction]) -> bool,
 ) -> Option<(LoopOrder, u32)> {

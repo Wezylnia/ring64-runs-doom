@@ -351,7 +351,7 @@ fn emit_paged_profile(
         }
     }
     #[cfg(target_arch = "wasm32")]
-    if let Some(body) = StructuredLoop::select_paged_sse_write(unit)
+    if let Some(body) = StructuredLoop::select_sse_write(unit, true)
         && let Some(bytes) = placement(body)
     {
         return Some(bytes);
