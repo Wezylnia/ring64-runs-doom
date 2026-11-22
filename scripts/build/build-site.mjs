@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import {
+  access,
   copyFile,
   cp,
   mkdir,
@@ -21,6 +22,12 @@ const source = join(root, 'website');
 const generated = join(root, 'build');
 const sdk = join(generated, 'npm/ring64');
 const output = join(generated, 'website');
+
+await access(join(sdk, 'ring64.wasm')).catch((error) => {
+  if (error.code !== 'ENOENT') throw error;
+  console.error('Ring64 SDK build is missing. Run npm run build first.');
+  process.exit(1);
+});
 
 hljs.registerLanguage('c', c);
 hljs.registerLanguage('typescript', typescript);

@@ -19,4 +19,6 @@ ring64 runs x86 code by translating it to wasm.
 
 `npm run build` stages the npm package in `build/npm/ring64/` and the runtime for benchmarks in `build/host/`.
 
+`npm run site:build` builds the website with the staged sdk. `npm run site:dev` serves the existing output in `build/website/`.
+
 rust unit tests live with the code they cover. `sdk/tests/` covers the api, wasm integration and npm package. `tests/execution/` checks guest behavior through the sdk. script tests live in `tests/tooling/`.

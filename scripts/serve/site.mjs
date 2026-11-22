@@ -7,7 +7,11 @@ const host = '127.0.0.1';
 const port = Number(process.env.RING64_SITE_PORT ?? 4173);
 if (!Number.isInteger(port) || port < 1 || port > 65535)
   throw new Error('RING64_SITE_PORT must be an integer from 1 to 65535');
-await readFile(resolve(root, 'index.html'));
+await readFile(resolve(root, 'index.html')).catch((error) => {
+  if (error.code !== 'ENOENT') throw error;
+  console.error('Website build is missing. Run npm run site:build first.');
+  process.exit(1);
+});
 
 const contentTypes = {
   '.bin': 'application/octet-stream',
