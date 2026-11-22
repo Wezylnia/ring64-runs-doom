@@ -28,6 +28,30 @@ impl Emitter {
     }
 
     pub(super) fn check_runtime_target(&mut self, exit_depth: u32) {
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if self.linear_call_spans
+            && self.context.code_limit() == u64::from(u32::MAX)
+            && matches!(
+                self.current_operation,
+                crate::x86::instruction::Operation::Call {
+                    target: crate::x86::instruction::Operand::Register(_)
+                        | crate::x86::instruction::Operand::Memory(_),
+                    width: Width::W16 | Width::W32,
+                } | crate::x86::instruction::Operation::Return {
+                    width: Width::W16 | Width::W32,
+                    ..
+                } | crate::x86::instruction::Operation::JumpRegister {
+                    width: Width::W16 | Width::W32,
+                    ..
+                } | crate::x86::instruction::Operation::JumpMemory {
+                    width: Width::W16 | Width::W32,
+                    ..
+                }
+            )
+        {
+            // The captured flat CS admits every decoded 16/32-bit near offset.
+            return;
+        }
         if let Some(check) = self.target_check {
             self.op(Op::LocalGet(RHS))
                 .op(Op::Call(check))

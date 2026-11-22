@@ -2683,7 +2683,11 @@ fn emit_body(
     let mut code = CodeSection::new();
     code.function(&emitter.body);
     if dynamic_targets {
-        code.function(&entry_lookup::emit(&emitter.entries));
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        let dense = linear_call_spans;
+        #[cfg(not(all(not(feature = "parallel"), target_arch = "wasm32")))]
+        let dense = false;
+        code.function(&entry_lookup::emit(&emitter.entries, dense));
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     for (_, body, _) in &outlined_functions {

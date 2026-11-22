@@ -21,6 +21,100 @@ function segmentFault(result: RunResult, expected: SegmentFault): void {
 export function boundaryScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [
     {
+      name: 'flat call target tables preserve holes, fetch priority, and short code segments',
+      async run() {
+        const head = 0x1000n;
+        const stop = head + 14n;
+        const stack = 0x3040n;
+        const known = head + 0x20n;
+        const hole = head + 0x10n;
+        // TEST EBX,EBX; JZ child; MOV ECX,1; CALL EAX; DEC ECX; JNZ call; HLT.
+        // The first RET is unreachable in discovery. The child is INC EBX; RET.
+        const code = '85db741cb901000000ffd04975fbf490c3'.padEnd(0x40, '90') + '43c3';
+        let checkedTargets = 0;
+        const create = Core.create;
+        Core.create = async (...args) => {
+          const core = await create(...args);
+          const imports = Reflect.get(core, 'artifactImports') as (
+            observed: boolean,
+          ) => Record<string, WebAssembly.ImportValue>;
+          Reflect.set(core, 'artifactImports', (observed: boolean) => {
+            const env = imports.call(core, observed);
+            const checkTarget = env.target_check;
+            if (typeof checkTarget === 'function') {
+              env.target_check = (target: bigint) => {
+                checkedTargets++;
+                return checkTarget(target);
+              };
+            }
+            return env;
+          });
+          return core;
+        };
+        const setup = { data: [{ base: 0x3000n, bytes: '00'.repeat(64) }] };
+        const start = (target: bigint) => input(head, { 0: target, 3: 1n, 4: stack }, 2n);
+        try {
+          await using(
+            compiler,
+            code,
+            context(),
+            async (cpu) => {
+              cpu.setState(start(known));
+              const hit = await cpu.run({ stop, budget: 20n });
+              equal(hit.reason, 'stop', 'the discovered handler returns');
+              equal(hit.retired, 8n, 'both near transfers retire exactly once');
+              equal(hit.state.registers[3], 2n, 'the discovered handler executes');
+              equal(checkedTargets, 0, 'full captured CS admits both near offsets');
+              equal(hit.resources.dispatches, 0, 'exact entries stay inside the owner');
+
+              cpu.setState(start(hole));
+              const separate = await cpu.run({ stop, budget: 20n });
+              equal(
+                separate.reason,
+                'stop',
+                'a table hole still executes its separately decoded RET',
+              );
+              equal(separate.retired, 7n, 'the hidden RET does not execute the discovered child');
+              equal(separate.state.registers[3], 1n, 'the hidden RET performs no child increment');
+              check(separate.resources.dispatches > 0, 'the hole needs ordinary dispatch');
+
+              cpu.setState(start(head - 1n));
+              const absent = await cpu.run({ stop, budget: 20n });
+              equal(absent.reason, 'fetch-fault', 'an unbacked code target faults at fetch');
+              equal(absent.state.rip, head - 1n, 'the branch target is committed before fetch');
+              equal(absent.state.registers[4], stack - 4n, 'the first CALL has already pushed');
+              equal(absent.retired, 4n, 'the CALL retires before its target fetch');
+            },
+            setup,
+          );
+          const short = context();
+          short.segments.cs.limit = 0x1040;
+          checkedTargets = 0;
+          await using(
+            compiler,
+            code,
+            short,
+            async (cpu) => {
+              cpu.setState(start(0x2000n));
+              const denied = await cpu.run({ stop, budget: 20n });
+              equal(
+                denied.reason,
+                'segment-fault',
+                'the short CS refuses the target before pushing',
+              );
+              equal(denied.state.rip, head + 9n, 'the CALL remains unstarted');
+              equal(denied.state.registers[4], stack, 'no return address was pushed');
+              equal(denied.retired, 3n, 'only the original prefix retired');
+              equal(checkedTargets, 1, 'the checked target helper owns the CS fault');
+            },
+            setup,
+          );
+        } finally {
+          Core.create = create;
+        }
+      },
+    },
+    {
       name: 'linear indirect call spans keep stack admission and source observation exact',
       async run() {
         const head = 0x1000n;
