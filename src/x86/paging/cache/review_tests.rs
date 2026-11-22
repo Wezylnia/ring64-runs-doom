@@ -53,6 +53,62 @@ fn fixture() -> (Image, State, Request) {
 
 #[cfg(not(feature = "parallel"))]
 #[test]
+fn guarded_vector_read_window_retouch_rejects_a_refilled_slot() {
+    let (mut image, state, read) = fixture();
+    image.physical_write(0x4010, 8, 0xc027).unwrap();
+    image.physical_write(0x4018, 8, 0xd027).unwrap();
+    let other = Request {
+        linear: 0x2000,
+        ..read
+    };
+    let fetch = Request {
+        linear: 0x3000,
+        access: Access::Execute,
+        ..read
+    };
+    let cache = Cache::with_capacity(3);
+    for request in [read, other, fetch] {
+        let entry = walk::peek(&image, &state, request, &Keys::ZERO).unwrap();
+        cache.fill(&state, request, entry);
+    }
+    let window = cache
+        .data_translation_then_fetch::<false, _>(
+            &state,
+            read,
+            &Keys::ZERO,
+            16,
+            true,
+            |slot, entry| Some((slot, entry.cache_id.unwrap())),
+        )
+        .unwrap();
+    cache.remember_vector_read_window(window.0, window.1);
+    cache
+        .data_then_fetch::<false, _>(&state, other, &Keys::ZERO, 4, true, Some)
+        .unwrap();
+    let fetch_slot = cache.entries.borrow().hint.unwrap();
+    assert_eq!(cache.retouch_vector_read_window(read.linear), Some(()));
+    {
+        let entries = cache.entries.borrow();
+        assert_eq!(entries.hint, Some(fetch_slot));
+        assert_eq!(entries.slots[window.0].unwrap().used, entries.clock - 1);
+    }
+
+    cache.invalidate_page(state.pcid(), read.linear, false);
+    assert_eq!(cache.retouch_vector_read_window(read.linear), None);
+    image.physical_write(0x4008, 8, 0xe027).unwrap();
+    cache.fill(
+        &state,
+        read,
+        walk::peek(&image, &state, read, &Keys::ZERO).unwrap(),
+    );
+    cache.lookup(&state, fetch, &Keys::ZERO).unwrap().unwrap();
+    let clock = cache.entries.borrow().clock;
+    assert_eq!(cache.retouch_vector_read_window(read.linear), None);
+    assert_eq!(cache.entries.borrow().clock, clock);
+}
+
+#[cfg(not(feature = "parallel"))]
+#[test]
 fn guarded_byte_store_slot_keeps_write_authority_and_fetch_recency() {
     use std::cell::Cell;
 
@@ -479,7 +535,14 @@ fn a_local_large_page_fill_signals_when_it_shadows_a_smaller_global() {
     #[cfg(not(feature = "parallel"))]
     {
         let local = cache
-            .data_translation_then_fetch::<false, _>(&current, read, &Keys::ZERO, 4, true, Some)
+            .data_translation_then_fetch::<false, _>(
+                &current,
+                read,
+                &Keys::ZERO,
+                4,
+                true,
+                |_, t| Some(t),
+            )
             .unwrap();
         assert_eq!(
             (local.linear_base, local.physical_base, local.span),
@@ -494,7 +557,7 @@ fn a_local_large_page_fill_signals_when_it_shadows_a_smaller_global() {
                     &Keys::ZERO,
                     4,
                     true,
-                    |_| { Some(()) }
+                    |_, _| { Some(()) }
                 )
                 .is_none(),
         );

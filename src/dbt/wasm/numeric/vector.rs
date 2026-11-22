@@ -287,8 +287,24 @@ impl Emitter {
             .op(Op::I64Sub)
             .op(Op::LocalTee(super::VALUE))
             .op(Op::LocalGet(window.limit))
-            .op(Op::I64LtU)
-            .op(Op::If(BlockType::Result(ValType::I32)))
+            .op(Op::I64LtU);
+        if let Some(retouch) = window.retouch {
+            // Never re-age a previous page on a miss outside its window.
+            self.op(Op::If(BlockType::Result(ValType::I32)))
+                .op(Op::LocalGet(retouch.dirty))
+                .op(Op::If(BlockType::Result(ValType::I32)))
+                .op(Op::I32Const(0))
+                .op(Op::LocalSet(retouch.dirty))
+                .op(Op::LocalGet(ADDRESS))
+                .op(Op::Call(retouch.touch))
+                .op(Op::Else)
+                .op(Op::I32Const(1))
+                .op(Op::End)
+                .op(Op::Else)
+                .op(Op::I32Const(0))
+                .op(Op::End);
+        }
+        self.op(Op::If(BlockType::Result(ValType::I32)))
             .op(Op::LocalGet(super::VALUE))
             .op(Op::I32WrapI64)
             .op(Op::LocalGet(window.host))
@@ -306,9 +322,11 @@ impl Emitter {
             .op(Op::LocalTee(STORE_STATUS))
             .op(Op::I32Eqz);
         self.retry_guarded_paged_operand(exit_depth + 2, true);
-        self.op(Op::LocalGet(STORE_STATUS))
-            .op(Op::Else)
-            .op(Op::LocalGet(ADDRESS))
+        self.op(Op::LocalGet(STORE_STATUS)).op(Op::Else);
+        if let Some(retouch) = window.retouch {
+            self.op(Op::I32Const(0)).op(Op::LocalSet(retouch.dirty));
+        }
+        self.op(Op::LocalGet(ADDRESS))
             .op(Op::LocalSet(window.base))
             .op(Op::LocalGet(super::VALUE))
             .op(Op::I64Const(32))

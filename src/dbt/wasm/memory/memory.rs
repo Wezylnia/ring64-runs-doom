@@ -29,6 +29,16 @@ pub(super) struct PagedReadWindow {
     pub(super) limit: u32,
     pub(super) host: u32,
     pub(super) last_early_page: Option<u32>,
+    pub(super) retouch: Option<VectorWindowRetouch>,
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[derive(Clone, Copy)]
+pub(super) struct VectorWindowRetouch {
+    pub(super) alignment: (u8, i64),
+    pub(super) resolve: u32,
+    pub(super) touch: u32,
+    pub(super) dirty: u32,
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]

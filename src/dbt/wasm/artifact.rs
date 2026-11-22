@@ -460,6 +460,8 @@ fn emit_placement_with_copy(
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_vector_window: true,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        paged_vector_retouch: true,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_vector_rearm: max_artifact_bytes >= 256 * 1024,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_read_diamond: true,
@@ -573,6 +575,8 @@ struct OptionalLowering {
     paged_split_vectors: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_vector_window: bool,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    paged_vector_retouch: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_vector_rearm: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -1418,6 +1422,16 @@ fn emit_body(
         .filter(|_| paged_sse_write || paged_scalar_writes)
         .map(|(index, _)| import_function("paged_loop_write_ready", index));
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let paged_vector_retouch = paged_vector_window_type
+        .filter(|_| optional.paged_vector_retouch && unit.context.is_long64())
+        .zip(paged_loop_read_block_type)
+        .zip(loop_body.and_then(|body| body.paged_vector_alignment(unit)))
+        .map(|((resolve, touch), alignment)| {
+            let resolve = import_function("paged_loop_retouchable_block_window", resolve);
+            let touch = import_function("paged_loop_retouch_block_window", touch);
+            (alignment, resolve, touch)
+        });
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let paged_vector_window =
         paged_vector_window_type.map(|index| import_function("paged_loop_block_window", index));
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -1938,7 +1952,7 @@ fn emit_body(
         && unit.context.is_long64()
         && loop_body.is_some_and(|body| body.paged_source_is_4k(unit));
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    let mut read_window = |resolve, early_rearm: bool| {
+    let mut read_window = |resolve, early_rearm: bool, retouch: Option<((u8, i64), u32, u32)>| {
         let base = next_local;
         locals.extend([(2, ValType::I64), (1, ValType::I32)]);
         next_local += 3;
@@ -1948,18 +1962,31 @@ fn emit_body(
             next_local += 1;
             local
         });
+        let retouch = retouch.map(|(alignment, resolve, touch)| {
+            let dirty = next_local;
+            locals.push((1, ValType::I32));
+            next_local += 1;
+            memory::VectorWindowRetouch {
+                alignment,
+                resolve,
+                touch,
+                dirty,
+            }
+        });
         memory::PagedReadWindow {
             resolve,
             base,
             limit: base + 1,
             host: base + 2,
             last_early_page,
+            retouch,
         }
     };
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let (paged_dword_window, paged_vector_window) = (
-        paged_dword_window.map(|resolve| read_window(resolve, false)),
-        paged_vector_window.map(|resolve| read_window(resolve, paged_vector_rearm)),
+        paged_dword_window.map(|resolve| read_window(resolve, false, None)),
+        paged_vector_window
+            .map(|resolve| read_window(resolve, paged_vector_rearm, paged_vector_retouch)),
     );
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let copy_window = |group, resolve, locals: &mut Vec<(u32, ValType)>, next_local: &mut u32| {
@@ -2560,6 +2587,21 @@ fn emit_body(
             _guard_reads,
             OptionalLowering {
                 parallel_native_lock_memo: false,
+                ..optional
+            },
+            max_artifact_bytes,
+        );
+    }
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    if bytes.len() > max_artifact_bytes && paged_vector_retouch.is_some() {
+        return emit_body(
+            unit,
+            observed,
+            (paged, mmio),
+            loop_body,
+            _guard_reads,
+            OptionalLowering {
+                paged_vector_retouch: false,
                 ..optional
             },
             max_artifact_bytes,

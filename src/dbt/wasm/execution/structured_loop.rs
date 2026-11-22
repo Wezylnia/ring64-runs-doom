@@ -891,6 +891,91 @@ impl StructuredLoop {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn paged_vector_alignment(self, unit: &super::Unit) -> Option<(u8, i64)> {
+        use crate::x86::instruction::{AddressBase, DataOperand, VectorOperand};
+
+        let body = &unit.instructions[self.earlier as usize..=self.tail as usize];
+        let (index, load, address) = body.iter().enumerate().find_map(|(index, instruction)| {
+            let Operation::Vector(VectorInstruction::Move {
+                operand: VectorOperand::Memory(address),
+                bytes: 16,
+                store: false,
+                ..
+            }) = instruction.operation
+            else {
+                return None;
+            };
+            Some((index, instruction, address))
+        })?;
+        let AddressBase::Register(base) = address.base else {
+            return None;
+        };
+        if address.segment != crate::x86::context::Segment::Ds {
+            return None;
+        }
+        // The base is live at clone entry. The optional index must have its
+        // low bits cleared on the unique fall-through into the vector load.
+        if let Some(indexing) = address.index {
+            let previous = body.get(index.checked_sub(1)?)?;
+            let Operation::Alu {
+                kind: Alu::And,
+                dst,
+                src: DataOperand::Immediate(mask),
+                ..
+            } = previous.operation
+            else {
+                return None;
+            };
+            if dst.high_byte
+                || dst.bank != indexing.register
+                || mask.wrapping_mul(u64::from(indexing.scale)) & 15 != 0
+                || previous.next_pc != load.pc
+                || self.earlier + index as u32 == self.head
+            {
+                return None;
+            }
+            if body.iter().any(|i| {
+                matches!(i.operation,
+                Operation::Jump { target } | Operation::Jcc { target, .. } if target == load.pc)
+            }) {
+                return None;
+            }
+        }
+        for instruction in body {
+            let destination = match instruction.operation {
+                Operation::Mov { dst, .. }
+                | Operation::Lea { dst, .. }
+                | Operation::Load { dst, .. }
+                | Operation::Alu { dst, .. }
+                | Operation::Shift {
+                    dst: Location::Register(dst),
+                    ..
+                }
+                | Operation::DoubleShift {
+                    dst: Location::Register(dst),
+                    ..
+                }
+                | Operation::Unary {
+                    dst: Location::Register(dst),
+                    ..
+                } => dst.bank,
+                Operation::Vector(VectorInstruction::Mask { dst, .. }) => dst,
+                Operation::Vector(VectorInstruction::Move { .. })
+                | Operation::Store { .. }
+                | Operation::Nop
+                | Operation::Jump { .. }
+                | Operation::Jcc { .. } => continue,
+                Operation::Float(float) if !float.destination_is_gpr() => continue,
+                _ => return None,
+            };
+            if destination == base {
+                return None;
+            }
+        }
+        Some((base, address.displacement & 15))
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     pub(super) fn with_paged_read_span(mut self, unit: &super::Unit) -> Option<Self> {
         if self.kind != LoopKind::PagedReads || self.paged_read_widths(unit) != [true, false] {
             return None;
@@ -1762,6 +1847,30 @@ impl Emitter {
             self.op(Op::Else);
             self.emit_prechecked_body(instructions, body, loop_depth + 4, None);
             self.op(Op::End);
+        } else if let Some(window) = self.paged_vector_window
+            && let Some(retouch) = window.retouch
+        {
+            let (base, displacement) = retouch.alignment;
+            self.op(Op::LocalGet(GPR + u32::from(base)))
+                .op(Op::I64Const(displacement))
+                .op(Op::I64Add)
+                .op(Op::I64Const(15))
+                .op(Op::I64And)
+                .op(Op::I64Eqz)
+                .op(Op::If(BlockType::Empty));
+            self.paged_vector_window = Some(super::memory::PagedReadWindow {
+                resolve: retouch.resolve,
+                ..window
+            });
+            self.emit_prechecked_body(instructions, body, loop_depth + 4, None);
+            self.op(Op::Else);
+            self.paged_vector_window = Some(super::memory::PagedReadWindow {
+                retouch: None,
+                ..window
+            });
+            self.emit_prechecked_body(instructions, body, loop_depth + 4, None);
+            self.paged_vector_window = Some(window);
+            self.op(Op::End);
         } else {
             self.emit_prechecked_body(instructions, body, loop_depth + 3, None);
         }
@@ -2161,8 +2270,12 @@ impl Emitter {
                     Operation::Load { .. } | Operation::Store { .. }
                 )
             {
-                // The other data access can change translation recency.
-                self.op(Op::I64Const(0)).op(Op::LocalSet(window.limit));
+                // The next vector load must recover its data-before-fetch order.
+                if let Some(retouch) = window.retouch {
+                    self.op(Op::I32Const(1)).op(Op::LocalSet(retouch.dirty));
+                } else {
+                    self.op(Op::I64Const(0)).op(Op::LocalSet(window.limit));
+                }
             }
             self.instruction(
                 instructions[ordinal],

@@ -164,6 +164,8 @@ pub struct Cache {
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
     guarded_order: RefCell<Option<recency::GuardedOrder>>,
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    vector_read_window: Cell<Option<(usize, u64)>>,
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
     last_dword_write: Cell<Option<NonZeroU8>>,
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
     last_byte_read: Cell<Option<NonZeroU8>>,
@@ -191,6 +193,8 @@ impl Cache {
             changed: Cell::new(false),
             #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
             guarded_order: RefCell::new(None),
+            #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+            vector_read_window: Cell::new(None),
             #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
             last_dword_write: Cell::new(None),
             #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
@@ -311,7 +315,7 @@ impl Cache {
             keys,
             width,
             local_only,
-            |translation| access(translation.physical),
+            |_, translation| access(translation.physical),
         )
     }
 
@@ -324,7 +328,7 @@ impl Cache {
         keys: &ProtectionKeys,
         width: u32,
         local_only: bool,
-        access: impl FnOnce(Translation) -> Option<T>,
+        access: impl FnOnce(usize, Translation) -> Option<T>,
     ) -> Option<T> {
         let mut entries = self.entries.borrow_mut();
         // The admitted same-page loop makes the code entry most recent and
@@ -338,7 +342,7 @@ impl Cache {
         if local_only && entries.slots[data].unwrap().global {
             return None;
         }
-        let value = access(translation)?;
+        let value = access(data, translation)?;
         // A live hint is the entry last touched. The same entry or the two
         // already newest entries would keep their relative order.
         if data != fetch && entries.slots[data].as_ref().unwrap().used != entries.clock - 1 {
@@ -346,6 +350,29 @@ impl Cache {
             entries.touch(fetch);
         }
         Some(value)
+    }
+
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    pub(crate) fn remember_vector_read_window(&self, slot: usize, id: u64) {
+        self.vector_read_window.set(Some((slot, id)));
+    }
+
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    pub(crate) fn retouch_vector_read_window(&self, linear: u64) -> Option<()> {
+        let (slot, id) = self.vector_read_window.get()?;
+        let mut entries = self.entries.borrow_mut();
+        let entry = entries.slots[slot].as_ref()?;
+        if entry.translation.cache_id != Some(id) || !entry.translation.contains(linear) {
+            return None;
+        }
+        let fetch = entries
+            .hint
+            .filter(|&index| entries.slots[index].is_some())?;
+        if slot != fetch && entry.used != entries.clock - 1 {
+            entries.touch(slot);
+            entries.touch(fetch);
+        }
+        Some(())
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]

@@ -990,6 +990,17 @@ pub extern "C" fn core_paged_loop_copy_window(source: u64, destination: u64, wid
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 #[unsafe(no_mangle)]
 pub extern "C" fn core_paged_loop_block_window(address: u64) -> u64 {
+    paged_loop_block_window::<false>(address)
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[unsafe(no_mangle)]
+pub extern "C" fn core_paged_loop_retouchable_block_window(address: u64) -> u64 {
+    paged_loop_block_window::<true>(address)
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+fn paged_loop_block_window<const RETOUCH: bool>(address: u64) -> u64 {
     const WIDTH: u32 = 16;
 
     if crate::memory::check_span(address, WIDTH, Access::Read).is_err() {
@@ -1018,7 +1029,7 @@ pub extern "C" fn core_paged_loop_block_window(address: u64) -> u64 {
                     &state.protection_keys,
                     WIDTH,
                     true,
-                    |translation| {
+                    |slot, translation| {
                         let span = core
                             .image
                             .physical_direct_read_span(translation.physical, WIDTH)?;
@@ -1031,13 +1042,31 @@ pub extern "C" fn core_paged_loop_block_window(address: u64) -> u64 {
                         {
                             return None;
                         }
-                        // Start the window at this operand, inside one local leaf and backing.
+                        // Remember identity as well as the pointer. Generated
+                        // locals keep the window inside this guarded lap.
+                        if RETOUCH {
+                            core.translation_cache
+                                .remember_vector_read_window(slot, translation.cache_id?);
+                        }
                         let host = span.host + offset;
                         Some(u64::from(length) << 32 | u64::from(host))
                     },
                 )
         })
         .unwrap_or(0)
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[unsafe(no_mangle)]
+pub extern "C" fn core_paged_loop_retouch_block_window(address: u64) -> i32 {
+    BRIDGE.with_borrow(|bridge| {
+        let core = bridge.core.as_ref().unwrap();
+        i32::from(
+            core.translation_cache
+                .retouch_vector_read_window(address)
+                .is_some(),
+        )
+    })
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -1225,7 +1254,7 @@ pub extern "C" fn core_paged_loop_read_dword_window(address: u64) -> u32 {
                 &state.protection_keys,
                 4,
                 true,
-                |translation| {
+                |_, translation| {
                     let span = core
                         .image
                         .physical_direct_read_span(translation.physical, 4)?;
