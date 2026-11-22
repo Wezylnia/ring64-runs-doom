@@ -199,9 +199,11 @@ impl StructuredLoop {
 
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
     pub(super) fn can_walk_paged_dword(self, unit: &super::Unit) -> bool {
-        if self.kind != LoopKind::PagedReads {
-            return false;
-        }
+        self.kind == LoopKind::PagedReads && self.paged_source_is_4k(unit)
+    }
+
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    pub(super) fn paged_source_is_4k(self, unit: &super::Unit) -> bool {
         let Some(bytes) = self.paged_fetch_bytes else {
             return false;
         };

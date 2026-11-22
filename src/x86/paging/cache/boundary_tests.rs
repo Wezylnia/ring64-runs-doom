@@ -418,6 +418,75 @@ fn current_pcid_non_global_precedes_global_and_targeted_eviction_keeps_global() 
 
 #[cfg(not(feature = "parallel"))]
 #[test]
+fn ready_dense_span_installs_only_after_all_three_pages_are_admitted() {
+    for (capacity, last_pte, backing_ready, admit) in [
+        (4, 0xc067, true, true),
+        (3, 0xc067, true, false),
+        (4, 0xc007, true, false),
+        (4, 0xf067, true, false),
+        (4, 0, true, false),
+        (4, 0xc067, false, false),
+    ] {
+        let (mut image, state, first) = fixture();
+        for (address, leaf) in [(0x4010, 0xb067), (0x4018, last_pte), (0x4020, 0xd067)] {
+            image.physical_write(address, 8, leaf).unwrap();
+        }
+        let at = |linear| Request { linear, ..first };
+        let code = Request {
+            access: Access::Execute,
+            ..at(0x4234)
+        };
+        let cache = Cache::with_capacity(capacity);
+        insert(&cache, &mut image, &state, at(0x2000));
+        insert(&cache, &mut image, &state, code);
+        image.physical_write(0x4010, 8, 0xf007).unwrap();
+        let snapshot = || {
+            let entries = cache.entries.borrow();
+            (entries.clock, entries.next_id, entries.hint)
+        };
+        let before = snapshot();
+        let reads = [at(0x1ff0), at(0x2000), at(0x3000)];
+        let value = cache.ready_dense_read_then_fetch(
+            &image,
+            &state,
+            reads[0],
+            &ProtectionKeys::ZERO,
+            0x1030,
+            |physical| {
+                assert_eq!(physical, 0xaff0);
+                backing_ready.then_some(physical)
+            },
+        );
+        assert_eq!(value, admit.then_some(0xaff0));
+        assert_eq!(image.physical_read(0x4010, 8), Ok(0xf007));
+        assert_eq!(image.physical_read(0x4018, 8), Ok(last_pte));
+        assert!(!cache.take_changed());
+        if admit {
+            let entries = cache.entries.borrow();
+            let ages = [reads[0], reads[1], reads[2], code].map(|request| {
+                entries.slots[entries.find(&state, request).unwrap()]
+                    .unwrap()
+                    .used
+            });
+            assert!(ages.windows(2).all(|ages| ages[0] < ages[1]));
+            assert_eq!(entries.next_id, before.1 + 2);
+            assert_eq!(entries.hint, before.2);
+        } else {
+            assert_eq!(snapshot(), before);
+            for request in [reads[0], reads[2]] {
+                assert!(
+                    cache
+                        .observe(&state, request, &ProtectionKeys::ZERO)
+                        .unwrap()
+                        .is_none()
+                );
+            }
+        }
+    }
+}
+
+#[cfg(not(feature = "parallel"))]
+#[test]
 fn guarded_store_requires_dirty_ready_writable_retention_before_aging() {
     for (leaf, width, admit) in [
         (0xa027, 1, false),

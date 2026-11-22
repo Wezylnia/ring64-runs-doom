@@ -453,6 +453,105 @@ impl Cache {
         Some(value)
     }
 
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    #[inline(never)]
+    pub(crate) fn ready_dense_read_then_fetch<T>(
+        &self,
+        image: &crate::memory::Image,
+        state: &State,
+        request: Request,
+        keys: &ProtectionKeys,
+        width: u32,
+        access: impl FnOnce(u64) -> Option<T>,
+    ) -> Option<T> {
+        const PAGE: u64 = 4096;
+        const MAX_PAGES: usize = 3;
+        debug_assert_eq!(request.access, Access::Read);
+        let width = u64::from(width);
+        if state.cr0 & (1 << 31) == 0
+            || width == 0
+            || width > PAGE * MAX_PAGES as u64 - (request.linear & (PAGE - 1))
+        {
+            return None;
+        }
+        let entries = self.entries.borrow();
+        let fetch = entries.hint?;
+        let code = entries.slots[fetch].as_ref()?;
+        if code.used != entries.clock || code.translation.span != PAGE || entries.exhausted {
+            return None;
+        }
+        let mut plan = [None; MAX_PAGES];
+        let value = image.probe_physical_read(|image| {
+            let mut covered = 0;
+            let mut missing = 0;
+            let mut physical_start = None;
+            for slot in &mut plan {
+                if covered == width {
+                    break;
+                }
+                let linear = request.linear.checked_add(covered)?;
+                let operand = Request { linear, ..request };
+                let index = entries.find(state, operand);
+                let translation = if let Some(index) = index {
+                    let entry = entries.slots[index].as_ref()?;
+                    if entry.global {
+                        return None;
+                    }
+                    let current = entry.translation.at(linear);
+                    current.rights.authorize(state, operand, keys).ok()?;
+                    current
+                } else {
+                    let current = super::walk::peek(image, state, operand, keys).ok()?;
+                    if !current.accessed
+                        || current.global && state.cr4 & (1 << 7) != 0
+                        || overlaps(code.translation, current)
+                    {
+                        return None;
+                    }
+                    missing += 1;
+                    current
+                };
+                if translation.span != PAGE {
+                    return None;
+                }
+                let first = *physical_start.get_or_insert(translation.physical);
+                if first.checked_add(covered) != Some(translation.physical) {
+                    return None;
+                }
+                covered += translation.remaining.min(width - covered);
+                *slot = Some((index, operand, translation));
+            }
+            // A true local 4 KiB miss cannot overlap another visible
+            // translation. Require space so every planned hit survives.
+            if covered != width
+                || missing == 0
+                || entries.next_id.checked_add(missing as u64).is_none()
+                || entries.slots[..entries.capacity]
+                    .iter()
+                    .filter(|slot| slot.is_none())
+                    .take(missing)
+                    .count()
+                    != missing
+            {
+                return None;
+            }
+            access(physical_start?)
+        })?;
+        drop(entries);
+        // Admission covers every funded byte. Install and touch the leaves
+        // in their original order, then make the successor fetch newest.
+        for (index, operand, translation) in plan.into_iter().flatten() {
+            if let Some(index) = index {
+                self.entries.borrow_mut().touch(index);
+            } else {
+                let installed = self.fill(state, operand, translation);
+                debug_assert!(installed.cache_id.is_some());
+            }
+        }
+        self.entries.borrow_mut().touch(fetch);
+        Some(value)
+    }
+
     /// Pure retained-view projection: no A/D, fill, eviction or LRU effects.
     pub fn observe(
         &self,

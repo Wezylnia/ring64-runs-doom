@@ -1262,8 +1262,16 @@ fn emit_body(
         .and_then(|body| body.paged_read_span)
         .map(|proof| (proof, span_import("paged_loop_read_span")));
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    let paged_dense_read_span = (optional.paged_dense_read_span && paged_dense_bytes)
-        .then(|| span_import("paged_loop_read_span_pages"));
+    let paged_dense_read_span = (optional.paged_dense_read_span && paged_dense_bytes).then(|| {
+        const _: () =
+            assert!("paged_loop_read_span_ready".len() == "paged_loop_read_span_pages".len());
+        let name = if loop_body.is_some_and(|body| body.paged_source_is_4k(unit)) {
+            "paged_loop_read_span_ready"
+        } else {
+            "paged_loop_read_span_pages"
+        };
+        span_import(name)
+    });
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let read_span = (!observed && !span_cycles.is_empty()).then(|| span_import("read_span"));
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]

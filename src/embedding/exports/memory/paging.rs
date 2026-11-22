@@ -687,6 +687,59 @@ pub extern "C" fn core_paged_loop_read_span_pages(address: u64, bytes: u32, segm
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 #[unsafe(no_mangle)]
+pub extern "C" fn core_paged_loop_read_span_ready(address: u64, bytes: u32, segment: u32) -> u32 {
+    let retained = core_paged_loop_read_span_pages(address, bytes, segment);
+    if retained != 0 {
+        return retained;
+    }
+    if segment != Segment::Ds as u32
+        || bytes == 0
+        || crate::memory::check_span(address, bytes, Access::Read).is_err()
+    {
+        return 0;
+    }
+    BRIDGE.with_borrow_mut(|bridge| {
+        let core = bridge.core.as_mut().unwrap();
+        if !core
+            .active_owner
+            .is_some_and(|owner| core.image.source_is_active(owner))
+            || !core.context.is_long64() && !core.context.flat_paged_read_span32(address, bytes)
+        {
+            return 0;
+        }
+        let Some(paging) = core.paging.as_ref() else {
+            return 0;
+        };
+        let state = unsafe { &*core.state.get() };
+        let request = paging::walk::Request {
+            linear: address,
+            access: Access::Read,
+            class: paging::walk::AccessClass::operand(
+                core.context.cpl(),
+                state.flags & crate::x86::flags::AC != 0,
+            ),
+        };
+        let Some(host) = core.translation_cache.ready_dense_read_then_fetch(
+            &core.image,
+            paging,
+            request,
+            &state.protection_keys,
+            bytes,
+            |physical| core.image.physical_direct_read_pointer(physical, bytes),
+        ) else {
+            return 0;
+        };
+        core.direct_span = crate::memory::DirectSpan {
+            base: address,
+            host,
+            length: bytes,
+        };
+        &raw const core.direct_span as u32
+    })
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[unsafe(no_mangle)]
 pub extern "C" fn core_paged_loop_read_block(address: u64) -> u32 {
     let segment = Segment::Ds as u32;
     // Keep the generic bodies inlined in their established span exports.
