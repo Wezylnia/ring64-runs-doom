@@ -1,6 +1,6 @@
 # ring64
 
-an x86 and x86-64 cpu emulator for the browser
+the fastest x86 and x86-64 cpu emulator for JavaScript runtimes
 
 ## install
 
