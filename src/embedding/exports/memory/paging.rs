@@ -868,6 +868,47 @@ pub extern "C" fn core_paged_loop_block_host(address: u64) -> u32 {
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 #[unsafe(no_mangle)]
+pub extern "C" fn core_paged_loop_write_block(address: u64, value_ptr: u32) -> i32 {
+    const WIDTH: u32 = 16;
+    if crate::memory::check_span(address, WIDTH, Access::Write).is_err() {
+        return 0;
+    }
+    let written = BRIDGE.with_borrow_mut(|bridge| {
+        let core = bridge.core.as_mut().unwrap();
+        if !core.context.is_long64()
+            || !core
+                .active_owner
+                .is_some_and(|owner| core.image.source_is_active(owner))
+        {
+            return None;
+        }
+        let paging = core.paging.as_ref()?;
+        let state = unsafe { &*core.state.get() };
+        assert_eq!(state.vector_scratch.as_ptr() as u32, value_ptr);
+        let bytes = state.vector_scratch;
+        let request = paging::walk::Request {
+            linear: address,
+            access: Access::Write,
+            // Unaligned m128 has no #AC. AC still controls supervisor access.
+            class: paging::walk::AccessClass::operand(
+                core.context.cpl(),
+                state.flags & crate::x86::flags::AC != 0,
+            ),
+        };
+        core.translation_cache.data_then_fetch::<true, _>(
+            paging,
+            request,
+            &state.protection_keys,
+            WIDTH,
+            true,
+            |physical| core.image.physical_direct_write(physical, bytes),
+        )
+    });
+    i32::from(written.is_some())
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[unsafe(no_mangle)]
 pub extern "C" fn core_paged_loop_block_window(address: u64) -> u64 {
     const WIDTH: u32 = 16;
 

@@ -1156,7 +1156,11 @@ export class Core {
     pc: bigint,
     limits: CompileLimits,
   ): { bytes: Uint8Array<ArrayBuffer>; metadata: UnitMetadata } | undefined {
-    const status = this.#exports.core_compile(
+    const compile =
+      this.isPaged && this.#exports.core_paged_loop_write_block
+        ? (this.#exports.core_compile_with_paged_vector_copy ?? this.#exports.core_compile)
+        : this.#exports.core_compile;
+    const status = compile(
       pc,
       limits.maxInstructions,
       limits.maxSourceBytes,
@@ -1298,6 +1302,8 @@ export class Core {
         env.paged_loop_read_block = this.#exports.core_paged_loop_read_block;
       if (this.#exports.core_paged_loop_block_host)
         env.paged_loop_block_host = this.#exports.core_paged_loop_block_host;
+      if (this.#exports.core_paged_loop_write_block)
+        env.paged_loop_write_block = this.#exports.core_paged_loop_write_block;
       if (this.#exports.core_paged_loop_block_window)
         env.paged_loop_block_window = this.#exports.core_paged_loop_block_window;
       if (this.#exports.core_paged_loop_write_ready)

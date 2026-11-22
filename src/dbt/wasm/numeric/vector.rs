@@ -381,6 +381,22 @@ impl Emitter {
         exit_depth: u32,
     ) {
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if self.guarded_paged_lap
+            && let Some(write) = self.paged_loop_write_block
+        {
+            debug_assert!(bytes == 16 && !aligned);
+            debug_assert_eq!(address.segment, crate::x86::context::Segment::Ds);
+            self.vector_store_scratch(value);
+            self.address(address, next_pc);
+            self.op(Op::LocalGet(0))
+                .op(Op::I32Const(offset_of!(RunState, vector_scratch) as i32))
+                .op(Op::I32Add)
+                .op(Op::Call(write))
+                .op(Op::I32Eqz);
+            self.retry_guarded_paged_operand(exit_depth, true);
+            return;
+        }
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         if self.direct_vector_stores && bytes == 16 && !aligned {
             self.segment = address.segment;
             if self.direct_access(

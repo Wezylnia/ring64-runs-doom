@@ -2,6 +2,8 @@
 mod artifact;
 #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
 pub(crate) use artifact::emit_mmio_profile;
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+pub(crate) use artifact::emit_paged_vector_copy;
 pub(crate) use artifact::emit_profile;
 #[path = "integer/bits.rs"]
 mod bits;
@@ -211,6 +213,8 @@ struct Emitter {
     paged_loop_read_dword: Option<u32>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_loop_read_block: Option<(u32, bool)>,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    paged_loop_write_block: Option<u32>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_write_ready: Option<u32>,
     paged_loop_write_byte: Option<u32>,

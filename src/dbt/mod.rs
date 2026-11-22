@@ -18,6 +18,11 @@ pub struct Limits {
     pub max_artifact_bytes: u32,
 }
 
+pub(crate) struct CompileProfile {
+    pub observed: bool,
+    pub paged_vector_copy: bool,
+}
+
 #[derive(Debug)]
 pub struct Artifact {
     pub bytes: Vec<u8>,
@@ -76,7 +81,18 @@ pub fn compile_with_paging(
     limits: Limits,
     observed: bool,
 ) -> Result<Artifact, CompileError> {
-    compile_profile(image, context, paging, None, entry, limits, observed)
+    compile_profile(
+        image,
+        context,
+        paging,
+        None,
+        entry,
+        limits,
+        CompileProfile {
+            observed,
+            paged_vector_copy: false,
+        },
+    )
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
@@ -87,9 +103,9 @@ pub(crate) fn compile_with_paging_cache(
     cache: &crate::x86::paging::cache::Cache,
     entry: u64,
     limits: Limits,
-    observed: bool,
+    profile: CompileProfile,
 ) -> Result<Artifact, CompileError> {
-    compile_profile(image, context, paging, Some(cache), entry, limits, observed)
+    compile_profile(image, context, paging, Some(cache), entry, limits, profile)
 }
 
 fn compile_profile(
@@ -99,8 +115,12 @@ fn compile_profile(
     cache: Option<&crate::x86::paging::cache::Cache>,
     entry: u64,
     limits: Limits,
-    observed: bool,
+    profile: CompileProfile,
 ) -> Result<Artifact, CompileError> {
+    let CompileProfile {
+        observed,
+        paged_vector_copy: _paged_vector_copy,
+    } = profile;
     let unit = discovery::discover_with_profile(image, context, paging, cache, entry, limits)?;
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
     let emit = if image.has_mmio() {
@@ -110,12 +130,16 @@ fn compile_profile(
     };
     #[cfg(not(all(not(feature = "parallel"), any(target_arch = "wasm32", test))))]
     let emit = wasm::emit_profile;
-    let bytes = emit(
-        &unit,
-        observed,
-        paging.is_some(),
-        limits.max_artifact_bytes as usize,
-    );
+    let max_artifact_bytes = limits.max_artifact_bytes as usize;
+    let checked = || emit(&unit, observed, paging.is_some(), max_artifact_bytes);
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let bytes = if _paged_vector_copy && paging.is_some() && !image.has_mmio() {
+        wasm::emit_paged_vector_copy(&unit, max_artifact_bytes).unwrap_or_else(checked)
+    } else {
+        checked()
+    };
+    #[cfg(any(feature = "parallel", not(target_arch = "wasm32")))]
+    let bytes = checked();
     if bytes.len() > limits.max_artifact_bytes as usize {
         return Err(CompileError::Resource);
     }

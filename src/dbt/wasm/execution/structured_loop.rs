@@ -31,6 +31,8 @@ enum LoopKind {
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     PagedSseWrite,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    PagedVectorCopy,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     PagedScalarWrites,
     ForwardEdges,
 }
@@ -668,6 +670,50 @@ impl StructuredLoop {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn select_paged_vector_copy(unit: &super::Unit) -> Option<Self> {
+        use crate::x86::{context::Segment, instruction::VectorOperand};
+
+        if !unit.context.is_long64() {
+            return None;
+        }
+        let vector_move = |operation| match operation {
+            Operation::Vector(VectorInstruction::Move {
+                operand:
+                    VectorOperand::Memory(Address {
+                        segment: Segment::Ds,
+                        ..
+                    }),
+                bytes: 16,
+                aligned: false,
+                store,
+                ..
+            }) => Some(store),
+            _ => None,
+        };
+        Self::select_straight_body(
+            &unit.instructions,
+            LoopKind::PagedVectorCopy,
+            |operation| inside_register_body(operation) || vector_move(operation).is_some(),
+            |instructions| {
+                instructions.len() <= 32
+                    && instructions
+                        .iter()
+                        .any(|i| vector_move(i.operation) == Some(false))
+                    && instructions
+                        .iter()
+                        .any(|i| vector_move(i.operation) == Some(true))
+            },
+        )?
+        .without_dword_projection()
+        .within_paged_fetch(unit)
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn paged_vector_copy(self) -> bool {
+        self.kind == LoopKind::PagedVectorCopy
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     pub(super) fn select_paged_scalar_writes(unit: &super::Unit) -> Option<Self> {
         use crate::x86::context::Segment;
 
@@ -961,8 +1007,8 @@ impl StructuredLoop {
             }
             LoopKind::ForwardEdges => unreachable!("forward edges use graph admission"),
             #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-            LoopKind::PagedSseWrite | LoopKind::PagedScalarWrites => {
-                unreachable!("paged writes use graph admission")
+            LoopKind::PagedSseWrite | LoopKind::PagedScalarWrites | LoopKind::PagedVectorCopy => {
+                unreachable!("paged writes use guarded admission")
             }
         };
         Self::select_straight_body(instructions, kind, inside, |body| match kind {
@@ -983,8 +1029,8 @@ impl StructuredLoop {
             }
             LoopKind::ForwardEdges => unreachable!("forward edges use graph admission"),
             #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-            LoopKind::PagedSseWrite | LoopKind::PagedScalarWrites => {
-                unreachable!("paged writes use graph admission")
+            LoopKind::PagedSseWrite | LoopKind::PagedScalarWrites | LoopKind::PagedVectorCopy => {
+                unreachable!("paged writes use guarded admission")
             }
         })
     }
