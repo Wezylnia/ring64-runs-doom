@@ -851,6 +851,59 @@ pub extern "C" fn core_paged_loop_block_host(address: u64) -> u32 {
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[unsafe(no_mangle)]
+pub extern "C" fn core_paged_loop_block_window(address: u64) -> u64 {
+    const WIDTH: u32 = 16;
+
+    if crate::memory::check_span(address, WIDTH, Access::Read).is_err() {
+        return 0;
+    }
+    BRIDGE
+        .with_borrow_mut(|bridge| {
+            let core = bridge.core.as_mut().unwrap();
+            if !core.context.is_long64() && !core.context.flat_paged_read_span32(address, WIDTH) {
+                return None;
+            }
+            let paging = core.paging.as_ref()?;
+            let state = unsafe { &*core.state.get() };
+            let request = paging::walk::Request {
+                linear: address,
+                access: Access::Read,
+                class: paging::walk::AccessClass::operand(
+                    core.context.cpl(),
+                    state.flags & crate::x86::flags::AC != 0,
+                ),
+            };
+            core.translation_cache
+                .data_translation_then_fetch::<false, _>(
+                    paging,
+                    request,
+                    &state.protection_keys,
+                    WIDTH,
+                    true,
+                    |translation| {
+                        let span = core
+                            .image
+                            .physical_direct_read_span(translation.physical, WIDTH)?;
+                        let offset = (translation.physical - span.base) as u32;
+                        let length =
+                            u64::from(span.length - offset).min(translation.remaining) as u32;
+                        if crate::memory::check_span(address, length, Access::Read).is_err()
+                            || (!core.context.is_long64()
+                                && !core.context.flat_paged_read_span32(address, length))
+                        {
+                            return None;
+                        }
+                        // Start the window at this operand, inside one local leaf and backing.
+                        let host = span.host + offset;
+                        Some(u64::from(length) << 32 | u64::from(host))
+                    },
+                )
+        })
+        .unwrap_or(0)
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 fn paged_loop_read_span<const MULTI_PAGE: bool, const HOST_POINTER: bool>(
     address: u64,
     bytes: u32,

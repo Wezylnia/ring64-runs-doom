@@ -320,6 +320,8 @@ fn emit_placement(
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_split_vectors: true,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        paged_vector_window: true,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_read_diamond: true,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_preamble: true,
@@ -421,6 +423,8 @@ struct OptionalLowering {
     paged_byte_write_pointer: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_split_vectors: bool,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    paged_vector_window: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_read_diamond: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -841,6 +845,12 @@ fn emit_body(
         }
     });
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let paged_vector_window_type = (paged_split_vectors
+        && optional.paged_vector_window
+        && !mmio
+        && loop_body.is_some_and(|body| body.has_single_paged_vector_load(unit)))
+    .then(|| add_function_type(&mut types, [ValType::I64], [ValType::I64]));
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let paged_dword_window_type = loop_body
         .is_some_and(|body| body.paged_dword_window)
         .then(|| add_function_type(&mut types, [ValType::I64], [ValType::I32]));
@@ -1169,6 +1179,9 @@ fn emit_body(
     let paged_write_ready = paged_read_rearm_type
         .filter(|_| paged_sse_write)
         .map(|(index, _)| import_function("paged_loop_write_ready", index));
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let paged_vector_window =
+        paged_vector_window_type.map(|index| import_function("paged_loop_block_window", index));
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let paged_dword_window =
         paged_dword_window_type.map(|index| import_function("paged_loop_read_dword_window", index));
@@ -1664,17 +1677,22 @@ fn emit_body(
         (proof, resolve, bias)
     });
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    let paged_dword_window = paged_dword_window.map(|resolve| {
-        let first = next_local;
+    let mut read_window = |resolve| {
+        let base = next_local;
         locals.extend([(2, ValType::I64), (1, ValType::I32)]);
         next_local += 3;
-        memory::PagedDwordWindow {
+        memory::PagedReadWindow {
             resolve,
-            base: first,
-            limit: first + 1,
-            host: first + 2,
+            base,
+            limit: base + 1,
+            host: base + 2,
         }
-    });
+    };
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let (paged_dword_window, paged_vector_window) = (
+        paged_dword_window.map(&mut read_window),
+        paged_vector_window.map(read_window),
+    );
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let paged_byte_write_pair = paged_byte_write_pair.map(|(load, store, read, write)| {
         let slot = next_local;
@@ -1846,6 +1864,8 @@ fn emit_body(
         paged_dense_read_span,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_dword_window,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        paged_vector_window,
         paged_loop_read_byte,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_byte_write_pair,
@@ -2173,6 +2193,21 @@ fn emit_body(
             _guard_reads,
             OptionalLowering {
                 parallel_native_add_memo: false,
+                ..optional
+            },
+            max_artifact_bytes,
+        );
+    }
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    if bytes.len() > max_artifact_bytes && paged_vector_window.is_some() {
+        return emit_body(
+            unit,
+            observed,
+            (paged, mmio),
+            loop_body,
+            _guard_reads,
+            OptionalLowering {
+                paged_vector_window: false,
                 ..optional
             },
             max_artifact_bytes,

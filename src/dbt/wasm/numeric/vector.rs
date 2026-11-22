@@ -1,5 +1,5 @@
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-use super::memory::DirectOperand;
+use super::memory::{DirectOperand, PagedReadWindow};
 use super::{ADDRESS, Emitter, REASON, RHS, STORE_STATUS};
 use crate::dbt::unit::Unit;
 use crate::embedding::layout::RunState;
@@ -215,6 +215,11 @@ impl Emitter {
             && let Some((read, returns_host)) = self.paged_loop_read_block
         {
             if self.guarded_paged_lap {
+                if let Some(window) = self.paged_vector_window {
+                    self.paged_vector_window_pointer(window, read, exit_depth);
+                    self.op(Op::V128Load(memory(0)));
+                    return;
+                }
                 if !returns_host {
                     self.op(Op::I32Const(16))
                         .op(Op::I32Const(address.segment as i32));
@@ -273,6 +278,49 @@ impl Emitter {
             }
         }
         self.vector_load_offset(bytes, aligned, exit_depth);
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    fn paged_vector_window_pointer(&mut self, window: PagedReadWindow, read: u32, exit_depth: u32) {
+        self.op(Op::LocalTee(ADDRESS))
+            .op(Op::LocalGet(window.base))
+            .op(Op::I64Sub)
+            .op(Op::LocalTee(super::VALUE))
+            .op(Op::LocalGet(window.limit))
+            .op(Op::I64LtU)
+            .op(Op::If(BlockType::Result(ValType::I32)))
+            .op(Op::LocalGet(super::VALUE))
+            .op(Op::I32WrapI64)
+            .op(Op::LocalGet(window.host))
+            .op(Op::I32Add)
+            .op(Op::Else)
+            .op(Op::LocalGet(ADDRESS))
+            .op(Op::Call(window.resolve))
+            .op(Op::LocalTee(super::VALUE))
+            .op(Op::I64Eqz)
+            .op(Op::If(BlockType::Result(ValType::I32)))
+            .op(Op::I64Const(0))
+            .op(Op::LocalSet(window.limit))
+            .op(Op::LocalGet(ADDRESS))
+            .op(Op::Call(read))
+            .op(Op::LocalTee(STORE_STATUS))
+            .op(Op::I32Eqz);
+        self.retry_guarded_paged_operand(exit_depth + 2, true);
+        self.op(Op::LocalGet(STORE_STATUS))
+            .op(Op::Else)
+            .op(Op::LocalGet(ADDRESS))
+            .op(Op::LocalSet(window.base))
+            .op(Op::LocalGet(super::VALUE))
+            .op(Op::I64Const(32))
+            .op(Op::I64ShrU)
+            .op(Op::I64Const(15))
+            .op(Op::I64Sub)
+            .op(Op::LocalSet(window.limit))
+            .op(Op::LocalGet(super::VALUE))
+            .op(Op::I32WrapI64)
+            .op(Op::LocalTee(window.host))
+            .op(Op::End)
+            .op(Op::End);
     }
 
     fn vector_load_offset(&mut self, bytes: u8, aligned: bool, exit_depth: u32) {

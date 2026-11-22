@@ -621,7 +621,7 @@ export function pagingBoundaryReviewScenarios(compiler: WebAssembly.Module): Sce
         const input = new Uint8Array(0x2000);
         input.fill(0xff, 0x1ff8);
         let splitReady = false;
-        let retainedAfterSplit = false;
+        let retainedAfterSplit = 0;
         const refused: bigint[] = [];
         const create = Core.create;
         Core.create = async (...args) => {
@@ -633,15 +633,24 @@ export function pagingBoundaryReviewScenarios(compiler: WebAssembly.Module): Sce
             const env = imports.call(core, observed);
             const ready = env.paged_loop_split_read_ready;
             const read = env.paged_loop_block_host;
-            if (typeof ready === 'function' && typeof read === 'function') {
+            const window = env.paged_loop_block_window;
+            if (
+              typeof ready === 'function' &&
+              typeof read === 'function' &&
+              typeof window === 'function'
+            ) {
               env.paged_loop_split_read_ready = (address: bigint, width: number) => {
                 const result = ready(address, width);
                 if (address === source && width === 16 && result === 1) splitReady = true;
                 return result;
               };
+              env.paged_loop_block_window = (address: bigint) => {
+                const result = window(address) as bigint;
+                if (splitReady && result !== 0n) retainedAfterSplit++;
+                return result;
+              };
               env.paged_loop_block_host = (address: bigint) => {
                 const result = read(address);
-                if (splitReady && result !== 0) retainedAfterSplit = true;
                 if (splitReady && result === 0) refused.push(address);
                 return result;
               };
@@ -672,8 +681,8 @@ export function pagingBoundaryReviewScenarios(compiler: WebAssembly.Module): Sce
               );
               const fault = await cpu.run({ budget: 2400n });
               check(
-                splitReady && retainedAfterSplit,
-                mode + ' checked split permits retained re-entry',
+                splitReady && retainedAfterSplit > 100,
+                mode + ' checked split permits windows, which must refill after the scalar arm',
               );
               same(refused, [denied - 8n], 'one later split returns to the checked operand');
               equal(fault.reason, 'page-fault', 'the second leaf is missing');
@@ -694,7 +703,7 @@ export function pagingBoundaryReviewScenarios(compiler: WebAssembly.Module): Sce
         try {
           await replay('long64');
           splitReady = false;
-          retainedAfterSplit = false;
+          retainedAfterSplit = 0;
           refused.length = 0;
           await replay('compatibility');
         } finally {

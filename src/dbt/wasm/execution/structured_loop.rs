@@ -661,6 +661,25 @@ impl StructuredLoop {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn has_single_paged_vector_load(self, unit: &super::Unit) -> bool {
+        use crate::x86::instruction::VectorOperand;
+
+        let mut loads = unit.instructions[self.earlier as usize..=self.tail as usize]
+            .iter()
+            .filter(|instruction| {
+                matches!(
+                    instruction.operation,
+                    Operation::Vector(VectorInstruction::Move {
+                        operand: VectorOperand::Memory(_),
+                        store: false,
+                        ..
+                    })
+                )
+            });
+        loads.next().is_some() && loads.next().is_none()
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     pub(super) fn with_paged_read_span(mut self, unit: &super::Unit) -> Option<Self> {
         if self.kind != LoopKind::PagedReads || self.paged_read_widths(unit) != [true, false] {
             return None;
@@ -1268,12 +1287,14 @@ impl Emitter {
             .op(Op::I32Eq)
             .op(Op::If(BlockType::Empty));
         let window = self.paged_dword_window.take();
+        let vector_window = self.paged_vector_window.take();
         let diamond = self.read_loop_diamond.take();
         self.guarded_paged_lap = true;
         self.emit_prechecked_body(instructions, body, loop_depth + 2, None);
         self.guarded_paged_lap = false;
         self.read_loop_diamond = diamond;
         self.paged_dword_window = window;
+        self.paged_vector_window = vector_window;
         self.op(Op::End).op(Op::End);
     }
 
@@ -1429,7 +1450,8 @@ impl Emitter {
             .op(Op::LocalSet(REASON));
         self.guarded_paged_lap = true;
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-        if let Some(window) = self.paged_dword_window {
+        if let Some(window) = self.paged_dword_window.or(self.paged_vector_window) {
+            // The live guard excluded observers; locals never survive a replay or a host boundary.
             self.op(Op::I64Const(0)).op(Op::LocalSet(window.limit));
         }
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -1846,6 +1868,17 @@ impl Emitter {
             } else {
                 InstructionRetirement::One
             };
+            #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+            if self.guarded_paged_lap
+                && let Some(window) = self.paged_vector_window
+                && matches!(
+                    instructions[ordinal].operation,
+                    Operation::Load { .. } | Operation::Store { .. }
+                )
+            {
+                // The other data access can change translation recency.
+                self.op(Op::I64Const(0)).op(Op::LocalSet(window.limit));
+            }
             self.instruction(
                 instructions[ordinal],
                 instructions.get(ordinal + 1),

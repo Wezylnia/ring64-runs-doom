@@ -23,7 +23,7 @@ pub(super) struct SpanCache {
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 #[derive(Clone, Copy)]
-pub(super) struct PagedDwordWindow {
+pub(super) struct PagedReadWindow {
     pub(super) resolve: u32,
     pub(super) base: u32,
     pub(super) limit: u32,
@@ -349,7 +349,7 @@ impl Emitter {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    fn load_windowed_paged_dword(&mut self, window: PagedDwordWindow, read: u32, exit_depth: u32) {
+    fn load_windowed_paged_dword(&mut self, window: PagedReadWindow, read: u32, exit_depth: u32) {
         use crate::memory::DirectSpan;
 
         let field = |offset: usize, align| MemArg {
