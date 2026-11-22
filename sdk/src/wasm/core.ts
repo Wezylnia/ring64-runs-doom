@@ -349,6 +349,9 @@ export function captureMemoryProfile(
   };
 }
 
+// Use the asynchronous path when the host replaces its compile function.
+const nativeCompile = globalThis.WebAssembly?.compile;
+
 export function instantiateArtifact(
   module: WebAssembly.Module,
   env: Record<string, WebAssembly.ImportValue>,
@@ -360,6 +363,25 @@ export function instantiateArtifact(
 }
 
 export class Core {
+  static async compileArtifact(bytes: Uint8Array<ArrayBuffer>): Promise<WebAssembly.Module> {
+    if (
+      bytes.byteLength <= 256 * 1024 &&
+      WebAssembly.compile === nativeCompile &&
+      typeof process !== 'undefined' &&
+      process.versions?.node &&
+      typeof setImmediate === 'function'
+    ) {
+      // Give pending host work a turn before compiling a small generated module on Node.
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      try {
+        return new WebAssembly.Module(bytes);
+      } catch (error) {
+        if (error instanceof WebAssembly.CompileError) throw error;
+      }
+    }
+    return WebAssembly.compile(bytes);
+  }
+
   #taskRetry: 'instruction' | 'delivery' | undefined;
   readonly takeSourceInvalidation?: () => boolean;
 

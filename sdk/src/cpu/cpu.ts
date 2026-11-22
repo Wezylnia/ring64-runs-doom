@@ -778,7 +778,7 @@ export class Cpu {
       )
         return;
       const began = performance.now();
-      const module = await WebAssembly.compile(output.bytes);
+      const module = await Core.compileArtifact(output.bytes);
       timings.browserCompileMs += performance.now() - began;
       return { module, bytes: output.bytes.length };
     } finally {
@@ -852,7 +852,7 @@ export class Cpu {
       }
       if (tracked && preferred!.size < 2) return;
       const began = performance.now();
-      const module = await WebAssembly.compile(output.bytes);
+      const module = await Core.compileArtifact(output.bytes);
       timings.browserCompileMs += performance.now() - began;
       const ready = this.#cache.installCompiled(
         engine,
@@ -1081,7 +1081,7 @@ export class Cpu {
           let installed = false;
           try {
             at = performance.now();
-            const module = await WebAssembly.compile(output.bytes);
+            const module = await Core.compileArtifact(output.bytes);
             timings.browserCompileMs += performance.now() - at;
             const artifact = this.#cache.installCompiled(engine, module, output.metadata, timings);
             if (!artifact) continue;

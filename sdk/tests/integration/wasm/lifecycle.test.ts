@@ -4,6 +4,7 @@ import test from 'node:test';
 import { registerBank } from '../../../../tests/support/fixture.js';
 import { createCpu, type Limits } from '../../../src/index.js';
 import type { State } from '../../../src/index.js';
+import { Core } from '../../../src/wasm/core.js';
 
 const compiler = await WebAssembly.compile(
   new Uint8Array(await readFile(new URL('../../../../build/ring64.wasm', import.meta.url))),
@@ -99,6 +100,52 @@ test('large host copies grow core memory without invalidating state or cached ge
     input[0] = 0x79;
     assert.deepEqual(cpu.readMemory(RAM, size), input);
     assert.deepEqual(cpu.readState(), expected);
+  } finally {
+    cpu.dispose();
+  }
+});
+
+test('large generated modules use asynchronous Wasm compilation', async () => {
+  const bytes = new Uint8Array(256 * 1024 + 1);
+  const Module = WebAssembly.Module;
+  let syncCompilations = 0;
+  WebAssembly.Module = new Proxy(Module, {
+    construct(target, args) {
+      syncCompilations++;
+      return Reflect.construct(target, args);
+    },
+  });
+  try {
+    await assert.rejects(Core.compileArtifact(bytes), WebAssembly.CompileError);
+    assert.equal(syncCompilations, 0);
+  } finally {
+    WebAssembly.Module = Module;
+  }
+});
+
+test('a cold run gives host tasks a turn before publishing its generated module', async () => {
+  const cpu = await createCpu({
+    compiler,
+    code: { base: CODE, bytes: Uint8Array.of(0xb8, 1, 0, 0, 0) },
+    ram: { base: RAM, bytes: new Uint8Array(8) },
+    limits,
+  });
+  cpu.setState(state());
+  const order: string[] = [];
+  const hostTask = new Promise<void>((resolve) =>
+    setImmediate(() => {
+      order.push('host');
+      resolve();
+    }),
+  );
+  try {
+    const run = cpu.run({ budget: 1n }).then((result) => {
+      order.push('guest');
+      return result;
+    });
+    const [result] = await Promise.all([run, hostTask]);
+    assert.equal(result.retired, 1n);
+    assert.deepEqual(order, ['host', 'guest']);
   } finally {
     cpu.dispose();
   }
