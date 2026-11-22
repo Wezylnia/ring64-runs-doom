@@ -607,6 +607,8 @@ impl Emitter {
             .map(|operation| (read_import.expect("leading read prefix import"), operation));
         let indexed_dword = self.indexed_dword_prefixes
             && instructions.iter().copied().any(paged_prefix_dword_read);
+        let indexed_wide = self.indexed_scalar_scratch.is_some()
+            && instructions.iter().copied().any(paged_prefix_wide_read);
         let indexed_leading = read.is_some_and(|(_, (_, _, width, _))| {
             if width == crate::x86::instruction::Width::W32 {
                 indexed_dword
@@ -615,14 +617,15 @@ impl Emitter {
             }
         });
         // A handoff can bypass its guard only directly from a read-only
-        // prefix in this unit. Request the same authority at every real
-        // guard in the chain, including register-only predecessors.
+        // prefix in this unit. Wide reads must admit their index at the
+        // checked entry because other prefixes can hand off fetch alone.
+        let indexed = indexed_leading || self.indexed_dword_prefixes || indexed_wide;
         self.guard_straight_paged_prefix(
             instructions,
             guard,
-            incoming,
-            indexed_leading || self.indexed_dword_prefixes,
-            true,
+            incoming.filter(|_| !indexed_wide),
+            indexed,
+            indexed_wide || !indexed,
         );
         if let Some((read, (register, address, source_width, width))) = read {
             use super::{ADDRESS, STORE_STATUS};
@@ -707,7 +710,7 @@ impl Emitter {
                 .map(|read| {
                     (
                         read,
-                        !wide && indexed_dword,
+                        if wide { indexed_wide } else { indexed_dword },
                         leading_wide_read && index == 0,
                     )
                 });
@@ -960,10 +963,10 @@ impl Emitter {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    fn newest_prefix_fetch(&mut self, pc: u64) {
+    fn newest_prefix_fetch(&mut self, pc: u64, indexed_read: bool) {
         use super::{SHADOW, STORE_STATUS};
         use crate::embedding::layout::debug::{Continuation, DebugState};
-        use crate::embedding::layout::paging::NewestFetch;
+        use crate::embedding::layout::paging::{NEWEST_FETCH_INDEXED, NewestFetch};
         use crate::embedding::layout::{RawEventState, RawInterruptState, RunState, StateStorage};
         use crate::x86::paging::cache::IndexedReadTable;
         use std::mem::offset_of;
@@ -983,8 +986,19 @@ impl Emitter {
             .op(Op::I32Const(0))
             .op(Op::Block(BlockType::Empty))
             .op(Op::LocalGet(0))
-            .op(Op::I64Load(field(offset_of!(NewestFetch, tag), 3)))
-            .op(Op::I64Const(((pc & !4095) | 1) as i64))
+            .op(Op::I64Load(field(offset_of!(NewestFetch, tag), 3)));
+        if !indexed_read {
+            self.op(Op::I64Const(!NEWEST_FETCH_INDEXED as i64))
+                .op(Op::I64And);
+        }
+        let tag = (pc & !4095)
+            | 1
+            | if indexed_read {
+                NEWEST_FETCH_INDEXED
+            } else {
+                0
+            };
+        self.op(Op::I64Const(tag as i64))
             .op(Op::I64Ne)
             .op(Op::BrIf(0));
         self.system_bits();
@@ -1112,11 +1126,10 @@ impl Emitter {
             && self.sampled_region
             && self.context.is_long64()
             && self.context.cpl() == 0
-            && !indexed_read
             && last.next_pc > first.pc
             && (last.next_pc - 1) & !4095 == first.pc & !4095;
         if newest {
-            self.newest_prefix_fetch(first.pc);
+            self.newest_prefix_fetch(first.pc, indexed_read);
             self.op(Op::If(BlockType::Result(wasm_encoder::ValType::I32)))
                 .op(Op::I32Const(1))
                 .op(Op::Else);

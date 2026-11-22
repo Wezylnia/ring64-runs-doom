@@ -588,7 +588,8 @@ test('sampled stack comparisons retire with their branch and replay an unavailab
   const source = PC + 0x1000n;
   const data = new Uint8Array(4096);
   data[0] = 16;
-  let accepted = 0;
+  let guarded = 0;
+  let checked = 0;
   let refused = 0;
   let corridor: bigint[];
   Core.prototype.compile = function (pc, limits, seeds, regionPoints) {
@@ -597,13 +598,21 @@ test('sampled stack comparisons retire with their branch and replay an unavailab
   };
   prototype.artifactImports = function (observed) {
     const env = imports.call(this, observed);
+    const guard = env.paged_loop_guard;
+    if (typeof guard === 'function') {
+      env.paged_loop_guard = (pc: bigint, count: number, flags: bigint, shadow: number) => {
+        const result = guard(pc, count, flags, shadow);
+        if (pc === PC && result === 1) guarded++;
+        return result;
+      };
+    }
     const read = env.paged_loop_read_span;
     if (typeof read === 'function') {
       env.paged_loop_read_span = (address: bigint, width: number, segment: number) => {
         const result = read(address, width, segment);
         if (width === 8) {
-          if (result) accepted++;
-          else refused++;
+          checked++;
+          if (!result) refused++;
         }
         return result;
       };
@@ -625,7 +634,7 @@ test('sampled stack comparisons retire with their branch and replay an unavailab
         async (cpu) => {
           const enter = (rax: bigint, rsp = source) =>
             cpu.setState(initial(PC, { 0: rax, 1: 5n, 2: 8n, 4: rsp }));
-          const before = accepted;
+          const before = guarded;
           for (let wave = 0; wave < 3; wave++) {
             for (const rax of [1n, 32n]) {
               enter(rax);
@@ -637,7 +646,13 @@ test('sampled stack comparisons retire with their branch and replay an unavailab
               assert.equal(outcome.state.flags & 1n, taken ? 1n : 0n);
             }
           }
-          assert.ok(accepted > before, 'the checked comparison should use a retained stack span');
+          assert.ok(guarded > before, 'the comparison should enter the guarded prefix');
+          const beforeReuse = checked;
+          enter(1n);
+          const reused = await cpu.run({ budget: 12n, stop });
+          assert.equal(reused.reason, 'stop');
+          assert.equal(reused.retired, preceding + 2n);
+          assert.equal(checked, beforeReuse, 'the warm stack comparison uses the indexed page');
 
           enter(1n);
           const partial = await cpu.run({ budget: preceding + 1n, stop });
@@ -659,9 +674,38 @@ test('sampled stack comparisons retire with their branch and replay an unavailab
           assert.equal(split.state.rip, compare);
           assert.equal(split.state.registers[2], 8n + preceding);
           assert.equal(refused, beforeSplit + 1);
+
+          enter(1n, 0x800000000008n);
+          const noncanonical = await cpu.run({ budget: 12n, stop, eventDelivery: { budget: 0n } });
+          assert.equal(noncanonical.reason, 'event-budget');
+          assert.equal(noncanonical.retired, preceding);
+          assert.equal(noncanonical.state.rip, compare);
+          assert.equal(noncanonical.state.event.kind, 'pending');
+          assert.equal(noncanonical.state.event.exception.vector, 12);
         },
       );
     }
+    const stop = PC + 9n;
+    corridor = [PC, PC + 4n, PC + 6n, stop];
+    await usingPaged(
+      compiler,
+      {
+        code: '483b0424720348ffc1f4',
+        context: snapshot('long64', 3),
+        bank: { ...BANK, cr0: BANK.cr0 | 0x40000n },
+        words: [[0x4008n, 0xa007n]],
+        spans: [{ physical: 0xa000n, bytes: data }],
+      },
+      async (cpu) => {
+        const beforeAlignment = checked;
+        cpu.setState(initial(PC, { 0: 1n, 4: source + 1n }, 0x40002n));
+        const alignment = await cpu.run({ budget: 12n, stop });
+        assert.equal(alignment.reason, 'alignment-check');
+        assert.equal(alignment.retired, 0n);
+        assert.equal(alignment.state.rip, PC);
+        assert.equal(checked, beforeAlignment);
+      },
+    );
   } finally {
     prototype.artifactImports = imports;
     Core.prototype.compile = compile;

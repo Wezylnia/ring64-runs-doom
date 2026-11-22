@@ -607,8 +607,13 @@ fn paged_loop_guard<const FLAT_DATA32: bool, const SSE: bool, const FLAT_WRITE32
                 .is_some()
             && let Some((slot, id)) = core.translation_cache.current_fetch_slot(pc)
         {
+            let indexed = if indexed_reads && core.state.indexed_paged_reads != 0 {
+                crate::embedding::layout::paging::NEWEST_FETCH_INDEXED
+            } else {
+                0
+            };
             core.state.newest_fetch = crate::embedding::layout::paging::NewestFetch {
-                tag: (pc & !4095) | 1,
+                tag: (pc & !4095) | 1 | indexed,
                 id,
                 table: core.translation_cache.indexed_reads_ptr(),
                 source_invalid: core.image.active_source_invalid_ptr(),
@@ -939,7 +944,7 @@ pub extern "C" fn core_paged_loop_read_span(address: u64, bytes: u32, segment: u
     if segment == crate::embedding::layout::paging::PREFIX_DWORD_READ_SEGMENT && bytes == 4 {
         return paged_loop_read_span::<false, false, true, false>(address, 4, Segment::Ds as u32);
     }
-    if segment == PREFIX_INDEXED_READ_SEGMENT && matches!(bytes, 1 | 2) {
+    if segment == PREFIX_INDEXED_READ_SEGMENT && matches!(bytes, 1 | 2 | 8) {
         return paged_loop_read_span::<false, false, false, true>(
             address,
             bytes,

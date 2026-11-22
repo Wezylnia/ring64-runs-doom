@@ -301,7 +301,7 @@ impl Emitter {
             );
             self.address(address, next_pc);
             if indexed {
-                self.indexed_prefix_operand_host(read, 4);
+                self.indexed_prefix_operand_host(read, width.bytes());
             } else {
                 let check_alignment = self.context.cpl() == 3;
                 if check_alignment {

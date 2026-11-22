@@ -12,6 +12,9 @@ pub(crate) const INDEXED_SCALAR_READ: u32 = 1 << 31;
 pub(crate) const INDEXED_PAGED_READ_GUARD: u32 = 1 << 31;
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 pub(crate) const NEWEST_FETCH_GUARD: u32 = 1 << 30;
+// The guard also refreshed indexed data authority in this paging context.
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+pub(crate) const NEWEST_FETCH_INDEXED: u64 = 2;
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 #[derive(Default)]
