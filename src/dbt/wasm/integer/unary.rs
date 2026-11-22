@@ -42,7 +42,7 @@ impl Emitter {
     ) {
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         let proof = match dst {
-            Location::Memory(address) => self.load_stack_rmw(address, width, next_pc, exit_depth),
+            Location::Memory(address) => self.load_cached_rmw(address, width, next_pc, exit_depth),
             _ => None,
         };
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -82,7 +82,7 @@ impl Emitter {
         }
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         if let Some(proof) = proof {
-            self.store_stack_rmw(proof, width, exit_depth);
+            self.store_cached_rmw(proof, width, exit_depth);
         } else {
             self.write_location(dst, width, exit_depth);
         }

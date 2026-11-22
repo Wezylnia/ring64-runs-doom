@@ -28,10 +28,13 @@ export function boundaryScenarios(compiler: WebAssembly.Module): Scenario[] {
         const stack = 0x3040n;
         const destination = 0x2000n;
         // TEST EBX,EBX; JZ child; MOV ECX,2; again: CALL EAX; DEC ECX; JNZ again; HLT.
-        // child: PUSH EBX; MOV EBX,[ESP+4]; MOV [EDI],EBX; POP EBX; RET.
-        const code = '85db741cb902000000ffd04975fbf4'.padEnd(0x40, '90') + '538b5c2404891f5bc3';
+        // child: PUSH EBX; MOV EBX,[ESP+4]; MOV [EDI],EBX; MOV EBX,[EDI];
+        // ADD DWORD [EDI+4],1; POP EBX; RET.
+        const code =
+          '85db741cb902000000ffd04975fbf4'.padEnd(0x40, '90') + '538b5c2404891f8b1f834704015bc3';
         let checkedWrites = 0;
         let admittedSpans = 0;
+        let checkedRmw = 0;
         const create = Core.create;
         Core.create = async (...args) => {
           const core = await create(...args);
@@ -42,6 +45,13 @@ export function boundaryScenarios(compiler: WebAssembly.Module): Scenario[] {
             const env = imports.call(core, observed);
             const store = env.segmented_store;
             const span = env.write_span;
+            const rmw = env.segmented_load_for_write;
+            if (typeof rmw === 'function') {
+              env.segmented_load_for_write = (...args: (number | bigint)[]) => {
+                checkedRmw++;
+                return rmw(...args);
+              };
+            }
             if (typeof store === 'function') {
               env.segmented_store = (
                 address: bigint,
@@ -65,8 +75,8 @@ export function boundaryScenarios(compiler: WebAssembly.Module): Scenario[] {
           return core;
         };
         try {
-          for (const form of ['private', 'executable', 'readonly', 'segment']) {
-            checkedWrites = admittedSpans = 0;
+          for (const form of ['private', 'executable', 'readonly', 'segment', 'split-ds']) {
+            checkedWrites = admittedSpans = checkedRmw = 0;
             const ctx = context();
             if (form === 'segment') ctx.segments.ss.limit = 0x303a;
             await using(
@@ -77,6 +87,28 @@ export function boundaryScenarios(compiler: WebAssembly.Module): Scenario[] {
                 const start = input(head, { 0: head + 0x20n, 3: 1n, 4: stack, 7: destination }, 2n);
                 cpu.setState(start);
                 const result = await cpu.run({ stop, budget: 40n });
+                if (form === 'split-ds') {
+                  equal(
+                    result.reason,
+                    'data-fault',
+                    'a separate readonly destination refuses cached RMW',
+                  );
+                  equal(result.state.rip, head + 0x29n, 'the original ADD faults');
+                  equal(result.retired, 8n, 'only the prefix preceding the ADD retires');
+                  equal(
+                    result.state.registers[4],
+                    stack - 8n,
+                    'the CALL and PUSH remain committed',
+                  );
+                  equal(result.state.flags, 2n, 'failed ADD preserves incoming flags');
+                  equal(checkedRmw, 1, 'split permission goes through the checked RMW');
+                  equal(
+                    (await cpu.readMemory(destination + 4n, 4))[0],
+                    1,
+                    'the readonly dword is unchanged',
+                  );
+                  return;
+                }
                 equal(result.state.registers[4], stack, `${form}: the stack pointer is precise`);
                 if (form === 'readonly' || form === 'segment') {
                   equal(result.reason, form === 'readonly' ? 'data-fault' : 'segment-fault', form);
@@ -85,7 +117,17 @@ export function boundaryScenarios(compiler: WebAssembly.Module): Scenario[] {
                   equal(admittedSpans, 0, `${form}: refused write span`);
                 } else {
                   equal(result.reason, 'stop', form);
-                  equal(result.retired, 19n, `${form}: both calls and returns retire`);
+                  equal(result.retired, 23n, `${form}: both calls and returns retire`);
+                  equal(
+                    checkedRmw,
+                    0,
+                    `${form}: the data RMW uses cached read and write permissions`,
+                  );
+                  equal(
+                    (await cpu.readMemory(destination + 4n, 4))[0],
+                    3,
+                    `${form}: both ADDs commit`,
+                  );
                   equal(
                     result.state.registers[3],
                     1n,
@@ -110,7 +152,13 @@ export function boundaryScenarios(compiler: WebAssembly.Module): Scenario[] {
               },
               {
                 data: [
-                  { base: destination, bytes: '00000000' },
+                  {
+                    base: destination,
+                    bytes: form === 'split-ds' ? '00000000' : '0000000001000000',
+                  },
+                  ...(form === 'split-ds'
+                    ? [{ base: destination + 4n, bytes: '01000000', write: false }]
+                    : []),
                   {
                     base: 0x3000n,
                     bytes: '00'.repeat(64),

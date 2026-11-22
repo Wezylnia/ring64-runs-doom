@@ -18,7 +18,17 @@ impl Emitter {
         let exit_depth = exit_depth + u32::from(parallel);
         let writes_memory =
             matches!(operands, MemoryAluOperands::MemoryFirst(_)) && kind.writes_result();
-        self.load_value(address, width, next_pc, writes_memory, exit_depth);
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        let cached = (writes_memory && self.linear_call_spans)
+            .then(|| self.load_cached_rmw(address, width, next_pc, exit_depth))
+            .flatten();
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        let ordinary = cached.is_none();
+        #[cfg(not(all(not(feature = "parallel"), target_arch = "wasm32")))]
+        let ordinary = true;
+        if ordinary {
+            self.load_value(address, width, next_pc, writes_memory, exit_depth);
+        }
         match operands {
             MemoryAluOperands::MemoryFirst(source) => {
                 self.op(Op::LocalGet(VALUE));
@@ -46,7 +56,13 @@ impl Emitter {
             }
         }
         if writes_memory {
-            self.store_result(width, exit_depth);
+            #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+            if let Some(proof) = cached {
+                self.store_cached_rmw(proof, width, exit_depth);
+            }
+            if ordinary {
+                self.store_result(width, exit_depth);
+            }
         }
         // A failed store exits above with the incoming flags still live.
         match kind {

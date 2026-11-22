@@ -89,7 +89,7 @@ pub(super) enum DirectOperand {
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 #[derive(Clone, Copy)]
-pub(super) enum StackRmw {
+pub(super) enum RmwAccess {
     Proved(u32, MemArg),
     Cached,
 }
@@ -986,13 +986,13 @@ impl Emitter {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) fn load_stack_rmw(
+    pub(super) fn load_cached_rmw(
         &mut self,
         address: Address,
         width: Width,
         next_pc: u64,
         exit_depth: u32,
-    ) -> Option<StackRmw> {
+    ) -> Option<RmwAccess> {
         use crate::memory::Access;
 
         if let Some((proof, host)) = self.proved_stack
@@ -1006,23 +1006,28 @@ impl Emitter {
             };
             self.op(Op::LocalGet(host));
             self.direct_scalar_load(width, memory);
-            return Some(StackRmw::Proved(host, memory));
+            return Some(RmwAccess::Proved(host, memory));
         }
-        let (read, write) = self.stack_read_span.zip(self.write_spans[1])?;
+        let read = match address.segment {
+            Segment::Ss => self.stack_read_span,
+            Segment::Ds if self.linear_call_spans => self.read_span,
+            _ => return None,
+        }?;
+        let stack = address.segment == Segment::Ss;
+        let write = self.write_spans[usize::from(stack)]?;
         if self.observed
             || self.context.is_long64()
-            || address.segment != Segment::Ss
             || address.size != Width::W32
             || width != Width::W32
             || self
                 .context
-                .translate(0, 4, Segment::Ss, Access::Write, true)
+                .translate(0, 4, address.segment, Access::Write, stack)
                 .ok()
                 != Some(0)
         {
             return None;
         }
-        let last = i64::from(self.context.segment(Segment::Ss).limit) - 3;
+        let last = i64::from(self.context.segment(address.segment).limit) - 3;
         self.address(address, next_pc);
         self.op(Op::LocalTee(ADDRESS))
             .op(Op::I64Const(last))
@@ -1070,18 +1075,18 @@ impl Emitter {
             .op(Op::LocalSet(STORE_STATUS));
         self.load_address_slow(width, true, exit_depth + 1);
         self.op(Op::End);
-        Some(StackRmw::Cached)
+        Some(RmwAccess::Cached)
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) fn store_stack_rmw(&mut self, proof: StackRmw, width: Width, exit_depth: u32) {
-        if let StackRmw::Proved(host, memory) = proof {
+    pub(super) fn store_cached_rmw(&mut self, proof: RmwAccess, width: Width, exit_depth: u32) {
+        if let RmwAccess::Proved(host, memory) = proof {
             self.op(Op::LocalGet(host)).op(Op::LocalGet(RESULT));
             self.direct_scalar_store(width, memory);
             return;
         }
         // No other guest access or callback runs between the proved load and
-        // this unary store. On the checked path, keep the original status.
+        // this store. On the checked path, keep the original status.
         self.stores = true;
         self.op(Op::LocalGet(STORE_STATUS))
             .op(Op::If(BlockType::Empty))
