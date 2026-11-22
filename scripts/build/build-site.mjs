@@ -63,6 +63,7 @@ try {
     'api/copy-guest-bytes.ts',
     'api/set-first-argument.ts',
     'api/run-together.ts',
+    'api/port-output.ts',
     'api/byte-register.ts',
   ];
   const examples = await Promise.all(
