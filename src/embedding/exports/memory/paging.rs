@@ -1194,7 +1194,7 @@ fn paged_loop_read_span<
                 paging,
                 request,
                 &state.protection_keys,
-                read,
+                |physical| core.image.physical_direct_read_span(physical, 4),
             )
         } else {
             core.translation_cache.data_then_fetch::<false, _>(

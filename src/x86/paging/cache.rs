@@ -2,6 +2,9 @@ use std::cell::{Cell, RefCell};
 #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
 use std::num::NonZeroU8;
 
+#[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+use crate::memory::DirectSpan;
+
 use super::{
     State,
     walk::{Failure, Request, Translation},
@@ -36,6 +39,14 @@ struct Entry {
 struct IndexedWriteSlot {
     index: usize,
     id: u64,
+}
+
+#[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+#[derive(Clone, Copy)]
+struct DwordReadMemo {
+    slot: usize,
+    id: u64,
+    span: DirectSpan,
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -274,7 +285,7 @@ pub struct Cache {
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
     last_byte_read: Cell<Option<NonZeroU8>>,
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
-    last_dword_read: Cell<Option<NonZeroU8>>,
+    last_dword_read: Cell<Option<DwordReadMemo>>,
 }
 
 impl Default for Cache {
@@ -711,24 +722,79 @@ impl Cache {
 
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
     #[inline]
-    pub(crate) fn read_local_dword_then_fetch<T>(
+    pub(crate) fn read_local_dword_then_fetch(
         &self,
         state: &State,
         request: Request,
         keys: &ProtectionKeys,
-        access: impl FnOnce(u64) -> Option<T>,
-    ) -> Option<T> {
-        let slot = self
-            .last_dword_read
-            .get()
-            .map(|slot| usize::from(slot.get() - 1));
-        self.data_with_slot_then_fetch::<false, 4, true, T>(
+        admit: impl FnOnce(u64) -> Option<DirectSpan>,
+    ) -> Option<u32> {
+        let memo = self.last_dword_read.get();
+        if let Some(memo) = memo {
+            let delta = request.linear.wrapping_sub(memo.span.base);
+            if delta <= u64::from(memo.span.length - 4) {
+                let mut entries = self.entries.borrow_mut();
+                let fetch = entries
+                    .hint
+                    .filter(|&index| entries.slots[index].is_some())?;
+                if let Some(data) = entries.slots[memo.slot].as_ref()
+                    && data.translation.cache_id == Some(memo.id)
+                    && data.family == family(state)
+                    && data.pcid == state.pcid()
+                {
+                    data.translation
+                        .rights
+                        .authorize(state, request, keys)
+                        .ok()?;
+                    if memo.slot != fetch && data.used != entries.clock - 1 {
+                        entries.touch_data_and_fetch(memo.slot, fetch);
+                    }
+                    return Some(memo.span.host + delta as u32);
+                }
+            }
+        }
+        self.memo_dword_then_fetch(state, request, keys, memo.map(|memo| memo.slot), admit)
+    }
+
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    #[cold]
+    #[inline(never)]
+    fn memo_dword_then_fetch(
+        &self,
+        state: &State,
+        request: Request,
+        keys: &ProtectionKeys,
+        slot: Option<usize>,
+        admit: impl FnOnce(u64) -> Option<DirectSpan>,
+    ) -> Option<u32> {
+        self.data_with_slot_then_fetch::<false, 4, true, u32>(
             state,
             request,
             keys,
             slot,
-            Some(&self.last_dword_read),
-            |_, translation| access(translation.physical),
+            None,
+            |slot, translation| {
+                let span = admit(translation.physical)?;
+                // Host mapping changes clear retained translations before resuming.
+                // Intersect the backing with this exact local translation.
+                let start = span.base.max(translation.physical_base);
+                let backing_delta = (start - span.base) as u32;
+                let physical_delta = start - translation.physical_base;
+                let length = u64::from(span.length - backing_delta)
+                    .min(translation.span - physical_delta) as u32;
+                if let Some(id) = translation.cache_id {
+                    self.last_dword_read.set(Some(DwordReadMemo {
+                        slot,
+                        id,
+                        span: DirectSpan {
+                            base: translation.linear_base + physical_delta,
+                            length,
+                            host: span.host + backing_delta,
+                        },
+                    }));
+                }
+                Some(span.host + (translation.physical - span.base) as u32)
+            },
         )
     }
 

@@ -1,4 +1,6 @@
 use super::*;
+#[cfg(not(feature = "parallel"))]
+use crate::memory::DirectSpan;
 use crate::memory::{Access, Image, MappingInput, MemoryLimits, Permissions};
 use crate::x86::paging::{
     State,
@@ -61,35 +63,73 @@ fn retained_dword_read_checks_the_live_occupant_after_invalidation() {
         linear: 0x2000,
         ..first
     };
-    let replacement = Request {
-        linear: 0x3000,
-        ..first
-    };
     image.physical_write(0x4010, 8, 0xb067).unwrap();
-    image.physical_write(0x4018, 8, 0xc067).unwrap();
     let cache = Cache::with_capacity(2);
-    let mut fill = |request| {
-        let translation = walk::walk(&mut image, &state, request, &ProtectionKeys::ZERO).unwrap();
+    let fill = |image: &mut Image, request| {
+        let translation = walk::walk(image, &state, request, &ProtectionKeys::ZERO).unwrap();
         cache.fill(&state, request, translation);
         translation.physical
     };
-    let code_physical = fill(code);
-    assert_eq!(fill(data), 0xb000);
+    let code_physical = fill(&mut image, code);
+    assert_eq!(fill(&mut image, data), 0xb000);
     assert!(cache.touch_current_fetch(&state, code, code_physical));
+    let admit = |base| {
+        Some(DirectSpan {
+            base,
+            length: 16,
+            host: base as u32,
+        })
+    };
     assert_eq!(
-        cache.read_local_dword_then_fetch(&state, data, &ProtectionKeys::ZERO, Some),
+        cache.read_local_dword_then_fetch(&state, data, &ProtectionKeys::ZERO, admit),
         Some(0xb000)
     );
-
-    cache.invalidate_page(state.pcid(), data.linear, false);
-    assert_eq!(fill(replacement), 0xc000);
-    assert!(cache.touch_current_fetch(&state, code, code_physical));
+    let nearby = Request {
+        linear: data.linear + 12,
+        ..data
+    };
+    let refuse_recheck = |_| panic!("covered data should reuse its backing");
+    let clock = cache.entries.borrow().clock;
     assert_eq!(
-        cache.read_local_dword_then_fetch(&state, data, &ProtectionKeys::ZERO, Some),
+        cache.read_local_dword_then_fetch(&state, nearby, &ProtectionKeys::ZERO, refuse_recheck),
+        Some(0xb00c)
+    );
+    assert_eq!(cache.entries.borrow().clock, clock);
+    let outside = Request {
+        linear: nearby.linear + 1,
+        ..nearby
+    };
+    assert_eq!(
+        cache.read_local_dword_then_fetch(&state, outside, &ProtectionKeys::ZERO, |address| {
+            assert_eq!(address, 0xb00d);
+            None
+        }),
         None
     );
+    let denied = Request {
+        class: AccessClass::Supervisor { ac: false },
+        ..nearby
+    };
+    let smap = State {
+        cr4: state.cr4 | (1 << 21),
+        ..state
+    };
     assert_eq!(
-        cache.read_local_dword_then_fetch(&state, replacement, &ProtectionKeys::ZERO, Some),
+        cache.read_local_dword_then_fetch(&smap, denied, &ProtectionKeys::ZERO, refuse_recheck),
+        None
+    );
+    assert_eq!(cache.entries.borrow().clock, clock);
+
+    cache.invalidate_page(state.pcid(), data.linear, false);
+    assert_eq!(
+        cache.read_local_dword_then_fetch(&state, data, &ProtectionKeys::ZERO, refuse_recheck),
+        None
+    );
+    image.physical_write(0x4010, 8, 0xc067).unwrap();
+    assert_eq!(fill(&mut image, data), 0xc000);
+    assert!(cache.touch_current_fetch(&state, code, code_physical));
+    assert_eq!(
+        cache.read_local_dword_then_fetch(&state, data, &ProtectionKeys::ZERO, admit),
         Some(0xc000)
     );
 }

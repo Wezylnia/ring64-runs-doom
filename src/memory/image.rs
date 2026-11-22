@@ -58,8 +58,8 @@ pub struct Image {
     pub(super) shared_rmw: Option<super::parallel::SharedHeld>,
 }
 
-#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-#[derive(Default)]
+#[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+#[derive(Clone, Copy, Default)]
 #[repr(C)]
 pub(crate) struct DirectSpan {
     pub(crate) base: u64,
