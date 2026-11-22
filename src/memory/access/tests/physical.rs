@@ -121,33 +121,64 @@ fn direct_physical_byte_store_requires_plain_writable_ram() {
     let alias = mapping(HOLE + 0x1000, 5, 1, all());
     let mut image = physical((0..8).collect(), vec![data.clone(), alias]);
     assert_eq!(image.physical_direct_write(HOLE + 1, [0xaa]), None);
-    assert!(image.physical_direct_write_byte_pointer(HOLE + 1).is_none());
+    assert_eq!(
+        image.physical_read_mapped_byte_for_store(HOLE + 1, || true),
+        Some((2, None))
+    );
     assert_eq!(image.physical_read(HOLE + 1, 1), Ok(2));
 
     image.set_mappings(vec![data.clone()]).unwrap();
     assert_eq!(image.physical_direct_write(HOLE + 1, [0xaa]), Some(()));
     assert_eq!(image.physical_read(HOLE + 1, 1), Ok(0xaa));
+    assert_eq!(
+        image.physical_read_mapped_byte_for_store(HOLE + 1, || false),
+        Some((0xaa, None))
+    );
     assert_eq!(image.physical_direct_write(HOLE + 4, [0xbb]), None);
-    assert!(image.physical_direct_write_byte_pointer(HOLE + 4).is_none());
+    assert_eq!(
+        image.physical_read_mapped_byte_for_store(HOLE + 4, || true),
+        None
+    );
 
     let owner = image.register_dependencies([], [(HOLE, 4)]).unwrap();
     assert!(image.activate(owner));
-    assert!(image.physical_direct_write_byte_pointer(HOLE + 1).is_none());
+    assert_eq!(
+        image.physical_read_mapped_byte_for_store(HOLE + 1, || true),
+        Some((0xaa, None))
+    );
     assert!(image.owner_valid(owner));
     image.release(owner);
-    let pointer = image.physical_direct_write_byte_pointer(HOLE + 1).unwrap();
+    let (value, pointer) = image
+        .physical_read_mapped_byte_for_store(HOLE + 1, || true)
+        .unwrap();
+    assert_eq!(value, 0xaa);
     // This is the direct store's entire lease, with no intervening Image use.
-    unsafe { pointer.write(0x5c) };
+    unsafe { pointer.unwrap().write(0x5c) };
     assert_eq!(image.physical_read(HOLE + 1, 1), Ok(0x5c));
 
     let denied = MappingInput {
         permissions: Permissions { write: false, ..rw },
-        ..data
+        ..data.clone()
     };
     image.set_mappings(vec![denied]).unwrap();
     assert_eq!(image.physical_direct_write(HOLE + 1, [0xbb]), None);
-    assert!(image.physical_direct_write_byte_pointer(HOLE + 1).is_none());
+    assert_eq!(
+        image.physical_read_mapped_byte_for_store(HOLE + 1, || true),
+        Some((0x5c, None))
+    );
     assert_eq!(image.physical_read(HOLE + 1, 1), Ok(0x5c));
+
+    let unreadable = MappingInput {
+        permissions: Permissions { read: false, ..rw },
+        ..data
+    };
+    image.set_mappings(vec![unreadable]).unwrap();
+    assert_eq!(
+        image.physical_read_mapped_byte_for_store(HOLE + 1, || panic!(
+            "read must be admitted first"
+        )),
+        None
+    );
 }
 
 #[cfg(not(feature = "parallel"))]
@@ -224,16 +255,22 @@ fn mapped_byte_probe_covers_only_readable_physical_ram() {
         }])
         .unwrap();
     for address in [HOLE - 1, HOLE, HOLE + 3, HOLE + 4, HOLE + 6, END - 1, END] {
+        let expected = image
+            .physical_read(address, 1)
+            .ok()
+            .map(|value| value as u8);
+        assert_eq!(image.physical_read_mapped_byte(address), expected);
         assert_eq!(
-            image.physical_read_mapped_byte(address),
-            image
-                .physical_read(address, 1)
-                .ok()
-                .map(|value| value as u8)
+            image.physical_read_mapped_byte_for_store(address, || false),
+            expected.map(|value| (value, None))
         );
     }
-    let linear = Image::new(0x1000, vec![0x90], 0x2000, vec![1]).unwrap();
+    let mut linear = Image::new(0x1000, vec![0x90], 0x2000, vec![1]).unwrap();
     assert_eq!(linear.physical_read_mapped_byte(0x2000), None);
+    assert_eq!(
+        linear.physical_read_mapped_byte_for_store(0x2000, || true),
+        None
+    );
 }
 
 #[test]

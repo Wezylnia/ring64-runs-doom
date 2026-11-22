@@ -427,39 +427,54 @@ impl Image {
     }
 
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
-    pub(crate) fn physical_direct_write_byte_pointer(&mut self, address: u64) -> Option<*mut u8> {
+    #[inline(always)]
+    pub(crate) fn physical_read_mapped_byte_for_store(
+        &mut self,
+        address: u64,
+        write_ready: impl FnOnce() -> bool,
+    ) -> Option<(u8, Option<*mut u8>)> {
         if !self.physical {
             return None;
         }
-        let (mapping, relative) = self.writable_direct_mapping(address, 1)?;
+        let mapping = &self.mappings[self.locate_index(address)?];
+        if !mapping.permissions.read {
+            return None;
+        }
+        let relative = address - mapping.base;
         let backing = mapping.backing;
         let index = mapping.offset as usize + relative as usize;
+        let value = self.backings[backing].bytes[index];
         // The synchronous guarded clone consumes the pointer before any host
         // call or another guest memory operation.
-        Some(
-            self.backings[backing]
-                .bytes
-                .as_mut_ptr()
-                .wrapping_add(index),
-        )
+        let pointer =
+            (write_ready() && self.direct_mapping_writable(mapping, relative, 1)).then(|| {
+                self.backings[backing]
+                    .bytes
+                    .as_mut_ptr()
+                    .wrapping_add(index)
+            });
+        Some((value, pointer))
     }
 
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
     fn writable_direct_mapping(&self, address: u64, width: u32) -> Option<(&Mapping, u64)> {
         let mapping = &self.mappings[self.locate_index(address)?];
         let relative = address - mapping.base;
-        if !mapping.permissions.write
-            || u64::from(width) > u64::from(mapping.length) - relative
-            || self.backings[mapping.backing].has_sources
-            || self
+        self.direct_mapping_writable(mapping, relative, width)
+            .then_some((mapping, relative))
+    }
+
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    #[inline(always)]
+    fn direct_mapping_writable(&self, mapping: &Mapping, relative: u64, width: u32) -> bool {
+        // Writable aliases of code must use the path that publishes invalidation.
+        mapping.permissions.write
+            && u64::from(width) <= u64::from(mapping.length) - relative
+            && !self.backings[mapping.backing].has_sources
+            && !self
                 .mappings
                 .iter()
                 .any(|alias| alias.backing == mapping.backing && alias.permissions.execute)
-        {
-            return None;
-        }
-        // Writable aliases of code must use the path that publishes invalidation.
-        Some((mapping, relative))
     }
 
     #[inline(always)]
