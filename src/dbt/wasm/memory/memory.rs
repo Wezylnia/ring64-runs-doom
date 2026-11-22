@@ -1257,12 +1257,37 @@ impl Emitter {
         if self.uses_indexed_scalar_rmw() {
             self.address(address, next_pc);
             self.op(Op::LocalSet(ADDRESS));
-            self.indexed_read_host(
-                self.indexed_paged_read.unwrap(),
-                width.bytes(),
-                false,
-                IndexedOperand::ReadModifyWrite,
-            );
+            let guarded = self.can_reuse_paged_rmw_fetch(next_pc);
+            let index = self.indexed_paged_read.unwrap();
+            if guarded {
+                use crate::embedding::layout::debug::CONTINUE_ACTIVE;
+                use wasm_encoder::ValType;
+
+                self.op(Op::Block(BlockType::Result(ValType::I32)));
+                self.newest_prefix_fetch(self.current_pc, true, false);
+                self.op(Op::If(BlockType::Empty));
+                self.indexed_read_host(
+                    index,
+                    width.bytes(),
+                    false,
+                    IndexedOperand::ReadModifyWrite,
+                );
+                let boundary_result = self.boundary_result.unwrap();
+                self.op(Op::LocalTee(STORE_STATUS))
+                    .op(Op::If(BlockType::Empty))
+                    .op(Op::I32Const(CONTINUE_ACTIVE))
+                    .op(Op::LocalSet(boundary_result))
+                    .op(Op::LocalGet(STORE_STATUS))
+                    .op(Op::Br(2))
+                    .op(Op::End)
+                    .op(Op::End);
+                // A refusal has neither loaded nor updated guest memory.
+                self.begin(self.current_operation, next_pc, exit_depth + 1);
+            }
+            self.indexed_read_host(index, width.bytes(), false, IndexedOperand::ReadModifyWrite);
+            if guarded {
+                self.op(Op::End);
+            }
             self.op(Op::LocalTee(STORE_STATUS))
                 .op(Op::If(BlockType::Empty))
                 .op(Op::LocalGet(STORE_STATUS));

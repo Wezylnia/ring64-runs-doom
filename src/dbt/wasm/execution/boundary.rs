@@ -79,6 +79,11 @@ impl Emitter {
                 && self.uses_indexed_scalar_write(operation)
                 && match operation {
                     Operation::Call { .. } => true,
+                    Operation::MemoryAlu { .. }
+                    | Operation::Shift {
+                        kind: crate::x86::instruction::Shift::Rol,
+                        ..
+                    } => self.retouch_prefix_fetch,
                     Operation::Store { .. } => {
                         self.proved_stack.is_none()
                             && self.paged_prefix_store.is_none()
@@ -87,6 +92,14 @@ impl Emitter {
                     _ => false,
                 }
         }
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn can_reuse_paged_rmw_fetch(&self, next_pc: u64) -> bool {
+        self.uses_indexed_scalar_rmw()
+            && self.can_complete_paged_write_quietly(self.current_operation)
+            && next_pc > self.current_pc
+            && (next_pc - 1) >> 12 == self.current_pc >> 12
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]

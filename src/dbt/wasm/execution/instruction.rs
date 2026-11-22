@@ -249,9 +249,11 @@ impl Emitter {
         let guarded_return = self.try_guarded_return_read(instruction, exit_depth);
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         let guarded_store = self.try_guarded_store(instruction, exit_depth);
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        let guarded_rmw = self.can_reuse_paged_rmw_fetch(instruction.next_pc);
         #[cfg(any(feature = "parallel", not(target_arch = "wasm32")))]
-        let (guarded_return, guarded_store) = (false, false);
-        if !guarded_return && !guarded_store {
+        let (guarded_return, guarded_store, guarded_rmw) = (false, false, false);
+        if !guarded_return && !guarded_store && !guarded_rmw {
             self.begin(instruction.operation, instruction.next_pc, exit_depth);
         }
         #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
