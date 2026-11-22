@@ -350,15 +350,11 @@ fn divide(a: Num, b: Num) -> Num {
 fn root(n: Num) -> Num {
     let (s, e) = normalized(n);
     let radicand = if e & 1 == 0 { s << 63 } else { s << 64 };
-    let mut rem = 0u128;
-    let mut q = 0u128;
-    for i in 0..67 {
-        let pair = if i < 64 {
-            (radicand >> (126 - 2 * i)) & 3
-        } else {
-            0
-        };
-        rem = (rem << 2) | pair;
+    let mut q = radicand.isqrt();
+    let mut rem = radicand - q * q;
+    // Append the same three zero pairs to recover the rounding bits.
+    for _ in 0..3 {
+        rem <<= 2;
         q <<= 1;
         let test = (q << 1) | 1;
         if rem >= test {
