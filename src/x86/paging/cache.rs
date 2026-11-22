@@ -45,6 +45,7 @@ pub(crate) struct IndexedWriteMemo {
     table: Option<IndexedWriteSlot>,
     target: Option<IndexedWriteSlot>,
     destination: Option<crate::memory::DirectSpan>,
+    pub(crate) unsupported_leaf: bool,
 }
 
 struct Entries {
@@ -224,6 +225,7 @@ impl Entries {
         request: Request,
         keys: &ProtectionKeys,
         width: u32,
+        unsupported_leaf: &mut bool,
     ) -> Option<(usize, u64)> {
         if let Some(retained) = *slot
             && let Some(entry) = self.slots[retained.index]
@@ -236,11 +238,11 @@ impl Entries {
             }
         }
         let (index, t) = self.retained_data_span::<WRITE>(state, request, keys, width)?;
-        *slot = if t.global || t.span != 4096 {
-            None
-        } else {
-            t.cache_id.map(|id| IndexedWriteSlot { index, id })
-        };
+        if t.global || t.span != 4096 {
+            *unsupported_leaf = true;
+            return None;
+        }
+        *slot = t.cache_id.map(|id| IndexedWriteSlot { index, id });
         Some((index, t.physical))
     }
 
@@ -497,6 +499,7 @@ impl Cache {
             index,
             keys,
             1,
+            &mut memo.unsupported_leaf,
         )?;
         let index_value = image.physical_read_mapped_byte(first)?;
         if index_value == 0 {
@@ -516,10 +519,22 @@ impl Cache {
         {
             return None;
         }
-        let (table_slot, lookup) =
-            entries.indexed_write_span::<false>(&mut memo.table, state, table, keys, 4)?;
-        let (store_slot, target) =
-            entries.indexed_write_span::<true>(&mut memo.target, state, store, keys, 4)?;
+        let (table_slot, lookup) = entries.indexed_write_span::<false>(
+            &mut memo.table,
+            state,
+            table,
+            keys,
+            4,
+            &mut memo.unsupported_leaf,
+        )?;
+        let (store_slot, target) = entries.indexed_write_span::<true>(
+            &mut memo.target,
+            state,
+            store,
+            keys,
+            4,
+            &mut memo.unsupported_leaf,
+        )?;
         let value = image.physical_read_mapped_dword(lookup)?;
         let span = match memo.destination.as_ref() {
             Some(span) if target.wrapping_sub(span.base) <= u64::from(span.length - 4) => span,

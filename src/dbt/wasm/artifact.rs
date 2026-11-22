@@ -1134,7 +1134,12 @@ fn emit_body(
     });
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let paged_indexed_write = loop_body
-        .filter(|_| optional.paged_indexed_write && paged_scalar_writes && !mmio)
+        .filter(|body| {
+            optional.paged_indexed_write
+                && paged_scalar_writes
+                && !mmio
+                && body.paged_source_is_4k(unit)
+        })
         .and_then(|body| super::paged_indexed_write::IndexedWrite::recognize(body, unit))
         .map(|shape| {
             let signature = add_function_type(

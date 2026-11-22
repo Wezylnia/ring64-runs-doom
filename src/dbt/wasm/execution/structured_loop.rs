@@ -1814,7 +1814,10 @@ impl Emitter {
             .paged_indexed_write
             .filter(|_| body.paged_scalar_writes())
         {
-            self.op(Op::I32Const(0)).op(Op::LocalSet(group.continuing));
+            self.op(Op::I32Const(0))
+                .op(Op::LocalSet(group.continuing))
+                .op(Op::I32Const(0))
+                .op(Op::LocalSet(group.record));
         }
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         if let Some(window) = self.paged_copy_window {

@@ -1,4 +1,5 @@
 use super::{Emitter, StructuredLoop, Unit, VALUE};
+use crate::embedding::layout::INDEXED_WRITE_UNSUPPORTED_LEAF;
 use crate::memory::IndexedDwordWrite;
 use crate::x86::{
     context::Segment,
@@ -149,8 +150,14 @@ impl Emitter {
             align: 2,
             memory_index: 0,
         };
+        let unsupported = INDEXED_WRITE_UNSUPPORTED_LEAF as i32;
         if first {
-            self.op(Op::I32Const(0)).op(Op::LocalSet(group.host));
+            self.op(Op::I32Const(0))
+                .op(Op::LocalSet(group.host))
+                .op(Op::LocalGet(group.record))
+                .op(Op::I32Const(unsupported))
+                .op(Op::I32Ne)
+                .op(Op::If(BlockType::Empty));
             self.address(address, next_pc);
             self.address(group.shape.table, 0);
             self.address(group.shape.destination, 0);
@@ -158,9 +165,13 @@ impl Emitter {
                 .op(Op::Call(group.resolve))
                 .op(Op::LocalSet(group.record))
                 .op(Op::I32Const(1))
-                .op(Op::LocalSet(group.continuing));
+                .op(Op::LocalSet(group.continuing))
+                .op(Op::End);
         }
+        // One unsuitable leaf disables grouping until the guarded clone ends.
         self.op(Op::LocalGet(group.record))
+            .op(Op::I32Const(unsupported))
+            .op(Op::I32GtU)
             .op(Op::If(BlockType::Empty));
         if first {
             self.op(Op::LocalGet(group.record))

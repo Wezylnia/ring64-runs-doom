@@ -1401,6 +1401,9 @@ pub extern "C" fn core_paged_loop_indexed_dword_write(
             (table, request(store, Access::Write)),
             &mut core.indexed_write_memo,
         ) else {
+            if core.indexed_write_memo.unsupported_leaf {
+                return crate::embedding::layout::INDEXED_WRITE_UNSUPPORTED_LEAF;
+            }
             return 0;
         };
         core.indexed_dword_write = proof;
