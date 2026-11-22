@@ -611,8 +611,24 @@ sup.ink-note-mark {
 }
 
 @media (max-width: 42rem) and (height > 40rem), (max-width: 37rem) {
-  .shell {
+  .shell:not(:has(> .landing)) {
     min-block-size: 0;
+  }
+
+  .landing::before,
+  .landing::after {
+    content: none;
+  }
+
+  .wet-ink,
+  .ink-display {
+    display: flex;
+    flex: 1 auto;
+    flex-direction: column;
+  }
+
+  .ink-display > .ink-stage {
+    flex: 1 auto;
   }
 
   .masthead {
