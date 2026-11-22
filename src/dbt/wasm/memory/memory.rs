@@ -28,6 +28,7 @@ pub(super) struct PagedReadWindow {
     pub(super) base: u32,
     pub(super) limit: u32,
     pub(super) host: u32,
+    pub(super) last_early_page: Option<u32>,
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -883,8 +884,47 @@ impl Emitter {
         self.op(Op::I32Const(i32::from(bytes)))
             .op(Op::Call(ready))
             .op(Op::Select)
-            .op(Op::LocalSet(attempts))
-            .op(Op::End);
+            .op(Op::LocalSet(attempts));
+        if bytes == 16
+            && let Some(window) = self.paged_vector_window
+            && let Some(last_early_page) = window.last_early_page
+        {
+            // Ready approved the checked read. The adjacent page head may
+            // retry once; the old window coordinates confer no authority.
+            self.op(Op::LocalGet(ADDRESS))
+                .op(Op::I32WrapI64)
+                .op(Op::I32Const(4095))
+                .op(Op::I32And)
+                .op(Op::I32Eqz)
+                .op(Op::If(BlockType::Empty))
+                .op(Op::LocalGet(attempts))
+                .op(Op::I32Const(PAGED_READ_COOLDOWN))
+                .op(Op::I32Eq)
+                .op(Op::LocalGet(window.host))
+                .op(Op::I32Const(0))
+                .op(Op::I32Ne)
+                .op(Op::I32And)
+                .op(Op::LocalGet(ADDRESS))
+                .op(Op::LocalGet(window.base))
+                .op(Op::I64Const(-4096))
+                .op(Op::I64And)
+                .op(Op::I64Sub)
+                .op(Op::I64Const(4096))
+                .op(Op::I64Eq)
+                .op(Op::I32And)
+                .op(Op::LocalGet(ADDRESS))
+                .op(Op::LocalGet(last_early_page))
+                .op(Op::I64GtU)
+                .op(Op::I32And)
+                .op(Op::If(BlockType::Empty))
+                .op(Op::LocalGet(ADDRESS))
+                .op(Op::LocalSet(last_early_page))
+                .op(Op::I32Const(0))
+                .op(Op::LocalSet(attempts))
+                .op(Op::End)
+                .op(Op::End);
+        }
+        self.op(Op::End);
     }
 
     pub(super) fn store_result(&mut self, width: Width, exit_depth: u32) {

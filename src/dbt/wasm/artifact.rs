@@ -322,6 +322,8 @@ fn emit_placement(
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_vector_window: true,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        paged_vector_rearm: max_artifact_bytes >= 256 * 1024,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_read_diamond: true,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_preamble: true,
@@ -425,6 +427,8 @@ struct OptionalLowering {
     paged_split_vectors: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_vector_window: bool,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    paged_vector_rearm: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_read_diamond: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -1677,21 +1681,34 @@ fn emit_body(
         (proof, resolve, bias)
     });
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    let mut read_window = |resolve| {
+    let paged_vector_rearm = paged_vector_window.is_some()
+        && optional.paged_vector_rearm
+        && paged_read_rearm.is_some()
+        && unit.context.is_long64()
+        && loop_body.is_some_and(|body| body.paged_source_is_4k(unit));
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let mut read_window = |resolve, early_rearm: bool| {
         let base = next_local;
         locals.extend([(2, ValType::I64), (1, ValType::I32)]);
         next_local += 3;
+        let last_early_page = early_rearm.then(|| {
+            let local = next_local;
+            locals.push((1, ValType::I64));
+            next_local += 1;
+            local
+        });
         memory::PagedReadWindow {
             resolve,
             base,
             limit: base + 1,
             host: base + 2,
+            last_early_page,
         }
     };
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let (paged_dword_window, paged_vector_window) = (
-        paged_dword_window.map(&mut read_window),
-        paged_vector_window.map(read_window),
+        paged_dword_window.map(|resolve| read_window(resolve, false)),
+        paged_vector_window.map(|resolve| read_window(resolve, paged_vector_rearm)),
     );
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let paged_byte_write_pair = paged_byte_write_pair.map(|(load, store, read, write)| {
@@ -2193,6 +2210,23 @@ fn emit_body(
             _guard_reads,
             OptionalLowering {
                 parallel_native_lock_memo: false,
+                ..optional
+            },
+            max_artifact_bytes,
+        );
+    }
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    if bytes.len() > max_artifact_bytes
+        && paged_vector_window.is_some_and(|window| window.last_early_page.is_some())
+    {
+        return emit_body(
+            unit,
+            observed,
+            (paged, mmio),
+            loop_body,
+            _guard_reads,
+            OptionalLowering {
+                paged_vector_rearm: false,
                 ..optional
             },
             max_artifact_bytes,
