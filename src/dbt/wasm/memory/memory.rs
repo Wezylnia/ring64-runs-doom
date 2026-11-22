@@ -78,7 +78,13 @@ impl Emitter {
                 );
         }
         let dword = address.size == Width::W32;
-        let add = if dword { Op::I32Add } else { Op::I64Add };
+        let add = |emitter: &mut Self| {
+            if dword {
+                emitter.op(Op::I32Add);
+            } else {
+                emitter.op(Op::I64Add);
+            }
+        };
         let has_base = if let AddressBase::Register(base) = address.base {
             self.op(Op::LocalGet(if base == 4 {
                 pending_stack.unwrap_or(GPR + 4)
@@ -110,7 +116,7 @@ impl Emitter {
                 }
             }
             if has_base {
-                self.op(add.clone());
+                add(self);
             }
         }
         let constant = if address.base == AddressBase::NextPc {
@@ -119,13 +125,13 @@ impl Emitter {
             address.displacement as u64
         };
         if constant != 0 || address.index.is_none() {
-            self.op(if dword {
-                Op::I32Const(constant as i32)
+            if dword {
+                self.op(Op::I32Const(constant as i32));
             } else {
-                Op::I64Const(constant as i64)
-            });
+                self.op(Op::I64Const(constant as i64));
+            }
             if has_base || address.index.is_some() {
-                self.op(add);
+                add(self);
             }
         }
         if dword {
