@@ -115,12 +115,19 @@ impl Stream {
             .checked_sub(self.first.displacement)?;
         u32::try_from(distance).ok()?.checked_add(bytes)
     }
+
+    #[cfg(all(not(feature = "parallel"), any(test, target_arch = "wasm32")))]
+    fn scale(self) -> u64 {
+        u64::from(self.first.index.map_or(1, |index| index.scale))
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ReadLimit {
     Register(u8),
     Immediate(u64),
+    #[cfg(all(not(feature = "parallel"), any(test, target_arch = "wasm32")))]
+    Countdown(u8),
 }
 
 #[derive(Clone, Copy)]
@@ -232,13 +239,107 @@ impl ReadLoop {
             return false;
         };
         self.byte_reads
-            && self.step * u64::from(stream.first.index.unwrap().scale)
-                == u64::from(stream.displacement_width(1).unwrap())
+            && self.step * stream.scale() == u64::from(stream.displacement_width(1).unwrap())
             && instructions
                 .iter()
                 .filter_map(|instruction| Self::read_operand(instruction.operation, true).flatten())
                 .map(|address| address.displacement)
                 .eq(stream.first.displacement..=stream.last_displacement)
+    }
+
+    #[cfg(all(not(feature = "parallel"), any(test, target_arch = "wasm32")))]
+    pub(super) fn recognize_paged_countdown_bytes(
+        context: &ExecutionContext,
+        instructions: &[Instruction],
+    ) -> Option<Self> {
+        use crate::x86::context::Segment;
+
+        let [decrement, body @ .., update, compare, branch] = instructions else {
+            return None;
+        };
+        let Operation::Alu {
+            kind: kind @ (Alu::Add | Alu::Sub),
+            dst: count,
+            src: DataOperand::Immediate(amount),
+            width,
+        } = decrement.operation
+        else {
+            return None;
+        };
+        let Operation::Alu {
+            kind: Alu::Add,
+            dst: pointer,
+            src: DataOperand::Immediate(step),
+            width: pointer_width,
+        } = update.operation
+        else {
+            return None;
+        };
+        let decrement_by = if kind == Alu::Sub {
+            amount
+        } else {
+            amount.wrapping_neg()
+        } & width.mask();
+        if count.bank == pointer.bank
+            || count.high_byte
+            || pointer.high_byte
+            || width != pointer_width
+            || !matches!(width, Width::W32 | Width::W64)
+            || decrement_by != step
+            || !step.is_power_of_two()
+            || step < 4
+            || step > body.len() as u64
+            || !matches!(compare.operation, Operation::Alu {
+                kind: Alu::Cmp,
+                dst,
+                src: DataOperand::Immediate(bound),
+                width: compare_width,
+            } if dst == count && compare_width == width && bound == step - 1)
+            || !matches!(branch.operation, Operation::Jcc {
+                condition: Condition::Above, target
+            } if target == decrement.pc)
+            || instructions
+                .windows(2)
+                .any(|pair| pair[0].next_pc != pair[1].pc)
+        {
+            return None;
+        }
+
+        let mut reads = body
+            .iter()
+            .filter_map(|instruction| Self::read_operand(instruction.operation, true).flatten());
+        let first = reads.next()?;
+        let stream = Stream {
+            first,
+            last_displacement: first.displacement.checked_add(step as i64 - 1)?,
+        };
+        let written = body.iter().try_fold(0u16, |written, instruction| {
+            Some(written | Self::integer_writes(instruction.operation)?)
+        })?;
+        if written & ((1 << count.bank) | (1 << pointer.bank)) != 0
+            || first.base != AddressBase::Register(pointer.bank)
+            || first.index.is_some()
+            || first.size != width
+            || first.segment != Segment::Ds
+            || context.segment_base(first.segment) != 0
+            || !reads.all(|address| stream.matches(address))
+        {
+            return None;
+        }
+        let proof = Self {
+            index: pointer.bank,
+            end: ReadLimit::Countdown(count.bank),
+            count_width: width,
+            step,
+            streams: [Some(stream), None],
+            byte_reads: true,
+        };
+        proof.dense_ascending_bytes(instructions).then_some(proof)
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn is_countdown(self) -> bool {
+        matches!(self.end, ReadLimit::Countdown(_))
     }
 
     fn recognize_body(
@@ -603,6 +704,17 @@ impl Emitter {
             ReadLimit::Immediate(end) => {
                 self.op(Op::I64Const(end as i64));
             }
+            ReadLimit::Countdown(count) => {
+                // The counter is decremented before the first read. A
+                // sub-step entry would wrap and must run checked.
+                self.register(count, proof.count_width);
+                self.op(Op::I64Const(!(proof.step - 1) as i64))
+                    .op(Op::I64And)
+                    .op(Op::LocalTee(LHS))
+                    .op(Op::I64Eqz)
+                    .op(Op::BrIf(0));
+                return;
+            }
         }
         self.op(Op::LocalTee(RHS));
         self.register(proof.index, proof.count_width);
@@ -621,7 +733,7 @@ impl Emitter {
     }
 
     fn guard_read_stream_length(&mut self, proof: ReadLoop, stream: Stream) {
-        let scale = u64::from(stream.first.index.unwrap().scale);
+        let scale = stream.scale();
         let bytes = if proof.byte_reads { 1 } else { 4 };
         let displacement_width = u64::from(stream.displacement_width(bytes).unwrap());
         // Length = (end - start - step) * scale + displacement width.
@@ -1166,6 +1278,66 @@ mod tests {
         let mut instructions = candidate;
         instructions[2].next_pc += 1;
         assert!(ReadLoop::recognize(&context, &instructions).is_none());
+    }
+
+    #[cfg(not(feature = "parallel"))]
+    #[test]
+    fn countdown_byte_span_requires_an_unchanged_counter_and_dense_pointer_reads() {
+        let context = ExecutionContext::default();
+        let mut candidate = fixture();
+        let count = RegisterView::low(1);
+        let pointer = RegisterView::low(7);
+        let alu = |kind, dst, immediate| Operation::Alu {
+            kind,
+            dst,
+            src: DataOperand::Immediate(immediate),
+            width: Width::W64,
+        };
+        candidate[0].operation = alu(Alu::Add, count, 4u64.wrapping_neg());
+        for (offset, instruction) in candidate[1..5].iter_mut().enumerate() {
+            instruction.operation = Operation::Extend {
+                dst: RegisterView::low(2),
+                src: Location::Memory(Address {
+                    base: AddressBase::Register(pointer.bank),
+                    index: None,
+                    displacement: offset as i64,
+                    size: Width::W64,
+                    segment: Segment::Ds,
+                }),
+                source_width: Width::W8,
+                width: Width::W32,
+                signed: false,
+            };
+        }
+        candidate[5].operation = alu(Alu::Add, pointer, 4);
+        candidate[6].operation = alu(Alu::Cmp, count, 3);
+        candidate[7].operation = Operation::Jcc {
+            condition: Condition::Above,
+            target: candidate[0].pc,
+        };
+        let proof = ReadLoop::recognize_paged_countdown_bytes(&context, &candidate).unwrap();
+        assert!(matches!(proof.end, ReadLimit::Countdown(bank) if bank == count.bank));
+        assert!(proof.dense_ascending_bytes(&candidate));
+        assert_eq!(proof.step, 4);
+
+        for (index, replacement) in [
+            (0, alu(Alu::Sub, count, 8)),
+            (2, alu(Alu::Add, pointer, 1)),
+            (2, alu(Alu::Add, count, 1)),
+            (3, candidate[4].operation),
+            (6, alu(Alu::Cmp, count, 4)),
+            (
+                7,
+                Operation::Jcc {
+                    condition: Condition::NotEqual,
+                    target: candidate[0].pc,
+                },
+            ),
+        ] {
+            let mut instructions = candidate;
+            instructions[index].operation = replacement;
+            assert!(ReadLoop::recognize_paged_countdown_bytes(&context, &instructions).is_none());
+        }
     }
 
     #[cfg(not(feature = "parallel"))]

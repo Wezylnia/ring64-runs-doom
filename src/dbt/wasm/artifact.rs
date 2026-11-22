@@ -2060,6 +2060,12 @@ fn emit_body(
     code.append_to(&mut bytes);
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if bytes.len() > max_artifact_bytes
+        && paged_read_span.is_some_and(|(proof, _, _)| proof.is_countdown())
+    {
+        return (bytes, false);
+    }
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    if bytes.len() > max_artifact_bytes
         && paged_f32_read_pair.is_some_and(|(_, _, split)| split.is_some())
     {
         return emit_body(

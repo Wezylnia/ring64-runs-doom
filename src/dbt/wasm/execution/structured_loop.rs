@@ -583,10 +583,14 @@ impl StructuredLoop {
         if self.kind != LoopKind::PagedReads || self.paged_read_widths(unit) != [true, false] {
             return None;
         }
-        let proof = super::read_loop::ReadLoop::recognize_integer(
-            &unit.context,
-            &unit.instructions[self.head as usize..=self.tail as usize],
-        )?;
+        let instructions = &unit.instructions[self.head as usize..=self.tail as usize];
+        let proof = super::read_loop::ReadLoop::recognize_integer(&unit.context, instructions)
+            .or_else(|| {
+                super::read_loop::ReadLoop::recognize_paged_countdown_bytes(
+                    &unit.context,
+                    instructions,
+                )
+            })?;
         if !proof.one_stream() {
             return None;
         }
