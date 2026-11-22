@@ -12,30 +12,36 @@ use super::{REMAINING, RIP};
 use crate::x86::{
     instruction::{Instruction, Operation},
     x87::{
-        Op, REGISTER_PAIR_SEGMENT, register_exchange_compare, register_load_arithmetic,
-        register_store_pop,
+        MEMORY_PAIR_SEGMENT, REGISTER_PAIR_SEGMENT, register_exchange_compare,
+        register_load_arithmetic, register_load_memory_arithmetic, register_store_pop,
     },
 };
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 use wasm_encoder::BlockType;
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-pub(super) fn register_pair(first: Instruction, second: Instruction) -> Option<(Op, Op)> {
+pub(super) fn x87_pair(
+    first: Instruction,
+    second: Instruction,
+) -> Option<(X87Instruction, X87Instruction)> {
     let (Operation::X87(a), Operation::X87(b)) = (first.operation, second.operation) else {
         return None;
     };
     (first.next_pc == second.pc
         && a.address.is_none()
-        && b.address.is_none()
-        && (register_load_arithmetic(a.op, b.op)
-            || register_exchange_compare(a.op, b.op)
-            || (register_store_pop(a.op) && register_store_pop(b.op))))
-    .then_some((a.op, b.op))
+        && if b.address.is_some() {
+            register_load_memory_arithmetic(a.op, b.op)
+        } else {
+            register_load_arithmetic(a.op, b.op)
+                || register_exchange_compare(a.op, b.op)
+                || (register_store_pop(a.op) && register_store_pop(b.op))
+        })
+    .then_some((a, b))
 }
 
 impl Emitter {
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) fn emit_x87_register_pair(
+    pub(super) fn emit_x87_pair(
         &mut self,
         first: Instruction,
         second: Instruction,
@@ -45,7 +51,7 @@ impl Emitter {
         if !self.x87_register_pairs || self.structured_loop.is_some() {
             return;
         }
-        let Some((a, b)) = register_pair(first, second) else {
+        let Some((a, b)) = x87_pair(first, second) else {
             return;
         };
         // The first entry already passed its own gate. Keep the second entry
@@ -64,20 +70,29 @@ impl Emitter {
         // The private discriminator is rejected by older cores. Both
         // operands and PCs fit the existing x87 import without JS mediation.
         let helper = self.x87.expect("x87 import");
-        self.op(Wasm::I32Const(a.encode() as i32))
-            .op(Wasm::I64Const(i64::from(b.encode())))
-            .op(Wasm::I32Const(REGISTER_PAIR_SEGMENT as i32))
-            .op(Wasm::I64Const(first.pc as i64));
-        if b.writes_flags() {
-            self.full_flags();
+        self.op(Wasm::I32Const(a.op.encode() as i32));
+        if let Some(address) = b.address {
+            self.address(address, second.next_pc);
+            self.op(Wasm::I32Const(
+                (MEMORY_PAIR_SEGMENT | address.segment as u32) as i32,
+            ))
+            .op(Wasm::I64Const(0))
+            .op(Wasm::I64Const(i64::from(b.op.encode())));
         } else {
-            self.op(Wasm::I64Const(0));
+            self.op(Wasm::I64Const(i64::from(b.op.encode())))
+                .op(Wasm::I32Const(REGISTER_PAIR_SEGMENT as i32))
+                .op(Wasm::I64Const(first.pc as i64));
+            if b.op.writes_flags() {
+                self.full_flags();
+            } else {
+                self.op(Wasm::I64Const(0));
+            }
         }
         self.op(Wasm::I64Const(second.pc as i64))
             .op(Wasm::Call(helper))
             .op(Wasm::I32Eqz)
             .op(Wasm::If(BlockType::Empty));
-        if b.writes_flags() {
+        if b.op.writes_flags() {
             self.reload_x87_flags();
         }
         self.op(Wasm::I64Const(second.next_pc as i64))

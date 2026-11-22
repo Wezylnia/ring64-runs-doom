@@ -60,6 +60,24 @@ fn pops(state: &mut State, count: u8) {
         state.pop()
     }
 }
+#[inline(always)]
+fn finish_numeric(state: &mut State, destination: usize, r: number::Result, pop: u8) {
+    status(state, r);
+    if !r.suppress && r.pre & !state.control_word & 63 == 0 {
+        state.put(destination, r.value);
+        pops(state, pop);
+    }
+}
+
+#[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+pub(super) fn load_memory_arithmetic(state: &mut State, index: u8, op: Op, source: u128) {
+    let (destination, lhs) = state.load_admitted_register(index);
+    let rhs = number::widen(source, op.format);
+    let extra = u16::from(number::memory_denormal(source, op.format)) << 1;
+    let result = number::binary(op.kind, lhs, rhs, state.control_word, extra);
+    finish_numeric(state, destination, result, 0);
+}
+
 fn examined(state: &mut State) {
     let p = state.top();
     let raw = state.raw(p);
@@ -373,11 +391,6 @@ pub(super) fn eval(state: &mut State, op: Op, source: u128, flags: u64) -> Effec
             number::binary(op.kind, lhs, rhs, cw, extra)
         }
     };
-    status(state, r);
-    if r.suppress || r.pre & !cw & 63 != 0 {
-        return out;
-    }
-    state.put(if op.dest_index { other } else { top }, r.value);
-    pops(state, op.pop);
+    finish_numeric(state, if op.dest_index { other } else { top }, r, op.pop);
     out
 }

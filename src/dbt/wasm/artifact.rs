@@ -978,7 +978,7 @@ fn emit_body(
         && unit
             .instructions
             .windows(2)
-            .any(|pair| super::x87::register_pair(pair[0], pair[1]).is_some());
+            .any(|pair| super::x87::x87_pair(pair[0], pair[1]).is_some());
     let has_mmx = unit
         .instructions
         .iter()

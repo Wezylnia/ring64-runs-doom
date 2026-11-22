@@ -90,7 +90,66 @@ pub extern "C" fn core_x87(
     if segment == x87::REGISTER_PAIR_SEGMENT {
         return core_x87_register_pair(operation, offset, instruction_pc, rax, flags);
     }
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    if segment & x87::MEMORY_PAIR_SEGMENT != 0 {
+        return core_x87_load_memory_pair(
+            operation,
+            flags,
+            offset,
+            segment ^ x87::MEMORY_PAIR_SEGMENT,
+            rax,
+        );
+    }
     core_x87_impl::<false, false>(operation, offset, segment, instruction_pc, flags, rax)
+}
+
+#[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+#[inline(never)]
+fn core_x87_load_memory_pair(first: u32, second: u64, offset: u64, segment: u32, pc: u64) -> i32 {
+    let (Ok(second), Some(&segment)) = (u32::try_from(second), Segment::ALL.get(segment as usize))
+    else {
+        return -1;
+    };
+    BRIDGE.with_borrow_mut(|bridge| {
+        let (Some(first), Some(second)) = (
+            bridge.x87_operations.get(first),
+            bridge.x87_operations.get(second),
+        ) else {
+            return -1;
+        };
+        if !x87::register_load_memory_arithmetic(first, second) {
+            return -1;
+        }
+        let core = bridge.core.as_mut().unwrap();
+        let state = unsafe { &(*core.state.get()).x87 };
+        if core.paging.is_some() || !state.can_load_register(first.index) {
+            return -1;
+        }
+        // Capture the second operand without publishing diagnostics or changing x87.
+        // On refusal, the ordinary entries execute the load then expose the fault.
+        let width = second.memory_bytes();
+        let Ok(linear) = core
+            .context
+            .translate(offset, width, segment, Access::Read, false)
+        else {
+            return -1;
+        };
+        let Ok(bits) = core.image.read(linear, width) else {
+            return -1;
+        };
+        clear_x87_diagnostics(core);
+        let run = unsafe { &mut *core.state.get() };
+        run.fault_segment = segment as u32;
+        run.x87.load_memory_arithmetic(first.index, second, bits);
+        x87_environment(
+            &core.context,
+            &mut run.x87,
+            second,
+            pc,
+            Some((offset, segment)),
+        );
+        0
+    })
 }
 
 #[cfg(not(feature = "parallel"))]

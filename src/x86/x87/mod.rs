@@ -162,6 +162,20 @@ pub struct Op {
 pub(crate) const REGISTER_PAIR_SEGMENT: u32 = u32::MAX;
 
 #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+pub(crate) const MEMORY_PAIR_SEGMENT: u32 = 1 << 31;
+
+#[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+pub(crate) fn register_load_memory_arithmetic(first: Op, second: Op) -> bool {
+    first.kind == Kind::Load
+        && first.format == Format::Register
+        && matches!(second.format, Format::F32 | Format::F64)
+        && matches!(
+            second.kind,
+            Kind::Add | Kind::Mul | Kind::Sub | Kind::SubReverse | Kind::Div | Kind::DivReverse
+        )
+}
+
+#[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
 pub(crate) fn register_load_arithmetic(first: Op, second: Op) -> bool {
     first.kind == Kind::Load
         && first.format == Format::Register
@@ -197,6 +211,20 @@ impl State {
         self.pending() == 0
             && self.tag(self.physical(index)) != 3
             && self.tag((self.top() + 7) & 7) == 3
+    }
+
+    fn load_admitted_register(&mut self, index: u8) -> (usize, u128) {
+        let raw = self.raw(self.physical(index));
+        let next = (self.top() + 7) & 7;
+        self.status_word &= !0x200;
+        self.refresh();
+        self.top_to(next);
+        self.put(next, raw);
+        (next, raw)
+    }
+
+    pub(crate) fn load_memory_arithmetic(&mut self, index: u8, op: Op, source: u64) {
+        execute::load_memory_arithmetic(self, index, op, u128::from(source));
     }
 
     pub(crate) fn can_exchange_register(&self, index: u8) -> bool {

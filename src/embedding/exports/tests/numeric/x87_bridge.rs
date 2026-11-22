@@ -156,6 +156,67 @@ fn x87_register_pairs_keep_numeric_and_environment_effects_or_refuse_before_eith
 
 #[cfg(not(feature = "parallel"))]
 #[test]
+fn x87_memory_pair_matches_separate_register_load_and_arithmetic() {
+    use crate::x86::x87::MEMORY_PAIR_SEGMENT;
+
+    initialize(0x1000, &[0xf4]);
+    let load = operation(Kind::Load, Format::Register, 0x1c0);
+    let pair = |second: Op, address| {
+        x87::core_x87(
+            load.encode(),
+            address,
+            MEMORY_PAIR_SEGMENT | Segment::Fs as u32,
+            0,
+            u64::from(second.encode()),
+            0x1002,
+        )
+    };
+    for (format, encoded, width, inputs) in [
+        (Format::F32, 0x038, 4, [0x4040_0000, 1, 0x7f80_0010]),
+        (
+            Format::F64,
+            0x438,
+            8,
+            [0x4008_0000_0000_0000u64, 1, 0x7ff0_0000_0000_0010],
+        ),
+    ] {
+        let divide = operation(Kind::DivReverse, format, encoded);
+        for input in inputs {
+            assert_eq!(core_store(0x4001, width, input), 1);
+            for top in 0u16..8 {
+                for cw in [0x037f, 0x037e, 0x007d, 0x0e5f] {
+                    let mut prior = X87State {
+                        control_word: cw,
+                        status_word: (top << 11) | 0x4700,
+                        opcode: 0x123,
+                        instruction_pointer: 0x7000,
+                        data_pointer: 0x8000,
+                        ..X87State::default()
+                    };
+                    prior.set_raw(usize::from(top), 0x4000_c000_0000_0000_0000);
+                    prior.set_tag(usize::from(top), 0);
+                    install(prior);
+                    assert_eq!(invoke(load, 0, 0x1000, 0x202, 0), 0);
+                    assert_eq!(invoke(divide, 0x4001, 0x1002, 0x202, 0), 0);
+                    let expected = snapshot();
+                    assert_eq!(expected.instruction_pointer, 0x1002);
+                    assert_eq!(expected.data_pointer, 0x4001);
+                    install(prior);
+                    assert_eq!(core_load(0x7000, 8), 0);
+                    let diagnostic = metadata(DATA);
+                    assert_eq!(pair(divide, 0x400f), -1);
+                    assert_eq!(snapshot(), prior);
+                    assert_eq!(metadata(DATA), diagnostic);
+                    assert_eq!(pair(divide, 0x4001), 0);
+                    assert_eq!(snapshot(), expected);
+                }
+            }
+        }
+    }
+}
+
+#[cfg(not(feature = "parallel"))]
+#[test]
 fn x87_register_pop_pair_matches_two_checked_writes_or_refuses_intact() {
     use crate::x86::x87::REGISTER_PAIR_SEGMENT;
 

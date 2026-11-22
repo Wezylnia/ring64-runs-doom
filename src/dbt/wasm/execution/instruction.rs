@@ -348,7 +348,7 @@ impl Emitter {
             Operation::X87(x87) => {
                 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
                 if let Some(second) = next {
-                    self.emit_x87_register_pair(instruction, *second, loop_depth, exit_depth);
+                    self.emit_x87_pair(instruction, *second, loop_depth, exit_depth);
                 }
                 self.x87(x87, instruction.pc, instruction.next_pc, exit_depth);
             }
