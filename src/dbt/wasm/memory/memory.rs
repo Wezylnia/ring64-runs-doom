@@ -393,9 +393,19 @@ impl Emitter {
         // instructions before entering its checked label.
         self.op(Op::If(BlockType::Empty));
         self.restore_preceding_read_state();
-        self.op(Op::I32Const(status))
-            .op(Op::LocalSet(attempts))
-            .op(Op::I32Const(entry))
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        let preamble = self
+            .paged_preamble
+            .zip(self.structured_loop)
+            .is_some_and(|((preamble, _, _), (body, _))| preamble.body.head == body.head);
+        #[cfg(any(feature = "parallel", not(target_arch = "wasm32")))]
+        let preamble = false;
+        // A refused preamble read has its own checked successor path. It
+        // cannot arm or disable the selected inner graph's replay latch.
+        if !preamble {
+            self.op(Op::I32Const(status)).op(Op::LocalSet(attempts));
+        }
+        self.op(Op::I32Const(entry))
             .op(Op::LocalSet(super::ENTRY))
             .op(Op::Br(exit_depth))
             .op(Op::End);

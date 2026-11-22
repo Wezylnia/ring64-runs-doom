@@ -310,6 +310,8 @@ fn emit_placement(
         paged_split_vectors: true,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_read_diamond: true,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        paged_preamble: true,
     };
     let (bytes, extra_spans) = emit_body(
         unit,
@@ -398,6 +400,8 @@ struct OptionalLowering {
     paged_split_vectors: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_read_diamond: bool,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    paged_preamble: bool,
 }
 
 fn emit_body(
@@ -1544,6 +1548,19 @@ fn emit_body(
         (guard, attempts)
     });
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let paged_preamble = if optional.paged_preamble && !mmio && paged_loop_guard.is_some() {
+        loop_body
+            .and_then(|body| body.paged_preamble(unit))
+            .map(|body| {
+                let handoff = next_local;
+                locals.push((2, ValType::I32));
+                next_local += 2;
+                (body, handoff, handoff + 1)
+            })
+    } else {
+        None
+    };
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let paged_read_span = paged_read_span.map(|(proof, resolve)| {
         let bias = next_local;
         let biases = if loop_body.is_some_and(StructuredLoop::paged_sse) {
@@ -1709,6 +1726,8 @@ fn emit_body(
         guarded_paged_lap: false,
         paged_loop_guard,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        paged_preamble,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_read_rearm,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_read_span,
@@ -1844,6 +1863,12 @@ fn emit_body(
             emitter.parallel_memo_address = false;
         }
         let loop_depth = count - index as u32;
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if let Some((preamble, handoff, _)) =
+            paged_preamble.filter(|(preamble, _, _)| preamble.body.head == index as u32)
+        {
+            emitter.emit_guarded_preamble(&unit.instructions, preamble.body, loop_depth, handoff);
+        }
         let head = loop_body.filter(|body| body.head == index as u32);
         if let Some((body, guard)) = head
             .filter(|body| body.natural_forward_loop())
@@ -2010,6 +2035,21 @@ fn emit_body(
     }
     let code_start = bytes.len();
     code.append_to(&mut bytes);
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    if bytes.len() > max_artifact_bytes && paged_preamble.is_some() {
+        return emit_body(
+            unit,
+            observed,
+            (paged, mmio),
+            loop_body,
+            _guard_reads,
+            OptionalLowering {
+                paged_preamble: false,
+                ..optional
+            },
+            max_artifact_bytes,
+        );
+    }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if bytes.len() > max_artifact_bytes && paged_split_vectors {
         return emit_body(

@@ -49,6 +49,13 @@ pub(super) struct StructuredLoop {
     pub(super) paged_dword_window: bool,
 }
 
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[derive(Clone, Copy)]
+pub(super) struct PagedPreamble {
+    pub(super) body: StructuredLoop,
+    pub(super) inner_head: u32,
+}
+
 impl StructuredLoop {
     pub(super) fn dword_writes(self, unit: &super::Unit) -> u16 {
         if !self.project_dwords || self.kind != LoopKind::Registers || unit.context.is_long64() {
@@ -205,6 +212,82 @@ impl StructuredLoop {
             unit.context.nonwrapping_code32_fetch(pc, bytes)
         };
         linear.is_some_and(|address| unit.fetch_proof.leaf_is_4k(address))
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn paged_preamble(self, unit: &super::Unit) -> Option<PagedPreamble> {
+        // Bridge one finite preamble to an existing rotated, read-only inner
+        // placement. A general nested graph is outside this proof.
+        if !unit.context.is_long64()
+            || !self.paged_dword_window
+            || !self.forward_edges()
+            || self.earlier == self.head
+        {
+            return None;
+        }
+        let instructions = &unit.instructions;
+        let tail = self.earlier.checked_sub(1)? as usize;
+        let exit = instructions.get(self.tail as usize + 1)?;
+        let Operation::Jump { target: header } = exit.operation else {
+            return None;
+        };
+        if exit.pc != instructions[self.tail as usize].next_pc {
+            return None;
+        }
+        let head = instructions[..tail]
+            .binary_search_by_key(&header, |instruction| instruction.pc)
+            .ok()?;
+        let inner_pc = instructions[self.head as usize].pc;
+        if tail - head >= 16
+            || !matches!(instructions[tail].operation, Operation::Jump { target } if target == inner_pc)
+        {
+            return None;
+        }
+        let prefix = &instructions[head..=tail];
+        if prefix.windows(2).any(|pair| pair[0].next_pc != pair[1].pc) {
+            return None;
+        }
+        let mut reads = 0;
+        for instruction in &prefix[..prefix.len() - 1] {
+            match instruction.operation {
+                Operation::Load { .. }
+                    if paged_read_width(instruction.operation, None) == Some(Width::W32) =>
+                {
+                    reads += 1;
+                }
+                Operation::Jcc { target, .. }
+                    if crate::memory::canonical48(target)
+                        && (target == header
+                            || !(header..=instructions[tail].pc).contains(&target))
+                        && target != inner_pc => {}
+                operation if inside_register_body(operation) => {}
+                _ => return None,
+            }
+        }
+        if reads != 1 {
+            return None;
+        }
+        let full_span = instructions[self.tail as usize]
+            .next_pc
+            .checked_sub(header)?;
+        let full_span = u32::try_from(full_span).ok()?;
+        if !unit.context.single_page_code_span(header, full_span) {
+            return None;
+        }
+        let mut body = Self::forward((
+            LoopOrder {
+                earlier: head as u32,
+                head: head as u32,
+                tail: tail as u32,
+            },
+            prefix.len() as u32,
+        ))
+        .without_dword_projection();
+        body.paged_fetch_bytes = Some(full_span);
+        Some(PagedPreamble {
+            body,
+            inner_head: self.head,
+        })
     }
 
     pub(super) fn natural_forward_loop(self) -> bool {
@@ -1043,6 +1126,50 @@ fn normal_low_after(known: u16, operation: Operation) -> u16 {
 }
 
 impl Emitter {
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn emit_guarded_preamble(
+        &mut self,
+        instructions: &[Instruction],
+        body: StructuredLoop,
+        loop_depth: u32,
+        handoff: u32,
+    ) {
+        let (guard, attempts) = self.paged_loop_guard.expect("paged preamble guard");
+        // Two marks a backward exit that must visit the original outer entry.
+        self.op(Op::LocalGet(handoff))
+            .op(Op::I32Const(2))
+            .op(Op::I32Ne)
+            .op(Op::I32Const(0))
+            .op(Op::LocalSet(handoff))
+            .op(Op::LocalGet(attempts))
+            .op(Op::I32Const(2))
+            .op(Op::I32LtU)
+            .op(Op::I32And);
+        self.exclude_loop_stop(instructions, body);
+        self.op(Op::I32And)
+            .op(Op::LocalGet(REMAINING))
+            .op(Op::I64Const(i64::from(body.max_lap_len)))
+            .op(Op::I64GeU)
+            .op(Op::I32And)
+            .op(Op::If(BlockType::Empty))
+            .op(Op::I64Const(instructions[body.head as usize].pc as i64))
+            .op(Op::I32Const(body.paged_fetch_bytes.unwrap() as i32));
+        self.system_bits();
+        self.op(Op::LocalGet(super::SHADOW))
+            .op(Op::Call(guard))
+            .op(Op::I32Const(1))
+            .op(Op::I32Eq)
+            .op(Op::If(BlockType::Empty));
+        let window = self.paged_dword_window.take();
+        let diamond = self.read_loop_diamond.take();
+        self.guarded_paged_lap = true;
+        self.emit_prechecked_body(instructions, body, loop_depth + 2, None);
+        self.guarded_paged_lap = false;
+        self.read_loop_diamond = diamond;
+        self.paged_dword_window = window;
+        self.op(Op::End).op(Op::End);
+    }
+
     pub(super) fn exclude_loop_stop(&mut self, instructions: &[Instruction], body: StructuredLoop) {
         let first = instructions[body.earlier as usize].pc as i64;
         let last = instructions[body.tail as usize].pc as i64;
@@ -1150,6 +1277,18 @@ impl Emitter {
         loop_depth: u32,
         (guard, attempts): (u32, u32),
     ) {
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        let inherited = self.paged_preamble.map(|(_, handoff, inherited)| {
+            // Only the direct guarded preamble edge provides this admission.
+            // Consume it even when the inner stop or budget check declines.
+            self.op(Op::LocalGet(handoff))
+                .op(Op::I32Const(1))
+                .op(Op::I32Eq)
+                .op(Op::LocalSet(inherited))
+                .op(Op::I32Const(0))
+                .op(Op::LocalSet(handoff));
+            inherited
+        });
         self.op(Op::LocalGet(attempts))
             .op(Op::I32Const(2))
             .op(Op::I32LtU)
@@ -1159,13 +1298,23 @@ impl Emitter {
             .op(Op::I64Const(i64::from(body.max_lap_len)))
             .op(Op::I64GeU)
             .op(Op::I32And)
-            .op(Op::If(BlockType::Empty))
-            .op(Op::I64Const(instructions[body.earlier as usize].pc as i64))
+            .op(Op::If(BlockType::Empty));
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if let Some(inherited) = inherited {
+            self.op(Op::LocalGet(inherited))
+                .op(Op::If(BlockType::Result(wasm_encoder::ValType::I32)))
+                .op(Op::I32Const(1))
+                .op(Op::Else);
+        }
+        self.op(Op::I64Const(instructions[body.earlier as usize].pc as i64))
             .op(Op::I32Const(body.paged_fetch_bytes.unwrap() as i32));
         self.system_bits();
-        self.op(Op::LocalGet(super::SHADOW))
-            .op(Op::Call(guard))
-            .op(Op::LocalTee(REASON))
+        self.op(Op::LocalGet(super::SHADOW)).op(Op::Call(guard));
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if inherited.is_some() {
+            self.op(Op::End);
+        }
+        self.op(Op::LocalTee(REASON))
             .op(Op::I32Const(1))
             .op(Op::I32Eq)
             .op(Op::If(BlockType::Empty))
@@ -1445,10 +1594,17 @@ impl Emitter {
         let paged_sse_write = body.paged_sse_write();
         #[cfg(not(all(not(feature = "parallel"), target_arch = "wasm32")))]
         let paged_sse_write = false;
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        let finite_preamble = self
+            .paged_preamble
+            .is_some_and(|(preamble, _, _)| preamble.body.head == body.head);
+        #[cfg(any(feature = "parallel", not(target_arch = "wasm32")))]
+        let finite_preamble = false;
         let (predicates, read_prefix_len) = if !cfg!(feature = "parallel")
             && self.loop_gates_prechecked
             && body.forward_edges()
             && !paged_sse_write
+            && !finite_preamble
         {
             // A faulting or refused read settles its already-executed prefix.
             let read_prefix_len = if self.guarded_paged_lap

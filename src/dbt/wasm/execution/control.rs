@@ -306,7 +306,26 @@ impl Emitter {
                 // Count transient scopes (such as Jcc's If) on top of the
                 // cloned forward labels that still enclose the source.
                 let extra_depth = loop_depth - inner_depth;
-                if index == body.head && (body.forward_edges() || self.current_index == body.tail) {
+                #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+                let preamble = self
+                    .paged_preamble
+                    .filter(|(preamble, _, _)| preamble.body.head == body.head);
+                #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+                if let Some((preamble, handoff, _)) = preamble {
+                    if index == preamble.inner_head {
+                        self.op(Op::I32Const(1)).op(Op::LocalSet(handoff));
+                    } else if index == body.head {
+                        self.op(Op::I32Const(2)).op(Op::LocalSet(handoff));
+                    }
+                }
+                #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+                let finite_preamble = preamble.is_some();
+                #[cfg(any(feature = "parallel", not(target_arch = "wasm32")))]
+                let finite_preamble = false;
+                if !finite_preamble
+                    && index == body.head
+                    && (body.forward_edges() || self.current_index == body.tail)
+                {
                     self.op(Op::Br(body.active_labels(self.current_index) + extra_depth));
                     return;
                 }
