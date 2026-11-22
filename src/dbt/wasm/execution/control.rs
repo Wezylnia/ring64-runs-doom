@@ -11,8 +11,21 @@ pub(super) enum InstructionRetirement {
     Deferred,
     DeferredCommit,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    FlatPrefix(u32),
+    FlatPrefix {
+        count: u32,
+        terminal: bool,
+    },
     AfterPrefix(u32),
+}
+
+impl InstructionRetirement {
+    pub(super) fn prechecked_flat_entry(self) -> bool {
+        match self {
+            #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+            Self::FlatPrefix { .. } => true,
+            _ => false,
+        }
+    }
 }
 
 impl Emitter {
@@ -302,7 +315,12 @@ impl Emitter {
             InstructionRetirement::Deferred => None,
             InstructionRetirement::DeferredCommit => return,
             #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-            InstructionRetirement::FlatPrefix(_) => return,
+            InstructionRetirement::FlatPrefix { count, terminal } => {
+                if !terminal {
+                    return;
+                }
+                Some(count + 1)
+            }
             InstructionRetirement::AfterPrefix(count) => Some(count + 1),
         };
         if self.loop_gates_prechecked
@@ -321,7 +339,7 @@ impl Emitter {
         match self.instruction_retirement {
             InstructionRetirement::AfterPrefix(count) => self.retire_instructions(count),
             #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-            InstructionRetirement::FlatPrefix(count) => {
+            InstructionRetirement::FlatPrefix { count, .. } => {
                 self.op(Op::I64Const(self.current_pc as i64))
                     .op(Op::LocalSet(RIP));
                 if count != 0 {

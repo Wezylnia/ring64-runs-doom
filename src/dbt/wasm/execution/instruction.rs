@@ -236,7 +236,7 @@ impl Emitter {
         self.current_operation = instruction.operation;
         self.stores = false;
         let exit_depth = loop_depth + 1;
-        if !self.loop_gates_prechecked {
+        if !self.loop_gates_prechecked && !self.instruction_retirement.prechecked_flat_entry() {
             self.gates(exit_depth);
         }
         #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
@@ -1335,19 +1335,17 @@ impl Emitter {
         let last = instructions.last().unwrap();
         let count = instructions.len() as u32;
         self.guard_straight_prefix(first, last, count);
-        self.loop_gates_prechecked = true;
         let loop_depth = loop_depth + 1;
         let branch = matches!(last.operation, Operation::Jcc { .. });
         for (index, instruction) in instructions.iter().enumerate() {
             let terminal = branch && index + 1 == instructions.len();
-            self.instruction_retirement = if terminal {
-                InstructionRetirement::AfterPrefix(index as u32)
-            } else {
-                InstructionRetirement::FlatPrefix(index as u32)
+            // Funding this prefix proves its entry gates, not the surrounding loop's state.
+            self.instruction_retirement = InstructionRetirement::FlatPrefix {
+                count: index as u32,
+                terminal,
             };
             self.emit_instruction(*instruction, None, loop_depth, None, None, terminal);
         }
-        self.loop_gates_prechecked = false;
         self.instruction_retirement = InstructionRetirement::One;
         if !branch {
             self.op(Op::I64Const(last.next_pc as i64))

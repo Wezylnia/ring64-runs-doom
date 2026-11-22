@@ -198,3 +198,118 @@ test('flat sampled integer groups preserve exact faults across successful reads'
     Core.prototype.compile = compile;
   }
 });
+
+test('a straight prefix preserves the high halves projected by a disjoint register loop', async () => {
+  const head = 0x31000n;
+  // ADD EAX,1; XOR EAX,2; ADD EAX,4; CALL EBX.
+  // loop: ADD EAX,1; DEC EDX; JNZ loop; HLT; RET.
+  const code = hex('83c00183f00283c004ffd383c0014a75faf4c3');
+  const seeds = [0n, 3n, 6n, 9n, 11n, 14n, 15n, 17n, 18n].map((offset) => head + offset);
+  const compile = Core.prototype.compile;
+  Core.prototype.compile = function (pc, limits, entries, regionPoints) {
+    if (pc === head && !entries?.length) return compile.call(this, pc, limits, seeds, true);
+    return compile.call(this, pc, limits, entries, regionPoints);
+  };
+  try {
+    const cpu = await createCpu({
+      compiler,
+      entry: head,
+      limits: LIMITS,
+      context: protectedSnapshot(),
+      memory: {
+        backings: [{ id: 'code', bytes: code }],
+        mappings: [
+          {
+            base: head,
+            backing: 'code',
+            offset: 0,
+            length: code.length,
+            permissions: { read: true, write: false, execute: true },
+          },
+        ],
+      },
+      memoryLimits: { maxBackings: 1, maxMappings: 1, maxBackingBytes: code.length },
+    });
+    try {
+      cpu.setState(initial(head, { 0: 0x1234567800000002n }));
+      const result = await cpu.run({ budget: 8n, stop: head + 9n });
+      assert.equal(result.reason, 'stop');
+      assert.equal(result.retired, 3n);
+      assert.equal(result.state.rip, head + 9n);
+      assert.equal(result.state.registers[0], 0x1234567800000005n);
+    } finally {
+      cpu.dispose();
+    }
+  } finally {
+    Core.prototype.compile = compile;
+  }
+});
+
+test('a flat read chain does not reuse a disjoint loop indexed window', async () => {
+  const head = 0x31000n;
+  const oldData = 0x50000n;
+  const newData = 0x60000n;
+  // Four MOV EAX,[ESI+EAX*4]; SUB EDX,1; JNZ head.
+  // MOV ESI,EDI; MOV EAX,[ESI+EAX*4]; ADD EAX,1; CALL EBX; HLT; RET.
+  const code = hex('8b04868b04868b04868b048683ea0175ef89fe8b048683c001ffd3f4c3');
+  const seeds = [0n, 3n, 6n, 9n, 12n, 15n, 17n, 19n, 22n, 25n, 27n, 28n].map(
+    (offset) => head + offset,
+  );
+  const compile = Core.prototype.compile;
+  Core.prototype.compile = function (pc, limits, entries, regionPoints) {
+    if (pc === head && !entries?.length) return compile.call(this, pc, limits, seeds, true);
+    return compile.call(this, pc, limits, entries, regionPoints);
+  };
+  try {
+    const cpu = await createCpu({
+      compiler,
+      entry: head,
+      limits: LIMITS,
+      context: protectedSnapshot(),
+      memory: {
+        backings: [
+          { id: 'code', bytes: code },
+          { id: 'old-data', bytes: hex('00000000') },
+          { id: 'new-data', bytes: hex('14000000') },
+        ],
+        mappings: [
+          {
+            base: head,
+            backing: 'code',
+            offset: 0,
+            length: code.length,
+            permissions: { read: true, write: false, execute: true },
+          },
+          {
+            base: oldData,
+            backing: 'old-data',
+            offset: 0,
+            length: 4,
+            permissions: { read: true, write: false, execute: false },
+          },
+          {
+            base: newData,
+            backing: 'new-data',
+            offset: 0,
+            length: 4,
+            permissions: { read: true, write: false, execute: false },
+          },
+        ],
+      },
+      memoryLimits: { maxBackings: 3, maxMappings: 3, maxBackingBytes: code.length + 8 },
+    });
+    try {
+      cpu.setState(initial(head, { 0: 0n, 2: 1n, 6: oldData, 7: newData }));
+      const result = await cpu.run({ budget: 40n, stop: head + 25n });
+      assert.equal(result.reason, 'stop');
+      assert.equal(result.retired, 9n);
+      assert.equal(result.state.rip, head + 25n);
+      assert.equal(result.state.registers[6], newData);
+      assert.equal(result.state.registers[0], 21n);
+    } finally {
+      cpu.dispose();
+    }
+  } finally {
+    Core.prototype.compile = compile;
+  }
+});
