@@ -2016,8 +2016,8 @@ fn emit_body(
             #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
             let natural = natural
                 || (paged_dense_read_span.is_some()
-                    && !unit.context.is_long64()
-                    && body.straight_paged_reads());
+                    && body.straight_paged_reads()
+                    && (!unit.context.is_long64() || body.paged_source_is_4k(unit)));
             natural
         };
         if let Some((body, guard)) = head.filter(canonical_checked).zip(paged_loop_guard) {
