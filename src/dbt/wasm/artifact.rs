@@ -767,15 +767,20 @@ fn emit_body(
     let paged_loop_write_type = (paged_write_byte || paged_write_dword)
         .then(|| add_function_type(&mut types, [ValType::I64, ValType::I32], [ValType::I32]));
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let paged_dense_bytes = loop_body.is_some_and(|body| {
+        body.paged_read_span.is_some_and(|proof| {
+            proof.dense_ascending_bytes(&unit.instructions[body.head as usize..=body.tail as usize])
+        })
+    });
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let paged_read_rearm_type = loop_body
         .filter(|body| {
             optional.paged_read_rearm
                 && !mmio
-                && paged_read_dword
                 && !paged_write_byte
                 && !paged_write_dword
                 && body.paged_fetch_bytes.is_some()
-                && body.forward_edges()
+                && ((paged_read_dword && body.forward_edges()) || paged_dense_bytes)
         })
         .map(|body| {
             (
@@ -1158,13 +1163,8 @@ fn emit_body(
         .and_then(|body| body.paged_read_span)
         .map(|proof| (proof, span_import("paged_loop_read_span")));
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    let paged_dense_read_span = loop_body
-        .filter(|_| optional.paged_dense_read_span)
-        .zip(paged_read_span)
-        .filter(|(body, (proof, _))| {
-            proof.dense_ascending_bytes(&unit.instructions[body.head as usize..=body.tail as usize])
-        })
-        .map(|_| span_import("paged_loop_read_span_pages"));
+    let paged_dense_read_span = (optional.paged_dense_read_span && paged_dense_bytes)
+        .then(|| span_import("paged_loop_read_span_pages"));
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let read_span = (!observed && !span_cycles.is_empty()).then(|| span_import("read_span"));
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]

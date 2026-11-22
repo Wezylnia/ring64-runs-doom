@@ -21,6 +21,39 @@ const PAGED_STACK_SPILL_LOOP = '8b4424043b442408760140894424040fb61701c288164647
 export function pagingBoundaryReviewScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [
     {
+      name: 'paged dense byte replay preserves the prefix of a faulting lap',
+      async run() {
+        const head = 0x400000n;
+        const missing = head + 0x2000n;
+        // Four consecutive MOVZX loads, a four-byte stride, CMP and JNE.
+        const code = '0fb6040e0fb65c0e010fb6540e020fb67c0e034883c1044c39c175e4';
+        await usingPaged(
+          compiler,
+          {
+            code,
+            words: [[0x4008n, 0xa007n]],
+            spans: [{ physical: 0xa000n, bytes: Uint8Array.from({ length: 4096 }, (_, i) => i) }],
+          },
+          async (cpu) => {
+            cpu.setState(initial(head, { 1: 0n, 6: missing - 39n, 8: 64n }, 2n));
+            const result = await cpu.run({ stop: head + 28n, budget: 120n });
+            equal(result.reason, 'page-fault', 'the checked read reports the next missing leaf');
+            equal(result.retired, 66n, 'nine complete laps and three reads retire');
+            equal(result.state.rip, head + 14n, 'the fourth read remains the next instruction');
+            equal(result.state.registers[1], 36n, 'the partial lap leaves the index intact');
+            same(
+              [0, 3, 2, 7].map((index) => result.state.registers[index]),
+              [253n, 254n, 255n, 252n],
+              'earlier reads commit and the faulting destination keeps its prior value',
+            );
+            equal(result.state.flags & 0x8d7n, 0x87n, 'the previous compare flags survive');
+            equal(cpu.readPagingState().cr2, missing, 'CR2 records the original read address');
+            equal(word(cpu, 0x4008n), 0xa027n, 'the earlier reads mark their leaf accessed');
+          },
+        );
+      },
+    },
+    {
       name: 'paged scalar replay qualifies only a successful ordinary checked read',
       async run() {
         const head = 0x400000n;
