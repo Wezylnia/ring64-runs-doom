@@ -290,7 +290,7 @@ impl Core {
 #[cfg(not(feature = "parallel"))]
 #[unsafe(no_mangle)]
 pub extern "C" fn core_paged_loop_guard(pc: u64, bytes: u32, flags: u64, shadow: u32) -> i32 {
-    paged_loop_guard::<false>(pc, bytes, flags, shadow)
+    paged_loop_guard::<false, false>(pc, bytes, flags, shadow)
 }
 
 #[cfg(not(feature = "parallel"))]
@@ -301,12 +301,24 @@ pub extern "C" fn core_paged_read_loop_guard32(
     flags: u64,
     shadow: u32,
 ) -> i32 {
-    paged_loop_guard::<true>(pc, bytes, flags, shadow)
+    paged_loop_guard::<true, false>(pc, bytes, flags, shadow)
 }
 
 #[cfg(not(feature = "parallel"))]
-fn paged_loop_guard<const FLAT_DATA32: bool>(pc: u64, bytes: u32, flags: u64, shadow: u32) -> i32 {
+#[unsafe(no_mangle)]
+pub extern "C" fn core_paged_sse_loop_guard(pc: u64, bytes: u32, flags: u64, shadow: u32) -> i32 {
+    paged_loop_guard::<false, true>(pc, bytes, flags, shadow)
+}
+
+#[cfg(not(feature = "parallel"))]
+fn paged_loop_guard<const FLAT_DATA32: bool, const SSE: bool>(
+    pc: u64,
+    bytes: u32,
+    flags: u64,
+    shadow: u32,
+) -> i32 {
     use crate::x86::flags::{RF, TF};
+    const MXCSR_EXCEPTION_MASKS: u32 = 0x1f80;
 
     if flags & (RF | TF) != 0 || shadow != 0 {
         return 2;
@@ -314,7 +326,12 @@ fn paged_loop_guard<const FLAT_DATA32: bool>(pc: u64, bytes: u32, flags: u64, sh
     BRIDGE.with_borrow_mut(|bridge| {
         let core = bridge.core.as_mut().unwrap();
         let state = unsafe { &*core.state.get() };
-        if (FLAT_DATA32 && !core.context.flat_paged_data32())
+        // Retained operand reads advance to their same-page successor fetch.
+        // Masked arithmetic cannot fault between the read and that fetch.
+        if (SSE
+            && (!core.numeric_admission_unrestricted()
+                || state.mxcsr & MXCSR_EXCEPTION_MASKS != MXCSR_EXCEPTION_MASKS))
+            || (FLAT_DATA32 && !core.context.flat_paged_data32())
             || !core.context.single_page_code_span(pc, bytes)
             || state.event.kind != 0
             || state.interrupts != Default::default()

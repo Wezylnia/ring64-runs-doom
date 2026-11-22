@@ -438,6 +438,41 @@ fn paged_natural_write_graph_imports_only_the_admitted_ds_byte_store() {
     }
 }
 
+#[cfg(not(feature = "parallel"))]
+#[test]
+fn paged_scalar_f32_loop_uses_a_distinct_guard_and_has_checked_fallback() {
+    let code = [
+        0x8b, 0x17, // mov edx, [rdi]
+        0xf3, 0x0f, 0x10, 0x07, // movss xmm0, [rdi]
+        0xf3, 0x0f, 0x59, 0x06, // mulss xmm0, [rsi]
+        0xf3, 0x0f, 0x58, 0xc1, // addss xmm0, xmm1
+        0x83, 0xc0, 1, 0x83, 0xe9, 1, 0x75, 0xec,
+    ];
+    let local = unit(compiled_fixture(0x1000, &code, 0x1000).instructions);
+    let split = unit(compiled_fixture(0x1ff8, &code, 0x1ff8).instructions);
+    let guarded = emit_profile(&local, true, true, usize::MAX);
+    let limited = emit_profile(&local, true, true, guarded.len() - 1);
+    let crossing = emit_profile(&split, true, true, usize::MAX);
+    for (bytes, fast) in [(guarded, true), (limited, false), (crossing, false)] {
+        wasmparser::Validator::new().validate_all(&bytes).unwrap();
+        let imports: Vec<_> = wasmparser::Parser::new(0)
+            .parse_all(&bytes)
+            .find_map(|payload| match payload.unwrap() {
+                wasmparser::Payload::ImportSection(reader) => Some(reader),
+                _ => None,
+            })
+            .unwrap()
+            .into_imports()
+            .map(|item| item.unwrap().name)
+            .collect();
+        assert!(imports.contains(&"debug_begin"));
+        assert!(imports.contains(&"vector_load"));
+        assert_eq!(imports.contains(&"paged_sse_loop_guard"), fast);
+        assert_eq!(imports.contains(&"paged_loop_read_dword"), fast);
+        assert!(!imports.contains(&"paged_loop_guard"));
+    }
+}
+
 #[test]
 fn register_loop_keeps_carry_live_through_zero_count_and_partial_writers() {
     let code = [

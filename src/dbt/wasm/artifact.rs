@@ -86,6 +86,20 @@ pub(crate) fn emit_profile(
             return bytes;
         }
     }
+    #[cfg(not(feature = "parallel"))]
+    if paged && let Some(body) = StructuredLoop::select_paged_scalar_f32(unit) {
+        let bytes = emit_placement(
+            unit,
+            observed,
+            (paged, false),
+            Some(body),
+            false,
+            max_artifact_bytes,
+        );
+        if bytes.len() <= max_artifact_bytes {
+            return bytes;
+        }
+    }
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     if !observed
         && let Some(body) = StructuredLoop::select_shared_float(&unit.instructions)
@@ -901,6 +915,10 @@ fn emit_body(
     let processor = processor_type.map(|index| import_function("processor", index));
     let protection_key = protection_key_type.map(|index| import_function("protection_key", index));
     let paged_loop_guard = paged_loop_guard_type.map(|index| {
+        #[cfg(not(feature = "parallel"))]
+        if loop_body.is_some_and(StructuredLoop::paged_sse) {
+            return import_function("paged_sse_loop_guard", index);
+        }
         let name = if !unit.context.is_long64() && (paged_read_byte || paged_read_dword) {
             "paged_read_loop_guard32"
         } else {
@@ -1708,6 +1726,10 @@ fn emit_body(
     }
     let code_start = bytes.len();
     code.append_to(&mut bytes);
+    #[cfg(not(feature = "parallel"))]
+    if bytes.len() > max_artifact_bytes && loop_body.is_some_and(StructuredLoop::paged_sse) {
+        return (bytes, false);
+    }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if bytes.len() > max_artifact_bytes && emitter.used_direct_vector_load {
         return emit_body(

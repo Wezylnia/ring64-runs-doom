@@ -12,6 +12,7 @@ import { pagingPermissionReviewScenarios } from './review-permissions.js';
 import { invpcidScenarios } from './invpcid.js';
 import { pagingRetentionLifecycleScenarios } from './retention-lifecycle.js';
 import { retainedTranslationScenarios } from './retained-translations.js';
+import { pagingScalarF32LoopScenarios } from './scalar-f32-loop.js';
 import type { Scenario } from '../../support/fixture.js';
 
 export function pagingScenarios(compiler: WebAssembly.Module): Scenario[] {
@@ -24,6 +25,7 @@ export function pagingScenarios(compiler: WebAssembly.Module): Scenario[] {
     ...pagingReviewFetchScenarios(compiler),
     ...pagingReviewAccessScenarios(compiler),
     ...pagingBoundaryReviewScenarios(compiler),
+    ...pagingScalarF32LoopScenarios(compiler),
     ...pagingCurrentWalkReviewScenarios(compiler),
     ...pagingMutationOracleScenarios(compiler),
     ...pagingPermissionReviewScenarios(compiler),

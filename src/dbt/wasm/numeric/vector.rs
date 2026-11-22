@@ -167,6 +167,15 @@ impl Emitter {
         next_pc: u64,
         exit_depth: u32,
     ) {
+        if bytes == 4
+            && !aligned
+            && self.load_guarded_paged_value(address, Width::W32, next_pc, exit_depth)
+        {
+            self.op(Op::V128Const(0))
+                .op(Op::LocalGet(super::VALUE))
+                .op(Op::I64x2ReplaceLane(0));
+            return;
+        }
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         if bytes == 4
             && !aligned

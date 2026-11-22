@@ -26,6 +26,8 @@ enum LoopKind {
     IntegerReads,
     #[cfg(not(feature = "parallel"))]
     PagedReads,
+    #[cfg(not(feature = "parallel"))]
+    PagedScalarF32,
     ForwardEdges,
 }
 
@@ -259,6 +261,9 @@ impl StructuredLoop {
 
     #[cfg(not(feature = "parallel"))]
     pub(super) fn paged_read_widths(self, unit: &super::Unit) -> [bool; 2] {
+        if self.paged_sse() {
+            return [false, true];
+        }
         let mut widths = [false; 2];
         if self.paged_fetch_bytes.is_some() {
             for instruction in &unit.instructions[self.earlier as usize..self.tail as usize] {
@@ -280,6 +285,32 @@ impl StructuredLoop {
             && unit.instructions[self.head as usize..self.tail as usize]
                 .iter()
                 .any(|instruction| paged_byte_store(instruction.operation))
+    }
+
+    #[cfg(not(feature = "parallel"))]
+    pub(super) fn select_paged_scalar_f32(unit: &super::Unit) -> Option<Self> {
+        if !unit.context.is_long64() {
+            return None;
+        }
+        Self::select_straight_body(
+            &unit.instructions,
+            LoopKind::PagedScalarF32,
+            |operation| {
+                inside_register_body(operation)
+                    || paged_scalar_f32_read(operation)
+                    || matches!(operation, Operation::Float(instruction)
+                        if instruction.op.scalar && instruction.op.format == Format::F32
+                            && instruction.op.kind == Kind::Add && matches!(instruction.src, Location::Register(_)))
+            },
+            |body| body.iter().any(|i| paged_scalar_f32_read(i.operation)),
+        )?
+        .without_dword_projection()
+        .within_paged_fetch(unit)
+    }
+
+    #[cfg(not(feature = "parallel"))]
+    pub(super) fn paged_sse(self) -> bool {
+        self.kind == LoopKind::PagedScalarF32
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -425,7 +456,9 @@ impl StructuredLoop {
             LoopKind::Registers => inside_register_body,
             LoopKind::IntegerReads => inside_integer_read_body,
             #[cfg(not(feature = "parallel"))]
-            LoopKind::PagedReads => unreachable!("paged reads use guarded admission"),
+            LoopKind::PagedReads | LoopKind::PagedScalarF32 => {
+                unreachable!("paged reads use guarded admission")
+            }
             LoopKind::ForwardEdges => unreachable!("forward edges use graph admission"),
         };
         Self::select_straight_body(instructions, kind, inside, |body| match kind {
@@ -441,7 +474,9 @@ impl StructuredLoop {
                     == MIN_READS
             }
             #[cfg(not(feature = "parallel"))]
-            LoopKind::PagedReads => unreachable!("paged reads use guarded admission"),
+            LoopKind::PagedReads | LoopKind::PagedScalarF32 => {
+                unreachable!("paged reads use guarded admission")
+            }
             LoopKind::ForwardEdges => unreachable!("forward edges use graph admission"),
         })
     }
@@ -561,6 +596,29 @@ fn paged_byte_store(operation: Operation) -> bool {
             ..
         }
     )
+}
+
+#[cfg(not(feature = "parallel"))]
+fn paged_scalar_f32_read(operation: Operation) -> bool {
+    use crate::x86::{context::Segment, instruction::VectorOperand};
+
+    match operation {
+        Operation::Vector(VectorInstruction::Move {
+            operand: VectorOperand::Memory(address),
+            bytes: 4,
+            aligned: false,
+            store: false,
+            ..
+        }) => address.segment == Segment::Ds,
+        Operation::Float(instruction)
+            if instruction.op.scalar
+                && instruction.op.format == Format::F32
+                && instruction.op.kind == Kind::Mul =>
+        {
+            matches!(instruction.src, Location::Memory(address) if address.segment == Segment::Ds)
+        }
+        _ => false,
+    }
 }
 
 fn integer_read(operation: Operation) -> bool {

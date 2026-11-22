@@ -206,20 +206,7 @@ impl Emitter {
         for_write: bool,
         exit_depth: u32,
     ) {
-        if self.guarded_paged_lap
-            && !for_write
-            && let Some(read) = match width {
-                Width::W8 => self.paged_loop_read_byte,
-                Width::W32 => self.paged_loop_read_dword,
-                _ => None,
-            }
-        {
-            self.address(address, next_pc);
-            self.op(Op::Call(read))
-                .op(Op::LocalTee(VALUE))
-                .op(Op::I64Const(-1))
-                .op(Op::I64Eq);
-            self.retry_guarded_paged_operand(exit_depth);
+        if !for_write && self.load_guarded_paged_value(address, width, next_pc, exit_depth) {
             return;
         }
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -246,6 +233,33 @@ impl Emitter {
         self.address(address, next_pc);
         self.op(Op::LocalSet(ADDRESS));
         self.load_address_value(width, for_write, exit_depth);
+    }
+
+    pub(super) fn load_guarded_paged_value(
+        &mut self,
+        address: Address,
+        width: Width,
+        next_pc: u64,
+        exit_depth: u32,
+    ) -> bool {
+        if !self.guarded_paged_lap || address.segment != Segment::Ds {
+            return false;
+        }
+        let read = match width {
+            Width::W8 => self.paged_loop_read_byte,
+            Width::W32 => self.paged_loop_read_dword,
+            _ => None,
+        };
+        let Some(read) = read else {
+            return false;
+        };
+        self.address(address, next_pc);
+        self.op(Op::Call(read))
+            .op(Op::LocalTee(VALUE))
+            .op(Op::I64Const(-1))
+            .op(Op::I64Eq);
+        self.retry_guarded_paged_operand(exit_depth);
+        true
     }
 
     fn retry_guarded_paged_operand(&mut self, exit_depth: u32) {
