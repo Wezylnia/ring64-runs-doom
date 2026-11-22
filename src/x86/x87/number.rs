@@ -63,12 +63,38 @@ pub(super) fn num(raw: u128) -> Num {
     }
 }
 fn normalized(n: Num) -> (u128, i32) {
-    if n.sig == 0 {
+    // Operands decoded from binary80 and the rounded integer of FRNDINT fit in one word.
+    debug_assert!(n.sig <= u128::from(u64::MAX));
+    let sig = n.sig as u64;
+    if sig == 0 {
         return (0, 0);
     }
-    let b = 127 - n.sig.leading_zeros() as i32;
-    (n.sig << (63 - b), n.scale + b)
+    let shift = sig.leading_zeros();
+    (u128::from(sig << shift), n.scale + (63 - shift as i32))
 }
+
+#[cfg(test)]
+#[test]
+fn one_word_normalization_matches_wide_shift_at_every_bit_position() {
+    for scale in [-16445, -1, 0, 16320] {
+        let input = Num {
+            negative: false,
+            sig: 0,
+            scale,
+        };
+        assert_eq!(normalized(input), (0, 0));
+        for bit in 0..64 {
+            let leading = 1u128 << bit;
+            let lower = leading - 1;
+            for sig in [leading, leading | (lower / 2), leading | lower] {
+                let index = 127 - sig.leading_zeros() as i32;
+                let expected = (sig << (63 - index), scale + index);
+                assert_eq!(normalized(Num { sig, ..input }), expected);
+            }
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Result {
     pub value: u128,
