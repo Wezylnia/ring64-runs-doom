@@ -398,32 +398,36 @@ impl Cache {
         let pcid = state.pcid();
         let global = translation.global && state.cr4 & (1 << 7) != 0;
         let family = family(state);
-        for slot in &mut entries.slots {
-            if let Some(entry) = slot
-                && entry.family == family
+        let mut first_free = None;
+        let mut oldest_index = 0;
+        let mut oldest_age = u64::MAX;
+        let mut overlaps_visible_entry = false;
+        let capacity = entries.capacity;
+        for (index, slot) in entries.slots[..capacity].iter_mut().enumerate() {
+            let Some(entry) = slot.as_ref() else {
+                first_free.get_or_insert(index);
+                continue;
+            };
+            if entry.family == family
                 && (entry.global || !global && entry.pcid == pcid)
                 && overlaps(entry.translation, translation)
             {
+                overlaps_visible_entry = true;
                 // Local entries shadow overlapping globals for this PCID.
                 // Other PCIDs can still use the global translation.
                 if entry.global == global {
                     *slot = None;
+                    first_free.get_or_insert(index);
+                    continue;
                 }
-                self.changed.set(true);
+            }
+            if entry.used < oldest_age {
+                oldest_index = index;
+                oldest_age = entry.used;
             }
         }
-        let index = entries.slots[..entries.capacity]
-            .iter()
-            .position(Option::is_none)
-            .unwrap_or_else(|| {
-                entries.slots[..entries.capacity]
-                    .iter()
-                    .enumerate()
-                    .min_by_key(|(_, e)| e.unwrap().used)
-                    .unwrap()
-                    .0
-            });
-        if entries.slots[index].is_some() {
+        let index = first_free.unwrap_or(oldest_index);
+        if overlaps_visible_entry || first_free.is_none() {
             self.changed.set(true);
         }
         translation.cache_id = Some(entries.next_id);

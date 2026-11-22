@@ -16,6 +16,47 @@ fn insert(
 }
 
 #[test]
+fn fill_chooses_the_first_vacant_slot_then_the_first_oldest_slot() {
+    let (mut image, state, first) = fixture();
+    for (address, leaf) in [(0x4010, 0xb067), (0x4018, 0xc067), (0x4020, 0xd067)] {
+        image.physical_write(address, 8, leaf).unwrap();
+    }
+    let at = |linear| Request { linear, ..first };
+    let cache = Cache::with_capacity(3);
+    let id = |translation: Translation| translation.cache_id.unwrap();
+    let slots = || -> [Option<u64>; 3] {
+        let entries = cache.entries.borrow();
+        std::array::from_fn(|index| entries.slots[index].map(|entry| id(entry.translation)))
+    };
+    let first_id = id(insert(&cache, &mut image, &state, first));
+    let second_id = id(insert(&cache, &mut image, &state, at(0x2234)));
+    let third = at(0x3234);
+    let third_id = id(insert(&cache, &mut image, &state, third));
+    assert_eq!(slots(), [Some(first_id), Some(second_id), Some(third_id)]);
+    assert!(!cache.take_changed());
+    cache.invalidate_page(state.pcid(), first.linear, false);
+    assert!(cache.take_changed());
+    let replaced = id(insert(&cache, &mut image, &state, third));
+    assert_eq!(replaced, third_id + 1);
+    assert_eq!(slots(), [Some(replaced), Some(second_id), None]);
+    assert!(cache.take_changed());
+
+    let first_id = id(insert(&cache, &mut image, &state, first));
+    assert_eq!(slots(), [Some(replaced), Some(second_id), Some(first_id)]);
+    assert!(!cache.take_changed());
+    {
+        // Force a tie to verify the historical first-slot selection.
+        let mut entries = cache.entries.borrow_mut();
+        entries.slots[0].as_mut().unwrap().used = 1;
+        entries.slots[1].as_mut().unwrap().used = 1;
+    }
+    let fourth_id = id(insert(&cache, &mut image, &state, at(0x4234)));
+    assert_eq!(fourth_id, first_id + 1);
+    assert_eq!(slots(), [Some(fourth_id), Some(second_id), Some(first_id)]);
+    assert!(cache.take_changed());
+}
+
+#[test]
 fn observation_does_not_fill_evict_or_promote_lru() {
     let (mut image, state, first) = fixture();
     image.physical_write(0x4010, 8, 0xb067).unwrap();
