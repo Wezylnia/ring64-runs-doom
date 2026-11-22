@@ -374,6 +374,23 @@ impl Image {
         if self.physical {
             return None;
         }
+        self.writable_direct_span(address, width)
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(crate) fn physical_direct_write_span(
+        &mut self,
+        address: u64,
+        width: u32,
+    ) -> Option<DirectSpan> {
+        if !self.physical {
+            return None;
+        }
+        self.writable_direct_span(address, width)
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    fn writable_direct_span(&mut self, address: u64, width: u32) -> Option<DirectSpan> {
         let (mapping, _) = self.writable_direct_mapping(address, width)?;
         let (base, length, offset, backing) = (
             mapping.base,

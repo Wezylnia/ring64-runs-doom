@@ -909,6 +909,86 @@ pub extern "C" fn core_paged_loop_write_block(address: u64, value_ptr: u32) -> i
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 #[unsafe(no_mangle)]
+pub extern "C" fn core_paged_loop_copy_window(source: u64, destination: u64, width: u32) -> u32 {
+    use crate::memory::check_span;
+
+    if !(32..=64).contains(&width) || !width.is_multiple_of(16) {
+        return 0;
+    }
+    let page_remaining = |address: u64| 4096 - (address & 4095);
+    if page_remaining(source).min(page_remaining(destination)) < u64::from(width)
+        || check_span(source, width, Access::Read).is_err()
+        || check_span(destination, width, Access::Write).is_err()
+    {
+        return 0;
+    }
+    BRIDGE
+        .with_borrow_mut(|bridge| {
+            let core = bridge.core.as_mut().unwrap();
+            if !core.context.is_long64()
+                || !core
+                    .active_owner
+                    .is_some_and(|owner| core.image.source_is_active(owner))
+            {
+                return None;
+            }
+            let paging = core.paging.as_ref()?;
+            let state = unsafe { &mut *core.state.get() };
+            let class = paging::walk::AccessClass::operand(
+                core.context.cpl(),
+                state.flags & crate::x86::flags::AC != 0,
+            );
+            let read = paging::walk::Request {
+                linear: source,
+                access: Access::Read,
+                class,
+            };
+            let write = paging::walk::Request {
+                linear: destination,
+                access: Access::Write,
+                class,
+            };
+            let (source_host, destination_host, length) =
+                core.translation_cache.copy_pair_then_fetch(
+                    paging,
+                    [read, write],
+                    &state.protection_keys,
+                    width,
+                    |read, write| {
+                        let read_span =
+                            core.image.physical_direct_read_span(read.physical, width)?;
+                        let write_span = core
+                            .image
+                            .physical_direct_write_span(write.physical, width)?;
+                        let read_offset = (read.physical - read_span.base) as u32;
+                        let write_offset = (write.physical - write_span.base) as u32;
+                        // A 4 KiB window also bounds potential shadowing by overlapping local leaves.
+                        let length = page_remaining(source)
+                            .min(page_remaining(destination))
+                            .min(read.remaining)
+                            .min(write.remaining)
+                            .min(u64::from(read_span.length - read_offset))
+                            .min(u64::from(write_span.length - write_offset))
+                            as u32;
+                        debug_assert!(length >= width);
+                        Some((
+                            read_span.host + read_offset,
+                            write_span.host + write_offset,
+                            length,
+                        ))
+                    },
+                )?;
+            let scratch = &mut state.vector_scratch;
+            scratch[..4].copy_from_slice(&source_host.to_le_bytes());
+            scratch[4..8].copy_from_slice(&destination_host.to_le_bytes());
+            scratch[8..12].copy_from_slice(&(length - width + 1).to_le_bytes());
+            Some(scratch.as_ptr() as u32)
+        })
+        .unwrap_or(0)
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[unsafe(no_mangle)]
 pub extern "C" fn core_paged_loop_block_window(address: u64) -> u64 {
     const WIDTH: u32 = 16;
 

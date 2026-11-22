@@ -33,6 +33,8 @@ enum LoopKind {
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     PagedVectorCopy,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    PagedVectorCopySpans,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     PagedScalarWrites,
     ForwardEdges,
 }
@@ -710,7 +712,32 @@ impl StructuredLoop {
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     pub(super) fn paged_vector_copy(self) -> bool {
-        self.kind == LoopKind::PagedVectorCopy
+        matches!(
+            self.kind,
+            LoopKind::PagedVectorCopy | LoopKind::PagedVectorCopySpans
+        )
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn with_paged_copy_spans(mut self, unit: &super::Unit) -> Option<Self> {
+        super::paged_copy::CopyGroup::recognize(
+            &unit.instructions[self.head as usize..=self.tail as usize],
+        )?;
+        self.kind = LoopKind::PagedVectorCopySpans;
+        Some(self)
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn paged_copy_group(
+        self,
+        unit: &super::Unit,
+    ) -> Option<super::paged_copy::CopyGroup> {
+        (self.kind == LoopKind::PagedVectorCopySpans).then(|| {
+            super::paged_copy::CopyGroup::recognize(
+                &unit.instructions[self.head as usize..=self.tail as usize],
+            )
+            .expect("copy span matches admission")
+        })
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -1007,7 +1034,10 @@ impl StructuredLoop {
             }
             LoopKind::ForwardEdges => unreachable!("forward edges use graph admission"),
             #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-            LoopKind::PagedSseWrite | LoopKind::PagedScalarWrites | LoopKind::PagedVectorCopy => {
+            LoopKind::PagedSseWrite
+            | LoopKind::PagedScalarWrites
+            | LoopKind::PagedVectorCopy
+            | LoopKind::PagedVectorCopySpans => {
                 unreachable!("paged writes use guarded admission")
             }
         };
@@ -1029,7 +1059,10 @@ impl StructuredLoop {
             }
             LoopKind::ForwardEdges => unreachable!("forward edges use graph admission"),
             #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-            LoopKind::PagedSseWrite | LoopKind::PagedScalarWrites | LoopKind::PagedVectorCopy => {
+            LoopKind::PagedSseWrite
+            | LoopKind::PagedScalarWrites
+            | LoopKind::PagedVectorCopy
+            | LoopKind::PagedVectorCopySpans => {
                 unreachable!("paged writes use guarded admission")
             }
         })
@@ -1615,6 +1648,10 @@ impl Emitter {
             .op(Op::LocalSet(REASON));
         self.guarded_paged_lap = true;
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if let Some(window) = self.paged_copy_window {
+            self.op(Op::I64Const(0)).op(Op::LocalSet(window.limit));
+        }
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         if let Some(window) = self.paged_dword_window.or(self.paged_vector_window) {
             // The live guard excluded observers; locals never survive a replay or a host boundary.
             self.op(Op::I64Const(0)).op(Op::LocalSet(window.limit));
@@ -1959,6 +1996,16 @@ impl Emitter {
                 depth
             };
             self.structured_loop = Some((body, depth));
+            #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+            if self.guarded_paged_lap
+                && let Some(window) = self.paged_copy_window
+                && position < window.group.width / 8
+            {
+                if position == 0 {
+                    self.emit_paged_copy_group(window, depth + 1);
+                }
+                continue;
+            }
             #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
             if let Some(diamond) = diamond.filter(|diamond| diamond.read + 1 == self.current_index)
             {

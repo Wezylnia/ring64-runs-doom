@@ -135,6 +135,7 @@ pub extern "C" fn core_compile(
         max_source_bytes,
         max_artifact_bytes,
         false,
+        false,
     )
 }
 
@@ -152,6 +153,25 @@ pub extern "C" fn core_compile_with_paged_vector_copy(
         max_source_bytes,
         max_artifact_bytes,
         true,
+        false,
+    )
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[unsafe(no_mangle)]
+pub extern "C" fn core_compile_with_paged_copy_spans(
+    pc: u64,
+    max_instructions: u32,
+    max_source_bytes: u32,
+    max_artifact_bytes: u32,
+) -> i32 {
+    compile_artifact(
+        pc,
+        max_instructions,
+        max_source_bytes,
+        max_artifact_bytes,
+        true,
+        true,
     )
 }
 
@@ -161,6 +181,7 @@ fn compile_artifact(
     max_source_bytes: u32,
     max_artifact_bytes: u32,
     paged_vector_copy: bool,
+    paged_copy_spans: bool,
 ) -> i32 {
     BRIDGE.with_borrow_mut(|bridge| {
         bridge.output.clear();
@@ -168,7 +189,7 @@ fn compile_artifact(
         let limits = Limits { max_instructions, max_source_bytes, max_artifact_bytes };
         core.reconcile_translation_changes();
         let observed = core.boundary_observed();
-        let profile = dbt::CompileProfile { observed, paged_vector_copy };
+        let profile = dbt::CompileProfile { observed, paged_vector_copy, paged_copy_spans };
         match dbt::compile_with_paging_cache(&core.image, &core.context, core.paging.as_ref(), &core.translation_cache, pc, limits, profile) {
             Ok(artifact) => {
                 let owner = match core.image.register_dependencies(

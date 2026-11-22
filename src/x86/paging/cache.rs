@@ -302,6 +302,38 @@ impl Cache {
         Some(value)
     }
 
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(crate) fn copy_pair_then_fetch<T>(
+        &self,
+        state: &State,
+        operands: [Request; 2],
+        keys: &ProtectionKeys,
+        width: u32,
+        admit: impl FnOnce(Translation, Translation) -> Option<T>,
+    ) -> Option<T> {
+        let mut entries = self.entries.borrow_mut();
+        let fetch = entries
+            .hint
+            .filter(|&index| entries.slots[index].is_some())?;
+        let (source, read) =
+            entries.retained_data_span::<false>(state, operands[0], keys, width)?;
+        let (destination, write) =
+            entries.retained_data_span::<true>(state, operands[1], keys, width)?;
+        if entries.slots[source].unwrap().global || entries.slots[destination].unwrap().global {
+            return None;
+        }
+        let value = admit(read, write)?;
+        // An alternating read/write group has this recency whenever it completes.
+        // Further accesses in the same pair of leaves preserve that order.
+        for data in [source, destination] {
+            if data != fetch && entries.slots[data].as_ref().unwrap().used != entries.clock - 1 {
+                entries.touch(data);
+                entries.touch(fetch);
+            }
+        }
+        Some(value)
+    }
+
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
     #[inline]
     pub(crate) fn data_byte_then_fetch<const WRITE: bool, T>(

@@ -57,6 +57,9 @@ mod mmx;
 mod multiply_divide;
 #[path = "numeric/numeric_state.rs"]
 mod numeric_state;
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[path = "execution/paged_copy.rs"]
+mod paged_copy;
 #[path = "system/paging.rs"]
 mod paging;
 #[path = "system/processor.rs"]
@@ -215,6 +218,8 @@ struct Emitter {
     paged_loop_read_block: Option<(u32, bool)>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_loop_write_block: Option<u32>,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    paged_copy_window: Option<paged_copy::CopyWindow>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_write_ready: Option<u32>,
     paged_loop_write_byte: Option<u32>,

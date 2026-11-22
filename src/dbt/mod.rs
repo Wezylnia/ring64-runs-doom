@@ -21,6 +21,7 @@ pub struct Limits {
 pub(crate) struct CompileProfile {
     pub observed: bool,
     pub paged_vector_copy: bool,
+    pub paged_copy_spans: bool,
 }
 
 #[derive(Debug)]
@@ -91,6 +92,7 @@ pub fn compile_with_paging(
         CompileProfile {
             observed,
             paged_vector_copy: false,
+            paged_copy_spans: false,
         },
     )
 }
@@ -120,6 +122,7 @@ fn compile_profile(
     let CompileProfile {
         observed,
         paged_vector_copy: _paged_vector_copy,
+        paged_copy_spans: _paged_copy_spans,
     } = profile;
     let unit = discovery::discover_with_profile(image, context, paging, cache, entry, limits)?;
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
@@ -134,7 +137,8 @@ fn compile_profile(
     let checked = || emit(&unit, observed, paging.is_some(), max_artifact_bytes);
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let bytes = if _paged_vector_copy && paging.is_some() && !image.has_mmio() {
-        wasm::emit_paged_vector_copy(&unit, max_artifact_bytes).unwrap_or_else(checked)
+        wasm::emit_paged_vector_copy(&unit, max_artifact_bytes, _paged_copy_spans)
+            .unwrap_or_else(checked)
     } else {
         checked()
     };
