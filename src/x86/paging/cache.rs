@@ -65,6 +65,7 @@ impl Entries {
             })
     }
 
+    #[cfg(any(feature = "parallel", target_arch = "wasm32", test))]
     fn retained_data_span<const WRITE: bool>(
         &self,
         state: &State,
