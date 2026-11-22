@@ -1,4 +1,6 @@
-use super::{ADDRESS, Emitter, LHS, REMAINING, RHS, RIP, STORE_STATUS, VALUE};
+use super::{
+    ADDRESS, Emitter, LHS, REMAINING, RHS, RIP, STORE_STATUS, StructuredLoop, Unit, VALUE,
+};
 use crate::x86::context::Segment;
 use crate::x86::instruction::{
     Address, AddressBase, Instruction, Operation, VectorInstruction, VectorOperand, Width,
@@ -15,6 +17,34 @@ pub(super) struct CopyGroup {
 }
 
 impl CopyGroup {
+    pub(super) fn finite_prefix(
+        unit: &Unit,
+        loops: [Option<StructuredLoop>; 2],
+    ) -> Option<(usize, Self)> {
+        if !unit.context.is_long64() {
+            return None;
+        }
+        unit.instructions
+            .windows(4)
+            .enumerate()
+            .find_map(|(head, instructions)| {
+                let group = Self::recognize(instructions)?;
+                let start = instructions[0].pc;
+                let length = u32::try_from(group.end.checked_sub(start)?).ok()?;
+                if instructions
+                    .windows(2)
+                    .any(|pair| pair[0].next_pc != pair[1].pc)
+                    || unit.fetch_proof.physical_span(start, length).is_none()
+                    || loops.into_iter().flatten().any(|body| {
+                        (head..head + 4).any(|index| body.order().position(index as u32).is_some())
+                    })
+                {
+                    return None;
+                }
+                Some((head, group))
+            })
+    }
+
     pub(super) fn recognize(lap: &[Instruction]) -> Option<Self> {
         fn vector_move(instruction: Instruction, writing: bool) -> Option<(Address, u8)> {
             let Operation::Vector(VectorInstruction::Move {
@@ -93,15 +123,37 @@ pub(super) struct CopyWindow {
 }
 
 impl Emitter {
-    pub(super) fn emit_paged_copy_group(&mut self, window: CopyWindow, exit_depth: u32) {
-        fn memory(offset: u64) -> MemArg {
-            MemArg {
-                offset,
-                align: 0,
-                memory_index: 0,
-            }
-        }
+    pub(super) fn emit_finite_copy_prefix(
+        &mut self,
+        instructions: &[Instruction],
+        group: CopyGroup,
+        loop_depth: u32,
+        guard: u32,
+        resolve: u32,
+    ) {
+        self.guard_straight_paged_prefix(&instructions[0], &instructions[3], 4, guard);
+        self.address(group.source, 0);
+        self.op(Op::LocalSet(LHS));
+        self.address(group.destination, 0);
+        self.op(Op::LocalSet(RHS));
+        self.resolve_copy_window(group, resolve);
+        self.op(Op::If(BlockType::Empty));
+        self.op(Op::LocalGet(STORE_STATUS))
+            .op(Op::I32Load(memory(4)))
+            .op(Op::I64ExtendI32U)
+            .op(Op::LocalSet(ADDRESS))
+            .op(Op::LocalGet(STORE_STATUS))
+            .op(Op::I32Load(memory(0)))
+            .op(Op::LocalSet(STORE_STATUS));
+        self.emit_ordered_copy(group);
+        self.guarded_paged_lap = true;
+        self.stores = false;
+        self.route(group.end, loop_depth + 3, loop_depth + 4);
+        self.guarded_paged_lap = false;
+        self.op(Op::End).op(Op::End).op(Op::End);
+    }
 
+    pub(super) fn emit_paged_copy_group(&mut self, window: CopyWindow, exit_depth: u32) {
         let group = window.group;
         self.address(group.source, 0);
         self.op(Op::LocalTee(LHS))
@@ -119,13 +171,9 @@ impl Emitter {
             .op(Op::I64LtU)
             .op(Op::I32And)
             .op(Op::I32Eqz)
-            .op(Op::If(BlockType::Empty))
-            .op(Op::LocalGet(LHS))
-            .op(Op::LocalGet(RHS))
-            .op(Op::I32Const(group.width as i32))
-            .op(Op::Call(window.resolve))
-            .op(Op::LocalTee(STORE_STATUS))
-            .op(Op::I32Eqz);
+            .op(Op::If(BlockType::Empty));
+        self.resolve_copy_window(group, window.resolve);
+        self.op(Op::I32Eqz);
         self.retry_guarded_paged_operand(exit_depth + 1, true);
         self.op(Op::LocalGet(LHS))
             .op(Op::LocalSet(window.source_base))
@@ -158,6 +206,18 @@ impl Emitter {
             .op(Op::I32Add)
             .op(Op::I64ExtendI32U)
             .op(Op::LocalSet(ADDRESS));
+        self.emit_ordered_copy(group);
+    }
+
+    fn resolve_copy_window(&mut self, group: CopyGroup, resolve: u32) {
+        self.op(Op::LocalGet(LHS))
+            .op(Op::LocalGet(RHS))
+            .op(Op::I32Const(group.width as i32))
+            .op(Op::Call(resolve))
+            .op(Op::LocalTee(STORE_STATUS));
+    }
+
+    fn emit_ordered_copy(&mut self, group: CopyGroup) {
         for offset in (0..group.width).step_by(16) {
             // A dependent later load sees the preceding store even on aliased physical backing.
             self.op(Op::LocalGet(ADDRESS))
@@ -175,5 +235,13 @@ impl Emitter {
             .op(Op::I64Const(i64::from(group.width / 8)))
             .op(Op::I64Sub)
             .op(Op::LocalSet(REMAINING));
+    }
+}
+
+fn memory(offset: u64) -> MemArg {
+    MemArg {
+        offset,
+        align: 0,
+        memory_index: 0,
     }
 }

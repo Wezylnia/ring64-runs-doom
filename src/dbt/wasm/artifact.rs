@@ -5,7 +5,9 @@ use super::{
     mmx, state, vector,
 };
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-use super::{float_dyadic, float_loop, loop_cfg, memory, read_loop, stack_slots};
+use super::{
+    float_dyadic, float_loop, loop_cfg, memory, paged_copy::CopyGroup, read_loop, stack_slots,
+};
 use crate::embedding::layout::DISPATCH;
 use crate::x86::context::Segment;
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -89,7 +91,7 @@ pub(crate) fn emit_profile(
 ) -> Vec<u8> {
     let observed = observed || paged;
     #[cfg(not(feature = "parallel"))]
-    if paged && let Some(bytes) = emit_paged_profile(unit, max_artifact_bytes) {
+    if paged && let Some(bytes) = emit_paged_profile(unit, max_artifact_bytes, false) {
         return bytes;
     }
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
@@ -170,128 +172,72 @@ pub(crate) fn emit_profile(
 #[cfg(not(feature = "parallel"))]
 // Keep paged selection out of the Wasm body compiled on the first linear translation.
 #[cfg_attr(target_arch = "wasm32", inline(never))]
-fn emit_paged_profile(unit: &Unit, max_artifact_bytes: usize) -> Option<Vec<u8>> {
-    if let Some(body) = StructuredLoop::select_paged_registers(&unit.instructions) {
-        if let Some(guarded) = body.within_paged_fetch(unit) {
-            let bytes = emit_placement(
-                unit,
-                true,
-                (true, false),
-                Some(guarded),
-                false,
-                max_artifact_bytes,
-            );
-            if bytes.len() <= max_artifact_bytes {
-                return Some(bytes);
-            }
-        }
-        let bytes = emit_placement(
+fn emit_paged_profile(
+    unit: &Unit,
+    max_artifact_bytes: usize,
+    copy_prefix: bool,
+) -> Option<Vec<u8>> {
+    let placement = |body| {
+        let bytes = emit_placement_with_copy(
             unit,
             true,
             (true, false),
             Some(body),
             false,
             max_artifact_bytes,
+            (None, copy_prefix),
         );
-        if bytes.len() <= max_artifact_bytes {
+        (bytes.len() <= max_artifact_bytes).then_some(bytes)
+    };
+    if let Some(body) = StructuredLoop::select_paged_registers(&unit.instructions) {
+        if let Some(guarded) = body.within_paged_fetch(unit)
+            && let Some(bytes) = placement(guarded)
+        {
+            return Some(bytes);
+        }
+        if let Some(bytes) = placement(body) {
             return Some(bytes);
         }
     }
     if let Some(body) = StructuredLoop::select_paged_reads(unit) {
         #[cfg(target_arch = "wasm32")]
-        if let Some(window) = body.with_paged_dword_window(unit) {
-            let bytes = emit_placement(
-                unit,
-                true,
-                (true, false),
-                Some(window),
-                false,
-                max_artifact_bytes,
-            );
-            if bytes.len() <= max_artifact_bytes {
-                return Some(bytes);
-            }
+        if let Some(window) = body.with_paged_dword_window(unit)
+            && let Some(bytes) = placement(window)
+        {
+            return Some(bytes);
         }
         #[cfg(target_arch = "wasm32")]
-        if let Some(span) = body.with_paged_read_span(unit) {
-            let bytes = emit_placement(
-                unit,
-                true,
-                (true, false),
-                Some(span),
-                false,
-                max_artifact_bytes,
-            );
-            if bytes.len() <= max_artifact_bytes {
-                return Some(bytes);
-            }
+        if let Some(span) = body.with_paged_read_span(unit)
+            && let Some(bytes) = placement(span)
+        {
+            return Some(bytes);
         }
-        let bytes = emit_placement(
-            unit,
-            true,
-            (true, false),
-            Some(body),
-            false,
-            max_artifact_bytes,
-        );
-        if bytes.len() <= max_artifact_bytes {
+        if let Some(bytes) = placement(body) {
             return Some(bytes);
         }
     }
     if let Some(body) = StructuredLoop::select_paged_scalar_f32(unit) {
         #[cfg(target_arch = "wasm32")]
-        if let Some(span) = body.with_paged_f32_read_span(unit) {
-            let bytes = emit_placement(
-                unit,
-                true,
-                (true, false),
-                Some(span),
-                false,
-                max_artifact_bytes,
-            );
-            if bytes.len() <= max_artifact_bytes {
-                return Some(bytes);
-            }
+        if let Some(span) = body.with_paged_f32_read_span(unit)
+            && let Some(bytes) = placement(span)
+        {
+            return Some(bytes);
         }
-        let bytes = emit_placement(
-            unit,
-            true,
-            (true, false),
-            Some(body),
-            false,
-            max_artifact_bytes,
-        );
-        if bytes.len() <= max_artifact_bytes {
+        if let Some(bytes) = placement(body) {
             return Some(bytes);
         }
     }
     #[cfg(target_arch = "wasm32")]
-    if let Some(body) = StructuredLoop::select_paged_sse_write(unit) {
-        let bytes = emit_placement(
-            unit,
-            true,
-            (true, false),
-            Some(body),
-            false,
-            max_artifact_bytes,
-        );
-        if bytes.len() <= max_artifact_bytes {
-            return Some(bytes);
-        }
+    if let Some(body) = StructuredLoop::select_paged_sse_write(unit)
+        && let Some(bytes) = placement(body)
+    {
+        return Some(bytes);
     }
     #[cfg(target_arch = "wasm32")]
     if max_artifact_bytes >= 256 * 1024
         && let Some(body) = StructuredLoop::select_paged_scalar_writes(unit)
     {
-        let bytes = emit_placement(
-            unit,
-            true,
-            (true, false),
-            Some(body),
-            false,
-            max_artifact_bytes,
-        );
-        if bytes.len() <= max_artifact_bytes {
+        if let Some(bytes) = placement(body) {
             return Some(bytes);
         }
     }
@@ -304,27 +250,35 @@ pub(crate) fn emit_paged_vector_copy(
     max_artifact_bytes: usize,
     copy_spans: bool,
 ) -> Option<Vec<u8>> {
-    let body = StructuredLoop::select_paged_vector_copy(unit)?;
+    let body = StructuredLoop::select_paged_vector_copy(unit);
     let windowed = copy_spans
-        .then(|| body.with_paged_copy_spans(unit))
+        .then(|| body.and_then(|body| body.with_paged_copy_spans(unit)))
         .flatten();
     let additional = copy_spans
-        .then(|| StructuredLoop::select_additional_paged_copy(unit, body))
+        .then(|| body.and_then(|body| StructuredLoop::select_additional_paged_copy(unit, body)))
         .flatten();
-    if windowed.is_some() || additional.is_some() {
+    let copy_prefix = copy_spans && CopyGroup::finite_prefix(unit, [body, additional]).is_some();
+    if copy_prefix
+        && body.is_none()
+        && let Some(bytes) = emit_paged_profile(unit, max_artifact_bytes, true)
+    {
+        return Some(bytes);
+    }
+    if windowed.is_some() || additional.is_some() || copy_prefix {
         let bytes = emit_placement_with_copy(
             unit,
             true,
             (true, false),
-            Some(windowed.unwrap_or(body)),
+            windowed.or(body),
             false,
             max_artifact_bytes,
-            additional,
+            (additional, copy_prefix),
         );
         if bytes.len() <= max_artifact_bytes {
             return Some(bytes);
         }
     }
+    let body = body?;
     let bytes = emit_placement(
         unit,
         true,
@@ -376,7 +330,7 @@ fn emit_placement(
         loop_body,
         guard_reads,
         max_artifact_bytes,
-        None,
+        (None, false),
     )
 }
 
@@ -387,7 +341,7 @@ fn emit_placement_with_copy(
     loop_body: Option<StructuredLoop>,
     guard_reads: bool,
     max_artifact_bytes: usize,
-    _additional_copy: Option<StructuredLoop>,
+    (_additional_copy, _copy_prefix): (Option<StructuredLoop>, bool),
 ) -> Vec<u8> {
     let reads = if cfg!(all(feature = "parallel", target_arch = "wasm32")) {
         let indexed = !observed
@@ -441,6 +395,8 @@ fn emit_placement_with_copy(
         paged_register_prefixes: true,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         additional_copy: _additional_copy,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        copy_prefix: _copy_prefix,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         linear_recurrence: max_artifact_bytes >= 64 * 1024,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -558,6 +514,8 @@ struct OptionalLowering {
     paged_register_prefixes: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     additional_copy: Option<StructuredLoop>,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    copy_prefix: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     linear_recurrence: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -1038,13 +996,30 @@ fn emit_body(
         .additional_copy
         .and_then(|body| body.paged_copy_group(unit));
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    let paged_copy_resolver = copy_group.or(additional_copy_group).map(|_| {
-        add_function_type(
-            &mut types,
-            [ValType::I64, ValType::I64, ValType::I32],
-            [ValType::I32],
-        )
+    let copy_prefix = (paged && !mmio && optional.copy_prefix)
+        .then(|| CopyGroup::finite_prefix(unit, [loop_body, optional.additional_copy]))
+        .flatten();
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let copy_prefix_guard_type = copy_prefix.map(|_| {
+        paged_loop_guard_type.unwrap_or_else(|| {
+            add_function_type(
+                &mut types,
+                [ValType::I64, ValType::I32, ValType::I64, ValType::I32],
+                [ValType::I32],
+            )
+        })
     });
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let paged_copy_resolver = copy_group
+        .or(additional_copy_group)
+        .or(copy_prefix.map(|(_, group)| group))
+        .map(|_| {
+            add_function_type(
+                &mut types,
+                [ValType::I64, ValType::I64, ValType::I32],
+                [ValType::I32],
+            )
+        });
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let paged_scalar_writes = loop_body.is_some_and(StructuredLoop::paged_scalar_writes);
     #[cfg(not(all(not(feature = "parallel"), target_arch = "wasm32")))]
@@ -1423,6 +1398,12 @@ fn emit_body(
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let paged_copy_resolver =
         paged_copy_resolver.map(|signature| import_function("paged_loop_copy_window", signature));
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let copy_prefix_guard = if paged_vector_copy {
+        paged_loop_guard
+    } else {
+        copy_prefix_guard_type.map(|signature| import_function("paged_sse_loop_guard", signature))
+    };
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let paged_read_rearm = paged_read_rearm_type.map(|(index, order)| {
         let name = if paged_split_vectors {
@@ -2388,6 +2369,16 @@ fn emit_body(
                 additional.map_or(paged_copy_window, |(_, window, _, _)| Some(window));
         }
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if let Some((head, group)) = copy_prefix.filter(|(head, _)| *head == index) {
+            emitter.emit_finite_copy_prefix(
+                &unit.instructions[head..head + 4],
+                group,
+                loop_depth,
+                copy_prefix_guard.expect("copy prefix guard"),
+                paged_copy_resolver.expect("copy prefix operand resolver"),
+            );
+        }
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         if let Some((end, guard)) = register_prefixes
             .as_ref()
             .and_then(|p| p[index])
@@ -2590,6 +2581,21 @@ fn emit_body(
     }
     let code_start = bytes.len();
     code.append_to(&mut bytes);
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    if bytes.len() > max_artifact_bytes && copy_prefix.is_some() {
+        return emit_body(
+            unit,
+            observed,
+            (paged, mmio),
+            loop_body,
+            _guard_reads,
+            OptionalLowering {
+                copy_prefix: false,
+                ..optional
+            },
+            max_artifact_bytes,
+        );
+    }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if bytes.len() > max_artifact_bytes && additional_copy.is_some() {
         return emit_body(

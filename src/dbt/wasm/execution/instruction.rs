@@ -490,33 +490,9 @@ impl Emitter {
         guard: u32,
         read_import: Option<u32>,
     ) {
-        use super::{REMAINING, SHADOW};
         let first = instructions.first().unwrap();
         let last = instructions.last().unwrap();
-
-        self.op(Op::LocalGet(REMAINING))
-            .op(Op::I64Const(instructions.len() as i64))
-            .op(Op::I64GeU)
-            .op(Op::LocalGet(3))
-            .op(Op::LocalGet(2))
-            .op(Op::I64Const(first.pc as i64))
-            .op(Op::I64GeU)
-            .op(Op::I32And)
-            .op(Op::LocalGet(2))
-            .op(Op::I64Const(last.pc as i64))
-            .op(Op::I64LeU)
-            .op(Op::I32And)
-            .op(Op::I32Eqz)
-            .op(Op::I32And)
-            .op(Op::If(BlockType::Empty));
-        self.op(Op::I64Const(first.pc as i64))
-            .op(Op::I32Const((last.next_pc - first.pc) as i32));
-        self.system_bits();
-        self.op(Op::LocalGet(SHADOW))
-            .op(Op::Call(guard))
-            .op(Op::I32Const(1))
-            .op(Op::I32Eq)
-            .op(Op::If(BlockType::Empty));
+        self.guard_straight_paged_prefix(first, last, instructions.len() as u32, guard);
         let read = paged_prefix_read(*first)
             .map(|operation| (read_import.expect("leading read prefix import"), operation));
         if let Some((read, (register, address, source_width, width))) = read {
@@ -575,5 +551,40 @@ impl Emitter {
             self.op(Op::End);
         }
         self.op(Op::End).op(Op::End);
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn guard_straight_paged_prefix(
+        &mut self,
+        first: &Instruction,
+        last: &Instruction,
+        count: u32,
+        guard: u32,
+    ) {
+        use super::{REMAINING, SHADOW};
+
+        self.op(Op::LocalGet(REMAINING))
+            .op(Op::I64Const(i64::from(count)))
+            .op(Op::I64GeU)
+            .op(Op::LocalGet(3))
+            .op(Op::LocalGet(2))
+            .op(Op::I64Const(first.pc as i64))
+            .op(Op::I64GeU)
+            .op(Op::I32And)
+            .op(Op::LocalGet(2))
+            .op(Op::I64Const(last.pc as i64))
+            .op(Op::I64LeU)
+            .op(Op::I32And)
+            .op(Op::I32Eqz)
+            .op(Op::I32And)
+            .op(Op::If(BlockType::Empty));
+        self.op(Op::I64Const(first.pc as i64))
+            .op(Op::I32Const((last.next_pc - first.pc) as i32));
+        self.system_bits();
+        self.op(Op::LocalGet(SHADOW))
+            .op(Op::Call(guard))
+            .op(Op::I32Const(1))
+            .op(Op::I32Eq)
+            .op(Op::If(BlockType::Empty));
     }
 }
