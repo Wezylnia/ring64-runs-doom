@@ -760,21 +760,22 @@ export class Cpu {
     const finish = (reason: string) =>
       this[FINISH_RUN](run, reason, remaining, remainingRepeatBudget, remainingDeliveryBudget);
     try {
-      if (deliveryBudget !== undefined) this.#engine.configureDelivery(true);
+      const engine = this.#engine;
+      if (deliveryBudget !== undefined) engine.configureDelivery(true);
       let servicingEvent = false;
       // Idle-only intake keeps queues stable except at explicit acceptance boundaries.
-      let eventKind = this.#engine.eventKind();
-      let queuedInterrupts = this.#engine.hasQueuedInterrupts();
-      if (this.#engine.taskRetry) {
+      let eventKind = engine.eventKind();
+      let queuedInterrupts = engine.hasQueuedInterrupts();
+      if (engine.taskRetry) {
         if (remaining === 0n) return finish('budget');
-        if (stop !== undefined && this.#engine.current().rip === stop) return finish('stop');
-        this.#engine.prepareEntry();
+        if (stop !== undefined && engine.current().rip === stop) return finish('stop');
+        engine.prepareEntry();
         const at = performance.now();
-        const resumed = this.#engine.resumeTask();
+        const resumed = engine.resumeTask();
         timings.executionMs += performance.now() - at;
         this.pruneTranslations();
-        eventKind = this.#engine.eventKind();
-        queuedInterrupts = this.#engine.hasQueuedInterrupts();
+        eventKind = engine.eventKind();
+        queuedInterrupts = engine.hasQueuedInterrupts();
         if (typeof resumed !== 'string') {
           if (deliveryBudget === undefined) return finish(resumed.taskEvent);
         } else if (
@@ -787,14 +788,11 @@ export class Cpu {
       }
       let dispatchedPc: bigint | undefined;
       execution: for (;;) {
-        if (
-          eventKind === 'shutdown' &&
-          (deliveryBudget === undefined || !this.#engine.shutdownCanWake())
-        )
+        if (eventKind === 'shutdown' && (deliveryBudget === undefined || !engine.shutdownCanWake()))
           return finish('shutdown');
-        const boundaryObserved = eventKind === 'ready' && this.#engine.prepareEntry();
+        const boundaryObserved = eventKind === 'ready' && engine.prepareEntry();
         // boundary preparation clears diagnostics without changing rip.
-        const pc = dispatchedPc ?? this.#engine.current().rip;
+        const pc = dispatchedPc ?? engine.current().rip;
         dispatchedPc = undefined;
         if (!servicingEvent) {
           if (remaining === 0n) return finish('budget');
@@ -806,7 +804,7 @@ export class Cpu {
           if (remainingDeliveryBudget === 0n) return finish('event-budget');
           remainingDeliveryBudget--;
           const at = performance.now();
-          const reason = this.#engine.deliverException();
+          const reason = engine.deliverException();
           timings.executionMs += performance.now() - at;
           if (reason === 'shutdown') {
             eventKind = 'shutdown';
@@ -814,7 +812,7 @@ export class Cpu {
             continue;
           }
           if (reason !== 'dispatch') return finish(reason);
-          eventKind = this.#engine.eventKind();
+          eventKind = engine.eventKind();
           servicingEvent = eventKind === 'pending' || eventKind === 'pending-interrupt';
           this.pruneTranslations();
           resources.dispatches++;
@@ -822,10 +820,10 @@ export class Cpu {
         }
         servicingEvent = false;
         if (queuedInterrupts || eventKind === 'halted' || eventKind === 'shutdown') {
-          const reason = this.#engine.externalBoundary();
+          const reason = engine.externalBoundary();
           if (reason === 'pending-interrupt') {
-            eventKind = this.#engine.eventKind();
-            queuedInterrupts = this.#engine.hasQueuedInterrupts();
+            eventKind = engine.eventKind();
+            queuedInterrupts = engine.hasQueuedInterrupts();
             if (deliveryBudget === undefined) return finish(reason);
             if (eventKind !== 'pending-interrupt')
               throw new Error('core failed to accept eligible interrupt');
@@ -840,17 +838,17 @@ export class Cpu {
         let refusedEpoch: bigint | undefined;
         for (const candidate of this.#cache.candidates(pc, boundaryObserved)) {
           executionBegan = performance.now();
-          if (this.#engine.activate(candidate.artifact.metadata.owner)) {
+          if (engine.activate(candidate.artifact.metadata.owner)) {
             entry = candidate;
             cached = true;
             break;
           }
           timings.executionMs += performance.now() - executionBegan;
-          if (!this.#engine.valid(candidate.artifact.metadata.owner))
+          if (!engine.valid(candidate.artifact.metadata.owner))
             this.#cache.remove(candidate.artifact);
-          const epoch = this.#engine.contextVersion();
+          const epoch = engine.contextVersion();
           if (
-            this.#engine.boundaryObserved() !== boundaryObserved ||
+            engine.boundaryObserved() !== boundaryObserved ||
             (refusedEpoch !== undefined && refusedEpoch !== epoch)
           ) {
             if (!restartAdmission()) return finish('resource-limit');
@@ -859,7 +857,7 @@ export class Cpu {
           refusedEpoch = epoch;
         }
         if (!entry) {
-          const probe = this.#engine.probe(pc);
+          const probe = engine.probe(pc);
           if (probe === 'paging-restart') {
             resources.pagingRestarts = (resources.pagingRestarts ?? 0) + 1;
             if (resources.pagingRestarts >= this.#limits.maxTranslationsPerRun)
@@ -870,7 +868,7 @@ export class Cpu {
           if (probe !== 'dispatch') {
             if (
               (deliveryBudget !== undefined || boundaryObserved) &&
-              this.#engine.stageException(probe)
+              engine.stageException(probe)
             ) {
               eventKind = 'pending';
               servicingEvent = true;
@@ -882,12 +880,12 @@ export class Cpu {
             return finish('resource-limit');
           resources.compilations++;
           let at = performance.now();
-          const output = this.#engine.compile(pc, this.#limits);
+          const output = engine.compile(pc, this.#limits);
           timings.translationMs += performance.now() - at;
           if (!output) return finish('resource-limit');
           resources.generatedBytes += output.bytes.length;
           if (!this.#cache.canFit(output.bytes.length)) {
-            this.#engine.release(output.metadata.owner);
+            engine.release(output.metadata.owner);
             return finish('resource-limit');
           }
           let installed = false;
@@ -895,12 +893,7 @@ export class Cpu {
             at = performance.now();
             const module = await WebAssembly.compile(output.bytes);
             timings.browserCompileMs += performance.now() - at;
-            const artifact = this.#cache.installCompiled(
-              this.#engine,
-              module,
-              output.metadata,
-              timings,
-            );
+            const artifact = this.#cache.installCompiled(engine, module, output.metadata, timings);
             if (!artifact) continue;
             if (artifact === 'resource-limit') return finish(artifact);
             installed = true;
@@ -909,20 +902,19 @@ export class Cpu {
               .find((candidate) => candidate.artifact === artifact);
             if (!entry) throw new Error('installed artifact does not own its requested entry');
           } finally {
-            if (!installed) this.#engine.release(output.metadata.owner);
+            if (!installed) engine.release(output.metadata.owner);
           }
           executionBegan = performance.now();
-          if (!this.#engine.activate(entry.artifact.metadata.owner)) {
+          if (!engine.activate(entry.artifact.metadata.owner)) {
             timings.executionMs += performance.now() - executionBegan;
-            if (!this.#engine.valid(entry.artifact.metadata.owner))
-              this.#cache.remove(entry.artifact);
+            if (!engine.valid(entry.artifact.metadata.owner)) this.#cache.remove(entry.artifact);
             if (!restartAdmission()) return finish('resource-limit');
             continue;
           }
         }
         const before = remaining;
         const repeatBefore = remainingRepeatBudget;
-        const reason = this.#engine.execute(
+        const reason = engine.execute(
           entry.artifact.run,
           entry.index,
           remaining,
@@ -933,7 +925,7 @@ export class Cpu {
         this.#cache.touch(entry.artifact);
         if (cached) resources.cacheHits++;
         resources.nativeEntries++;
-        const current = this.#engine.current();
+        const current = engine.current();
         remaining = current.remaining;
         remainingRepeatBudget = current.repeatRemaining;
         if (
@@ -964,8 +956,8 @@ export class Cpu {
             continue;
           }
           if (reason === 'pending-interrupt' || reason === 'halted') {
-            eventKind = this.#engine.eventKind();
-            queuedInterrupts = this.#engine.hasQueuedInterrupts();
+            eventKind = engine.eventKind();
+            queuedInterrupts = engine.hasQueuedInterrupts();
             if (reason === 'pending-interrupt') {
               if (deliveryBudget === undefined) return finish(reason);
               if (eventKind !== 'pending-interrupt')
@@ -973,9 +965,9 @@ export class Cpu {
               servicingEvent = true;
               continue;
             }
-            if (queuedInterrupts && this.#engine.externalBoundary() === 'pending-interrupt') {
-              eventKind = this.#engine.eventKind();
-              queuedInterrupts = this.#engine.hasQueuedInterrupts();
+            if (queuedInterrupts && engine.externalBoundary() === 'pending-interrupt') {
+              eventKind = engine.eventKind();
+              queuedInterrupts = engine.hasQueuedInterrupts();
               if (deliveryBudget === undefined) return finish('pending-interrupt');
               if (eventKind !== 'pending-interrupt')
                 throw new Error('core failed to accept eligible interrupt');
@@ -983,10 +975,7 @@ export class Cpu {
             }
             continue;
           }
-          if (
-            (deliveryBudget !== undefined || boundaryObserved) &&
-            this.#engine.stageException(reason)
-          ) {
+          if ((deliveryBudget !== undefined || boundaryObserved) && engine.stageException(reason)) {
             eventKind = 'pending';
             servicingEvent = true;
             continue;
