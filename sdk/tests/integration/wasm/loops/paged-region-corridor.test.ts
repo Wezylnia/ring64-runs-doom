@@ -318,3 +318,86 @@ test('legacy paged entries route a same-page indirect branch within one owner', 
     cpu.dispose();
   }
 });
+
+test('a short flat capture preserves the earlier returning call region', async () => {
+  const bytes = new Uint8Array(0x110).fill(0xf4);
+  bytes.set([
+    0x85,
+    0xd2, // TEST EDX,EDX
+    0x74,
+    0x08, // JZ to the second MOV
+    0x4a, // DEC EDX
+    0xb8,
+    0,
+    0,
+    0,
+    0, // MOV EAX, first handler
+    0xeb,
+    0x05, // JMP to CALL
+    0xb8,
+    0,
+    0,
+    0,
+    0, // MOV EAX, second handler
+    0xff,
+    0xd0, // CALL EAX
+    0x49, // DEC ECX
+    0x75,
+    0xea, // JNZ to TEST
+  ]);
+  const view = new DataView(bytes.buffer);
+  view.setUint32(6, Number(PC + 0x80n), true);
+  view.setUint32(13, Number(PC + 0x100n), true);
+  bytes.set([...Array<number>(12).fill(0x47), 0xc3], 0x80); // INC EDI; RET
+  bytes.set([...Array<number>(12).fill(0x43), 0xc3], 0x100); // INC EBX; RET
+  const stack = PC + 0x1000n;
+  const cpu = await createCpu({
+    compiler,
+    entry: PC,
+    context: protectedSnapshot(),
+    memory: {
+      backings: [
+        { id: 'code', bytes },
+        { id: 'stack', bytes: new Uint8Array(64) },
+      ],
+      mappings: [
+        {
+          backing: 'code',
+          base: PC,
+          length: bytes.length,
+          offset: 0,
+          permissions: { read: true, write: false, execute: true },
+        },
+        {
+          backing: 'stack',
+          base: stack,
+          length: 64,
+          offset: 0,
+          permissions: { read: true, write: true, execute: false },
+        },
+      ],
+    },
+    memoryLimits: { maxBackings: 2, maxMappings: 2, maxBackingBytes: bytes.length + 64 },
+    limits: { ...LIMITS, maxInstructions: 32 },
+  });
+  const run = async (firstCalls: bigint) => {
+    cpu.setState(initial(PC, { 1: 4096n, 2: firstCalls, 3: 0n, 4: stack + 64n, 7: 0n }));
+    const result = await cpu.run({ stop: PC + 22n, budget: 80_000n });
+    assert.equal(result.reason, 'stop');
+    assert.equal(result.retired, 4096n * 19n + firstCalls * 2n);
+    assert.equal(result.state.registers[7], firstCalls * 12n);
+    assert.equal(result.state.registers[3], (4096n - firstCalls) * 12n);
+    assert.equal(result.state.registers[4], stack + 64n);
+    return result;
+  };
+  try {
+    await run(64n);
+    // This capture sees only the first handler. The returning region learned
+    // from the first run still covers the second handler for the rest.
+    const warm = await run(512n);
+    assert.ok(warm.resources.compilations > 0);
+    assert.ok(warm.resources.dispatches < 1200, String(warm.resources.dispatches));
+  } finally {
+    cpu.dispose();
+  }
+});

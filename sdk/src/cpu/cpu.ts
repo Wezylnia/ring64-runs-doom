@@ -796,6 +796,7 @@ export class Cpu {
           boundaryObserved: boolean;
           points: bigint[];
           entrances: Set<bigint>;
+          flat: boolean;
         },
     resources: Pick<RunResult['resources'], 'compilations' | 'generatedBytes'>,
     timings: RunResult['timings'],
@@ -834,11 +835,21 @@ export class Cpu {
     resources.generatedBytes += output.bytes.length;
     let installed = false;
     try {
-      const preferred = tracked
-        ? new Set(output.metadata.entries.filter((point) => region.entrances.has(point)))
-        : region instanceof LinearRegionTrace
-          ? new Set([selected.entry])
-          : undefined;
+      let preferred: Set<bigint> | undefined;
+      if (tracked) {
+        const entries = new Set(output.metadata.entries);
+        preferred = new Set(
+          output.metadata.entries.filter((point) => {
+            if (!region.entrances.has(point)) return false;
+            if (!region.flat) return true;
+            // A short capture can miss parts of an already learned call region.
+            const current = this.#cache.preferred(point, region.boundaryObserved);
+            return !current || current.metadata.entries.every((entry) => entries.has(entry));
+          }),
+        );
+      } else if (region instanceof LinearRegionTrace) {
+        preferred = new Set([selected.entry]);
+      }
       if (tracked && preferred!.size < 2) return;
       const began = performance.now();
       const module = await WebAssembly.compile(output.bytes);
@@ -1260,7 +1271,11 @@ export class Cpu {
             ) {
               entrances.add(current.rip);
               aliases.clear();
-              await this.#tryRegion({ boundaryObserved, points, entrances }, resources, timings);
+              await this.#tryRegion(
+                { boundaryObserved, points, entrances, flat: flatTracing },
+                resources,
+                timings,
+              );
             }
           }
         } else if (

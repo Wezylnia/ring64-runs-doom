@@ -40,6 +40,11 @@ export class Translations {
     return entries.get(pc) ?? EMPTY;
   }
 
+  preferred(pc: bigint, boundaryObserved: boolean): Artifact | undefined {
+    const artifact = this.candidates(pc, boundaryObserved)[0]?.artifact;
+    return artifact && this.#preferred.get(artifact)?.has(pc) ? artifact : undefined;
+  }
+
   touch(artifact: Artifact): void {
     const entry = this.#artifacts.get(artifact);
     if (!entry || entry === this.#newest) return;
