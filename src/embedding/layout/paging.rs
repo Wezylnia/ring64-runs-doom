@@ -1,6 +1,10 @@
 use crate::x86::exception::EventState;
 use std::mem::{offset_of, size_of};
 
+// Private argument to the read-span import, outside the x86 segment IDs.
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+pub(crate) const PREFIX_DWORD_READ_SEGMENT: u32 = 16;
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[repr(C)]
 pub struct RawPagingSource {

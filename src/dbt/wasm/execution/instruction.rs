@@ -542,8 +542,13 @@ impl Emitter {
                     .op(Op::If(BlockType::Result(ValType::I32)))
                     .op(Op::LocalGet(ADDRESS));
             }
+            let segment = if source_width == Width::W32 {
+                crate::embedding::layout::paging::PREFIX_DWORD_READ_SEGMENT
+            } else {
+                address.segment as u32
+            };
             self.op(Op::I32Const(i32::from(source_width.bytes())))
-                .op(Op::I32Const(address.segment as i32))
+                .op(Op::I32Const(segment as i32))
                 .op(Op::Call(read));
             if check_alignment {
                 self.op(Op::Else).op(Op::I32Const(0)).op(Op::End);

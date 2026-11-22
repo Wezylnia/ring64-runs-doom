@@ -288,7 +288,9 @@ impl Emitter {
                     .op(Op::LocalGet(ADDRESS));
             }
             self.op(Op::I32Const(4))
-                .op(Op::I32Const(Segment::Ds as i32))
+                .op(Op::I32Const(
+                    crate::embedding::layout::paging::PREFIX_DWORD_READ_SEGMENT as i32,
+                ))
                 .op(Op::Call(read));
             if check_alignment {
                 self.op(Op::Else).op(Op::I32Const(0)).op(Op::End);

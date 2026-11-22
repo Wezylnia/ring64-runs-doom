@@ -273,6 +273,8 @@ pub struct Cache {
     last_dword_write: Cell<Option<NonZeroU8>>,
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
     last_byte_read: Cell<Option<NonZeroU8>>,
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    last_dword_read: Cell<Option<NonZeroU8>>,
 }
 
 impl Default for Cache {
@@ -303,6 +305,8 @@ impl Cache {
             last_dword_write: Cell::new(None),
             #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
             last_byte_read: Cell::new(None),
+            #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+            last_dword_read: Cell::new(None),
         }
     }
 
@@ -668,7 +672,9 @@ impl Cache {
         slot: Option<usize>,
         access: impl FnOnce(usize, Translation) -> Option<T>,
     ) -> Option<T> {
-        self.data_with_slot_then_fetch::<WRITE, 1, T>(state, request, keys, slot, None, access)
+        self.data_with_slot_then_fetch::<WRITE, 1, false, T>(
+            state, request, keys, slot, None, access,
+        )
     }
 
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
@@ -684,12 +690,35 @@ impl Cache {
             .last_byte_read
             .get()
             .map(|slot| usize::from(slot.get() - 1));
-        self.data_with_slot_then_fetch::<false, 1, T>(
+        self.data_with_slot_then_fetch::<false, 1, false, T>(
             state,
             request,
             keys,
             slot,
             Some(&self.last_byte_read),
+            |_, translation| access(translation.physical),
+        )
+    }
+
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    #[inline]
+    pub(crate) fn read_local_dword_then_fetch<T>(
+        &self,
+        state: &State,
+        request: Request,
+        keys: &ProtectionKeys,
+        access: impl FnOnce(u64) -> Option<T>,
+    ) -> Option<T> {
+        let slot = self
+            .last_dword_read
+            .get()
+            .map(|slot| usize::from(slot.get() - 1));
+        self.data_with_slot_then_fetch::<false, 4, true, T>(
+            state,
+            request,
+            keys,
+            slot,
+            Some(&self.last_dword_read),
             |_, translation| access(translation.physical),
         )
     }
@@ -707,7 +736,7 @@ impl Cache {
             .last_dword_write
             .get()
             .map(|slot| usize::from(slot.get() - 1));
-        self.data_with_slot_then_fetch::<true, 4, T>(
+        self.data_with_slot_then_fetch::<true, 4, false, T>(
             state,
             request,
             keys,
@@ -719,7 +748,7 @@ impl Cache {
 
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
     #[inline]
-    fn data_with_slot_then_fetch<const WRITE: bool, const WIDTH: u32, T>(
+    fn data_with_slot_then_fetch<const WRITE: bool, const WIDTH: u32, const LOCAL_ONLY: bool, T>(
         &self,
         state: &State,
         request: Request,
@@ -753,6 +782,9 @@ impl Cache {
         } else {
             entries.retained_data_span::<WRITE>(state, request, keys, WIDTH)?
         };
+        if LOCAL_ONLY && entries.slots[data].unwrap().global {
+            return None;
+        }
         let value = access(data, translation)?;
         // Preserve the normal guarded data-then-fetch recency order.
         if data != fetch && entries.slots[data].as_ref().unwrap().used != entries.clock - 1 {

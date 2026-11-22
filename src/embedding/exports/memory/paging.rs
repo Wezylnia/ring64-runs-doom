@@ -809,14 +809,20 @@ fn paged_loop_read<const WIDTH: u32, const CAPTURE_SLOT: bool>(address: u64) -> 
 #[unsafe(no_mangle)]
 #[inline(never)]
 pub extern "C" fn core_paged_loop_read_span(address: u64, bytes: u32, segment: u32) -> u32 {
-    paged_loop_read_span::<false, false>(address, bytes, segment)
+    if segment == Segment::Ds as u32 {
+        return paged_loop_read_span::<false, false, false>(address, bytes, segment);
+    }
+    if segment == crate::embedding::layout::paging::PREFIX_DWORD_READ_SEGMENT && bytes == 4 {
+        return paged_loop_read_span::<false, false, true>(address, 4, Segment::Ds as u32);
+    }
+    0
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 #[unsafe(no_mangle)]
 #[inline(never)]
 pub extern "C" fn core_paged_loop_read_span_pages(address: u64, bytes: u32, segment: u32) -> u32 {
-    paged_loop_read_span::<true, false>(address, bytes, segment)
+    paged_loop_read_span::<true, false, false>(address, bytes, segment)
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -890,11 +896,11 @@ pub extern "C" fn core_paged_loop_read_block(address: u64) -> u32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn core_paged_loop_block_host(address: u64) -> u32 {
     let segment = Segment::Ds as u32;
-    let host = paged_loop_read_span::<false, true>(address, 16, segment);
+    let host = paged_loop_read_span::<false, true, false>(address, 16, segment);
     if host != 0 || address & 0xfff <= 0xff0 {
         host
     } else {
-        paged_loop_read_span::<true, true>(address, 16, segment)
+        paged_loop_read_span::<true, true, false>(address, 16, segment)
     }
 }
 
@@ -1137,7 +1143,11 @@ pub extern "C" fn core_paged_loop_retouch_block_window(address: u64) -> i32 {
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-fn paged_loop_read_span<const MULTI_PAGE: bool, const HOST_POINTER: bool>(
+fn paged_loop_read_span<
+    const MULTI_PAGE: bool,
+    const HOST_POINTER: bool,
+    const PREFIX_DWORD_MEMO: bool,
+>(
     address: u64,
     bytes: u32,
     segment: u32,
@@ -1172,6 +1182,13 @@ fn paged_loop_read_span<const MULTI_PAGE: bool, const HOST_POINTER: bool>(
                 request,
                 &state.protection_keys,
                 bytes,
+                read,
+            )
+        } else if PREFIX_DWORD_MEMO {
+            core.translation_cache.read_local_dword_then_fetch(
+                paging,
+                request,
+                &state.protection_keys,
                 read,
             )
         } else {

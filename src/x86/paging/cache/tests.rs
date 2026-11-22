@@ -49,6 +49,51 @@ pub(super) fn fixture() -> (Image, State, Request) {
     )
 }
 
+#[cfg(not(feature = "parallel"))]
+#[test]
+fn retained_dword_read_checks_the_live_occupant_after_invalidation() {
+    let (mut image, state, first) = fixture();
+    let code = Request {
+        access: Access::Execute,
+        ..first
+    };
+    let data = Request {
+        linear: 0x2000,
+        ..first
+    };
+    let replacement = Request {
+        linear: 0x3000,
+        ..first
+    };
+    image.physical_write(0x4010, 8, 0xb067).unwrap();
+    image.physical_write(0x4018, 8, 0xc067).unwrap();
+    let cache = Cache::with_capacity(2);
+    let mut fill = |request| {
+        let translation = walk::walk(&mut image, &state, request, &ProtectionKeys::ZERO).unwrap();
+        cache.fill(&state, request, translation);
+        translation.physical
+    };
+    let code_physical = fill(code);
+    assert_eq!(fill(data), 0xb000);
+    assert!(cache.touch_current_fetch(&state, code, code_physical));
+    assert_eq!(
+        cache.read_local_dword_then_fetch(&state, data, &ProtectionKeys::ZERO, Some),
+        Some(0xb000)
+    );
+
+    cache.invalidate_page(state.pcid(), data.linear, false);
+    assert_eq!(fill(replacement), 0xc000);
+    assert!(cache.touch_current_fetch(&state, code, code_physical));
+    assert_eq!(
+        cache.read_local_dword_then_fetch(&state, data, &ProtectionKeys::ZERO, Some),
+        None
+    );
+    assert_eq!(
+        cache.read_local_dword_then_fetch(&state, replacement, &ProtectionKeys::ZERO, Some),
+        Some(0xc000)
+    );
+}
+
 #[test]
 fn retained_mapping_and_live_rights_are_distinct_from_current_pte_bytes() {
     let (mut image, mut state, request) = fixture();
