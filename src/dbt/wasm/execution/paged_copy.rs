@@ -983,6 +983,7 @@ impl Emitter {
             None,
             false,
             PagedPrefixFetch::RetainedSse,
+            false,
         );
         self.address(group.source, 0);
         self.op(Op::LocalSet(LHS));
@@ -1013,6 +1014,7 @@ impl Emitter {
             None,
             false,
             PagedPrefixFetch::RetainedSse,
+            false,
         );
         self.address(group.source, 0);
         self.op(Op::LocalSet(LHS));

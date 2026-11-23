@@ -130,6 +130,14 @@ impl Emitter {
         }
     }
 
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn remember_quiet_fetch(&mut self, pc: u64) {
+        if let Some(page) = self.quiet_fetch_page {
+            self.op(Op::I64Const(((pc & !4095) | 1) as i64))
+                .op(Op::LocalSet(page));
+        }
+    }
+
     pub(super) fn external_boundary(&mut self, exit_depth: u32) {
         let Some(helper) = self.external_step else {
             return;

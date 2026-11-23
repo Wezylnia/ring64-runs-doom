@@ -124,6 +124,7 @@ impl Emitter {
         );
         self.op(Op::I64Const(value as i64));
         self.write_register(RegisterView::low(dst), Width::W64);
+        self.remember_quiet_fetch(first.pc);
         self.op(Op::I64Const(second.next_pc as i64))
             .op(Op::LocalSet(RIP));
         self.retire_instructions(2);

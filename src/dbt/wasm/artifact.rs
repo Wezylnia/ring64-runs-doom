@@ -208,14 +208,21 @@ fn paged_register_prefixes(
     }
     let terminal_branch = |instruction: &Instruction, has_read: bool, wide_read: bool| {
         long64
-            && matches!(
-                instruction.operation,
-                Operation::Jcc { target, .. }
-                    if crate::memory::canonical48(target)
+            && match instruction.operation {
+                Operation::Jcc { target, .. } => {
+                    crate::memory::canonical48(target)
                         && ((short_register_prefixes && !has_read)
                             || wide_read
                             || instructions.binary_search_by_key(&target, |i| i.pc).is_ok())
-            )
+                }
+                Operation::Jump { target } => {
+                    short_register_prefixes
+                        && !has_read
+                        && target >> 12 == instruction.pc >> 12
+                        && instructions.binary_search_by_key(&target, |i| i.pc).is_ok()
+                }
+                _ => false,
+            }
     };
     let mut prefixes = vec![None; instructions.len()];
     let mut first = 0;

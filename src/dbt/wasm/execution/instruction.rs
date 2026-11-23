@@ -706,6 +706,9 @@ impl Emitter {
         // checked entry because other prefixes can hand off fetch alone.
         let indexed =
             indexed_leading || self.indexed_dword_prefixes || indexed_wide || indexed_store;
+        let keep_quiet = self.sampled_region
+            && self.quiet_fetch_page.is_some()
+            && !instructions.iter().copied().any(paged_prefix_dword_store);
         self.guard_straight_paged_prefix(
             instructions,
             guard,
@@ -720,6 +723,7 @@ impl Emitter {
             } else {
                 PagedPrefixFetch::Checked
             },
+            keep_quiet,
         );
         if let Some((read, (register, address, source_width, width))) = read {
             use super::{ADDRESS, STORE_STATUS};
@@ -824,6 +828,10 @@ impl Emitter {
             self.op(Op::End);
         }
         self.op(Op::End).op(Op::End);
+        if keep_quiet {
+            // An operand refusal can fall through to the original entry.
+            self.clear_quiet_fetch();
+        }
         if let Some(local) = incoming {
             // A stop or short budget can reject the group before it consumes
             // the handoff. The checked copy cannot carry that proof forward.
@@ -1260,6 +1268,7 @@ impl Emitter {
         handoff: Option<u32>,
         indexed_read: bool,
         fetch: PagedPrefixFetch,
+        keep_quiet: bool,
     ) {
         use super::SHADOW;
 
@@ -1290,9 +1299,11 @@ impl Emitter {
                 indexed_read,
                 fetch == PagedPrefixFetch::RetainedSse,
             );
-            self.op(Op::If(BlockType::Result(wasm_encoder::ValType::I32)))
-                .op(Op::I32Const(1))
-                .op(Op::Else);
+            self.op(Op::If(BlockType::Result(wasm_encoder::ValType::I32)));
+            if keep_quiet {
+                self.remember_quiet_fetch(first.pc);
+            }
+            self.op(Op::I32Const(1)).op(Op::Else);
         }
         self.op(Op::I64Const(first.pc as i64))
             .op(Op::I32Const((last.next_pc - first.pc) as i32));

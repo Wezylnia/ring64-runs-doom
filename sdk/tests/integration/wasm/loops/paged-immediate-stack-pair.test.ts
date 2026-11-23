@@ -16,15 +16,23 @@ test('sampled immediate push and pop preserve the stack store and precise interv
   const push = PC + 12n;
   const pop = push + 2n;
   const stop = pop + 1n;
+  const afterSuccessor = stop + 3n;
   const compile = Core.prototype.compile;
   const prototype = Core.prototype as unknown as {
     artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
   };
   const imports = prototype.artifactImports;
   let begins = 0;
+  let successorBegins = 0;
   Core.prototype.compile = function (pc, limits, seeds, regionPoints) {
     if (pc === PC && !seeds?.length) {
-      return compile.call(this, pc, limits, [PC, PC + 3n, PC + 6n, PC + 9n, push, pop, stop], true);
+      return compile.call(
+        this,
+        pc,
+        limits,
+        [PC, PC + 3n, PC + 6n, PC + 9n, push, pop, stop, afterSuccessor],
+        true,
+      );
     }
     return compile.call(this, pc, limits, seeds, regionPoints);
   };
@@ -34,6 +42,7 @@ test('sampled immediate push and pop preserve the stack store and precise interv
     if (typeof begin === 'function') {
       env.debug_begin = (pc: bigint, ...args: unknown[]) => {
         if (pc === push || pc === pop) begins++;
+        if (pc === stop) successorBegins++;
         return begin(pc, ...args);
       };
     }
@@ -43,8 +52,8 @@ test('sampled immediate push and pop preserve the stack store and precise interv
     await usingPaged(
       compiler,
       {
-        // CMP RDX,[RDI]; INC RDX (three times); PUSH -1; POP RCX; HLT.
-        code: '483b1748ffc248ffc248ffc26aff59f4',
+        // CMP RDX,[RDI]; INC RDX (three times); PUSH -1; POP RCX; INC RCX; HLT.
+        code: '483b1748ffc248ffc248ffc26aff5948ffc1f4',
         bank: { ...BANK, cr0: BANK.cr0 | 0x10000n },
         words: [[0x4008n, 0xa003n]],
         spans: [{ physical: 0xa000n, bytes: new Uint8Array(4096) }],
@@ -63,6 +72,23 @@ test('sampled immediate push and pop preserve the stack store and precise interv
           assert.equal(word(cpu, 0xa038n), saved);
         }
         assert.equal(begins, 0, 'the warm pair uses its readable and writable stack authority');
+
+        enter();
+        successorBegins = 0;
+        const successor = await cpu.run({ stop: afterSuccessor, budget: 12n });
+        assert.equal(successor.reason, 'stop');
+        assert.equal(successor.retired, 7n);
+        assert.equal(successor.state.registers[1], 0n);
+        assert.equal(successorBegins, 0, 'the pair retains the admitted successor fetch');
+
+        cpu.setDebugState({ addresses: [stop, 0n, 0n, 0n], dr6: 0n, dr7: 0x401n });
+        enter();
+        const breakpoint = await cpu.run({ stop: afterSuccessor, budget: 12n });
+        assert.equal(breakpoint.reason, 'debug-exception');
+        assert.equal(breakpoint.retired, 6n);
+        assert.equal(breakpoint.state.rip, stop);
+        assert.equal(breakpoint.state.registers[1], saved);
+        cpu.setDebugState({ addresses: [0n, 0n, 0n, 0n], dr6: 0n, dr7: 0n });
 
         for (const [limits, reason] of [
           [{ stop: pop, budget: 12n }, 'stop'],
