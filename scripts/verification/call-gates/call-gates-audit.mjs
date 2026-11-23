@@ -3,10 +3,9 @@ import { createServer } from 'node:http';
 import { dirname, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import os from 'node:os';
-import { chromium } from 'playwright';
 import { encode, freeze, hash, manifest, root } from '../artifacts.mjs';
 import { callGateNames, checkCallGates, measureCallGates } from './call-gate-kernels.mjs';
-import { systemChromeExecutable } from '../../support/browser.mjs';
+import { evaluateInChromium } from '../browser.mjs';
 
 // This driver freezes existing artifacts. Build and CPU scheduling belong to the caller.
 const args = process.argv.slice(2);
@@ -53,6 +52,7 @@ const sourcePaths = [
   'scripts/verification/call-gates/call-gates-audit.mjs',
   'scripts/verification/call-gates/call-gate-kernels.mjs',
   'scripts/verification/artifacts.mjs',
+  'scripts/verification/browser.mjs',
 ];
 const sourceHashes = async () =>
   Object.fromEntries(
@@ -104,39 +104,25 @@ if (!browserMode) {
       response.end();
     }
   });
-  await new Promise((done) => server.listen(0, '127.0.0.1', done));
-  let browser;
-  try {
-    const executablePath = process.env.RING64_BROWSER || (await systemChromeExecutable());
-    browser = await chromium.launch({
-      headless: true,
-      ...(executablePath ? { executablePath } : {}),
-    });
-    const page = await browser.newPage();
-    await page.goto(`http://127.0.0.1:${server.address().port}/`);
-    result = await page.evaluate(
-      async ({ characterization, knobs }) => {
-        const { checkCallGates, measureCallGates } =
-          await import('/scripts/verification/call-gates/call-gate-kernels.mjs');
-        const { createCpu } = await import('/build/host/index.js');
-        const compiler = await WebAssembly.compile(
-          await (await fetch('/build/ring64.wasm')).arrayBuffer(),
-        );
-        const side = { label: 'current', createCpu, compiler };
-        return {
-          ...(characterization
-            ? await measureCallGates(side, knobs)
-            : await checkCallGates(side, knobs)),
-          browserUserAgent: navigator.userAgent,
-        };
-      },
-      { characterization, knobs },
-    );
-    result.browserVersion = browser.version();
-  } finally {
-    await browser?.close();
-    await new Promise((done) => server.close(done));
-  }
+  result = await evaluateInChromium(
+    server,
+    async ({ characterization, knobs }) => {
+      const { checkCallGates, measureCallGates } =
+        await import('/scripts/verification/call-gates/call-gate-kernels.mjs');
+      const { createCpu } = await import('/build/host/index.js');
+      const compiler = await WebAssembly.compile(
+        await (await fetch('/build/ring64.wasm')).arrayBuffer(),
+      );
+      const side = { label: 'current', createCpu, compiler };
+      return {
+        ...(characterization
+          ? await measureCallGates(side, knobs)
+          : await checkCallGates(side, knobs)),
+        browserUserAgent: navigator.userAgent,
+      };
+    },
+    { characterization, knobs },
+  );
 }
 const after = await manifest(current.path);
 if (after.coreSha256 !== current.coreSha256 || after.hostSha256 !== current.hostSha256)

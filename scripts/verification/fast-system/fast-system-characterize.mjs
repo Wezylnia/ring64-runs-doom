@@ -3,11 +3,10 @@ import { createServer } from 'node:http';
 import { dirname, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import os from 'node:os';
-import { chromium } from 'playwright';
 import { assertFastCandidate } from './fast-system-support.mjs';
 import { encode, freeze, hash, manifest, root } from '../artifacts.mjs';
 import { measureFast, fastNames } from './fast-system-kernels.mjs';
-import { systemChromeExecutable } from '../../support/browser.mjs';
+import { evaluateInChromium } from '../browser.mjs';
 
 const args = process.argv.slice(2);
 const value = (name, fallback) => (args.includes(name) ? args[args.indexOf(name) + 1] : fallback);
@@ -68,17 +67,9 @@ if (!browserMode) {
       response.end();
     }
   });
-  await new Promise((done) => server.listen(0, '127.0.0.1', done));
-  let browser;
-  try {
-    const executablePath = process.env.RING64_BROWSER || (await systemChromeExecutable());
-    browser = await chromium.launch({
-      headless: true,
-      ...(executablePath ? { executablePath } : {}),
-    });
-    const page = await browser.newPage();
-    await page.goto(`http://127.0.0.1:${server.address().port}/`);
-    results = await page.evaluate(async (knobs) => {
+  results = await evaluateInChromium(
+    server,
+    async (knobs) => {
       const { measureFast } =
         await import('/scripts/verification/fast-system/fast-system-kernels.mjs');
       const { createCpu } = await import('/build/host/index.js');
@@ -89,12 +80,9 @@ if (!browserMode) {
         ...(await measureFast({ label: 'current', createCpu, compiler }, knobs)),
         browserUserAgent: navigator.userAgent,
       };
-    }, knobs);
-    results.browserVersion = browser.version();
-  } finally {
-    await browser?.close();
-    await new Promise((done) => server.close(done));
-  }
+    },
+    knobs,
+  );
 }
 await mkdir(dirname(output), { recursive: true });
 await writeFile(

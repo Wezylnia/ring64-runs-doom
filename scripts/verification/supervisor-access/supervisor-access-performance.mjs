@@ -3,10 +3,9 @@ import { createServer } from 'node:http';
 import { dirname, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import os from 'node:os';
-import { chromium } from 'playwright';
 import { encode, freeze, hash, manifest, root } from '../artifacts.mjs';
 import { supervisorAccessNames, supervisorAccessPlan } from './supervisor-access-kernels.mjs';
-import { systemChromeExecutable } from '../../support/browser.mjs';
+import { evaluateInChromium } from '../browser.mjs';
 
 // The caller owns the quiet measurement window; this driver never builds or starts other jobs.
 const args = process.argv.slice(2),
@@ -58,6 +57,7 @@ const sourcePaths = [
   'scripts/verification/supervisor-access/supervisor-access-performance.mjs',
   'scripts/verification/supervisor-access/supervisor-access-kernels.mjs',
   'scripts/verification/artifacts.mjs',
+  'scripts/verification/browser.mjs',
 ];
 const sourceHashes = async () =>
   Object.fromEntries(
@@ -104,21 +104,9 @@ if (!browserMode) {
       response.end();
     }
   });
-  // Ephemeral owned listener: no shared expected port; close it even when validation fails.
-  await new Promise((done, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', done);
-  });
-  let browser;
-  try {
-    const executablePath = process.env.RING64_BROWSER || (await systemChromeExecutable());
-    browser = await chromium.launch({
-      headless: true,
-      ...(executablePath ? { executablePath } : {}),
-    });
-    const page = await browser.newPage();
-    await page.goto(`http://127.0.0.1:${server.address().port}/`);
-    result = await page.evaluate(async (knobs) => {
+  result = await evaluateInChromium(
+    server,
+    async (knobs) => {
       const { createCpu } = await import('/build/host/index.js');
       const { measureSupervisorAccess } =
         await import('/supervisor-access-performance-kernels.mjs');
@@ -129,12 +117,9 @@ if (!browserMode) {
         ...(await measureSupervisorAccess({ createCpu, compiler }, knobs)),
         browserUserAgent: navigator.userAgent,
       };
-    }, knobs);
-    result.browserVersion = browser.version();
-  } finally {
-    await browser?.close();
-    await new Promise((done) => server.close(done));
-  }
+    },
+    knobs,
+  );
 }
 const after = await manifest(current.path);
 if (current.coreSha256 !== after.coreSha256 || current.hostSha256 !== after.hostSha256)

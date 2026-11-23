@@ -3,13 +3,12 @@ import { createServer } from 'node:http';
 import { dirname, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import os from 'node:os';
-import { chromium } from 'playwright';
 import { benchmarkScript, encode, freeze, hash, manifest, root } from '../artifacts.mjs';
 import {
   alignmentPerformanceNames,
   alignmentPerformancePlan,
 } from './alignment-checking-performance-kernels.mjs';
-import { systemChromeExecutable } from '../../support/browser.mjs';
+import { evaluateInChromium } from '../browser.mjs';
 
 // Build, guest-process serialization and the quiet timing window belong to the caller.
 const args = process.argv.slice(2),
@@ -176,6 +175,7 @@ const sourcePaths = [
   'scripts/verification/alignment-checking/alignment-checking-performance.mjs',
   'scripts/verification/alignment-checking/alignment-checking-performance-kernels.mjs',
   'scripts/verification/artifacts.mjs',
+  'scripts/verification/browser.mjs',
 ];
 const sourceHashes = async () =>
   Object.fromEntries(
@@ -295,20 +295,9 @@ if (!browserMode) {
     }
   });
   // Owned ephemeral listener has no expected shared port; the caller serializes this command.
-  await new Promise((done, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', done);
-  });
-  let browser;
-  try {
-    const executablePath = process.env.RING64_BROWSER || (await systemChromeExecutable());
-    browser = await chromium.launch({
-      headless: true,
-      ...(executablePath ? { executablePath } : {}),
-    });
-    const page = await browser.newPage();
-    await page.goto(`http://127.0.0.1:${server.address().port}/`);
-    result = await page.evaluate(async (knobs) => {
+  result = await evaluateInChromium(
+    server,
+    async (knobs) => {
       const { createCpu } = await import('/build/host/index.js');
       const { measureAlignmentPerformance } =
         await import('/alignment-checking-performance-kernels.mjs');
@@ -319,12 +308,9 @@ if (!browserMode) {
         ...(await measureAlignmentPerformance({ createCpu, compiler }, knobs)),
         browserUserAgent: navigator.userAgent,
       };
-    }, knobs);
-    result.browserVersion = browser.version();
-  } finally {
-    await browser?.close();
-    await new Promise((done) => server.close(done));
-  }
+    },
+    knobs,
+  );
 }
 const after = await manifest(current.path);
 if (current.coreSha256 !== after.coreSha256 || current.hostSha256 !== after.hostSha256)

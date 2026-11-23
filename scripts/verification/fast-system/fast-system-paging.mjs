@@ -3,7 +3,6 @@ import { createServer } from 'node:http';
 import { dirname, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import os from 'node:os';
-import { chromium } from 'playwright';
 import { assertFastCandidate, baseline, checkedBaseline } from './fast-system-support.mjs';
 import { encode, freeze, hash, manifest, root } from '../artifacts.mjs';
 import { measurePaging, pagingNames } from '../paging/paging-kernels.mjs';
@@ -19,7 +18,7 @@ import {
   reuseNames,
   populationNames,
 } from '../context-reuse/context-reuse-kernels.mjs';
-import { systemChromeExecutable } from '../../support/browser.mjs';
+import { evaluateInChromium } from '../browser.mjs';
 
 const args = process.argv.slice(2);
 const value = (name, fallback) => (args.includes(name) ? args[args.indexOf(name) + 1] : fallback);
@@ -139,57 +138,43 @@ if (!browserMode) {
       response.end();
     }
   });
-  await new Promise((done) => server.listen(0, '127.0.0.1', done));
-  let browser;
-  try {
-    const executablePath = process.env.RING64_BROWSER || (await systemChromeExecutable());
-    browser = await chromium.launch({
-      headless: true,
-      ...(executablePath ? { executablePath } : {}),
-    });
-    const page = await browser.newPage();
-    await page.goto(`http://127.0.0.1:${server.address().port}/`);
-    result = await page.evaluate(
-      async ({ definitions, knobs, msrMode, fastMode, reuseMode, populationMode }) => {
-        const { measurePaging, pagingNames } =
-          await import('/scripts/verification/paging/paging-kernels.mjs');
-        const { measurePagingPair } =
-          await import('/scripts/verification/fast-system/fast-system-paging-pair.mjs');
-        const { measureFast, fastNames, measureInheritedMsr, inheritedMsrNames } =
-          await import('/scripts/verification/fast-system/fast-system-kernels.mjs');
-        const { measureReusePair } =
-          await import('/scripts/verification/context-reuse/context-reuse-kernels.mjs');
-        const sides = await Promise.all(
-          definitions.map(async ([label]) => {
-            const { createCpu } = await import(`/${label}/build/host/index.js`);
-            return {
-              label,
-              createCpu,
-              compiler: await WebAssembly.compile(
-                await (await fetch(`/${label}/build/ring64.wasm`)).arrayBuffer(),
-              ),
-            };
-          }),
-        );
-        return {
-          ...(reuseMode || populationMode
-            ? await measureReusePair(sides, knobs)
-            : await measurePagingPair(
-                sides,
-                fastMode ? measureFast : msrMode ? measureInheritedMsr : measurePaging,
-                fastMode ? fastNames : msrMode ? inheritedMsrNames : pagingNames,
-                knobs,
-              )),
-          browserUserAgent: navigator.userAgent,
-        };
-      },
-      { definitions, knobs, msrMode, fastMode, reuseMode, populationMode },
-    );
-    result.browserVersion = browser.version();
-  } finally {
-    await browser?.close();
-    await new Promise((done) => server.close(done));
-  }
+  result = await evaluateInChromium(
+    server,
+    async ({ definitions, knobs, msrMode, fastMode, reuseMode, populationMode }) => {
+      const { measurePaging, pagingNames } =
+        await import('/scripts/verification/paging/paging-kernels.mjs');
+      const { measurePagingPair } =
+        await import('/scripts/verification/fast-system/fast-system-paging-pair.mjs');
+      const { measureFast, fastNames, measureInheritedMsr, inheritedMsrNames } =
+        await import('/scripts/verification/fast-system/fast-system-kernels.mjs');
+      const { measureReusePair } =
+        await import('/scripts/verification/context-reuse/context-reuse-kernels.mjs');
+      const sides = await Promise.all(
+        definitions.map(async ([label]) => {
+          const { createCpu } = await import(`/${label}/build/host/index.js`);
+          return {
+            label,
+            createCpu,
+            compiler: await WebAssembly.compile(
+              await (await fetch(`/${label}/build/ring64.wasm`)).arrayBuffer(),
+            ),
+          };
+        }),
+      );
+      return {
+        ...(reuseMode || populationMode
+          ? await measureReusePair(sides, knobs)
+          : await measurePagingPair(
+              sides,
+              fastMode ? measureFast : msrMode ? measureInheritedMsr : measurePaging,
+              fastMode ? fastNames : msrMode ? inheritedMsrNames : pagingNames,
+              knobs,
+            )),
+        browserUserAgent: navigator.userAgent,
+      };
+    },
+    { definitions, knobs, msrMode, fastMode, reuseMode, populationMode },
+  );
 }
 if (fastMode)
   result.definitions = result.definitions.map((definition) => ({

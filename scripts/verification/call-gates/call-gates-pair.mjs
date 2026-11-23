@@ -3,10 +3,9 @@ import { createServer } from 'node:http';
 import { dirname, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import os from 'node:os';
-import { chromium } from 'playwright';
 import { encode, freeze, hash, manifest, root } from '../artifacts.mjs';
 import { callGateIterationCount, callGateNames } from './call-gate-kernels.mjs';
-import { systemChromeExecutable } from '../../support/browser.mjs';
+import { evaluateInChromium } from '../browser.mjs';
 
 const args = process.argv.slice(2),
   values = {};
@@ -94,6 +93,7 @@ const sourcePaths = [
   'scripts/verification/call-gates/call-gates-pair-kernels.mjs',
   'scripts/verification/call-gates/call-gate-kernels.mjs',
   'scripts/verification/artifacts.mjs',
+  'scripts/verification/browser.mjs',
 ];
 const sourceHashes = async () =>
   Object.fromEntries(
@@ -158,42 +158,25 @@ if (!browserMode) {
     }
   });
   // An owned ephemeral listener has no shared expected port and is closed below.
-  await new Promise((done, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', done);
-  });
-  let browser;
-  try {
-    const executablePath = process.env.RING64_BROWSER || (await systemChromeExecutable());
-    browser = await chromium.launch({
-      headless: true,
-      ...(executablePath ? { executablePath } : {}),
-    });
-    const page = await browser.newPage();
-    await page.goto(`http://127.0.0.1:${server.address().port}/`);
-    result = await page.evaluate(
-      async ({ sides, knobs }) => {
-        const factories = [];
-        for (const side of sides) {
-          const { createCpu } = await import(`/${side.label}/host/index.js`);
-          const compiler = await WebAssembly.compile(
-            await (await fetch(`/${side.label}/ring64.wasm`)).arrayBuffer(),
-          );
-          factories.push({ label: side.label, createCpu, compiler });
-        }
-        const { measureCallGatesPair } = await import('/driver/call-gates-pair-kernels.mjs');
-        return {
-          ...(await measureCallGatesPair(factories, knobs)),
-          browserUserAgent: navigator.userAgent,
-        };
-      },
-      { sides, knobs },
-    );
-    result.browserVersion = browser.version();
-  } finally {
-    await browser?.close();
-    await new Promise((done) => server.close(done));
-  }
+  result = await evaluateInChromium(
+    server,
+    async ({ sides, knobs }) => {
+      const factories = [];
+      for (const side of sides) {
+        const { createCpu } = await import(`/${side.label}/host/index.js`);
+        const compiler = await WebAssembly.compile(
+          await (await fetch(`/${side.label}/ring64.wasm`)).arrayBuffer(),
+        );
+        factories.push({ label: side.label, createCpu, compiler });
+      }
+      const { measureCallGatesPair } = await import('/driver/call-gates-pair-kernels.mjs');
+      return {
+        ...(await measureCallGatesPair(factories, knobs)),
+        browserUserAgent: navigator.userAgent,
+      };
+    },
+    { sides, knobs },
+  );
 }
 for (const side of [...inputs, ...sides]) {
   const after = await manifest(side.path);

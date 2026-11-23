@@ -2,7 +2,6 @@ import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { dirname, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { chromium } from 'playwright';
 import { coreModulePath } from '../../bench/emitted-host.mjs';
 import { assertFastCandidate, baseline, checkedBaseline } from './fast-system-support.mjs';
 import { encode, freeze, hash, manifest, root } from '../artifacts.mjs';
@@ -10,7 +9,7 @@ import {
   checkedContextBaseline,
   contextBaseline,
 } from '../context-reuse/context-reuse-support.mjs';
-import { systemChromeExecutable } from '../../support/browser.mjs';
+import { evaluateInChromium } from '../browser.mjs';
 
 const args = process.argv.slice(2);
 const browserMode = args.includes('--browser');
@@ -681,37 +680,22 @@ if (!browserMode) {
       response.end();
     }
   });
-  await new Promise((done) => server.listen(0, '127.0.0.1', done));
-  let browser;
-  try {
-    const executablePath = process.env.RING64_BROWSER || (await systemChromeExecutable());
-    browser = await chromium.launch({
-      headless: true,
-      ...(executablePath ? { executablePath } : {}),
-    });
-    const page = await browser.newPage();
-    await page.goto(`http://127.0.0.1:${server.address().port}/`);
-    result = await page.evaluate(observe, {
-      sides: sides.map(({ label, core }) => ({
-        label,
-        core,
-        host: `/${label}/host`,
-        wasm: `/${label}/ring64.wasm`,
-      })),
-      kernels: '/benchmarks/kernels.mjs',
-      pagingKernels: '/scripts/verification/paging/paging-kernels.mjs',
-      fastKernels: '/scripts/verification/fast-system/fast-system-kernels.mjs',
-      reuseKernels: '/scripts/verification/context-reuse/context-reuse-kernels.mjs',
-      includeFast: args.includes('--include-fast'),
-      contextReuse,
-      sameBuildControl: args.includes('--baseline-control'),
-      iterations: Number(value('--iterations', 101)),
-    });
-    result.browserVersion = browser.version();
-  } finally {
-    await browser?.close();
-    await new Promise((done) => server.close(done));
-  }
+  result = await evaluateInChromium(server, observe, {
+    sides: sides.map(({ label, core }) => ({
+      label,
+      core,
+      host: `/${label}/host`,
+      wasm: `/${label}/ring64.wasm`,
+    })),
+    kernels: '/benchmarks/kernels.mjs',
+    pagingKernels: '/scripts/verification/paging/paging-kernels.mjs',
+    fastKernels: '/scripts/verification/fast-system/fast-system-kernels.mjs',
+    reuseKernels: '/scripts/verification/context-reuse/context-reuse-kernels.mjs',
+    includeFast: args.includes('--include-fast'),
+    contextReuse,
+    sameBuildControl: args.includes('--baseline-control'),
+    iterations: Number(value('--iterations', 101)),
+  });
 }
 const sourcesAfter = await inputHashes();
 if (JSON.stringify(sourcesBefore) !== JSON.stringify(sourcesAfter))

@@ -3,9 +3,8 @@ import { cp, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { dirname, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import os from 'node:os';
-import { chromium } from 'playwright';
 import { root, freeze, manifest, hash, encode } from '../artifacts.mjs';
-import { systemChromeExecutable } from '../../support/browser.mjs';
+import { evaluateInChromium } from '../browser.mjs';
 
 const args = process.argv.slice(2);
 const values = {};
@@ -34,6 +33,7 @@ const oracleFiles = (await readdir(resolve(root, 'tests/execution/supervisor-acc
 const sources = [
   'scripts/verification/supervisor-access/supervisor-access-audit.mjs',
   'scripts/verification/artifacts.mjs',
+  'scripts/verification/browser.mjs',
   ...oracleFiles.flatMap((name) => [
     `tests/execution/supervisor-access/${name}`,
     `build/tests/execution/supervisor-access/${name.replace(/\.ts$/, '.js')}`,
@@ -116,17 +116,9 @@ if (!browserMode) {
     }
   });
   // An ephemeral owned listener has no expected shared port and is always closed below.
-  await new Promise((done) => server.listen(0, '127.0.0.1', done));
-  let browser;
-  try {
-    const executablePath = process.env.RING64_BROWSER || (await systemChromeExecutable());
-    browser = await chromium.launch({
-      headless: true,
-      ...(executablePath ? { executablePath } : {}),
-    });
-    const page = await browser.newPage();
-    await page.goto(`http://127.0.0.1:${server.address().port}/`);
-    result = await page.evaluate(async (selected) => {
+  result = await evaluateInChromium(
+    server,
+    async (selected) => {
       const { createCpu } = await import('/build/host/index.js');
       const { checkSupervisorAccess, groups } =
         await import('/build/tests/execution/supervisor-access/oracle.js');
@@ -139,12 +131,9 @@ if (!browserMode) {
         ...(await checkSupervisorAccess({ createCpu, compiler }, selected)),
         browserUserAgent: navigator.userAgent,
       };
-    }, selected);
-    result.browserVersion = browser.version();
-  } finally {
-    await browser?.close();
-    await new Promise((done) => server.close(done));
-  }
+    },
+    selected,
+  );
 }
 const after = await manifest(current.path);
 if (after.coreSha256 !== current.coreSha256 || after.hostSha256 !== current.hostSha256)
