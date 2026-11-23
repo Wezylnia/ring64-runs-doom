@@ -1,12 +1,12 @@
 // Group source files by responsibility while keeping the emitter modules in one scope.
 mod artifact;
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-pub(crate) use artifact::emit_flat_trace;
+pub(crate) use artifact::placement::emit_flat_trace;
 #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
-pub(crate) use artifact::emit_mmio_profile;
+pub(crate) use artifact::placement::emit_mmio_profile;
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-pub(crate) use artifact::emit_paged_vector_copy;
-pub(crate) use artifact::emit_profile;
+pub(crate) use artifact::placement::emit_paged_vector_copy;
+pub(crate) use artifact::placement::emit_profile;
 #[path = "integer/bits.rs"]
 mod bits;
 #[path = "integer/bmi.rs"]

@@ -1,6 +1,6 @@
-use super::{ADDRESS, Emitter, VALUE};
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-use super::{STORE_STATUS, indexed::IndexedOperand};
+use super::{ADDRESS, STORE_STATUS, indexed::IndexedOperand};
+use super::{Emitter, VALUE};
 use crate::x86::context::Segment;
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 use crate::x86::instruction::AddressBase;
