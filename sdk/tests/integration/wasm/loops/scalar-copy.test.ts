@@ -246,8 +246,8 @@ test('flat vector pairs preserve affine setup, overlapping loads and a late stor
     return env;
   };
   try {
-    const enter = (destination: bigint, limit = data + 32n) =>
-      cpu.setState(initial(PC, { 1: limit, 2: 0n, 6: destination, 7: data }));
+    const enter = (destination: bigint, limit = data + 32n, source = data) =>
+      cpu.setState(initial(PC, { 1: limit, 2: 0n, 6: destination, 7: source }));
     enter(data + 16n);
     const copied = await cpu.run({ budget: 20n, stop });
     assert.equal(copied.reason, 'stop');
@@ -285,6 +285,13 @@ test('flat vector pairs preserve affine setup, overlapping loads and a late stor
     assert.equal(split.retired, 5n);
     assert.equal(split.state.rip, PC + 17n);
     assert.deepEqual(cpu.readMemory(data + 4080n, 16), first);
+
+    enter(data + 16n, data + 4128n, data + 4064n);
+    const nextLap = await cpu.run({ budget: 20n, stop });
+    assert.equal(nextLap.reason, 'data-fault');
+    assert.equal(nextLap.retired, 9n);
+    assert.equal(nextLap.state.rip, PC);
+    assert.equal(nextLap.state.flags & 0x41n, 1n);
   } finally {
     proto.artifactImports = imports;
     cpu.dispose();

@@ -40,6 +40,22 @@ impl FlatVectorCopy {
     pub(super) fn instruction_count(self) -> u32 {
         self.group.instruction_count() + 3 * u32::from(self.tail.is_some())
     }
+
+    pub(super) fn can_defer_flags(self) -> bool {
+        self.tail.is_some_and(|tail| {
+            matches!(
+                tail.condition,
+                Condition::Below
+                    | Condition::AboveOrEqual
+                    | Condition::Equal
+                    | Condition::NotEqual
+                    | Condition::BelowOrEqual
+                    | Condition::Above
+                    | Condition::Less
+                    | Condition::GreaterOrEqual
+            )
+        })
+    }
 }
 
 impl FlatCopyTail {
@@ -560,7 +576,12 @@ impl Emitter {
         copy: FlatVectorCopy,
         loop_depth: u32,
         spans: (SpanCache, SpanCache),
+        start_remaining: Option<u32>,
     ) {
+        let start_remaining = start_remaining.filter(|_| copy.can_defer_flags());
+        if let Some(start) = start_remaining {
+            self.op(Op::LocalGet(REMAINING)).op(Op::LocalSet(start));
+        }
         let FlatVectorCopy { group, tail } = copy;
         if tail.is_some() {
             self.op(Op::Loop(BlockType::Empty));
@@ -587,7 +608,7 @@ impl Emitter {
                 Width::W32,
                 None,
             );
-            self.omit_result_status = false;
+            self.omit_result_status = start_remaining.is_some();
             self.integer(
                 Alu::Cmp,
                 tail.compare,
@@ -599,9 +620,16 @@ impl Emitter {
             self.retire_instructions(copy.instruction_count());
             self.op(Op::I64Const(instructions[0].pc as i64))
                 .op(Op::LocalSet(RIP));
-            self.condition(tail.condition);
-            self.op(Op::BrIf(3))
-                .op(Op::I64Const(tail.next_pc as i64))
+            self.cloned_condition(
+                tail.condition,
+                start_remaining.map(|_| super::loop_cfg::ConditionSource::Operands(Width::W32)),
+            );
+            self.op(Op::BrIf(3));
+            if start_remaining.is_some() {
+                self.arithmetic_result(Alu::Cmp, Width::W32);
+                self.arithmetic_flags(Alu::Cmp, Width::W32);
+            }
+            self.op(Op::I64Const(tail.next_pc as i64))
                 .op(Op::LocalSet(RIP));
             self.route(tail.next_pc, loop_depth + 4, loop_depth + 5);
         } else {
@@ -609,8 +637,24 @@ impl Emitter {
             self.route(group.end, loop_depth + 3, loop_depth + 4);
         }
         self.op(Op::End).op(Op::End).op(Op::End);
-        if tail.is_some() {
+        if let Some(tail) = tail {
             self.op(Op::End);
+            if let Some(start) = start_remaining {
+                // A refused guard leaves the previous lap's compare registers
+                // live. Rebuild its flags before entering the checked copy.
+                self.op(Op::LocalGet(REMAINING))
+                    .op(Op::LocalGet(start))
+                    .op(Op::I64Ne)
+                    .op(Op::If(BlockType::Empty));
+                self.integer(
+                    Alu::Cmp,
+                    tail.compare,
+                    DataOperand::Register(tail.limit),
+                    Width::W32,
+                    None,
+                );
+                self.op(Op::End);
+            }
         }
     }
 
