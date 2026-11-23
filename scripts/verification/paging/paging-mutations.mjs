@@ -168,9 +168,18 @@ const mutants = [
   {
     name: 'speculative-successor-compilation-publishes-accessed',
     file: translation,
-    old: '        let observed = core.boundary_observed();\n        match dbt::compile_with_paging',
-    replacement:
-      '        let observed = core.boundary_observed();\n        if let Some(bank) = core.paging { let request = crate::x86::paging::walk::Request { linear: (pc & !0xfff).wrapping_add(0x1000), access: Access::Execute, user: core.context.cpl() == 3 }; let _ = crate::x86::paging::walk::walk(&mut core.image, &bank, request); }\n        match dbt::compile_with_paging',
+    old: '        match dbt::compile_with_paging_cache(',
+    replacement: `        if let Some(bank) = core.paging.as_ref() {
+            use crate::x86::paging::walk::{self, AccessClass, Request};
+            let state = unsafe { &*core.state.get() };
+            let successor = Request {
+                linear: (pc & !0xfff).wrapping_add(0x1000),
+                access: crate::memory::Access::Execute,
+                class: AccessClass::operand(core.context.cpl(), state.flags & crate::x86::flags::AC != 0),
+            };
+            let _ = walk::walk(&mut core.image, bank, successor, &state.protection_keys);
+        }
+        match dbt::compile_with_paging_cache(`,
     filter: 'speculative discovery leave future code A',
   },
   {
