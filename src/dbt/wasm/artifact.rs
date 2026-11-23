@@ -1,3 +1,4 @@
+mod abi;
 mod operation_uses;
 pub(super) mod placement;
 
@@ -20,6 +21,7 @@ use crate::x86::context::Segment;
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 use crate::x86::instruction::Instruction;
 use crate::x86::instruction::{Location, MemoryAluOperands, Operation};
+use abi::{BaseSignatures, add_function_type};
 use operation_uses::OperationUses;
 use wasm_encoder::{
     BlockType, CodeSection, EntityType, ExportKind, ExportSection, Function, FunctionSection,
@@ -174,16 +176,6 @@ fn flat_call_order(instructions: &[Instruction]) -> Option<Vec<usize>> {
     Some(order)
 }
 
-fn add_function_type<const PARAMS: usize, const RESULTS: usize>(
-    types: &mut TypeSection,
-    params: [ValType; PARAMS],
-    results: [ValType; RESULTS],
-) -> u32 {
-    let index = types.len();
-    types.ty().function(params, results);
-    index
-}
-
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum SharedIndexedReads {
     Disabled,
@@ -301,36 +293,7 @@ fn emit_body(
     let segmented = !unit.context.is_long64();
     let target_type = uses.dynamic_targets || segmented;
     let mut types = TypeSection::new();
-    types.ty().function(
-        if segmented {
-            vec![ValType::I64, ValType::I32, ValType::I32]
-        } else {
-            vec![ValType::I64, ValType::I32]
-        },
-        [ValType::I64],
-    );
-    types.ty().function(
-        if segmented {
-            vec![ValType::I64, ValType::I32, ValType::I64, ValType::I32]
-        } else {
-            vec![ValType::I64, ValType::I32, ValType::I64]
-        },
-        [ValType::I32],
-    );
-    types.ty().function([], [ValType::I32]);
-    types.ty().function(
-        [
-            ValType::I32,
-            ValType::I64,
-            ValType::I64,
-            ValType::I32,
-            ValType::I32,
-        ],
-        [ValType::I32],
-    );
-    if target_type {
-        types.ty().function([ValType::I64], [ValType::I32]);
-    }
+    let base = BaseSignatures::declare(&mut types, segmented, target_type);
     let multiply_type = uses.wide_product.then(|| {
         add_function_type(
             &mut types,
@@ -885,7 +848,7 @@ fn emit_body(
     imports.import(
         "env",
         if segmented { "segmented_load" } else { "load" },
-        EntityType::Function(0),
+        EntityType::Function(base.load),
     );
     imports.import(
         "env",
@@ -894,7 +857,7 @@ fn emit_body(
         } else {
             "store"
         },
-        EntityType::Function(1),
+        EntityType::Function(base.store),
     );
     imports.import(
         "env",
@@ -903,7 +866,7 @@ fn emit_body(
         } else {
             "access_failed"
         },
-        EntityType::Function(2),
+        EntityType::Function(base.status),
     );
     let write_intent = unit.instructions.iter().any(|instruction| {
         matches!(instruction.operation,
@@ -942,7 +905,7 @@ fn emit_body(
             } else {
                 "load_for_write"
             },
-            EntityType::Function(0),
+            EntityType::Function(base.load),
         );
     }
     let mut run_index = 3 + u32::from(write_intent);
@@ -956,10 +919,15 @@ fn emit_body(
     let divide = divide_type.map(|index| import_function("divide", index));
     let divide_failed = uses
         .wide_divide
-        .then(|| import_function("divide_failed", 2));
-    let access_reason = (segmented || paged).then(|| import_function("access_reason", 2));
+        .then(|| import_function("divide_failed", base.status));
+    let access_reason = (segmented || paged).then(|| import_function("access_reason", base.status));
     let mmio_operand = mmio_type.map(|index| import_function("mmio_operand", index));
-    let target_check = segmented.then(|| import_function("target_check", 4));
+    let target_check = segmented.then(|| {
+        import_function(
+            "target_check",
+            base.target.expect("segmented target signature"),
+        )
+    });
     let vector_load = vector_load_type.map(|index| import_function("vector_load", index));
     let block16_for_write =
         block16_for_write_type.map(|index| import_function("block16_for_write", index));
@@ -1187,7 +1155,7 @@ fn emit_body(
     let external_step = external_step_type.map(|index| import_function("external_step", index));
     let halt = halt_type.map(|index| import_function("halt", index));
     let vector_access_reason = if vector_banks.loads || vector_store.is_some() || uses.store_mxcsr {
-        Some(access_reason.unwrap_or_else(|| import_function("access_reason", 2)))
+        Some(access_reason.unwrap_or_else(|| import_function("access_reason", base.status)))
     } else {
         None
     };
@@ -1204,7 +1172,7 @@ fn emit_body(
                 [ValType::I32],
             );
             let unguard_type = add_function_type(&mut types, [], []);
-            let begin = import_function("parallel_begin", 2);
+            let begin = import_function("parallel_begin", base.status);
             import_function("parallel_end", release_type);
             import_function("parallel_guard", guard_type);
             import_function("parallel_unguard", unguard_type);
@@ -1438,9 +1406,9 @@ fn emit_body(
         })
         .and_then(|body| body.linear_recurrence(unit));
     let mut functions = FunctionSection::new();
-    functions.function(3);
+    functions.function(base.run);
     if target_lookup {
-        functions.function(4);
+        functions.function(base.target.expect("dynamic target lookup signature"));
     }
     let mut exports = ExportSection::new();
     exports.export("run", ExportKind::Func, run_index);
