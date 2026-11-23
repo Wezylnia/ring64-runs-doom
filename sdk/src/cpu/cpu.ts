@@ -1,7 +1,6 @@
 import { captureIo, type IoProvider } from '../embedding/io.js';
 import { copyMemoryInput, unsigned64 } from '../embedding/input.js';
 import { captureMmio, captureMmioRanges, type MmioProvider } from '../embedding/mmio.js';
-import type { DeviceNotAvailable, NumericControlFault } from '../state/numeric/numeric-controls.js';
 import { captureDebugState, type DebugState } from '../state/execution/debug.js';
 import { capturePagingState, type PagingState } from '../state/system/paging.js';
 import { captureTimeState, type TimeState } from '../state/system/time.js';
@@ -18,25 +17,17 @@ import {
   captureContext,
   type ExecutionContext,
   type ExecutionContextSnapshot,
-  type SegmentFault,
 } from '../state/system/context.js';
-import { captureX87State, type X87State, type X87Exception } from '../state/numeric/x87.js';
-import {
-  Core,
-  type CompilerSource,
-  type Fault,
-  type AlignmentFault,
-  type AlignmentCheck,
-  type SimdException,
-  type GeneralProtectionFault,
-  type ProtectionFault,
-  type SystemMemoryFault,
-  type DebugException,
-  type PageFault,
-  type PhysicalMemoryFault,
-} from '../wasm/core.js';
+import { captureX87State, type X87State } from '../state/numeric/x87.js';
+import { Core, type CompilerSource } from '../wasm/core.js';
 import type { GeneratedRun } from '../wasm/abi.js';
 import { captureInitialContext, captureLimits, type Limits } from './options.js';
+import {
+  isRunReason,
+  readRunDiagnostics,
+  validateRunDiagnostic,
+  type RunResult,
+} from './run-result.js';
 import { OwnerLinkProfile } from './owner-links.js';
 import { LinearRegionTrace, PagedCorridor, RegionTrace } from './regions.js';
 import { Translations, type Artifact, type InstalledEntry } from './translations.js';
@@ -61,6 +52,7 @@ import {
   type MemoryOptions,
 } from '../embedding/memory.js';
 
+export type { RunReason, RunResult } from './run-result.js';
 export type { Limits } from './options.js';
 
 interface CommonOptions {
@@ -80,125 +72,6 @@ export type RunOptions = {
   exceptionDelivery?: { budget: bigint } | undefined;
   eventDelivery?: { budget: bigint } | undefined;
 };
-
-const runReasonNames = [
-  'budget',
-  'stop',
-  'unsupported',
-  'fetch-fault',
-  'target-fault',
-  'data-fault',
-  'invalid-encoding',
-  'resource-limit',
-  'divide-error',
-  'segment-fault',
-  'repeat-budget',
-  'alignment-fault',
-  'simd-exception',
-  'general-protection',
-  'x87-exception',
-  'protection-fault',
-  'system-memory-fault',
-  'debug-exception',
-  'event-budget',
-  'pending-exception',
-  'shutdown',
-  'pending-interrupt',
-  'halted',
-  'page-fault',
-  'physical-memory-fault',
-  'device-not-available',
-  'alignment-check',
-  'paused',
-] as const;
-
-export type RunReason = (typeof runReasonNames)[number];
-const runReasons: ReadonlySet<string> = new Set(runReasonNames);
-
-function isRunReason(reason: string): reason is RunReason {
-  return runReasons.has(reason);
-}
-
-interface RunDiagnostics {
-  fault?: Fault;
-  segmentFault?: SegmentFault;
-  alignmentFault?: AlignmentFault;
-  alignmentCheck?: AlignmentCheck;
-  simdException?: SimdException;
-  generalProtectionFault?: GeneralProtectionFault;
-  x87Exception?: X87Exception;
-  deviceNotAvailable?: DeviceNotAvailable;
-  numericControlFault?: NumericControlFault;
-  protectionFault?: ProtectionFault;
-  systemMemoryFault?: SystemMemoryFault;
-  debugException?: DebugException;
-  pageFault?: PageFault;
-  physicalMemoryFault?: PhysicalMemoryFault;
-}
-
-interface RunResultBase extends RunDiagnostics {
-  retired: bigint;
-  remaining: bigint;
-  repeatIterations: bigint;
-  remainingRepeatBudget: bigint;
-  deliveryAttempts?: bigint;
-  remainingDeliveryBudget?: bigint;
-  state: StateSnapshot;
-  resources: {
-    pagingRestarts?: number;
-    compilations: number;
-    cacheHits: number;
-    nativeEntries: number;
-    dispatches: number;
-    generatedBytes: number;
-    cachedArtifacts: number;
-    cachedBytes: number;
-  };
-  timings: {
-    translationMs: number;
-    browserCompileMs: number;
-    instantiationMs: number;
-    executionMs: number;
-    totalMs: number;
-  };
-}
-
-// The optional numeric ABI can omit details even for a matching reason.
-const runDiagnosticFields = {
-  'fetch-fault': 'fault',
-  'target-fault': 'fault',
-  'data-fault': 'fault',
-  'segment-fault': 'segmentFault',
-  'alignment-fault': 'alignmentFault',
-  'alignment-check': 'alignmentCheck',
-  'simd-exception': 'simdException',
-  'general-protection': 'generalProtectionFault',
-  'x87-exception': 'x87Exception',
-  'protection-fault': 'protectionFault',
-  'system-memory-fault': 'systemMemoryFault',
-  'debug-exception': 'debugException',
-  'page-fault': 'pageFault',
-  'physical-memory-fault': 'physicalMemoryFault',
-} as const satisfies Partial<Record<RunReason, keyof RunDiagnostics>>;
-
-type DiagnosedReason = keyof typeof runDiagnosticFields;
-type DiagnosedRun = {
-  [Reason in DiagnosedReason]: { reason: Reason } & Required<
-    Pick<RunDiagnostics, (typeof runDiagnosticFields)[Reason]>
-  >;
-}[DiagnosedReason];
-
-export type RunResult = RunResultBase &
-  (DiagnosedRun | { reason: Exclude<RunReason, DiagnosedReason> });
-
-function validateRunDiagnostic(
-  result: RunResultBase & { reason: RunReason },
-): asserts result is RunResult {
-  const fields: Partial<Record<RunReason, keyof RunDiagnostics>> = runDiagnosticFields;
-  const field = fields[result.reason];
-  if (field !== undefined && result[field] === undefined)
-    throw new Error(`core omitted ${field} for ${result.reason}`);
-}
 
 export const CONSTRUCTION = Symbol('createCpu');
 export const BEGIN_RUN = Symbol('beginRun');
@@ -635,26 +508,7 @@ export class Cpu {
     if (!isRunReason(reason)) throw new Error(`core returned an invalid run reason: ${reason}`);
     const { budget, repeatBudget, deliveryBudget, resources, timings, began } = run;
     this.pruneTranslations();
-    const numeric = this.#engine.numericFault?.(reason);
-    const fault = this.#engine.fault(reason);
-    const segmentFault = this.#engine.segmentFault(reason);
-    const alignmentFault = this.#engine.alignmentFault(reason);
-    const alignmentCheck =
-      reason === 'alignment-check' ? this.#engine.alignmentCheck(reason) : undefined;
-    const simdException =
-      reason === 'simd-exception' ? this.#engine.simdException(reason) : undefined;
-    const generalProtectionFault =
-      reason === 'general-protection' ? this.#engine.generalProtectionFault(reason) : undefined;
-    const x87Exception = reason === 'x87-exception' ? this.#engine.x87Exception(reason) : undefined;
-    const protectionFault =
-      reason === 'protection-fault' ? this.#engine.protectionFault(reason) : undefined;
-    const systemMemoryFault =
-      reason === 'system-memory-fault' ? this.#engine.systemMemoryFault(reason) : undefined;
-    const debugException =
-      reason === 'debug-exception' ? this.#engine.debugException(reason) : undefined;
-    const pageFault = reason === 'page-fault' ? this.#engine.pageFault(reason) : undefined;
-    const physicalMemoryFault =
-      reason === 'physical-memory-fault' ? this.#engine.physicalMemoryFault(reason) : undefined;
+    const diagnostics = readRunDiagnostics(this.#engine, reason);
     const result = {
       reason,
       retired: budget - remaining,
@@ -668,23 +522,7 @@ export class Cpu {
             remainingDeliveryBudget: remainingDeliveryBudget!,
           }),
       state: this.#engine.snapshot(),
-      ...(numeric?.vector === 7
-        ? { deviceNotAvailable: numeric }
-        : numeric?.vector === 6
-          ? { numericControlFault: numeric }
-          : {}),
-      ...(fault ? { fault } : {}),
-      ...(segmentFault ? { segmentFault } : {}),
-      ...(alignmentFault ? { alignmentFault } : {}),
-      ...(alignmentCheck ? { alignmentCheck } : {}),
-      ...(simdException ? { simdException } : {}),
-      ...(generalProtectionFault ? { generalProtectionFault } : {}),
-      ...(x87Exception ? { x87Exception } : {}),
-      ...(protectionFault ? { protectionFault } : {}),
-      ...(systemMemoryFault ? { systemMemoryFault } : {}),
-      ...(debugException ? { debugException } : {}),
-      ...(pageFault ? { pageFault } : {}),
-      ...(physicalMemoryFault ? { physicalMemoryFault } : {}),
+      ...diagnostics,
       resources: { ...resources, ...this.#cache.resources() },
       timings,
     };
