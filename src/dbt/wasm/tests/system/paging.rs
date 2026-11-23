@@ -1,4 +1,4 @@
-use super::*;
+use crate::dbt::wasm::tests::*;
 use crate::embedding::layout::{DEBUG_EXCEPTION, DISPATCH, PROTECTION};
 use crate::x86::context::{Mode, Segment};
 use crate::x86::instruction::{Address, AddressBase, PagingInstruction as Paging};

@@ -1,77 +1,8 @@
-#[path = "memory/addressing.rs"]
-mod addressing;
-#[path = "integer/arithmetic_bits.rs"]
-mod arithmetic_bits;
-#[path = "integer/bits.rs"]
-mod bits;
-#[path = "integer/bmi.rs"]
-mod bmi;
-#[cfg(target_arch = "x86_64")]
-#[path = "integer/bmi_native.rs"]
-mod bmi_native;
-#[path = "memory/code_validity.rs"]
-mod code_validity;
-#[path = "execution/compound_stack.rs"]
-mod compound_stack;
-#[path = "execution/conditions.rs"]
-mod conditions;
-#[path = "integer/counts.rs"]
-mod counts;
-#[path = "integer/data_widths.rs"]
-mod data_widths;
-#[path = "execution/df.rs"]
-mod df;
-#[path = "integer/exchange.rs"]
-mod exchange;
-#[cfg(target_arch = "x86_64")]
-#[path = "integer/exchange_native.rs"]
-mod exchange_native;
-#[path = "system/external_interrupts.rs"]
-mod external_interrupts;
-#[path = "execution/far.rs"]
-mod far;
-#[path = "numeric/float/mod.rs"]
-mod float;
-#[path = "integer/integer_memory.rs"]
-mod integer_memory;
-#[path = "integer/logical.rs"]
-mod logical;
-#[path = "numeric/mmx.rs"]
-mod mmx;
-#[path = "execution/mode_context.rs"]
-mod mode_context;
-#[path = "integer/multiply_divide.rs"]
-mod multiply_divide;
-#[path = "execution/near_stack.rs"]
-mod near_stack;
-#[path = "numeric/numeric_state.rs"]
-mod numeric_state;
-#[path = "system/paging.rs"]
-mod paging;
-#[path = "system/processor.rs"]
-mod processor;
-#[path = "system/protection.rs"]
-mod protection;
-#[path = "execution/routing/mod.rs"]
-mod routing;
-#[path = "system/software_events.rs"]
-mod software_events;
-#[path = "execution/stack.rs"]
-mod stack;
-#[path = "memory/streaming.rs"]
-mod streaming;
-#[path = "memory/strings.rs"]
-mod strings;
-#[path = "system/system_flags.rs"]
-mod system_flags;
-#[path = "system/system_lifetime.rs"]
-mod system_lifetime;
-#[path = "system/task.rs"]
-mod task;
-#[path = "numeric/vector/mod.rs"]
-mod vector;
-#[path = "numeric/x87.rs"]
-mod x87;
+mod execution;
+mod integer;
+mod memory;
+mod numeric;
+mod system;
 
 use super::*;
 use crate::embedding::layout::RunState;

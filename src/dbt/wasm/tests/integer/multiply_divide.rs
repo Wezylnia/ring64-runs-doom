@@ -1,4 +1,4 @@
-use super::*;
+use crate::dbt::wasm::tests::*;
 
 fn literal(code: &[u8], input: &[(usize, u64)], expected: &[(usize, u64)], flags: u64) -> Value {
     let artifact = compiled_fixture(0x1000, code, 0x1000);

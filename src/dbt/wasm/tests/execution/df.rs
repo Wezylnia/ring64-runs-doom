@@ -1,4 +1,4 @@
-use super::*;
+use crate::dbt::wasm::tests::*;
 
 #[test]
 fn inherited_flag_writers_preserve_direction_including_undefined_and_zero_counts() {

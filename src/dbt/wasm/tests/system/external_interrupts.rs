@@ -1,4 +1,4 @@
-use super::*;
+use crate::dbt::wasm::tests::*;
 use crate::embedding::layout::{BUDGET, DEBUG_EXCEPTION, HALTED, PENDING_INTERRUPT};
 
 #[test]

@@ -1,5 +1,5 @@
-use super::*;
 mod boundaries;
+use crate::dbt::wasm::tests::*;
 use crate::x86::context::Segment;
 use crate::x86::float::{Format, Kind, Op as Numeric};
 use crate::x86::instruction::{

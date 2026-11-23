@@ -1,6 +1,6 @@
-use super::*;
 mod boundaries;
 mod sse3;
+use crate::dbt::wasm::tests::*;
 use crate::embedding::layout::{BUDGET, DATA, DISPATCH};
 use crate::x86::context::Segment;
 use crate::x86::instruction::{

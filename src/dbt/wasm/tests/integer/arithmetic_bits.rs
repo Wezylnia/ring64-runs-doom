@@ -1,4 +1,4 @@
-use super::*;
+use crate::dbt::wasm::tests::*;
 
 fn literal(
     code: &[u8],

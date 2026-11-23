@@ -1,4 +1,4 @@
-use super::*;
+use crate::dbt::wasm::tests::*;
 
 #[test]
 fn dword_shifts_use_native_wasm_i32_values() {

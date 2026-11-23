@@ -1,4 +1,4 @@
-use super::*;
+use crate::dbt::wasm::tests::*;
 use crate::embedding::layout::{BUDGET, DATA, DISPATCH, X87_EXCEPTION};
 use crate::x86::x87::State as NumericState;
 

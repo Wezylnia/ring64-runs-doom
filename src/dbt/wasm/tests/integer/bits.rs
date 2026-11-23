@@ -1,4 +1,4 @@
-use super::*;
+use crate::dbt::wasm::tests::*;
 
 #[test]
 fn bit_literals_distinguish_readonly_writes_zero_scans_and_source_parity() {

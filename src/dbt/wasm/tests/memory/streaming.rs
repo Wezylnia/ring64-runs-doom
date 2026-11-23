@@ -1,4 +1,4 @@
-use super::*;
+use crate::dbt::wasm::tests::*;
 use crate::embedding::layout::{BUDGET, DATA, DISPATCH, STOP, X87_EXCEPTION};
 
 fn packet(code: &[u8], entry: u64, budget: u64, outcome: Outcome<'_>) -> Value {

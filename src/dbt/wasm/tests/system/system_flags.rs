@@ -1,4 +1,4 @@
-use super::*;
+use crate::dbt::wasm::tests::*;
 use crate::embedding::layout::{BUDGET, DEBUG_EXCEPTION, DISPATCH, PROTECTION, X87_EXCEPTION};
 use crate::x86::context::{ExecutionContext, Mode, Segment};
 use crate::x86::instruction::{

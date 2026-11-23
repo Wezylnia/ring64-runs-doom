@@ -1,4 +1,4 @@
-use super::*;
+use crate::dbt::wasm::tests::*;
 
 const SYSTEM_FLAGS: u64 = (1 << 21) | (1 << 10) | (1 << 9);
 

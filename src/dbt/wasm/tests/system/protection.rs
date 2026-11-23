@@ -1,4 +1,4 @@
-use super::*;
+use crate::dbt::wasm::tests::*;
 use crate::x86::instruction::{Location, ProtectionInstruction, ProtectionKind};
 
 #[test]

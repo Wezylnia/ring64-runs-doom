@@ -1,4 +1,4 @@
-use super::*;
+use crate::dbt::wasm::tests::*;
 use crate::embedding::layout::{BUDGET, DATA, DISPATCH, SEGMENT};
 use crate::x86::compound_stack::{CompoundStack, CompoundStackKind};
 

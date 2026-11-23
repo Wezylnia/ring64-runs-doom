@@ -1,4 +1,4 @@
-use super::*;
+use crate::dbt::wasm::tests::*;
 use core::arch::{asm, x86_64::__cpuid};
 use std::io::Write;
 

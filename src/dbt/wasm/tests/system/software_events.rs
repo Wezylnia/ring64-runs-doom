@@ -1,4 +1,4 @@
-use super::*;
+use crate::dbt::wasm::tests::*;
 use crate::embedding::layout::{BUDGET, DEBUG_EXCEPTION, DISPATCH, PROTECTION, STOP};
 use crate::x86::context::ExecutionContext;
 use crate::x86::instruction::{SoftwareEventDescriptor, SoftwareEventKind as Kind};

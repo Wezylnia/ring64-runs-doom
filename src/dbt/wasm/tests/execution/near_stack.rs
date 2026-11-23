@@ -1,4 +1,4 @@
-use super::*;
+use crate::dbt::wasm::tests::*;
 use crate::embedding::layout::{BUDGET, DATA, DISPATCH, SEGMENT, TARGET};
 use crate::x86::context::{ExecutionContext, Segment};
 use crate::x86::instruction::{Address, AddressBase, AddressIndex, CountCondition};

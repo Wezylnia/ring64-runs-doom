@@ -1,4 +1,4 @@
-use super::*;
+use crate::dbt::wasm::tests::*;
 use crate::embedding::layout::{BUDGET, DISPATCH, GENERAL_PROTECTION, STOP};
 use crate::x86::mmx::{Kind as MmxKind, Op as Mmx};
 use crate::x86::numeric_images::{Format, ImageOp, Kind};

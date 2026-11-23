@@ -1,4 +1,4 @@
-use super::*;
+use crate::dbt::wasm::tests::*;
 
 #[test]
 fn deferred_parity_is_visible_to_conditions_lahf_and_exact_stop() {

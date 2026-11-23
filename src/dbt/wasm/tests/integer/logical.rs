@@ -1,4 +1,4 @@
-use super::*;
+use crate::dbt::wasm::tests::*;
 
 fn bytes(hex: &str) -> Vec<u8> {
     hex.as_bytes()
