@@ -90,6 +90,7 @@ pub(crate) struct IndexedDwordWrite {
     pub(crate) tags: [u64; 3],
     pub(crate) biases: [u32; 3],
     pub(crate) ages: [u32; 4],
+    pub(crate) age_increments: [u8; 4],
     pub(crate) recency: u32,
     pub(crate) generation: u64,
     pub(crate) fetch: u32,
@@ -459,17 +460,17 @@ impl Entries {
             }
         }
         let (index, t) = self.retained_data_span::<WRITE>(state, request, keys, width)?;
-        if t.global || t.span != 4096 {
+        if t.global || t.span < 4096 || (t.linear_base | t.physical_base) & 4095 != 0 {
             *unsupported_leaf = true;
             return None;
         }
-        // Until this guarded group exits, replacement is the only way a
-        // checked local leaf can lose the authority admitted for this operand.
+        // Cache only this 4 KiB subpage, under the identity of its owning
+        // translation. Replacing a large leaf invalidates every memo using it.
         *slot = t.cache_id.map(|id| IndexedWriteSlot {
             index,
             id,
-            linear_base: t.linear_base,
-            physical_base: t.physical_base,
+            linear_base: request.linear & !4095,
+            physical_base: t.physical & !4095,
         });
         Some((index, t.physical))
     }

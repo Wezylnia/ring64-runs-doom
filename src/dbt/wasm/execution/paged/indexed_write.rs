@@ -354,13 +354,20 @@ impl Emitter {
             .op(Op::I64Load(clock))
             .op(Op::LocalSet(ADDRESS));
         for &slot in slots {
+            // A transparent index selects only its own translation and the
+            // fetch. Both transitions advance iff those two slots differ.
+            let increment = if slots.len() == 2 { 0 } else { slot };
             self.op(Op::LocalGet(group.record))
                 .op(Op::I32Load(field(
                     offset_of!(IndexedDwordWrite, ages) + 4 * slot,
                     2,
                 )))
                 .op(Op::LocalGet(ADDRESS))
-                .op(Op::I64Const(1))
+                .op(Op::LocalGet(group.record))
+                .op(Op::I64Load8U(field(
+                    offset_of!(IndexedDwordWrite, age_increments) + increment,
+                    0,
+                )))
                 .op(Op::I64Add)
                 .op(Op::LocalTee(ADDRESS))
                 .op(Op::I64Store(field(0, 3)));

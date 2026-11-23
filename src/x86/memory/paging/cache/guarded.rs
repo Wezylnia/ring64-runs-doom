@@ -197,13 +197,7 @@ impl Cache {
         let slots = [index_slot, table_slot, store_slot, fetch];
         let target_page = target & !4095;
         let offset = target_page.wrapping_sub(span.base);
-        if span.length < 4096
-            || offset > u64::from(span.length - 4096)
-            || index_slot == fetch
-            || index_slot == table_slot
-            || table_slot == store_slot
-            || store_slot == fetch
-        {
+        if span.length < 4096 || offset > u64::from(span.length - 4096) {
             return Some(proof);
         }
         if let (Some(source), Some(palette)) = (
@@ -217,6 +211,14 @@ impl Cache {
             let table = entries.recency_mut();
             proof.recency = table as *mut _ as u32;
             proof.ages = slots.map(|slot| &raw mut table.ages[slot] as u32);
+            // Consecutive operands may share a large leaf. Only a change of
+            // translation advances the LRU clock, just as in touch_indexed_group.
+            let mut previous = fetch;
+            proof.age_increments = slots.map(|slot| {
+                let advance = u8::from(slot != previous);
+                previous = slot;
+                advance
+            });
             proof.generation = table.generation;
             proof.fetch = fetch as u32;
         }

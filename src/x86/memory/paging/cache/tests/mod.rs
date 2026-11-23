@@ -134,6 +134,47 @@ fn indexed_operand_span_checks_width_and_slot_replacement() {
 
 #[cfg(not(feature = "parallel"))]
 #[test]
+fn indexed_writes_track_subpages_of_a_large_leaf_and_recheck_replacements() {
+    let (mut image, state, read) = fixture();
+    let cache = Cache::new(1);
+    let mut memo = None;
+    let mut resolve = |linear| {
+        cache.entries.borrow().indexed_write_span::<true>(
+            &mut memo,
+            &state,
+            Request {
+                linear,
+                access: Access::Write,
+                ..read
+            },
+            &ProtectionKeys::ZERO,
+            4,
+            &mut false,
+        )
+    };
+
+    image.physical_write(0x3000, 8, 0x2000e7).unwrap();
+    insert(&cache, &mut image, &state, read);
+    assert_eq!(resolve(0x1234), Some((0, 0x201234)));
+    assert_eq!(resolve(0x6234), Some((0, 0x206234)));
+    assert_eq!(resolve(0x6238), Some((0, 0x206238)));
+    assert_eq!(resolve(0x1ffffd), None);
+
+    for (pde, expected) in [
+        (0x6000e5, None),
+        (0x6000a7, None),
+        (0x6000e7, Some((0, 0x606234))),
+    ] {
+        cache.invalidate_page(state.pcid(), 0x1000, true);
+        assert_eq!(resolve(0x6234), None);
+        image.physical_write(0x3000, 8, pde).unwrap();
+        insert(&cache, &mut image, &state, read);
+        assert_eq!(resolve(0x6234), expected);
+    }
+}
+
+#[cfg(not(feature = "parallel"))]
+#[test]
 fn current_fetch_requires_the_right_physical_span_and_live_execute_rights() {
     use crate::x86::paging::{CR4_SMAP, CR4_SMEP};
 
