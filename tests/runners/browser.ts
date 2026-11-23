@@ -1,3 +1,4 @@
+import { checkMemory64, supportsMemory64 } from '../execution/memory/memory64.js';
 import { registerBank } from '../support/fixture.js';
 import { createCpu } from '../../sdk/src/index.js';
 import { runScenarios } from '../suite.js';
@@ -7,6 +8,13 @@ const resultWindow = window as Window & { ring64Result?: Promise<string> };
 resultWindow.ring64Result = (async () => {
   const bytes = new Uint8Array(await (await fetch('/build/ring64.wasm')).arrayBuffer());
   const conformance = await runScenarios(bytes);
+  let memory64Scenarios: number | undefined;
+  if (supportsMemory64()) {
+    const response = await fetch('/build/ring64-memory64.wasm');
+    const compiler = await WebAssembly.compile(await response.arrayBuffer());
+    await checkMemory64(compiler);
+    memory64Scenarios = (await runScenarios(compiler)).passed.length;
+  }
   const code = Uint8Array.from(
     'b800000000b9030000004801c84883e90175f7488903'.match(/../g)!,
     (byte) => parseInt(byte, 16),
@@ -50,6 +58,7 @@ resultWindow.ring64Result = (async () => {
     return JSON.stringify(
       {
         conformance,
+        memory64Scenarios,
         environment: { userAgent: navigator.userAgent },
         characterization: {
           label: 'tiny literal; phase costs, not a throughput ranking',

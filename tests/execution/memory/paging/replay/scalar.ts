@@ -1,18 +1,10 @@
+import { usesMemory64 } from '../../../../../sdk/src/wasm/core.js';
 import { observeArtifactImports } from '../../../../support/artifact-imports.js';
 import { context } from '../../../processor/modes/fixture.js';
-import {
-  BANK,
-  check,
-  equal,
-  initial,
-  little,
-  same,
-  usingPaged,
-  word,
-  type Scenario,
-} from '../fixture.js';
+import { BANK, equal, initial, little, same, usingPaged, word, type Scenario } from '../fixture.js';
 
 export function scalarReplayScenarios(compiler: WebAssembly.Module): Scenario[] {
+  const privateSpans = !usesMemory64(compiler);
   return [
     {
       name: 'paged dense byte replay preserves the prefix of a faulting lap',
@@ -165,8 +157,12 @@ export function scalarReplayScenarios(compiler: WebAssembly.Module): Scenario[] 
                 const result = await cpu.run({ stop, budget: 200n });
                 if (mode === 'cold') {
                   equal(calls.refused, 1, 'the first unaccessed leaf uses exact replay');
-                  equal(calls.ready, 1, 'a successful checked read enables the cooldown');
-                  check(calls.guarded > 0, 'later dword reads re-enter the guard in the same run');
+                  equal(calls.ready, Number(privateSpans), 'private span re-entry availability');
+                  equal(
+                    calls.guarded > 0,
+                    privateSpans,
+                    'later dword reads use an admitted private span',
+                  );
                   equal(result.reason, 'stop', mode);
                   equal(result.state.rip, stop, mode);
                   equal(result.retired, 144n, mode);

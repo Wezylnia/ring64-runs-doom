@@ -1,8 +1,9 @@
-import { Core } from '../../../../sdk/src/wasm/core.js';
+import { Core, usesMemory64 } from '../../../../sdk/src/wasm/core.js';
 import { LIMITS, check, equal, exit, fault, memory } from '../../../support/fixture.js';
 import { context, input, using, segmentFault, type Scenario } from './fixture.js';
 
 export function branchScenarios(compiler: WebAssembly.Module): Scenario[] {
+  const privateSpans = !usesMemory64(compiler);
   return [
     {
       name: 'flat call target tables preserve holes, fetch priority, and short code segments',
@@ -198,8 +199,8 @@ export function branchScenarios(compiler: WebAssembly.Module): Scenario[] {
                   equal(result.retired, 23n, `${form}: both calls and returns retire`);
                   equal(
                     checkedRmw,
-                    0,
-                    `${form}: the data RMW uses cached read and write permissions`,
+                    privateSpans ? 0 : 2,
+                    `${form}: checked read-modify-write count`,
                   );
                   equal(
                     (await cpu.readMemory(destination + 4n, 4))[0],
@@ -218,12 +219,12 @@ export function branchScenarios(compiler: WebAssembly.Module): Scenario[] {
                   );
                   equal(
                     checkedWrites,
-                    form === 'private' ? 0 : 4,
+                    privateSpans && form === 'private' ? 0 : 4,
                     `${form}: source-aware stack writes`,
                   );
                   equal(
                     admittedSpans,
-                    form === 'private' ? 1 : 0,
+                    privateSpans && form === 'private' ? 1 : 0,
                     `${form}: a retained private span`,
                   );
                 }

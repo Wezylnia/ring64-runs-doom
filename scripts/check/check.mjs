@@ -17,18 +17,20 @@ npm('run', 'lint');
 
 run('cargo', 'clippy', '--all-targets', '--', '-D', 'warnings');
 run('cargo', 'clippy', '--target', 'wasm32-unknown-unknown', '--lib', '--', '-D', 'warnings');
-run(
-  'cargo',
-  'clippy',
-  '--target',
-  'wasm32-unknown-unknown',
-  '--lib',
-  '--features',
-  'parallel',
-  '--',
-  '-D',
-  'warnings',
-);
+for (const profile of ['parallel', 'memory64']) {
+  run(
+    'cargo',
+    'clippy',
+    '--target',
+    'wasm32-unknown-unknown',
+    '--lib',
+    '--features',
+    profile,
+    '--',
+    '-D',
+    'warnings',
+  );
+}
 run('cargo', 'test', '--locked');
 
 npm('run', 'build');

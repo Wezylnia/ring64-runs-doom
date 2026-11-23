@@ -1,8 +1,9 @@
-import { Core } from '../../../../sdk/src/wasm/core.js';
+import { Core, usesMemory64 } from '../../../../sdk/src/wasm/core.js';
 import { equal, exit, memory } from '../../../support/fixture.js';
 import { changed, context, input, using, segmentFault, type Scenario } from './fixture.js';
 
 export function stackLoopScenarios(compiler: WebAssembly.Module): Scenario[] {
+  const privateSpans = !usesMemory64(compiler);
   return [
     {
       name: 'flat stack RMW requires both cached permissions and the full segment span',
@@ -61,7 +62,7 @@ export function stackLoopScenarios(compiler: WebAssembly.Module): Scenario[] {
                   equal(result.state.flags & 1n, 1n, 'INC and DEC preserve carry');
                   equal(
                     checks,
-                    scenario === 'allowed' ? 0 : 3,
+                    privateSpans && scenario === 'allowed' ? 0 : 3,
                     'only non-executable RAM gets both proofs',
                   );
                   memory(cpu, 0x2000n, '030000000300000005000000');
@@ -151,7 +152,7 @@ export function stackLoopScenarios(compiler: WebAssembly.Module): Scenario[] {
           equal(stackSpans.length, 4, 'one checked stack span per entry to the clone');
           equal(
             stackSpans.join(','),
-            'true,false,true,true',
+            privateSpans ? 'true,false,true,true' : 'false,false,false,false',
             'a split span refuses only the proof',
           );
         } finally {

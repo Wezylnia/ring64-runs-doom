@@ -1,7 +1,9 @@
+import { usesMemory64 } from '../../../../../sdk/src/wasm/core.js';
 import { observeArtifactImports } from '../../../../support/artifact-imports.js';
 import { equal, initial, little, same, usingPaged, word, type Scenario } from '../fixture.js';
 
 export function guardedPrefixScenarios(compiler: WebAssembly.Module): Scenario[] {
+  const privateSpans = !usesMemory64(compiler);
   return [
     {
       name: 'paged guarded prefixes preserve both conditional edges and precise pre-branch exits',
@@ -117,7 +119,11 @@ export function guardedPrefixScenarios(compiler: WebAssembly.Module): Scenario[]
               equal(warm.reason, 'stop', 'the warmed mixed prefix completes');
               equal(warm.retired, 6n, 'the store and its neighbors retire');
               equal(word(cpu, 0xa000n) >> 32n, 4n, 'the retained store commits its source dword');
-              same(writes, [[data + 4n, 1]], 'the warmed writable operand takes the clone');
+              same(
+                writes,
+                privateSpans ? [[data + 4n, 1]] : [],
+                'the warmed writable operand takes the clone',
+              );
 
               const missing = 0x402000n;
               prepare(missing);
@@ -129,7 +135,11 @@ export function guardedPrefixScenarios(compiler: WebAssembly.Module): Scenario[]
               equal(fault.state.registers[1], 8n, 'the increment executes once');
               equal(fault.state.registers[2], 19n, 'the load commits before the write fault');
               equal(fault.state.registers[0], 4n, 'the post-write XOR remains unstarted');
-              same(writes, [[missing, 0]], 'the unbacked write refuses without a store');
+              same(
+                writes,
+                privateSpans ? [[missing, 0]] : [],
+                'the unbacked write refuses without a store',
+              );
 
               const codeAlias = head + 8n;
               // The aligned dword changes XOR's immediate from 5 to 6.
@@ -140,7 +150,11 @@ export function guardedPrefixScenarios(compiler: WebAssembly.Module): Scenario[]
               equal(watched.retired, 6n, 'the write retires once before running the new owner');
               equal(watched.state.registers[0], changed ^ 6n, 'the changed XOR executes');
               equal(watched.state.registers[1], 8n, 'the earlier increment is not replayed');
-              same(writes, [[codeAlias, 0]], 'the clone never writes executable backing');
+              same(
+                writes,
+                privateSpans ? [[codeAlias, 0]] : [],
+                'the clone never writes executable backing',
+              );
               equal(
                 word(cpu, 0x9008n) & 0xffffffffn,
                 changed,
@@ -199,10 +213,12 @@ export function guardedPrefixScenarios(compiler: WebAssembly.Module): Scenario[]
               );
               same(
                 reads,
-                [
-                  [data, true],
-                  [data + 4n, true],
-                ],
+                privateSpans
+                  ? [
+                      [data, true],
+                      [data + 4n, true],
+                    ]
+                  : [[data, false]],
                 'both warmed reads take the guard',
               );
 
@@ -219,10 +235,12 @@ export function guardedPrefixScenarios(compiler: WebAssembly.Module): Scenario[]
               equal(fault.state.flags, 2n, 'the fault preserves the preceding XOR flags');
               same(
                 reads,
-                [
-                  [data, true],
-                  [missing, false],
-                ],
+                privateSpans
+                  ? [
+                      [data, true],
+                      [missing, false],
+                    ]
+                  : [[data, false]],
                 'only the original faulting slot replays',
               );
 

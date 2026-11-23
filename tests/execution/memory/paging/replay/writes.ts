@@ -1,3 +1,4 @@
+import { usesMemory64 } from '../../../../../sdk/src/wasm/core.js';
 import { observeArtifactImports } from '../../../../support/artifact-imports.js';
 import { context } from '../../../processor/modes/fixture.js';
 import {
@@ -20,6 +21,7 @@ const PAGED_STACK_SPILL_LOOP = '8b4424043b442408760140894424040fb61701c288164647
 const PAGED_BYTE_STORE_LOOP = '0fb6073c407602fec0880648ffc748ffc6ffc975eb';
 
 export function writeReplayScenarios(compiler: WebAssembly.Module): Scenario[] {
+  const privateSpans = !usesMemory64(compiler);
   return [
     {
       name: 'paged 32-bit stack spills preserve dirty, segment, and partial budget boundaries',
@@ -298,9 +300,17 @@ export function writeReplayScenarios(compiler: WebAssembly.Module): Scenario[] {
             async (cpu) => {
               cpu.setState(initial(head, { 1: 20n, 6: denied - 16n, 7: src }, 2n));
               const fault = await cpu.run({ budget: 200n });
-              check(replayReady, 'the cold source page arms re-entry after its checked read');
-              check(guardedWrites > 0, 'the reentered guard writes to the retained destination');
-              same(guardRefusals, [denied], 'the later write exits the guarded path once');
+              equal(replayReady, privateSpans, 'read re-entry requires a private span');
+              equal(
+                guardedWrites > 0,
+                privateSpans,
+                'guarded writes require a retained destination',
+              );
+              same(
+                guardRefusals,
+                privateSpans ? [denied] : [],
+                'the later write exits the guarded path once',
+              );
               equal(fault.reason, 'page-fault', 'the checked write reports protection');
               equal(fault.retired, 147n, 'only the completed laps and faulting prefix retire');
               equal(fault.state.rip, head + 9n, 'the refused store remains unretired');
@@ -386,16 +396,25 @@ export function writeReplayScenarios(compiler: WebAssembly.Module): Scenario[] {
               const readReady = routes.indexOf('paged_loop_read_ready');
               const firstWrite = routes.indexOf('paged_loop_write_dword');
               const writeReady = routes.lastIndexOf('paged_loop_write_ready');
-              check(
-                readReady >= 0 && routes.indexOf('paged_loop_read_dword') > readReady,
-                'the cold coefficient retries through the checked ADD, then uses retained reads',
-              );
-              check(
-                firstWrite >= 0 &&
-                  firstWrite < writeReady &&
-                  routes.lastIndexOf('paged_loop_write_dword') > writeReady,
-                'guarded stores succeed on both sides of the checked page transition',
-              );
+              if (privateSpans) {
+                check(
+                  readReady >= 0 && routes.indexOf('paged_loop_read_dword') > readReady,
+                  'the cold coefficient retries through the checked ADD, then uses retained reads',
+                );
+                check(
+                  firstWrite >= 0 &&
+                    firstWrite < writeReady &&
+                    routes.lastIndexOf('paged_loop_write_dword') > writeReady,
+                  'guarded stores succeed on both sides of the checked page transition',
+                );
+              } else {
+                equal(firstWrite, -1, 'guest RAM never yields a writable Core pointer');
+                equal(
+                  routes.indexOf('paged_loop_read_dword'),
+                  -1,
+                  'guest RAM reads use the checked operand',
+                );
+              }
               equal(result.reason, 'budget', 'the last lap stops before its store');
               equal(result.retired, 254n, 'one zero lap, 24 writing laps, and the final prefix');
               equal(result.state.rip, head + 0x12n, 'the last store remains unstarted');
@@ -475,7 +494,11 @@ export function writeReplayScenarios(compiler: WebAssembly.Module): Scenario[] {
               },
             );
           }
-          same(spans, [true, false], 'the guard admits one leaf and refuses the crossing pair');
+          same(
+            spans,
+            [privateSpans, false],
+            'the guard admits one leaf and refuses the crossing pair',
+          );
         } finally {
           restore();
         }
@@ -542,11 +565,18 @@ export function writeReplayScenarios(compiler: WebAssembly.Module): Scenario[] {
                 initial(head, { 1: 0x12345678n, 3: output + 4n, 6: source, 7: output }, 2n),
               );
               const fault = await cpu.run({ budget: 2400n });
-              check(
-                splitReady && retainedAfterSplit > 100,
-                mode + ' checked split permits windows, which must refill after the scalar arm',
+              if (privateSpans)
+                check(
+                  splitReady && retainedAfterSplit > 100,
+                  mode + ' checked split refills the private span',
+                );
+              else
+                equal(retainedAfterSplit, 0, 'the checked guest RAM path retains no Core pointer');
+              same(
+                refused,
+                privateSpans ? [denied - 8n] : [],
+                'one later split returns to the checked operand',
               );
-              same(refused, [denied - 8n], 'one later split returns to the checked operand');
               equal(fault.reason, 'page-fault', 'the second leaf is missing');
               equal(fault.retired, 2304n, '256 complete laps retire');
               equal(fault.state.rip, head, 'the original MOVUPS remains unretired');
