@@ -689,9 +689,9 @@ export const mutants = [
     'public-ac-packet-omitted',
     'semantic operand granules suppress all candidate numeric and RMW state',
     edit(
-      'sdk/src/cpu/run-result.ts',
-      '  const field = diagnosticFields[reason];',
-      "  if (reason === 'alignment-check') return {};\n  const field = diagnosticFields[reason];",
+      'sdk/src/cpu/cpu.ts',
+      '    validateRunDiagnostic(result);',
+      "    validateRunDiagnostic(result);\n    if (reason === 'alignment-check') Reflect.deleteProperty(result, 'alignmentCheck');",
     ),
   ),
   publicCpu(
