@@ -54,6 +54,16 @@ function copyModule(): WebAssembly.Module {
   ));
 }
 
+export function supportsGuestMemory64(): boolean {
+  try {
+    copyModule();
+    return true;
+  } catch (error) {
+    if (error instanceof WebAssembly.CompileError) return false;
+    throw error;
+  }
+}
+
 export function bindGuestMemory64() {
   const memory = new WebAssembly.Memory({ initial: 32 });
   let compiled: WebAssembly.Module;

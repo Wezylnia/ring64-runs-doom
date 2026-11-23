@@ -118,9 +118,11 @@ test(
       join(project, 'check.mjs'),
       `
     import assert from 'node:assert/strict';
-    import { checkCpu, checkParallel } from './out/consumer.js';
+    import { checkCpu, checkParallel, supportsWide } from './out/consumer.js';
     await assert.rejects(import('ring64/wasm/core.js'), { code: 'ERR_PACKAGE_PATH_NOT_EXPORTED' });
     await checkCpu();
+    await checkCpu('memory32');
+    if (supportsWide) await checkCpu('memory64');
     await checkParallel();
   `,
     );
@@ -183,7 +185,7 @@ async function checkBrowser(project) {
     page.on('request', (request) => paths.push(new URL(request.url()).pathname));
     await page.goto(`http://127.0.0.1:${server.address().port}/`);
     await runInBrowser(page, 'checkCpu');
-    assert.ok(paths.includes(`${moduleRoot}ring64.wasm`));
+    assert.equal(paths.filter((path) => path.endsWith('.wasm')).length, 1);
     assert.ok(
       !paths.some((path) => /\/parallel\/|\/machine\.js$|ring64-parallel\.wasm$/.test(path)),
     );

@@ -18,9 +18,20 @@ function checkFetchFault(result: RunResult): void {
     throw new Error('expected a fetch fault after the end of code');
 }
 
-export async function checkCpu(): Promise<void> {
+// This module declares one memory32 and one memory64.
+export const supportsWide = WebAssembly.validate(
+  Uint8Array.of(0, 97, 115, 109, 1, 0, 0, 0, 5, 5, 2, 0, 0, 4, 0),
+);
+
+export async function checkCpu(profile?: 'memory32' | 'memory64'): Promise<void> {
+  const compiler = await loadCpuCompiler(profile);
+  const expectWide = profile ? profile === 'memory64' : supportsWide;
+  if (
+    WebAssembly.Module.imports(compiler).some((entry) => entry.module === 'guest64') !== expectWide
+  )
+    throw new Error('unexpected CPU compiler memory profile');
   const options = {
-    compiler: await loadCpuCompiler(),
+    compiler,
     code: { base: entry, bytes: program },
     ram: { base: 0x2000n, bytes: new Uint8Array(16) },
     limits,

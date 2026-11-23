@@ -1,8 +1,10 @@
+import { supportsGuestMemory64 } from './wasm/guest-memory64.js';
+
 export { createCpu } from './cpu/cpu.js';
 
-/** Compile the packaged standalone Core for reuse across CPU instances. */
+/** Prefer memory64 on supported hosts. Reuse the compiled Core across CPUs. */
 export async function loadCpuCompiler(
-  guestMemory: 'memory32' | 'memory64' = 'memory32',
+  guestMemory: 'memory32' | 'memory64' = supportsGuestMemory64() ? 'memory64' : 'memory32',
 ): Promise<WebAssembly.Module> {
   if (guestMemory !== 'memory32' && guestMemory !== 'memory64')
     throw new TypeError('guestMemory must be memory32 or memory64');
