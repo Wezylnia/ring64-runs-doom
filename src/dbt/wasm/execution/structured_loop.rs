@@ -1845,10 +1845,31 @@ impl Emitter {
                 .op(Op::I32Const(1))
                 .op(Op::Else);
         }
-        self.op(Op::I64Const(instructions[body.earlier as usize].pc as i64))
+        let pc = instructions[body.earlier as usize].pc;
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        let retained_copy_fetch = self.sampled_region
+            && self.paged_copy_window.is_some()
+            && body.paged_vector_copy()
+            && self.context.is_long64()
+            && self.context.cpl() == 0;
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if retained_copy_fetch {
+            // The copy body already proved a single fetch page. A live quiet
+            // SSE admission can fund its entry just as it funds a finite copy.
+            self.newest_prefix_fetch(pc, false, true);
+            self.op(Op::If(BlockType::Result(wasm_encoder::ValType::I32)))
+                .op(Op::I32Const(1))
+                .op(Op::Else);
+        }
+        self.op(Op::I64Const(pc as i64))
             .op(Op::I32Const(body.paged_fetch_bytes.unwrap() as i32));
         self.system_bits();
-        self.op(Op::LocalGet(super::SHADOW)).op(Op::Call(guard));
+        self.op(Op::LocalGet(super::SHADOW));
+        self.op(Op::Call(guard));
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if retained_copy_fetch {
+            self.op(Op::End);
+        }
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         if inherited.is_some() {
             self.op(Op::End);

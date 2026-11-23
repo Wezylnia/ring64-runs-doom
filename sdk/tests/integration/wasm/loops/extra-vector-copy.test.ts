@@ -139,3 +139,102 @@ test('one artifact keeps its original vector loop and an independently replayabl
     proto.artifactImports = imports;
   }
 });
+
+test('a sampled copy loop reuses quiet SSE fetch admission and keeps checked exits', async () => {
+  // CMP RAX,[RDI]; three INC R8 instructions; two ordered vector transfers per lap.
+  const prefix = '483b0749ffc049ffc049ffc0';
+  const copy = '0f1004070f1104060f104407100f114406104883c0204839c872e5';
+  const head = PC + 12n;
+  const inside = head + 8n;
+  const stop = PC + 39n;
+  const source = PC + 0x1010n;
+  const seed = Uint8Array.from({ length: 16 }, (_, index) => index + 1);
+  const bytes = new Uint8Array(4096);
+  bytes.set(seed, 16);
+  const expected = Uint8Array.from({ length: 64 }, (_, index) => seed[index % seed.length]!);
+  const compile = Core.prototype.compile;
+  const prototype = Core.prototype as unknown as {
+    artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
+  };
+  const imports = prototype.artifactImports;
+  let guards = 0;
+  let windows = 0;
+  Core.prototype.compile = function (pc, limits, seeds, regionPoints) {
+    if (pc === PC && !seeds?.length) {
+      const points = [0, 3, 6, 9, 12, 16, 20, 25, 30, 34, 37, 39].map(
+        (offset) => PC + BigInt(offset),
+      );
+      return compile.call(this, pc, limits, points, true);
+    }
+    return compile.call(this, pc, limits, seeds, regionPoints);
+  };
+  prototype.artifactImports = function (observed) {
+    const env = imports.call(this, observed);
+    const guard = env.paged_sse_loop_guard;
+    if (typeof guard === 'function') {
+      env.paged_sse_loop_guard = (pc: bigint, ...args: unknown[]) => {
+        if (pc === head) guards++;
+        return guard(pc, ...args);
+      };
+    }
+    const window = env.paged_loop_copy_window;
+    if (typeof window === 'function') {
+      env.paged_loop_copy_window = (...args: unknown[]) => {
+        const result = window(...args);
+        if (result) windows++;
+        return result;
+      };
+    }
+    return env;
+  };
+
+  try {
+    await usingPaged(
+      compiler,
+      {
+        code: prefix + copy + 'f4',
+        words: [[0x4008n, 0xa063n]],
+        spans: [{ physical: 0xa000n, bytes }],
+      },
+      async (cpu) => {
+        const enter = () =>
+          cpu.setState(initial(PC, { 0: 0n, 1: 64n, 6: source + 16n, 7: source }));
+        for (let wave = 0; wave < 4; wave++) {
+          enter();
+          guards = 0;
+          windows = 0;
+          const run = await cpu.run({ stop, budget: 32n });
+          assert.equal(run.reason, 'stop');
+          assert.equal(run.retired, 18n);
+          assert.deepEqual(cpu.readPhysicalMemory(0xa020n, 64), expected);
+        }
+        assert.equal(guards, 0, 'the admitted copy avoids the checked SSE wrapper');
+        assert.ok(windows > 0, 'the structured two-transfer copy still uses the paired data proof');
+
+        enter();
+        cpu.setMxcsr(0x1f00);
+        const unmasked = await cpu.run({ stop, budget: 32n });
+        assert.equal(unmasked.reason, 'stop');
+        assert.equal(unmasked.retired, 18n);
+        assert.ok(guards > 0, 'a changed exception mask rechecks the guard');
+
+        cpu.setMxcsr(0x1f80);
+        enter();
+        const stopped = await cpu.run({ stop: inside, budget: 32n });
+        assert.equal(stopped.reason, 'stop');
+        assert.equal(stopped.retired, 6n);
+        assert.equal(stopped.state.rip, inside);
+
+        cpu.setDebugState({ addresses: [inside, 0n, 0n, 0n], dr6: 0n, dr7: 1n });
+        enter();
+        const debug = await cpu.run({ stop, budget: 32n });
+        assert.equal(debug.reason, 'debug-exception');
+        assert.equal(debug.retired, 6n);
+        assert.equal(debug.state.rip, inside);
+      },
+    );
+  } finally {
+    Core.prototype.compile = compile;
+    prototype.artifactImports = imports;
+  }
+});
