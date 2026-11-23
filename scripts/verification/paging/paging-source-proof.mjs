@@ -58,10 +58,8 @@ for (const [path, anchors] of Object.entries({
     'let emit = if image.has_mmio() {\n        wasm::emit_mmio_profile\n    } else {\n        wasm::emit_profile',
     'emit(&unit, observed, paging.is_some(), max_artifact_bytes)',
   ],
-  'src/dbt/wasm/artifact.rs': [
-    'let observed = observed || paged;',
-    'let access_reason = (segmented || paged).then',
-  ],
+  'src/dbt/wasm/artifact/placement.rs': ['let observed = observed || paged;'],
+  'src/dbt/wasm/artifact.rs': ['let access_reason = (segmented || paged).then'],
   'src/dbt/wasm/execution/boundary.rs': ['if self.paged {'],
   'src/embedding/exports/events/system_flags.rs': ['pub(super) fn boundary_observed(&self)'],
   'sdk/src/wasm/core.ts': [
