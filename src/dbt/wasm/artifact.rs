@@ -3586,8 +3586,12 @@ fn emit_body(
     }
     let code_start = bytes.len();
     code.append_to(&mut bytes);
-    if bytes.len() > max_artifact_bytes {
-        // Optional annotations never displace executable code under the owner's limit.
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    if retouch_prefix_fetch
+        && bytes.len() > max_artifact_bytes
+        && bytes.len() - (code_start - hints_start) <= max_artifact_bytes
+    {
+        // Preserve the ordinary call region when only its miss hints exceed the limit.
         bytes.drain(hints_start..code_start);
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -4307,6 +4311,10 @@ fn emit_body(
             optional,
             max_artifact_bytes,
         );
+    }
+    if bytes.len() > max_artifact_bytes {
+        // Optional annotations never displace executable code under the owner's limit.
+        bytes.drain(hints_start..code_start);
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if float_outline.is_some() && bytes.len() > max_artifact_bytes {
