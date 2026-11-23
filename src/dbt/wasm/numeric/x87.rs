@@ -55,7 +55,141 @@ pub(super) fn paged_x87_memory_pair(first: Instruction, second: Instruction) -> 
     })
 }
 
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+pub(super) fn inline_x87_pop(op: crate::x86::x87::Op) -> bool {
+    register_store_pop(op) && op.index == 0
+}
+
 impl Emitter {
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    fn can_inline_x87_pop(&self) -> bool {
+        use crate::x86::context::Mode;
+        self.x87_register_pairs
+            && !self.observed
+            && !self.paged
+            && self.structured_loop.is_none()
+            && (self.context.is_long64()
+                || self.context.mode() == Mode::Protected && self.context.code32())
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    fn inline_x87_pop_bank(&mut self, pc: u64, count: i32) {
+        use crate::x86::x87::State;
+        let x87 = offset_of!(RunState, x87);
+        let mem = |offset, align| MemArg {
+            offset: offset as u64,
+            align,
+            memory_index: 0,
+        };
+        let status = mem(x87 + offset_of!(State, status_word), 1);
+        let control = mem(x87 + offset_of!(State, control_word), 1);
+        let tags = mem(x87 + offset_of!(State, tag_word), 1);
+        // Only the nonempty, no-pending branch may skip numeric admission.
+        self.op(Wasm::LocalGet(0))
+            .op(Wasm::I32Load16U(status))
+            .op(Wasm::LocalTee(REASON))
+            .op(Wasm::LocalGet(0))
+            .op(Wasm::I32Load16U(control))
+            .op(Wasm::I32Const(-1))
+            .op(Wasm::I32Xor)
+            .op(Wasm::I32And)
+            .op(Wasm::I32Const(63))
+            .op(Wasm::I32And)
+            .op(Wasm::I32Eqz)
+            .op(Wasm::LocalGet(0))
+            .op(Wasm::I32Load16U(tags))
+            .op(Wasm::LocalGet(REASON))
+            .op(Wasm::I32Const(11))
+            .op(Wasm::I32ShrU)
+            .op(Wasm::I32Const(7))
+            .op(Wasm::I32And)
+            .op(Wasm::LocalTee(STORE_STATUS))
+            .op(Wasm::I32Const(1))
+            .op(Wasm::I32Shl)
+            .op(Wasm::I32ShrU)
+            .op(Wasm::I32Const(3))
+            .op(Wasm::I32And)
+            .op(Wasm::I32Const(3))
+            .op(Wasm::I32Ne)
+            .op(Wasm::I32And)
+            .op(Wasm::If(BlockType::Empty));
+
+        self.op(Wasm::LocalGet(0))
+            .op(Wasm::LocalGet(REASON))
+            .op(Wasm::I32Const(!(0x8080 | 0x3800 | 0x200)))
+            .op(Wasm::I32And)
+            .op(Wasm::LocalGet(REASON))
+            .op(Wasm::I32Const(count << 11))
+            .op(Wasm::I32Add)
+            .op(Wasm::I32Const(0x3800))
+            .op(Wasm::I32And)
+            .op(Wasm::I32Or)
+            .op(Wasm::I32Store16(status));
+
+        if count == 2 {
+            // FSTP ST(1) copies the raw value to the next stack slot.
+            // FSTP ST(0) then empties that tag, leaving both raw copies intact.
+            self.op(Wasm::LocalGet(STORE_STATUS))
+                .op(Wasm::I32Const(1))
+                .op(Wasm::I32Add)
+                .op(Wasm::I32Const(7))
+                .op(Wasm::I32And)
+                .op(Wasm::LocalSet(REASON));
+            let registers = x87 + offset_of!(State, registers);
+            for (load, store) in [
+                (
+                    Wasm::I64Load(mem(registers, 0)),
+                    Wasm::I64Store(mem(registers, 0)),
+                ),
+                (
+                    Wasm::I32Load16U(mem(registers + 8, 0)),
+                    Wasm::I32Store16(mem(registers + 8, 0)),
+                ),
+            ] {
+                for top in [REASON, STORE_STATUS] {
+                    self.op(Wasm::LocalGet(0))
+                        .op(Wasm::LocalGet(top))
+                        .op(Wasm::I32Const(10))
+                        .op(Wasm::I32Mul)
+                        .op(Wasm::I32Add);
+                }
+                self.op(load).op(store);
+            }
+        }
+
+        self.op(Wasm::LocalGet(0))
+            .op(Wasm::LocalGet(0))
+            .op(Wasm::I32Load16U(tags));
+        for top in [STORE_STATUS, REASON].into_iter().take(count as usize) {
+            self.op(Wasm::I32Const(3))
+                .op(Wasm::LocalGet(top))
+                .op(Wasm::I32Const(1))
+                .op(Wasm::I32Shl)
+                .op(Wasm::I32Shl)
+                .op(Wasm::I32Or);
+        }
+        let saved_pc = if self.context.is_long64() {
+            pc
+        } else {
+            u64::from(pc as u32)
+        };
+        self.op(Wasm::I32Store16(tags))
+            .op(Wasm::LocalGet(0))
+            .op(Wasm::I64Const(saved_pc as i64))
+            .op(Wasm::I64Store(mem(
+                x87 + offset_of!(State, instruction_pointer),
+                3,
+            )))
+            .op(Wasm::LocalGet(0))
+            .op(Wasm::I64Const(0))
+            .op(Wasm::I64Store(mem(offset_of!(RunState, target), 3)))
+            .op(Wasm::LocalGet(0))
+            .op(Wasm::I32Const(Segment::Cs as i32))
+            .op(Wasm::I32Store(mem(offset_of!(RunState, fault_segment), 2)))
+            .op(Wasm::I32Const(0))
+            .op(Wasm::LocalSet(REASON));
+    }
+
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     pub(super) fn emit_x87_pair(
         &mut self,
@@ -92,6 +226,18 @@ impl Emitter {
                 .op(Wasm::I32And);
         }
         self.op(Wasm::If(BlockType::Empty));
+        if register_store_pop(a.op)
+            && a.op.index == 1
+            && inline_x87_pop(b.op)
+            && self.can_inline_x87_pop()
+        {
+            self.inline_x87_pop_bank(second.pc, 2);
+            self.op(Wasm::I64Const(second.next_pc as i64))
+                .op(Wasm::LocalSet(RIP));
+            self.retire_instructions(2);
+            self.route(second.next_pc, loop_depth + 2, exit_depth + 2);
+            self.op(Wasm::End);
+        }
         // The private discriminator is rejected by older cores. Both
         // operands and PCs fit the existing x87 import without JS mediation.
         let helper = self.x87.expect("x87 import");
@@ -179,6 +325,15 @@ impl Emitter {
         exit_depth: u32,
     ) {
         let operation = instruction.op;
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        let inlined = inline_x87_pop(operation) && self.can_inline_x87_pop();
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if inlined {
+            self.inline_x87_pop_bank(pc, 1);
+            self.op(Wasm::Else);
+        }
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        let exit_depth = exit_depth + u32::from(inlined);
         let writes_ax = operation.writes_ax();
         let helper = self.x87.expect("x87 import");
         self.op(Wasm::I32Const(operation.encode() as i32));
@@ -228,6 +383,10 @@ impl Emitter {
             self.op(Wasm::LocalGet(REASON))
                 .op(Wasm::LocalSet(STORE_STATUS));
             self.stores = true;
+        }
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if inlined {
+            self.op(Wasm::End);
         }
     }
 

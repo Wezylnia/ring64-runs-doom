@@ -1039,10 +1039,10 @@ fn emit_body(
                     .any(|pair| super::x87::paged_x87_memory_pair(pair[0], pair[1]))
         } else {
             !observed
-                && unit
-                    .instructions
-                    .windows(2)
-                    .any(|pair| super::x87::x87_pair(pair[0], pair[1]).is_some())
+                && (unit.instructions.iter().any(|instruction| {
+                    matches!(instruction.operation, Operation::X87(x87) if super::x87::inline_x87_pop(x87.op))
+                }) || unit.instructions.windows(2)
+                    .any(|pair| super::x87::x87_pair(pair[0], pair[1]).is_some()))
         };
     let has_mmx = unit
         .instructions
