@@ -12,8 +12,8 @@ import {
   type Factory,
   type Scenario,
 } from './fixture.js';
-import { LIMITS } from '../../support/fixture.js';
-import type { ExecutionContextSnapshot, FastSystemState } from '../../../sdk/src/index.js';
+import { LIMITS } from '../../../support/fixture.js';
+import type { ExecutionContextSnapshot, FastSystemState } from '../../../../sdk/src/index.js';
 
 export const USER = 0x400000n,
   KERNEL = 0x401000n,

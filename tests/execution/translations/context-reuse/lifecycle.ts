@@ -1,6 +1,6 @@
-import { Core } from '../../../sdk/src/wasm/core.js';
-import { LIMITS } from '../../support/fixture.js';
-import { mapping, RX, RW } from '../memory/mappings/fixture.js';
+import { Core } from '../../../../sdk/src/wasm/core.js';
+import { LIMITS } from '../../../support/fixture.js';
+import { mapping, RX, RW } from '../../memory/mappings/fixture.js';
 import {
   changed,
   check,

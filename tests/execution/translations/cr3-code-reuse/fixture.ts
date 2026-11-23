@@ -1,7 +1,7 @@
-import { createCpu, type Cpu } from '../../../sdk/src/index.js';
-import { longSnapshot, protectedSnapshot } from '../../support/context.js';
-import { LIMITS, equal, hex } from '../../support/fixture.js';
-import { little } from '../memory/legacy-paging/fixture.js';
+import { createCpu, type Cpu } from '../../../../sdk/src/index.js';
+import { longSnapshot, protectedSnapshot } from '../../../support/context.js';
+import { LIMITS, equal, hex } from '../../../support/fixture.js';
+import { little } from '../../memory/legacy-paging/fixture.js';
 
 export type Family = 'non-PAE' | 'PAE' | 'IA32e';
 export const PC = 0x1000n,
@@ -13,9 +13,9 @@ export const CODE_A = 0x9000,
   NEXT_B = 0xc000;
 export const SHARED_PC = 0x7000n,
   SHARED = 0x11000;
-export { check, equal, hex, type Scenario } from '../../support/fixture.js';
-export { little, word } from '../memory/legacy-paging/fixture.js';
-export type { Cpu } from '../../../sdk/src/index.js';
+export { check, equal, hex, type Scenario } from '../../../support/fixture.js';
+export { little, word } from '../../memory/legacy-paging/fixture.js';
+export type { Cpu } from '../../../../sdk/src/index.js';
 
 export async function withRoots(
   compiler: WebAssembly.Module,

@@ -1,4 +1,4 @@
-import { createCpu } from '../../../sdk/src/index.js';
+import { createCpu } from '../../../../sdk/src/index.js';
 import { variantScenarios } from './variants.js';
 import { warmScenarios } from './warm.js';
 import { writerScenarios } from './writers.js';

@@ -1,4 +1,4 @@
-import type { Registers } from '../../../sdk/src/index.js';
+import type { Registers } from '../../../../sdk/src/index.js';
 import {
   changed,
   check,

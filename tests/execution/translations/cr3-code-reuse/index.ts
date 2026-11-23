@@ -20,7 +20,7 @@ import {
   toCaller,
   withGuest,
   write32,
-} from '../task-switching/fixture.js';
+} from '../../task-switching/fixture.js';
 
 function alternating(
   compiler: WebAssembly.Module,
