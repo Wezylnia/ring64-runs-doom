@@ -1,4 +1,4 @@
-import { registerBank } from '../../../support/fixture.js';
+import { registerBank } from '../../../support/literals.js';
 // Independent public oracle: literal byte programs and direct BigInt retirement steps.
 // No decoder, time implementation, transport layout, or production retirement count supplies expectations.
 import type {

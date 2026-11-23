@@ -7,28 +7,14 @@ import {
   type State,
 } from '../../sdk/src/index.js';
 
-type Execution = RunResult;
+import { check, hex, LIMITS, registerBank } from './literals.js';
+export { check, hex, LIMITS, registerBank, type Scenario } from './literals.js';
 
-export interface Scenario {
-  name: string;
-  run(): Promise<void>;
-}
+type Execution = RunResult;
 
 export const CODE = 0x1000n;
 export const DATA = 0x100004000n;
-export const LIMITS: Limits = {
-  maxInstructions: 128,
-  maxSourceBytes: 2048,
-  maxArtifactBytes: 262144,
-  maxCachedArtifacts: 32,
-  maxCachedBytes: 4 * 1024 * 1024,
-  maxTranslationsPerRun: 32,
-};
 export const FRAME = '10111213141516178877665544332211f0f1f2f3f4f5f6f7';
-
-export function check(condition: unknown, message: string): asserts condition {
-  if (!condition) throw new Error(message);
-}
 
 export function equal(actual: unknown, expected: unknown, label: string): void {
   check(actual === expected, `${label}: expected ${String(expected)}, received ${String(actual)}`);
@@ -47,11 +33,6 @@ export function same(actual: unknown, expected: unknown, label: string): void {
   equal(fingerprint(actual), fingerprint(expected), label);
 }
 
-export function hex(source: string): Uint8Array {
-  check(source.length % 2 === 0 && /^[0-9a-f]*$/.test(source), 'malformed literal bytes');
-  return Uint8Array.from(source.match(/../g) ?? [], (byte) => Number.parseInt(byte, 16));
-}
-
 function byteString(bytes: Uint8Array): string {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
@@ -62,14 +43,6 @@ export function memory(cpu: Cpu, base: bigint, expected: string): void {
     expected,
     `memory at ${base.toString(16)}`,
   );
-}
-
-export function registerBank(value: bigint | ((index: number) => bigint) = 0n): Registers {
-  return (
-    typeof value === 'function'
-      ? Array.from({ length: 16 }, (_, index) => value(index))
-      : Array<bigint>(16).fill(value)
-  ) as Registers;
 }
 
 export function initial(rip = CODE, registers: Record<number, bigint> = {}, flags = 2n): State {

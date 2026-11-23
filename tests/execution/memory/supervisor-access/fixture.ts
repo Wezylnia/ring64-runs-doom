@@ -7,9 +7,9 @@ import type {
   State,
 } from '../../../../sdk/src/index.js';
 import { longSnapshot, protectedSnapshot } from '../../../support/context.js';
-import { LIMITS, hex, registerBank } from '../../../support/fixture.js';
+import { LIMITS, hex, registerBank } from '../../../support/literals.js';
 
-export { check, hex, type Scenario } from '../../../support/fixture.js';
+export { check, hex, type Scenario } from '../../../support/literals.js';
 export type { Cpu, PagingState } from '../../../../sdk/src/index.js';
 export type Side = { createCpu(options: Options): Promise<Cpu>; compiler: WebAssembly.Module };
 export type Family = 'non-pae' | 'pae' | 'ia32e' | 'fixed';
