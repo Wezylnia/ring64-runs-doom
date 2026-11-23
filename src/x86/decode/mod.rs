@@ -130,11 +130,3 @@ pub(crate) use decode_with_profile as decode_for_translation;
 
 #[cfg(test)]
 mod tests;
-
-#[cfg(test)]
-#[path = "tests/paging.rs"]
-mod paging_tests;
-
-#[cfg(test)]
-#[path = "tests/invpcid.rs"]
-mod invpcid_tests;

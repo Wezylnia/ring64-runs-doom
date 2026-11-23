@@ -1,0 +1,10 @@
+mod arithmetic_bits;
+mod bmi;
+mod conditions;
+mod exchange;
+mod integer_memory;
+mod logical;
+mod multiply_divide;
+mod registers;
+mod scalar_data;
+mod strings;
