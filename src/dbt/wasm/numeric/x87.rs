@@ -7,7 +7,7 @@ use std::mem::offset_of;
 use wasm_encoder::{Instruction as Wasm, MemArg};
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-use super::{REMAINING, RIP, SHADOW};
+use super::{ADDRESS, REMAINING, RIP, SHADOW, VALUE};
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 use crate::x86::{
     instruction::{Instruction, Operation},
@@ -55,11 +55,6 @@ pub(super) fn paged_x87_memory_pair(first: Instruction, second: Instruction) -> 
     })
 }
 
-#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-pub(super) fn inline_x87_pop(op: crate::x86::x87::Op) -> bool {
-    register_store_pop(op) && op.index == 0
-}
-
 impl Emitter {
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     fn can_inline_x87_pop(&self) -> bool {
@@ -73,7 +68,7 @@ impl Emitter {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    fn inline_x87_pop_bank(&mut self, pc: u64, count: i32) {
+    fn inline_x87_pop_bank(&mut self, pc: u64, count: i32, destination: u8) {
         use crate::x86::x87::State;
         let x87 = offset_of!(RunState, x87);
         let mem = |offset, align| MemArg {
@@ -126,25 +121,31 @@ impl Emitter {
             .op(Wasm::I32Or)
             .op(Wasm::I32Store16(status));
 
-        if count == 2 {
-            // FSTP ST(1) copies the raw value to the next stack slot.
-            // FSTP ST(0) then empties that tag, leaving both raw copies intact.
+        let reclassify = destination != 0 && count == 1;
+        if destination != 0 {
             self.op(Wasm::LocalGet(STORE_STATUS))
-                .op(Wasm::I32Const(1))
+                .op(Wasm::I32Const(i32::from(destination)))
                 .op(Wasm::I32Add)
                 .op(Wasm::I32Const(7))
                 .op(Wasm::I32And)
                 .op(Wasm::LocalSet(REASON));
             let registers = x87 + offset_of!(State, registers);
-            for (load, store) in [
+            let exponent = mem(registers + 8, 0);
+            for (load, store, scratch) in [
                 (
                     Wasm::I64Load(mem(registers, 0)),
                     Wasm::I64Store(mem(registers, 0)),
+                    reclassify.then_some(VALUE),
                 ),
-                (
-                    Wasm::I32Load16U(mem(registers + 8, 0)),
-                    Wasm::I32Store16(mem(registers + 8, 0)),
-                ),
+                if reclassify {
+                    (
+                        Wasm::I64Load16U(exponent),
+                        Wasm::I64Store16(exponent),
+                        Some(ADDRESS),
+                    )
+                } else {
+                    (Wasm::I32Load16U(exponent), Wasm::I32Store16(exponent), None)
+                },
             ] {
                 for top in [REASON, STORE_STATUS] {
                     self.op(Wasm::LocalGet(0))
@@ -153,7 +154,11 @@ impl Emitter {
                         .op(Wasm::I32Mul)
                         .op(Wasm::I32Add);
                 }
-                self.op(load).op(store);
+                self.op(load);
+                if let Some(local) = scratch {
+                    self.op(Wasm::LocalTee(local));
+                }
+                self.op(store);
             }
         }
 
@@ -165,6 +170,43 @@ impl Emitter {
                 .op(Wasm::LocalGet(top))
                 .op(Wasm::I32Const(1))
                 .op(Wasm::I32Shl)
+                .op(Wasm::I32Shl)
+                .op(Wasm::I32Or);
+        }
+        if reclassify {
+            // The raw value owns the new tag, even for an imported bank whose
+            // source tag disagrees with its payload. See x87::number::tag.
+            self.op(Wasm::I32Const(3))
+                .op(Wasm::LocalGet(REASON))
+                .op(Wasm::I32Const(1))
+                .op(Wasm::I32Shl)
+                .op(Wasm::LocalTee(STORE_STATUS))
+                .op(Wasm::I32Shl)
+                .op(Wasm::I32Const(-1))
+                .op(Wasm::I32Xor)
+                .op(Wasm::I32And)
+                .op(Wasm::LocalGet(ADDRESS))
+                .op(Wasm::I32WrapI64)
+                .op(Wasm::I32Const(0x7fff))
+                .op(Wasm::I32And)
+                .op(Wasm::LocalTee(REASON))
+                .op(Wasm::I32Const(1))
+                .op(Wasm::I32Sub)
+                .op(Wasm::I32Const(0x7ffe))
+                .op(Wasm::I32GeU)
+                .op(Wasm::LocalGet(VALUE))
+                .op(Wasm::I64Const(0))
+                .op(Wasm::I64GeS)
+                .op(Wasm::I32Or)
+                .op(Wasm::I32Const(1))
+                .op(Wasm::I32Shl)
+                .op(Wasm::LocalGet(REASON))
+                .op(Wasm::I32Eqz)
+                .op(Wasm::LocalGet(VALUE))
+                .op(Wasm::I64Eqz)
+                .op(Wasm::I32And)
+                .op(Wasm::I32Sub)
+                .op(Wasm::LocalGet(STORE_STATUS))
                 .op(Wasm::I32Shl)
                 .op(Wasm::I32Or);
         }
@@ -228,10 +270,11 @@ impl Emitter {
         self.op(Wasm::If(BlockType::Empty));
         if register_store_pop(a.op)
             && a.op.index == 1
-            && inline_x87_pop(b.op)
+            && register_store_pop(b.op)
+            && b.op.index == 0
             && self.can_inline_x87_pop()
         {
-            self.inline_x87_pop_bank(second.pc, 2);
+            self.inline_x87_pop_bank(second.pc, 2, 1);
             self.op(Wasm::I64Const(second.next_pc as i64))
                 .op(Wasm::LocalSet(RIP));
             self.retire_instructions(2);
@@ -326,10 +369,10 @@ impl Emitter {
     ) {
         let operation = instruction.op;
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-        let inlined = inline_x87_pop(operation) && self.can_inline_x87_pop();
+        let inlined = register_store_pop(operation) && self.can_inline_x87_pop();
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         if inlined {
-            self.inline_x87_pop_bank(pc, 1);
+            self.inline_x87_pop_bank(pc, 1, operation.index);
             self.op(Wasm::Else);
         }
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]

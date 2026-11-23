@@ -1040,7 +1040,7 @@ fn emit_body(
         } else {
             !observed
                 && (unit.instructions.iter().any(|instruction| {
-                    matches!(instruction.operation, Operation::X87(x87) if super::x87::inline_x87_pop(x87.op))
+                    matches!(instruction.operation, Operation::X87(x87) if crate::x86::x87::register_store_pop(x87.op))
                 }) || unit.instructions.windows(2)
                     .any(|pair| super::x87::x87_pair(pair[0], pair[1]).is_some()))
         };

@@ -69,7 +69,7 @@ test('inline x87 stack pops preserve raw bank bits and checked retirement bounda
       const stopped = await cpu.run({ budget: 8n, stop: pc + 2n });
       assert.equal(stopped.reason, 'stop');
       assert.equal(stopped.retired, 1n);
-      assert.equal(helperCalls, 1);
+      assert.equal(helperCalls, 0);
       assert.deepEqual(cpu.readX87State(), {
         ...original,
         registers: [rawTop, ...original.registers.slice(1)],
@@ -89,6 +89,33 @@ test('inline x87 stack pops preserve raw bank bits and checked retirement bounda
       assert.equal(trapped.retired, 0n);
       assert.equal(helperCalls, 2);
       assert.deepEqual(cpu.readX87State(), pending);
+    });
+
+    // FSTP ST(2) from TOP=7 writes physical slot 1. The imported source
+    // tag is 0 for all three values, including zero and unsupported.
+    await using(compiler, 'ddda', context('protected'), async (cpu) => {
+      for (const [value, tag] of [
+        [0x80000000000000000000n, 1],
+        [0x40008000000000000000n, 0],
+        [0x40000000000000000001n, 2],
+      ] as const) {
+        const registers = [...original.registers.slice(0, 7), value];
+        cpu.setState(input(pc, {}, 2n));
+        cpu.setX87State({ ...original, registers });
+        helperCalls = 0;
+        const run = await cpu.run({ budget: 8n, stop: pc + 2n });
+        assert.equal(run.reason, 'stop');
+        assert.equal(run.retired, 1n);
+        assert.equal(helperCalls, 0);
+        registers[1] = value;
+        assert.deepEqual(cpu.readX87State(), {
+          ...original,
+          registers,
+          statusWord: 0x4500,
+          tagWord: 0xfff3 | (tag << 2),
+          instructionPointer: pc,
+        });
+      }
     });
   } finally {
     prototype.artifactImports = imports;
