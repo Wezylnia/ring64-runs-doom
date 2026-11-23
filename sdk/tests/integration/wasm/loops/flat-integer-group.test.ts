@@ -736,3 +736,91 @@ test('funded stack groups preserve wrapped offsets and partial stack effects', a
     Core.prototype.compile = compile;
   }
 });
+
+test('bounded flat data windows replay at the first checked operand on refusal', async () => {
+  const head = 0x31000n;
+  const data = 0x40000n;
+  const stack = 0x41000n;
+  // INC EAX; AND ECX,3; MOV EDX,[ESI+ECX*4]; INC EAX; MOV [ESI+16],EAX;
+  // AND EDI,3; ADD [ESI+EDI*4+16],EDX; CALL EBX; DEC EBP; JNZ head; HLT; RET.
+  const code = hex('4083e1038b148e4089461083e7030154be10ffd34d75e9f4c3');
+  const values = new Uint8Array(32);
+  new DataView(values.buffer).setUint32(12, 7, true);
+  const seeds = [0n, 1n, 4n, 7n, 8n, 11n, 14n, 18n, 20n, 21n, 23n, 24n].map(
+    (offset) => head + offset,
+  );
+  const compile = Core.prototype.compile;
+  Core.prototype.compile = function (pc, limits, entries, regionPoints) {
+    if (pc === head && !entries?.length) return compile.call(this, pc, limits, seeds, true);
+    return compile.call(this, pc, limits, entries, regionPoints);
+  };
+  const mapping = (base: bigint, backing: string, length: number, execute: boolean) => ({
+    base,
+    backing,
+    length,
+    offset: 0,
+    permissions: { read: true, write: !execute, execute },
+  });
+  const codeMap = mapping(head, 'code', code.length, true);
+  const stackMap = mapping(stack, 'stack', 16, false);
+  try {
+    const cpu = await createCpu({
+      compiler,
+      entry: head,
+      limits: LIMITS,
+      context: protectedSnapshot(),
+      memoryLimits: { maxBackings: 3, maxMappings: 3, maxBackingBytes: code.length + 48 },
+      memory: {
+        backings: [
+          { id: 'code', bytes: code },
+          { id: 'data', bytes: values },
+          { id: 'stack', bytes: new Uint8Array(16) },
+        ],
+        mappings: [codeMap, mapping(data, 'data', 32, false), stackMap],
+      },
+    });
+    try {
+      const input = initial(head, {
+        0: 10n,
+        1: 0x123n,
+        2: 0n,
+        3: head + 24n,
+        4: stack + 16n,
+        5: 2n,
+        6: data,
+        7: 0x100n,
+      });
+      for (let pass = 0; pass < 2; pass++) {
+        cpu.setState(input);
+        const result = await cpu.run({ budget: 32n, stop: head + 23n });
+        assert.equal(result.reason, 'stop');
+        assert.equal(result.retired, 22n);
+        assert.equal(result.state.registers[0], 14n);
+        assert.equal(result.state.registers[2], 7n);
+        assert.deepEqual(await cpu.readMemory(data + 16n, 4), hex('15000000'));
+      }
+
+      cpu.setState(input);
+      const inner = await cpu.run({ budget: 32n, stop: head + 7n });
+      assert.equal(inner.reason, 'stop');
+      assert.equal(inner.retired, 3n);
+      assert.equal(inner.state.registers[0], 11n);
+      assert.equal(inner.state.registers[2], 7n);
+
+      cpu.setMappings([codeMap, mapping(data, 'data', 16, false), stackMap]);
+      cpu.setState(input);
+      const clipped = await cpu.run({ budget: 32n, stop: head + 23n });
+      assert.equal(clipped.reason, 'data-fault');
+      assert.equal(clipped.fault?.address, data + 16n);
+      assert.equal(clipped.state.rip, head + 8n);
+      assert.equal(clipped.retired, 4n);
+      assert.equal(clipped.state.registers[0], 12n);
+      assert.equal(clipped.state.registers[2], 7n);
+      assert.equal(clipped.state.flags, 6n);
+    } finally {
+      cpu.dispose();
+    }
+  } finally {
+    Core.prototype.compile = compile;
+  }
+});

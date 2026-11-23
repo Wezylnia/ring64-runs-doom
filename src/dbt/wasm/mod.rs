@@ -32,6 +32,9 @@ mod far;
 #[path = "system/fast_system.rs"]
 mod fast_system;
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[path = "memory/flat_data.rs"]
+mod flat_data;
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 #[path = "memory/flat_stack.rs"]
 mod flat_stack;
 #[path = "numeric/float.rs"]
@@ -166,6 +169,8 @@ struct Emitter {
     flat_stack_pointer_span: Option<memory::SpanCache>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     flat_stack_access: Option<(u32, flat_stack::StackAccess)>,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    flat_data_bias: Option<u32>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     stack_pointer_relative: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]

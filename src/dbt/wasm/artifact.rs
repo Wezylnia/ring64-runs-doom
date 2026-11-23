@@ -2273,6 +2273,30 @@ fn emit_body(
         host
     });
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let flat_data_windows = flat_integer_groups
+        .as_ref()
+        .filter(|_| complete_flat_call && read_span.is_some() && write_caches[0].is_some())
+        .map(|groups| {
+            groups
+                .iter()
+                .enumerate()
+                .map(|(first, end)| {
+                    super::flat_data::FlatDataWindow::recognize(
+                        &unit.context,
+                        &unit.instructions[first..(*end)?],
+                    )
+                })
+                .collect::<Vec<_>>()
+        })
+        .filter(|windows| windows.iter().any(Option::is_some));
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let flat_data_bias = flat_data_windows.as_ref().map(|_| {
+        let bias = next_local;
+        locals.push((1, ValType::I32));
+        next_local += 1;
+        bias
+    });
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let linear_scalar_copy_prefix =
         (!paged && !observed && !mmio && optional.scalar_copy_prefix && !unit.context.is_long64())
             .then(|| ScalarCopyGroup::finite_prefix(unit, [loop_body, None]))
@@ -2844,6 +2868,8 @@ fn emit_body(
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         flat_stack_access: None,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        flat_data_bias: None,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         stack_pointer_relative: false,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         read_loop_diamond,
@@ -3136,10 +3162,15 @@ fn emit_body(
                 .as_ref()
                 .and_then(|windows| windows[index].as_ref())
                 .zip(flat_stack_host);
+            let data_window = flat_data_windows
+                .as_ref()
+                .and_then(|windows| windows[index].as_ref())
+                .zip(flat_data_bias);
             emitter.emit_flat_integer_group(
                 &unit.instructions[index..end],
                 loop_depth,
                 stack_window,
+                data_window,
             );
         }
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]

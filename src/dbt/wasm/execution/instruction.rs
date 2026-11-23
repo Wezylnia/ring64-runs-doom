@@ -1339,6 +1339,7 @@ impl Emitter {
         instructions: &[Instruction],
         loop_depth: u32,
         stack: Option<(&super::flat_stack::FlatStackWindow, u32)>,
+        data: Option<(&super::flat_data::FlatDataWindow, u32)>,
     ) {
         use super::{RIP, control::InstructionRetirement};
 
@@ -1361,9 +1362,23 @@ impl Emitter {
                 count: index as u32,
                 terminal,
             };
+            if let Some((plan, bias)) = data.filter(|(plan, _)| plan.head == index) {
+                self.guard_flat_data_window(plan, bias);
+                // The guard is a refusal before this operand. Publish the
+                // preceding group's effects and replay from the exact PC.
+                self.op(Op::I64Const(instruction.pc as i64))
+                    .op(Op::LocalSet(RIP));
+                self.retire_instructions(index as u32);
+                self.route(instruction.pc, loop_depth + 1, loop_depth + 2);
+                self.op(Op::End);
+            }
             self.flat_stack_access = stack.map(|(plan, host)| (host, plan.access(index)));
+            self.flat_data_bias = data
+                .filter(|(plan, _)| plan.uses(index))
+                .map(|(_, bias)| bias);
             self.emit_instruction(*instruction, None, loop_depth, None, None, terminal);
             self.flat_stack_access = None;
+            self.flat_data_bias = None;
             if !terminal && self.stores {
                 self.code_write_boundary(
                     loop_depth + 1,

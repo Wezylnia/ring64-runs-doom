@@ -1045,6 +1045,27 @@ impl Emitter {
             }
             return true;
         }
+        if self.segment == Segment::Ds
+            && let Some(bias) = self.flat_data_bias
+            && matches!(
+                operand,
+                DirectOperand::ScalarLoad(Width::W32) | DirectOperand::ScalarStore(Width::W32)
+            )
+        {
+            let arg = MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            };
+            self.flat_data_pointer(bias);
+            if store {
+                self.op(Op::LocalGet(RESULT));
+                self.direct_scalar_store(Width::W32, arg);
+            } else {
+                self.direct_scalar_load(Width::W32, arg);
+            }
+            return true;
+        }
         let stack_pointer = !store
             && self.segment == Segment::Ss
             && self.stack_pointer_relative
@@ -1220,6 +1241,22 @@ impl Emitter {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn flat_span_bias(&mut self, span: SpanCache) {
+        self.op(Op::LocalGet(span.host))
+            .op(Op::LocalGet(span.base))
+            .op(Op::I32WrapI64)
+            .op(Op::I32Sub);
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    fn flat_data_pointer(&mut self, bias: u32) {
+        self.op(Op::LocalGet(ADDRESS))
+            .op(Op::I32WrapI64)
+            .op(Op::LocalGet(bias))
+            .op(Op::I32Add);
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     pub(super) fn flat_span_pointer(&mut self, span: SpanCache) {
         self.op(Op::LocalGet(span.host))
             .op(Op::LocalGet(VALUE))
@@ -1329,6 +1366,22 @@ impl Emitter {
     ) -> Option<RmwAccess> {
         use crate::memory::Access;
 
+        if address.segment == Segment::Ds
+            && width == Width::W32
+            && let Some(bias) = self.flat_data_bias
+        {
+            self.address(address, next_pc);
+            self.op(Op::LocalSet(ADDRESS));
+            self.flat_data_pointer(bias);
+            self.op(Op::LocalTee(STORE_STATUS));
+            let memory = MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            };
+            self.direct_scalar_load(width, memory);
+            return Some(RmwAccess::Proved(STORE_STATUS, memory));
+        }
         if self.uses_indexed_scalar_rmw() {
             self.address(address, next_pc);
             self.op(Op::LocalSet(ADDRESS));
