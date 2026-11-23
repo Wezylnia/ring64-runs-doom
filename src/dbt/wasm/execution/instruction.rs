@@ -707,16 +707,17 @@ impl Emitter {
         let indexed =
             indexed_leading || self.indexed_dword_prefixes || indexed_wide || indexed_store;
         // A first operand can refuse before any guest effect. After it,
-        // register-only work and a canonical branch can retire together.
-        let count_once = self.context.is_long64()
+        // register-only work can retire together at each possible branch exit.
+        let batch_retirement = self.context.is_long64()
             && instructions.len() > 1
             && instructions.iter().enumerate().all(|(index, instruction)| {
                 super::artifact::register_prefix_operation(instruction.operation)
                     || index == 0 && (read.is_some() || leading_wide_read)
+                    || matches!(instruction.operation, Operation::Jcc { target, .. }
+                        if crate::memory::canonical48(target))
                     || index + 1 == instructions.len()
                         && matches!(instruction.operation,
-                            Operation::Jump { target } | Operation::Jcc { target, .. }
-                                if crate::memory::canonical48(target))
+                        Operation::Jump { target } if crate::memory::canonical48(target))
             });
         let keep_quiet = self.sampled_region
             && self.quiet_fetch_page.is_some()
@@ -789,7 +790,7 @@ impl Emitter {
                 Width::W64 => unreachable!("unsupported prefix read width"),
             });
             self.write_register(register, width);
-            if !count_once {
+            if !batch_retirement {
                 self.commit(first.next_pc);
             }
         }
@@ -800,8 +801,9 @@ impl Emitter {
         let loop_depth = loop_depth + 2 + u32::from(read.is_some() || leading_wide_read);
         self.guarded_paged_lap = true;
         self.loop_gates_prechecked = true;
-        self.paged_prefix_fetch_out =
+        let outgoing =
             fetch_handoff.and_then(|(local, _, outgoing)| outgoing.map(|target| (local, target)));
+        let mut deferred = u32::from(read.is_some());
         let guarded = &instructions[usize::from(read.is_some())..];
         let mut retired_read = false;
         for (index, instruction) in guarded.iter().enumerate() {
@@ -809,10 +811,13 @@ impl Emitter {
             let fuse_branch = wide && guarded.get(index + 1).is_some_and(|next| {
                 matches!(next.operation, Operation::Jcc { target, .. } if crate::memory::canonical48(target))
             });
-            self.instruction_retirement = if count_once {
-                if index + 1 == guarded.len() {
-                    InstructionRetirement::AfterPrefix(instructions.len() as u32 - 1)
+            let terminal = index + 1 == guarded.len();
+            self.paged_prefix_fetch_out = if terminal { outgoing } else { None };
+            self.instruction_retirement = if batch_retirement {
+                if terminal || matches!(instruction.operation, Operation::Jcc { .. }) {
+                    InstructionRetirement::AfterPrefix(std::mem::take(&mut deferred))
                 } else {
+                    deferred += 1;
                     InstructionRetirement::DeferredCommit
                 }
             } else if fuse_branch {

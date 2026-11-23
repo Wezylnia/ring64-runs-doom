@@ -281,7 +281,17 @@ fn paged_register_prefixes(
             end += 1;
             if terminal_branch(instruction, has_read, has_wide_read) {
                 has_branch = true;
-                break;
+                let extend_fallthrough = short_register_prefixes
+                    && matches!(instruction.operation, Operation::Jcc { target, .. }
+                        if target >> 12 == instruction.pc >> 12)
+                    && instructions.get(end).is_some_and(|next| {
+                        register_prefix_operation(next.operation)
+                            || super::instruction::paged_prefix_dword_read(*next)
+                            || super::instruction::paged_prefix_wide_read(*next)
+                    });
+                if !extend_fallthrough {
+                    break;
+                }
             }
         }
         // Each successful operand accounts for the next fetch. Leave a following

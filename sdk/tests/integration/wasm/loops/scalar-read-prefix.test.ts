@@ -172,6 +172,90 @@ test('a sampled register prefix preserves stop and budget at an external branch 
   }
 });
 
+test('sampled fallthrough branches retire only the executed prefix and its loads', async () => {
+  // XOR EDX,EDX; CMP EAX,1; JE first; ADD EDX,2; MOV ECX,source;
+  // CMP ECX,7; JE second; HLT; first: INC EBX twice; HLT; second: INC ESI twice; HLT.
+  const offsets = [0, 2, 5, 7, 10, 12, 15, 17, 18, 20, 22, 23, 25, 27];
+  const compile = Core.prototype.compile;
+  const prototype = Core.prototype as unknown as {
+    artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
+  };
+  const imports = prototype.artifactImports;
+  const addr = (offset: number) => PC + BigInt(offset);
+  Core.prototype.compile = function (pc, limits, seeds, regionPoints) {
+    if (pc === PC && !seeds?.length) return compile.call(this, pc, limits, offsets.map(addr), true);
+    return compile.call(this, pc, limits, seeds, regionPoints);
+  };
+  let combined = 0;
+  prototype.artifactImports = function (observed) {
+    const env = imports.call(this, observed);
+    const guard = env.paged_loop_guard;
+    if (typeof guard === 'function') {
+      env.paged_loop_guard = (pc: bigint, bytes: number, ...args: unknown[]) => {
+        const result = guard(pc, bytes, ...args);
+        if (pc === PC && bytes === 17 && result === 1) combined++;
+        return result;
+      };
+    }
+    return env;
+  };
+  try {
+    for (const operand of ['89e9', '8b0f']) {
+      const code = '31d283f801740b83c202' + operand + '83f9077406f4ffc3ffc3f4ffc6ffc6f4';
+      const data = new Uint8Array(4096);
+      data[0] = 7;
+      const before = combined;
+      await usingPaged(
+        compiler,
+        { code, words: [[0x4008n, 0xa003n]], spans: [{ physical: 0xa000n, bytes: data }] },
+        async (cpu) => {
+          const source = PC + 4096n;
+          const missing = source + 4096n;
+          const enter = (eax: bigint, address = source) =>
+            cpu.setState(initial(PC, { 0: eax, 1: 29n, 2: 42n, 3: 0n, 5: 7n, 6: 0n, 7: address }));
+          enter(1n, missing);
+          const first = await cpu.run({ budget: 30n, stop: addr(22) });
+          assert.equal(first.reason, 'stop');
+          assert.equal(first.retired, 5n);
+          assert.equal(first.state.registers[2], 0n);
+          assert.equal(first.state.registers[3], 2n);
+          assert.equal(first.state.registers[1], 29n);
+          enter(0n);
+          const second = await cpu.run({ budget: 30n, stop: addr(27) });
+          assert.equal(second.reason, 'stop');
+          assert.equal(second.retired, 9n);
+          assert.equal(second.state.registers[2], 2n);
+          assert.equal(second.state.registers[6], 2n);
+          assert.ok(
+            combined > before,
+            'the guard must include the interior branch and the final branch',
+          );
+          enter(0n);
+          const inside = await cpu.run({ budget: 30n, stop: addr(10) });
+          assert.equal(inside.reason, 'stop');
+          assert.equal(inside.retired, 4n);
+          assert.equal(inside.state.registers[1], 29n);
+          enter(1n);
+          const short = await cpu.run({ budget: 3n });
+          assert.equal(short.reason, 'budget');
+          assert.equal(short.state.rip, addr(18));
+          if (operand === '8b0f') {
+            enter(0n, missing);
+            const fault = await cpu.run({ budget: 30n });
+            assert.equal(fault.reason, 'page-fault');
+            assert.equal(fault.retired, 4n);
+            assert.equal(fault.state.rip, addr(10));
+            assert.equal(fault.state.registers[2], 2n);
+          }
+        },
+      );
+    }
+  } finally {
+    Core.prototype.compile = compile;
+    prototype.artifactImports = imports;
+  }
+});
+
 test('sampled direct jumps carry quiet fetch only within a native entry', async () => {
   // JMP second; NOP; NOP; JMP stop; HLT.
   const second = PC + 4n;
