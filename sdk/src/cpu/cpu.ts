@@ -871,6 +871,7 @@ export class Cpu {
 
   readonly #sampledLinearOwners = new WeakSet<Artifact>();
   #hasLinearCallOwner = false;
+  #flatLinksReady = false;
   // Short frames can interrupt capture. An owner pays for one attempt per lifetime.
   readonly #sampledPagedCorridors = new WeakSet<Artifact>();
   #flatTraceReady = false;
@@ -919,6 +920,11 @@ export class Cpu {
         remainingDeliveryBudget,
       );
       const entries = result.resources.nativeEntries;
+      this.#flatLinksReady =
+        rememberFlatPressure &&
+        (reason === 'stop' || reason === 'budget') &&
+        result.resources.cacheHits >= 256 &&
+        result.resources.dispatches >= 256;
       this.#flatTraceReady =
         rememberFlatPressure &&
         (reason === 'stop' || reason === 'budget') &&
@@ -992,7 +998,7 @@ export class Cpu {
       let saturatedDispatches = 0;
       const linkEligible =
         linearRegionsSupported &&
-        this.#hasLinearCallOwner &&
+        (this.#hasLinearCallOwner || this.#flatLinksReady) &&
         !flatTracing &&
         engine.supportsOwnerLinks;
       if (linkEligible && !this.#cache.links && this.#cache.resources().cachedArtifacts > 0)
