@@ -65,9 +65,12 @@ for (const [path, anchors] of Object.entries({
   'src/dbt/wasm/execution/boundary.rs': ['if self.paged {'],
   'src/embedding/exports/events/system_flags.rs': ['pub(super) fn boundary_observed(&self)'],
   'sdk/src/wasm/core.ts': [
-    'if (this.isPaged)',
-    '...PAGED_HELPERS',
+    'bindArtifactImports(this.#exports, { observed, paged: this.isPaged',
     'run(this.#statePointer, budget',
+  ],
+  'sdk/src/wasm/artifact-imports.ts': [
+    'if (paged)',
+    'observed ? observedPagedBindings : pagedBindings',
   ],
   'src/memory/access.rs': [
     'fn preflight<const PHYSICAL: bool>',
