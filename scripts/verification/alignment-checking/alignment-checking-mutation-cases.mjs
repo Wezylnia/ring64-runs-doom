@@ -96,36 +96,16 @@ export const mutants = [
     'rmw_retains_its_leaf_and_payload_may_clear_the_planned_dirty_bit',
     edit(
       access,
-      `        if !prepared.published {
-            let updates = self.dirty_admission(&prepared, fields)?;
-            self.dirty_publish(&updates);
-            self.mark_dirty(&prepared, fields);
-        }
-        let mut storage = self.storage.borrow_mut();`,
-      `        let deferred_updates = if !prepared.published {
+      `        self.publish_write_metadata(&prepared, fields)?;
+        self.publish_write_payload(&prepared, fields, bytes);`,
+      `        let updates = if prepared.published { None } else {
             Some(self.dirty_admission(&prepared, fields)?)
-        } else { None };
-        let mut storage = self.storage.borrow_mut();`,
-    ),
-    edit(
-      access,
-      `        }
-        Ok(())
-    }
-}
-
-fn participates`,
-      `        }
-        drop(storage);
-        if let Some(updates) = deferred_updates {
+        };
+        self.publish_write_payload(&prepared, fields, bytes);
+        if let Some(updates) = updates {
             self.dirty_publish(&updates);
             self.mark_dirty(&prepared, fields);
-        }
-        Ok(())
-    }
-}
-
-fn participates`,
+        }`,
     ),
   ),
   publicCpu(
@@ -133,12 +113,12 @@ fn participates`,
     granular,
     edit(
       'src/embedding/exports/numeric/x87.rs',
-      '        let mut address = None;\n        let source = if width == 0 {',
-      `        if operation.is_store() {
+      '        let width = operation.memory_bytes();\n        let mut address = None;',
+      `        let width = operation.memory_bytes();
+        if store {
             unsafe { let state = &mut *core.state.get(); let _ = x87::eval(&mut state.x87, operation, 0, flags); }
         }
-        let mut address = None;
-        let source = if width == 0 {`,
+        let mut address = None;`,
     ),
   ),
   native(
@@ -549,17 +529,11 @@ fn participates`,
     'each_operand_admission_clears_a_previous_alignment_refusal',
     edit(
       scalar,
-      `fn core_load_impl<const OBSERVED: bool, const PAGED: bool>(address: u64, width: u32) -> u64 {
-    BRIDGE.with_borrow_mut(|bridge| {
-        let core = bridge.core.as_mut().unwrap();
-        core.fault = None;
-        if PAGED {
+      `        if PAGED {
             core.alignment_check = None;
-        }`,
-      `fn core_load_impl<const OBSERVED: bool, const PAGED: bool>(address: u64, width: u32) -> u64 {
-    BRIDGE.with_borrow_mut(|bridge| {
-        let core = bridge.core.as_mut().unwrap();
-        core.fault = None;`,
+        }
+        match guest_access!(core, PAGED, read(address, width)) {`,
+      '        match guest_access!(core, PAGED, read(address, width)) {',
     ),
   ),
   native(
