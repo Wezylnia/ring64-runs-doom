@@ -53,6 +53,38 @@ pub(super) fn fixture() -> (Image, State, Request) {
 
 #[cfg(not(feature = "parallel"))]
 #[test]
+fn grouped_operand_touches_match_separate_touches_with_aliases_and_clock_rebasing() {
+    let grouped = Cache::new(4);
+    let reference = Cache::new(4);
+    let mut grouped = grouped.entries.borrow_mut();
+    let mut reference = reference.entries.borrow_mut();
+    for start in [0, u64::MAX - 2] {
+        for index in 0..4 {
+            for table in 0..4 {
+                for store in 0..4 {
+                    for entries in [&mut grouped, &mut reference] {
+                        entries.recency_mut().clock = start;
+                        entries.recency_mut().ages.fill(0);
+                        entries.set_hint(Some(3));
+                    }
+                    let slots = [index, table, store, 3];
+                    grouped.touch_indexed_group(slots);
+                    for slot in slots {
+                        if reference.hint() != Some(slot) {
+                            reference.touch(slot);
+                        }
+                    }
+                    assert_eq!(grouped.hint(), reference.hint());
+                    assert_eq!(grouped.recency().clock, reference.recency().clock);
+                    assert_eq!(grouped.recency().ages, reference.recency().ages);
+                }
+            }
+        }
+    }
+}
+
+#[cfg(not(feature = "parallel"))]
+#[test]
 fn indexed_operand_span_checks_width_and_slot_replacement() {
     let (mut image, state, read) = fixture();
     let cache = Cache::new(1);

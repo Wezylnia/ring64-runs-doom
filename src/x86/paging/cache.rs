@@ -456,6 +456,33 @@ impl Entries {
     }
 
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    fn touch_indexed_group(&mut self, slots: [usize; 4]) {
+        let fetch = slots[3];
+        debug_assert_eq!(self.hint(), Some(fetch));
+        // The group's last fetch restores the incoming hint. Keep the
+        // intermediate clock and hint local unless the clock needs rebasing.
+        let recency = self.recency_mut();
+        if recency.clock <= u64::MAX - 4 {
+            let mut previous = fetch;
+            let mut clock = recency.clock;
+            for slot in slots {
+                if previous != slot {
+                    clock += 1;
+                    recency.ages[slot] = clock;
+                }
+                previous = slot;
+            }
+            recency.clock = clock;
+        } else {
+            for slot in slots {
+                if self.hint() != Some(slot) {
+                    self.touch(slot);
+                }
+            }
+        }
+    }
+
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
     fn touch_data_and_fetch(&mut self, data: usize, fetch: usize) {
         debug_assert_eq!(self.hint(), Some(fetch));
         debug_assert_ne!(data, fetch);
@@ -963,11 +990,7 @@ impl Cache {
 
         // No retained age changes before all operations are admitted. After
         // the straight group, the last uses are these operands and code.
-        for slot in [index_slot, table_slot, store_slot, fetch] {
-            if entries.hint() != Some(slot) {
-                entries.touch(slot);
-            }
-        }
+        entries.touch_indexed_group([index_slot, table_slot, store_slot, fetch]);
         Some(crate::memory::IndexedDwordWrite {
             index: u32::from(index_value),
             value,
