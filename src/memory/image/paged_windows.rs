@@ -56,6 +56,11 @@ fn window_token(base: u64) -> Option<u32> {
     Some(token)
 }
 
+pub(super) fn byte_token(ram: u64) -> Option<u32> {
+    let inside = ram % PAYLOAD;
+    Some(window_token(ram - inside)? + inside as u32)
+}
+
 pub(super) fn span(
     mapping: &Mapping,
     ram_base: u64,
@@ -72,10 +77,9 @@ pub(super) fn span(
     }
     // A guard page between tokens prevents unrelated windows from looking
     // contiguous to split-page and overlapping-copy proofs.
-    let token = window_token(ram - inside)?;
     Some(DirectSpan {
         base: address - before,
         length: (before + after) as u32,
-        host: token + (inside - before) as u32,
+        host: byte_token(ram)? - before as u32,
     })
 }

@@ -153,7 +153,7 @@ fn direct_physical_byte_store_requires_plain_writable_ram() {
         .unwrap();
     assert_eq!(value, 0xaa);
     // This is the direct store's entire lease, with no intervening Image use.
-    unsafe { pointer.unwrap().write(0x5c) };
+    unsafe { std::ptr::with_exposed_provenance_mut::<u8>(pointer.unwrap()).write(0x5c) };
     assert_eq!(image.physical_read(HOLE + 1, 1), Ok(0x5c));
 
     let denied = MappingInput {

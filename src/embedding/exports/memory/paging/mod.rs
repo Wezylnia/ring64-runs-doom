@@ -664,8 +664,7 @@ pub extern "C" fn core_paged_loop_read_byte_write_pointer(address: u64) -> u64 {
                         },
                     )?;
                     let slot_and_value = ((index as u32 + 1) << 8) | u32::from(value);
-                    let host = host.map_or(0, |pointer| pointer as u32);
-                    Some((u64::from(host) << 32) | u64::from(slot_and_value))
+                    Some(((host.unwrap_or(0) as u64) << 32) | u64::from(slot_and_value))
                 },
             )
         };

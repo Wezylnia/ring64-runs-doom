@@ -553,7 +553,7 @@ impl Image {
         &mut self,
         address: u64,
         write_ready: impl FnOnce() -> bool,
-    ) -> Option<(u8, Option<*mut u8>)> {
+    ) -> Option<(u8, Option<usize>)> {
         if !self.physical {
             return None;
         }
@@ -565,14 +565,23 @@ impl Image {
         let backing = mapping.backing;
         let index = mapping.offset + relative as BackingOffset;
         let value = self.backings[backing].read_array::<1>(index)[0];
-        // The synchronous guarded clone consumes the pointer before any host
-        // call or another guest memory operation.
-        let pointer = if write_ready() && self.direct_mapping_writable(mapping, relative, 1) {
-            self.backings[backing].host_pointer_mut(index)
+        // The generated store consumes this address within the same guarded entry.
+        let store = if write_ready() && self.direct_mapping_writable(mapping, relative, 1) {
+            #[cfg(guest_memory64)]
+            {
+                paged_windows::byte_token(self.backings[backing].extent.base + index)
+                    .map(|token| token as usize)
+            }
+            #[cfg(not(guest_memory64))]
+            {
+                self.backings[backing]
+                    .host_pointer_mut(index)
+                    .map(|pointer| pointer.expose_provenance())
+            }
         } else {
             None
         };
-        Some((value, pointer))
+        Some((value, store))
     }
 
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
