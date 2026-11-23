@@ -6,7 +6,10 @@ import { farRows } from './system/far-control.mjs';
 import { systemFlagRows } from './system/system-flags.mjs';
 import { softwareEventRows } from './events/software-events.mjs';
 import { eventDeliveryNames, measureEventDelivery } from './events/event-delivery.mjs';
-import { externalInterruptNames, measureExternalInterrupts } from './events/external-interrupts.mjs';
+import {
+  externalInterruptNames,
+  measureExternalInterrupts,
+} from './events/external-interrupts.mjs';
 import { accessFaultNames, measureAccessFaults } from './memory/access-faults.mjs';
 import { debugNames, measureDebug } from './system/debug.mjs';
 import { basicRows, RAM } from './basic-kernels.mjs';
