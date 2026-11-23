@@ -687,18 +687,42 @@ impl Emitter {
                 .op(Op::I32Const(3))
                 .op(Op::I32And)
                 .op(Op::I32Eqz)
-                .op(Op::If(BlockType::Result(ValType::I32)))
-                .op(Op::LocalGet(ADDRESS))
+                .op(Op::If(BlockType::Result(ValType::I32)));
+            let indexed = handoff.zip(self.indexed_paged_read);
+            if let Some((handoff, locals)) = indexed {
+                // A skipped tail leaves the data TLB entry behind the index and code.
+                // Revalidate and retouch it before reusing this pair at the same address.
+                self.op(Op::Block(BlockType::Result(ValType::I32)))
+                    .op(Op::Block(BlockType::Empty))
+                    .op(Op::LocalGet(pair.host))
+                    .op(Op::I32Eqz)
+                    .op(Op::BrIf(0))
+                    .op(Op::LocalGet(ADDRESS))
+                    .op(Op::LocalGet(handoff.address))
+                    .op(Op::I64Ne)
+                    .op(Op::BrIf(0));
+                self.indexed_read_host(locals, 8, true, IndexedOperand::Read);
+                self.op(Op::LocalTee(STORE_STATUS))
+                    .op(Op::I32Eqz)
+                    .op(Op::BrIf(0))
+                    .op(Op::I32Const(1))
+                    .op(Op::LocalSet(handoff.ready))
+                    .op(Op::LocalGet(STORE_STATUS))
+                    .op(Op::Br(1))
+                    .op(Op::End);
+            }
+            self.op(Op::LocalGet(ADDRESS))
                 .op(Op::I32Const(8))
                 .op(Op::LocalGet(pair.resolver_mode))
                 .op(Op::Call(pair.resolve))
                 .op(Op::I32Const(
                     crate::embedding::layout::PAGED_PAIR_CONTINUE as i32,
                 ))
-                .op(Op::LocalSet(pair.resolver_mode))
-                .op(Op::Else)
-                .op(Op::I32Const(0))
-                .op(Op::End);
+                .op(Op::LocalSet(pair.resolver_mode));
+            if indexed.is_some() {
+                self.op(Op::End);
+            }
+            self.op(Op::Else).op(Op::I32Const(0)).op(Op::End);
             if let Some(handoff) = handoff {
                 self.op(Op::End)
                     .op(Op::LocalGet(ADDRESS))

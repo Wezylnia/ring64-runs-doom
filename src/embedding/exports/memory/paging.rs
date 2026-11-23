@@ -1546,15 +1546,6 @@ fn paged_loop_read_pair_window(address: u64) -> u32 {
         {
             return 0;
         }
-        if core.state.indexed_paged_reads != 0 && pair.window_start == 0 && pair.window_end == 4096
-        {
-            let page = pair.address & !4095;
-            core.translation_cache.remember_indexed_read(
-                pair.binding.0,
-                page,
-                pair.host - (pair.address - page) as u32,
-            );
-        }
         pair.host
             .wrapping_add(address.wrapping_sub(pair.address) as u32)
     })
@@ -1623,6 +1614,18 @@ fn paged_loop_read_paired_dwords(address: u64, continuing: bool) -> u32 {
             else {
                 return 0;
             };
+            if let Some(pair) = memo
+                && core.state.indexed_paged_reads != 0
+                && pair.window_start == 0
+                && pair.window_end == 4096
+            {
+                let page = address & !4095;
+                core.translation_cache.remember_indexed_read(
+                    pair.binding.0,
+                    page,
+                    host - (address - page) as u32,
+                );
+            }
             core.guarded_dword_pair = memo;
             host
         };

@@ -332,7 +332,7 @@ test('a tail read carries live paired operands only across its own loop edge', a
             'full-page tail reads should reuse the mapping',
           );
           assert.ok(
-            draws ? resolved > 0 && resolved <= 2 : resolved >= 15,
+            resolved > 0 && resolved <= 2,
             `paired lookups with draws=${draws}: ${resolved}`,
           );
         }
