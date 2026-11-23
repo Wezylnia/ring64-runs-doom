@@ -270,6 +270,8 @@ struct Emitter {
     paged_byte_write_pair: Option<memory::PagedByteWritePair>,
     paged_loop_read_dword: Option<u32>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    direct_loop_reads: bool,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_loop_read_block: Option<(u32, bool)>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_loop_write_block: Option<u32>,

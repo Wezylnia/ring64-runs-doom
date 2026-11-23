@@ -738,6 +738,8 @@ fn emit_placement_with_copy(
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_dense_read_span: true,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        direct_loop_reads: true,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_read_rearm: true,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_byte_write_pair: true,
@@ -873,6 +875,8 @@ struct OptionalLowering {
     paged_f32_split_pair: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_dense_read_span: bool,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    direct_loop_reads: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_read_rearm: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -3011,6 +3015,8 @@ fn emit_body(
         paged_byte_write_pair,
         paged_loop_read_dword,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        direct_loop_reads: paged_dword_walk && optional.direct_loop_reads,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_loop_read_block,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_loop_write_block,
@@ -3534,6 +3540,21 @@ fn emit_body(
     }
     let code_start = bytes.len();
     code.append_to(&mut bytes);
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    if bytes.len() > max_artifact_bytes && emitter.direct_loop_reads {
+        return emit_body(
+            unit,
+            observed,
+            (paged, mmio),
+            loop_body,
+            _guard_reads,
+            OptionalLowering {
+                direct_loop_reads: false,
+                ..optional
+            },
+            max_artifact_bytes,
+        );
+    }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if bytes.len() > max_artifact_bytes && flat_integer_groups.is_some() {
         return emit_body(

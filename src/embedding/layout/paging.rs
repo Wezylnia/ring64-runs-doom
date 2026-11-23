@@ -23,6 +23,17 @@ pub(crate) const NEWEST_FETCH_SSE: u64 = 4;
 #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
 pub(crate) const MXCSR_EXCEPTION_MASKS: u32 = 0x1f80;
 
+#[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+pub(crate) const LOOP_READ_PAGES: usize = 2048;
+
+#[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+#[derive(Clone, Copy, Default)]
+#[repr(C)]
+pub(crate) struct LoopReadPage {
+    pub(crate) tag: u64,
+    pub(crate) host_bias: u32,
+}
+
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 #[derive(Default)]
 #[repr(C)]

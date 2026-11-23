@@ -502,6 +502,8 @@ pub struct Cache {
     entries: RefCell<Entries>,
     changed: Cell<bool>,
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    loop_reads_invalidated: Cell<bool>,
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
     guarded_order: RefCell<Option<recency::GuardedOrder>>,
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
     guarded_read_window: Cell<Option<(usize, u64)>>,
@@ -538,6 +540,8 @@ impl Cache {
                 admitted_fetch: None,
             }),
             changed: Cell::new(false),
+            #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+            loop_reads_invalidated: Cell::new(false),
             #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
             guarded_order: RefCell::new(None),
             #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
@@ -1315,8 +1319,8 @@ impl Cache {
         Some(value)
     }
 
-    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
-    pub(crate) fn read_dword_then_fetch(
+    #[cfg(all(not(feature = "parallel"), test))]
+    fn read_dword_then_fetch(
         &self,
         image: &crate::memory::Image,
         state: &State,
@@ -1324,6 +1328,19 @@ impl Cache {
         keys: &ProtectionKeys,
         peek: impl FnOnce() -> Option<Translation>,
     ) -> Option<u32> {
+        self.read_guarded_dword_then_fetch(image, state, request, keys, peek)
+            .map(|(value, _)| value)
+    }
+
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    pub(crate) fn read_guarded_dword_then_fetch(
+        &self,
+        image: &crate::memory::Image,
+        state: &State,
+        request: Request,
+        keys: &ProtectionKeys,
+        peek: impl FnOnce() -> Option<Translation>,
+    ) -> Option<(u32, Translation)> {
         debug_assert_eq!(request.access, Access::Read);
         debug_assert_eq!(request.linear & 3, 0);
         if state.cr0 & (1 << 31) == 0 {
@@ -1362,7 +1379,7 @@ impl Cache {
                 hint.touch(&entries, data, fetch);
             }
         }
-        Some(value)
+        Some((value, translation))
     }
 
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
@@ -1374,7 +1391,7 @@ impl Cache {
         request: Request,
         fetch: usize,
         peek: impl FnOnce() -> Option<Translation>,
-    ) -> Option<u32> {
+    ) -> Option<(u32, Translation)> {
         let entries = self.entries.borrow();
         // This private caller runs only in the admitted read-only loop.
         // Its last touch is the retained fetch for the entire code page.
@@ -1414,7 +1431,7 @@ impl Cache {
             debug_assert!(installed.cache_id.is_some());
             self.entries.borrow_mut().touch(fetch);
         }
-        Some(value)
+        Some((value, translation))
     }
 
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
@@ -1434,7 +1451,8 @@ impl Cache {
             self.changed.set(true);
             order.as_ref().unwrap().order.oldest().unwrap()
         };
-        translation.cache_id = Some(entries.next_id);
+        let id = entries.next_id;
+        translation.cache_id = Some(id);
         entries.next_id += 1;
         entries.insert(
             index,
@@ -1868,7 +1886,15 @@ impl Cache {
         self.changed.as_ptr() as u32
     }
 
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    pub(crate) fn take_loop_read_invalidation(&self) -> bool {
+        self.loop_reads_invalidated.replace(false)
+    }
+
     fn remove(&self, predicate: impl Fn(&Entry) -> bool) {
+        // The compiled read table can retain a page already evicted from the slots below.
+        #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+        self.loop_reads_invalidated.set(true);
         let mut entries = self.entries.borrow_mut();
         for index in 0..entries.capacity {
             if entries.slots[index].as_ref().is_some_and(&predicate) {

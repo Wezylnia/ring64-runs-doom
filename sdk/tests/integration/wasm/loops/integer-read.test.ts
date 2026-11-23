@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import test, { type TestContext } from 'node:test';
 import { createCpu } from '../../../../src/index.js';
 import { Core } from '../../../../src/wasm/core.js';
+import { BANK, PC, little, usingPaged } from '../../../../../tests/execution/paging/fixture.js';
 import { protectedSnapshot } from '../../../../../tests/support/context.js';
 import {
   LIMITS,
@@ -234,6 +235,94 @@ test('Long64 dependent dword reads preserve full indices and resume a denied loa
   } finally {
     cpu.dispose();
   }
+});
+
+// Four MOV EAX,[RDI+RAX*4]; DEC ECX; JNZ head.
+const pagedDwordLoop = '8b0487'.repeat(4) + 'ffc975f0';
+
+function countGuardedDwordReads(t: TestContext) {
+  const prototype = Core.prototype as unknown as {
+    artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
+  };
+  const imports = prototype.artifactImports;
+  let slowReads = 0;
+  t.mock.method(prototype, 'artifactImports', function (this: Core, observed: boolean) {
+    const env = imports.call(this, observed);
+    const read = env.paged_loop_walk_dword;
+    if (typeof read === 'function') {
+      env.paged_loop_walk_dword = (address: bigint) => {
+        slowReads++;
+        return read(address);
+      };
+    }
+    return env;
+  });
+  return () => slowReads;
+}
+
+test('direct paged dword reads follow guest INVLPG on remap and removal', async (t) => {
+  const slowReads = countGuardedDwordReads(t);
+  const data = 0x500000n;
+  // Save the last two loop results in EBP and EBX; replace the PTE and invalidate [RDI].
+  // Clear EDX for removal on the next lap; restart with EAX=0, ECX=24.
+  const replace = '89dd89c34889160f013f31d231c0b918000000ebdb';
+  const page = (index: bigint) => {
+    const bytes = new Uint8Array(4096);
+    bytes.set(little([index, index, index, index], 4));
+    return bytes;
+  };
+  await usingPaged(
+    compiler,
+    {
+      code: pagedDwordLoop + replace,
+      words: [
+        [0x4800n, 0xa067n],
+        [0x4808n, 0x4067n],
+      ],
+      spans: [
+        { physical: 0xa000n, bytes: page(2n) },
+        { physical: 0xb000n, bytes: page(3n) },
+      ],
+    },
+    async (cpu) => {
+      cpu.setState(initial(PC, { 0: 0n, 1: 24n, 2: 0xb067n, 6: 0x501800n, 7: data }));
+      const result = await cpu.run({ budget: 400n });
+      assert.equal(result.reason, 'page-fault');
+      assert.equal(result.retired, 304n);
+      assert.equal(result.state.registers[5], 2n, 'loop read from the original page');
+      assert.equal(result.state.registers[3], 3n, 'same loop read from the replacement page');
+      assert.equal(result.pageFault?.address, data);
+      assert.equal(result.state.rip, PC, 'first access after removal faulted');
+      assert.ok(slowReads() > 0 && slowReads() < 24, `192 reads used ${slowReads()} slow lookups`);
+    },
+  );
+});
+
+test('a warm dword loop sees read permission revoked by guest WRPKRU', async () => {
+  const data = 0x500000n;
+  const bytes = new Uint8Array(4096);
+  bytes.set(little([1n, 1n], 4));
+  // Save the loop result; deny reads with key 1; reset EAX and ECX and jump back.
+  const revoke = '89c3b8040000000f01ef31c0b918000000ebdd';
+  await usingPaged(
+    compiler,
+    {
+      code: pagedDwordLoop + revoke,
+      bank: { ...BANK, cr4: BANK.cr4 | (1n << 22n) },
+      words: [[0x4800n, (1n << 59n) | 0xa067n]],
+      spans: [{ physical: 0xa000n, bytes }],
+    },
+    async (cpu) => {
+      cpu.setState(initial(PC, { 0: 0n, 1: 24n, 2: 0n, 7: data }));
+      const result = await cpu.run({ budget: 400n });
+      assert.equal(result.reason, 'page-fault');
+      assert.equal(result.retired, 150n);
+      assert.equal(result.state.registers[3], 1n, 'the first 96 reads completed');
+      assert.equal(result.state.rip, PC, 'first load after WRPKRU faulted');
+      assert.equal(result.pageFault?.address, data);
+      assert.equal(result.pageFault?.errorCode, 0x21);
+    },
+  );
 });
 
 test('a read loop interleaving stack and data still faults at the first denied stack operand', async () => {

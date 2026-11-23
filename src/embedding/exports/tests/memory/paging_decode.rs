@@ -324,7 +324,7 @@ fn guarded_upper_walk_replays_a_cold_leaf_and_reloads_words_on_new_entry() {
     assert_eq!(physical_counts::take(), [1, 8, 0, 0, 0, 0]);
     BRIDGE.with_borrow(|bridge| {
         let core = bridge.core.as_ref().unwrap();
-        assert!(core.guarded_walk.borrow().is_none());
+        assert!(core.guarded_walk.borrow().active.is_none());
         assert_eq!(core.image.physical_read(0x5008, 8).unwrap(), 0x8007);
     });
     assert_eq!(
@@ -347,8 +347,58 @@ fn guarded_upper_walk_replays_a_cold_leaf_and_reloads_words_on_new_entry() {
     assert_eq!(physical_counts::take(), [1, 8, 0, 0, 0, 0]);
     BRIDGE.with_borrow(|bridge| {
         let core = bridge.core.as_ref().unwrap();
-        assert!(core.guarded_walk.borrow().is_none());
+        assert!(core.guarded_walk.borrow().active.is_none());
         assert_eq!(core.paging.unwrap().cr2, 0xdead);
+    });
+}
+
+#[cfg(not(feature = "parallel"))]
+#[test]
+fn guarded_read_generation_wrap_clears_pages_and_refused_entry_unpublishes_table() {
+    use crate::embedding::layout::paging::{LOOP_READ_PAGES, LoopReadPage};
+    fixture("long64", true, true);
+    activate_single_instruction();
+    assert_eq!(paging::core_paged_debug_begin(PC, RF, 0), 0);
+    let guard = |flags| paging::core_paged_walk_guard(PC, 3, flags, 0);
+    assert_eq!(guard(2), 1);
+    BRIDGE.with_borrow(|bridge| {
+        let core = bridge.core.as_ref().unwrap();
+        assert_eq!(core.state.loop_read_generation.get(), 1);
+        let stale = LoopReadPage {
+            tag: 0x2001,
+            host_bias: 0x6000,
+        };
+        core.guarded_walk.borrow_mut().pages = vec![stale; LOOP_READ_PAGES];
+    });
+    assert_eq!(guard(2), 1);
+    BRIDGE.with_borrow(|bridge| {
+        let core = bridge.core.as_ref().unwrap();
+        assert_eq!(core.state.loop_read_generation.get(), 1);
+        assert_eq!(core.guarded_walk.borrow().pages[2].tag, 0x2001);
+        core.state.loop_read_generation.set(4095);
+        core.translation_cache.invalidate_page(0, 0xdead_0000, true);
+    });
+    assert_eq!(guard(2), 1);
+    BRIDGE.with_borrow(|bridge| {
+        let core = bridge.core.as_ref().unwrap();
+        assert_eq!(core.state.loop_read_generation.get(), 1);
+        let reads = core.guarded_walk.borrow();
+        assert!(reads.active.is_some());
+        assert_eq!(reads.pages.len(), LOOP_READ_PAGES);
+        assert!(
+            reads
+                .pages
+                .iter()
+                .all(|page| page.tag == 0 && page.host_bias == 0)
+        );
+        // Simulate publication by the Wasm-only fill before a single-step entry.
+        core.state.loop_read_table.set(1);
+    });
+    assert_eq!(guard(0x102), 2);
+    BRIDGE.with_borrow(|bridge| {
+        let core = bridge.core.as_ref().unwrap();
+        assert!(core.guarded_walk.borrow().active.is_none());
+        assert_eq!(core.state.loop_read_table.get(), 0);
     });
 }
 

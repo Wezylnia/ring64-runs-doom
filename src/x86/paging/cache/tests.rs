@@ -470,6 +470,68 @@ fn paired_touch_matches_sequential_ages_at_clock_rollover() {
 
 #[cfg(not(feature = "parallel"))]
 #[test]
+fn guarded_dword_reports_checked_mapping_on_miss_and_resident_hit() {
+    let (mut image, state, request) = fixture();
+    let keys = &ProtectionKeys::ZERO;
+    let code = Request {
+        access: Access::Execute,
+        ..request
+    };
+    let cache = Cache::with_capacity(2);
+    let fetch = cache.fill(
+        &state,
+        code,
+        walk::walk(&mut image, &state, code, keys).unwrap(),
+    );
+    image.physical_write(0x4010, 8, 0xb027).unwrap();
+    image.physical_write(0xb020, 4, 0x11223344).unwrap();
+    image.physical_write(0xb024, 4, 0xaabbccdd).unwrap();
+    let data = Request {
+        linear: 0x2020,
+        ..request
+    };
+    let (value, translation) = cache
+        .read_guarded_dword_then_fetch(&image, &state, data, keys, || {
+            walk::peek(&image, &state, data, keys).ok()
+        })
+        .unwrap();
+    assert_eq!((value, translation.physical), (0x11223344, 0xb020));
+    assert_eq!(
+        (
+            translation.linear_base,
+            translation.physical_base,
+            translation.span
+        ),
+        (0x2000, 0xb000, 4096)
+    );
+
+    // A guest PTE write alone does not retire the resident mapping.
+    image.physical_write(0x4010, 8, 0xc027).unwrap();
+    let next = Request {
+        linear: 0x2024,
+        ..request
+    };
+    let (value, translation) = cache
+        .read_guarded_dword_then_fetch(&image, &state, next, keys, || {
+            panic!("resident guarded read must not walk")
+        })
+        .unwrap();
+    assert_eq!((value, translation.physical), (0xaabbccdd, 0xb024));
+    assert_eq!(
+        (
+            translation.linear_base,
+            translation.physical_base,
+            translation.span
+        ),
+        (0x2000, 0xb000, 4096)
+    );
+    let entries = cache.entries.borrow();
+    let newest = entries.slots[entries.hint().unwrap()].unwrap();
+    assert_eq!(newest.translation.cache_id, fetch.cache_id);
+}
+
+#[cfg(not(feature = "parallel"))]
+#[test]
 fn guarded_dword_miss_matches_checked_fill_and_successor_fetch() {
     let (mut image, state, request) = fixture();
     let code = Request {

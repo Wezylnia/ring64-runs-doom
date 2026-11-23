@@ -466,8 +466,15 @@ impl Emitter {
             self.load_windowed_paged_dword(window, read, exit_depth);
             return true;
         }
-        self.op(Op::Call(read))
-            .op(Op::LocalTee(VALUE))
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if self.direct_loop_reads && width == Width::W32 && address.segment == Segment::Ds {
+            self.load_loop_read_page(read);
+        } else {
+            self.op(Op::Call(read));
+        }
+        #[cfg(any(feature = "parallel", not(target_arch = "wasm32")))]
+        self.op(Op::Call(read));
+        self.op(Op::LocalTee(VALUE))
             .op(Op::I64Const(-1))
             .op(Op::I64Eq);
         self.retry_guarded_paged_operand(exit_depth, true);
@@ -491,6 +498,72 @@ impl Emitter {
                 .op(Op::LocalSet(VALUE));
         }
         true
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    fn load_loop_read_page(&mut self, read: u32) {
+        use crate::embedding::layout::{
+            StateStorage,
+            paging::{LOOP_READ_PAGES, LoopReadPage},
+        };
+        use std::mem::{offset_of, size_of};
+        use wasm_encoder::ValType;
+
+        let field = |offset: usize, align| MemArg {
+            offset: offset as u64,
+            align,
+            memory_index: 0,
+        };
+        self.op(Op::LocalSet(ADDRESS))
+            .op(Op::Block(BlockType::Result(ValType::I64)))
+            .op(Op::Block(BlockType::Empty))
+            .op(Op::LocalGet(0))
+            .op(Op::I32Load(field(
+                offset_of!(StateStorage, loop_read_table),
+                2,
+            )))
+            .op(Op::LocalTee(STORE_STATUS))
+            .op(Op::I32Eqz)
+            .op(Op::BrIf(0))
+            .op(Op::LocalGet(ADDRESS))
+            .op(Op::I32WrapI64)
+            .op(Op::I32Const(3))
+            .op(Op::I32And)
+            .op(Op::BrIf(0))
+            .op(Op::LocalGet(STORE_STATUS))
+            .op(Op::LocalGet(ADDRESS))
+            .op(Op::I32WrapI64)
+            .op(Op::I32Const(12))
+            .op(Op::I32ShrU)
+            .op(Op::I32Const(LOOP_READ_PAGES as i32 - 1))
+            .op(Op::I32And)
+            .op(Op::I32Const(size_of::<LoopReadPage>() as i32))
+            .op(Op::I32Mul)
+            .op(Op::I32Add)
+            .op(Op::LocalTee(STORE_STATUS))
+            .op(Op::I64Load(field(offset_of!(LoopReadPage, tag), 3)))
+            .op(Op::LocalGet(ADDRESS))
+            .op(Op::I64Const(!4095))
+            .op(Op::I64And)
+            .op(Op::LocalGet(0))
+            .op(Op::I64Load(field(
+                offset_of!(StateStorage, loop_read_generation),
+                3,
+            )))
+            .op(Op::I64Or)
+            .op(Op::I64Ne)
+            .op(Op::BrIf(0))
+            .op(Op::LocalGet(STORE_STATUS))
+            .op(Op::I32Load(field(offset_of!(LoopReadPage, host_bias), 2)))
+            .op(Op::LocalGet(ADDRESS))
+            .op(Op::I32WrapI64)
+            .op(Op::I32Add)
+            .op(Op::I64Load32U(field(0, 2)))
+            .op(Op::Br(1))
+            .op(Op::End)
+            .op(Op::LocalGet(ADDRESS))
+            .op(Op::Call(read))
+            .op(Op::End);
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]

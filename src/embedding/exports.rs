@@ -143,7 +143,7 @@ struct Core {
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
     paged_region_trace: Option<Box<paged_region::Trace>>,
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
-    guarded_walk: RefCell<Option<paging::GuardedWalk>>,
+    guarded_walk: RefCell<paging::GuardedReads>,
     paging_failure: Option<crate::x86::paging::walk::Failure>,
     pdpte_load_fault: Option<(u8, u8, Fault)>,
     paging_system: Option<crate::x86::protection::SystemPagingFault>,

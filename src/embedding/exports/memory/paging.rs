@@ -426,11 +426,70 @@ pub extern "C" fn core_paged_loop_guard(pc: u64, bytes: u32, flags: u64, shadow:
 }
 
 #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+#[derive(Default)]
+pub(super) struct GuardedReads {
+    pub(super) active: Option<GuardedWalk>,
+    authority: Option<(paging::State, paging::walk::AccessClass, Keys)>,
+    pub(super) pages: Vec<crate::embedding::layout::paging::LoopReadPage>,
+}
+
+#[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
 pub(super) struct GuardedWalk {
     owner: u64,
     cr3: u64,
     pdpte: Option<[u64; 4]>,
     words: paging::walk::UpperWords,
+}
+
+#[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+impl GuardedReads {
+    fn end(&mut self, state: &StateStorage) {
+        state.loop_read_table.set(0);
+        self.active = None;
+    }
+
+    fn begin(&mut self, core: &Core, owner: u64, paging: paging::State) {
+        let state = &core.state;
+        let run = unsafe { &*state.get() };
+        let class = paging::walk::AccessClass::operand(
+            core.context.cpl(),
+            run.flags & crate::x86::flags::AC != 0,
+        );
+        let authority = (paging, class, run.protection_keys);
+        if core.translation_cache.take_loop_read_invalidation() || self.authority != Some(authority)
+        {
+            let generation = state.loop_read_generation.get() % 4095 + 1;
+            if generation == 1 {
+                self.pages.fill(Default::default());
+            }
+            state.loop_read_generation.set(generation);
+            self.authority = Some(authority);
+        }
+        #[cfg(target_arch = "wasm32")]
+        if !self.pages.is_empty() {
+            state.loop_read_table.set(self.pages.as_ptr() as u32);
+        }
+        self.active = Some(GuardedWalk {
+            owner,
+            cr3: paging.cr3,
+            pdpte: paging.pdpte,
+            words: Default::default(),
+        });
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn remember(&mut self, state: &StateStorage, page: u64, host: u32) {
+        use crate::embedding::layout::paging::{LOOP_READ_PAGES, LoopReadPage};
+        if self.pages.is_empty() {
+            self.pages.resize(LOOP_READ_PAGES, Default::default());
+        }
+        let slot = (page >> 12) as usize & (LOOP_READ_PAGES - 1);
+        self.pages[slot] = LoopReadPage {
+            tag: page | state.loop_read_generation.get(),
+            host_bias: host.wrapping_sub(page as u32),
+        };
+        state.loop_read_table.set(self.pages.as_ptr() as u32);
+    }
 }
 
 #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
@@ -454,32 +513,27 @@ pub extern "C" fn core_paged_walk_loop_guard32(
 fn clear_guarded_walk() {
     BRIDGE.with_borrow(|bridge| {
         if let Some(core) = bridge.core.as_ref() {
-            *core.guarded_walk.borrow_mut() = None;
+            core.guarded_walk.borrow_mut().end(&core.state);
         }
     });
 }
 
 #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
 fn paged_walk_guard<const FLAT_DATA32: bool>(pc: u64, bytes: u32, flags: u64, shadow: u32) -> i32 {
-    // Only this read-only, synchronous body can use the lease. Each new
-    // entry starts empty, including across a checked replay or host boundary.
+    // Recheck read authority on every entry. Unwalked page-table words are visit-local.
     clear_guarded_walk();
     let status = paged_loop_guard::<FLAT_DATA32, false, false>(pc, bytes, flags, shadow);
     if status == 1 {
         BRIDGE.with_borrow(|bridge| {
             let core = bridge.core.as_ref().unwrap();
             if !core.image.has_mmio()
+                && core.paged_region_trace.is_none()
                 && let Some(owner) = core
                     .active_owner
                     .filter(|&owner| core.image.source_is_active(owner))
                 && let Some(paging) = core.paging
             {
-                *core.guarded_walk.borrow_mut() = Some(GuardedWalk {
-                    owner,
-                    cr3: paging.cr3,
-                    pdpte: paging.pdpte,
-                    words: Default::default(),
-                });
+                core.guarded_walk.borrow_mut().begin(core, owner, paging);
             }
         });
     }
@@ -650,37 +704,50 @@ pub extern "C" fn core_paged_loop_walk_dword(address: u64) -> u64 {
                     state.flags & crate::x86::flags::AC != 0,
                 ),
             };
-            core.translation_cache.read_dword_then_fetch(
+            let keys = &state.protection_keys;
+            let mut reads = core.guarded_walk.borrow_mut();
+            let owner = core
+                .active_owner
+                .filter(|&id| core.image.source_is_active(id));
+            if reads.active.as_ref().is_some_and(|lease| {
+                Some(lease.owner) != owner || lease.cr3 != paging.cr3 || lease.pdpte != paging.pdpte
+            }) {
+                reads.end(&core.state);
+            }
+            let (value, translation) = core.translation_cache.read_guarded_dword_then_fetch(
                 &core.image,
                 paging,
                 request,
-                &state.protection_keys,
+                keys,
                 || {
-                    let owner = core
-                        .active_owner
-                        .filter(|&owner| core.image.source_is_active(owner))?;
-                    let mut guarded_walk = core.guarded_walk.borrow_mut();
-                    if let Some(lease) = guarded_walk.as_mut()
-                        && lease.owner == owner
-                        && lease.cr3 == paging.cr3
-                        && lease.pdpte == paging.pdpte
-                    {
-                        return lease
-                            .words
-                            .peek(&core.image, paging, request, &state.protection_keys)
-                            .ok();
+                    owner?;
+                    if let Some(lease) = reads.active.as_mut() {
+                        lease.words.peek(&core.image, paging, request, keys).ok()
+                    } else {
+                        paging::walk::peek(&core.image, paging, request, keys).ok()
                     }
-                    *guarded_walk = None;
-                    paging::walk::peek(&core.image, paging, request, &state.protection_keys).ok()
                 },
-            )
+            )?;
+            // Only a synchronous read-only body may reuse this full-page RAM proof.
+            #[cfg(target_arch = "wasm32")]
+            if reads.active.is_some()
+                && translation.accessed
+                && !translation.global
+                && let Some((page, host)) = indexed_read_page(&core.image, address, 4, translation)
+            {
+                reads.remember(&core.state, page, host);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            let _ = translation;
+            Some(value)
         };
         match read() {
             Some(value) => u64::from(value),
             None => {
                 // Checked replay may publish A bits before changing or
                 // re-entering this clone.
-                *bridge.core.as_ref().unwrap().guarded_walk.borrow_mut() = None;
+                let core = bridge.core.as_ref().unwrap();
+                core.guarded_walk.borrow_mut().end(&core.state);
                 u64::MAX
             }
         }
