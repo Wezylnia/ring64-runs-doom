@@ -297,3 +297,76 @@ test('flat vector pairs preserve affine setup, overlapping loads and a late stor
     cpu.dispose();
   }
 });
+
+test('flat advancing vector copy windows preserve ordered aliases and replay at a span end', async () => {
+  // Copy two ordered vectors from [EDI] to [EDI+ESI], advance EDI and loop below ECX.
+  const code = hex('0f10070f110437f30f6f4710f30f7f44371083c72039cf72e7f4');
+  const data = PC + 0x1000n;
+  const stop = PC + 25n;
+  const initialBytes = Uint8Array.from({ length: 80 }, (_, index) => index + 1);
+  const ram = new Uint8Array(4096);
+  ram.set(initialBytes);
+  const cpu = await createCpu({
+    compiler,
+    context: snapshot('protected'),
+    entry: PC,
+    limits: LIMITS,
+    memoryLimits: { maxBackings: 2, maxMappings: 2, maxBackingBytes: 8192 },
+    memory: {
+      backings: [
+        { id: 'code', bytes: code },
+        { id: 'data', bytes: ram },
+      ],
+      mappings: [
+        {
+          base: PC,
+          length: code.length,
+          backing: 'code',
+          offset: 0,
+          permissions: { read: true, write: false, execute: true },
+        },
+        {
+          base: data,
+          length: ram.length,
+          backing: 'data',
+          offset: 0,
+          permissions: { read: true, write: true, execute: false },
+        },
+      ],
+    },
+  });
+  try {
+    const enter = (source: bigint, destination: bigint) =>
+      cpu.setState(
+        initial(PC, { 1: source + 64n, 6: BigInt.asUintN(32, destination - source), 7: source }),
+      );
+    enter(data, data + 16n);
+    const copied = await cpu.run({ budget: 20n, stop });
+    assert.equal(copied.reason, 'stop');
+    assert.equal(copied.retired, 14n);
+    assert.equal(copied.state.registers[7], data + 64n);
+    assert.deepEqual(
+      cpu.readMemory(data, 80),
+      Uint8Array.from(initialBytes, (_, i) => initialBytes[i % 16]!),
+    );
+
+    cpu.writeMemory(data, initialBytes);
+    enter(data, data + 16n);
+    const budget = await cpu.run({ budget: 8n, stop });
+    assert.equal(budget.reason, 'budget');
+    assert.equal(budget.retired, 8n);
+    assert.equal(budget.state.rip, PC + 3n);
+    assert.equal(budget.state.flags & 0x41n, 1n);
+    assert.deepEqual(cpu.readMemory(data + 48n, 32), initialBytes.slice(48));
+
+    enter(data + 4064n, data);
+    const fault = await cpu.run({ budget: 20n, stop });
+    assert.equal(fault.reason, 'data-fault');
+    assert.equal(fault.retired, 7n);
+    assert.equal(fault.state.rip, PC);
+    assert.equal(fault.state.flags & 0x41n, 1n);
+    assert.deepEqual(cpu.readMemory(data, 32), new Uint8Array(32));
+  } finally {
+    cpu.dispose();
+  }
+});

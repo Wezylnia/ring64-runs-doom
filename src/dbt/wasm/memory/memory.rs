@@ -1180,6 +1180,15 @@ impl Emitter {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn flat_copy_bytes_left(&mut self, address: u32, span: SpanCache) {
+        self.op(Op::LocalGet(span.length))
+            .op(Op::LocalGet(address))
+            .op(Op::LocalGet(span.base))
+            .op(Op::I64Sub)
+            .op(Op::I64Sub);
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     fn flat_span_contains(&mut self, span: SpanCache, bytes: u32) {
         // A retained span cannot cross 4 GiB. An offset below its base
         // wraps to an unsigned delta at or beyond the end of that span.

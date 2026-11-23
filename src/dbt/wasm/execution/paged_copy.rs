@@ -41,6 +41,28 @@ impl FlatVectorCopy {
         self.group.instruction_count() + 3 * u32::from(self.tail.is_some())
     }
 
+    pub(super) fn can_retain_window(self) -> bool {
+        let Some(tail) = self.tail else {
+            return false;
+        };
+        let group = self.group;
+        if group.adjustment.is_some_and(|adjustment| {
+            adjustment.register.bank == tail.advance.bank
+                || !separate_copy_register(adjustment.register, group.destination)
+        }) {
+            return false;
+        }
+        let stride = |address: Address| {
+            let base = u64::from(address.base == AddressBase::Register(tail.advance.bank));
+            let index = address
+                .index
+                .filter(|index| index.register == tail.advance.bank);
+            tail.step * (base + index.map_or(0, |index| u64::from(index.scale)))
+        };
+        stride(group.source) == u64::from(group.width)
+            && stride(group.destination) == u64::from(group.width)
+    }
+
     pub(super) fn can_defer_flags(self) -> bool {
         self.tail.is_some_and(|tail| {
             matches!(
@@ -577,8 +599,16 @@ impl Emitter {
         loop_depth: u32,
         spans: (SpanCache, SpanCache),
         start_remaining: Option<u32>,
+        window: Option<u32>,
     ) {
         let start_remaining = start_remaining.filter(|_| copy.can_defer_flags());
+        if let Some((laps, start)) = window
+            .filter(|_| copy.can_retain_window())
+            .zip(start_remaining)
+        {
+            self.emit_batched_flat_copy(instructions, copy, loop_depth, spans, start, laps);
+            return;
+        }
         if let Some(start) = start_remaining {
             self.op(Op::LocalGet(REMAINING)).op(Op::LocalSet(start));
         }
@@ -598,26 +628,12 @@ impl Emitter {
         if let Some(tail) = tail {
             // Both spans and the complete lap passed admission. Only the final
             // comparison can publish flags or affect the next branch.
-            let omit = self.omit_result_status;
-            self.omit_result_status = true;
-            self.copy_ordered_vectors(group);
-            self.integer(
-                Alu::Add,
-                tail.advance,
-                DataOperand::Immediate(tail.step),
-                Width::W32,
-                None,
+            self.emit_flat_copy_lap(
+                group,
+                tail,
+                copy.instruction_count(),
+                start_remaining.is_some(),
             );
-            self.omit_result_status = start_remaining.is_some();
-            self.integer(
-                Alu::Cmp,
-                tail.compare,
-                DataOperand::Register(tail.limit),
-                Width::W32,
-                None,
-            );
-            self.omit_result_status = omit;
-            self.retire_instructions(copy.instruction_count());
             self.op(Op::I64Const(instructions[0].pc as i64))
                 .op(Op::LocalSet(RIP));
             self.cloned_condition(
@@ -640,22 +656,137 @@ impl Emitter {
         if let Some(tail) = tail {
             self.op(Op::End);
             if let Some(start) = start_remaining {
-                // A refused guard leaves the previous lap's compare registers
-                // live. Rebuild its flags before entering the checked copy.
-                self.op(Op::LocalGet(REMAINING))
-                    .op(Op::LocalGet(start))
-                    .op(Op::I64Ne)
-                    .op(Op::If(BlockType::Empty));
-                self.integer(
-                    Alu::Cmp,
-                    tail.compare,
-                    DataOperand::Register(tail.limit),
-                    Width::W32,
-                    None,
-                );
-                self.op(Op::End);
+                self.restore_flat_copy_flags(tail, start);
             }
         }
+    }
+
+    fn restore_flat_copy_flags(&mut self, tail: FlatCopyTail, start: u32) {
+        // A refused guard leaves the previous lap's compare registers live.
+        self.op(Op::LocalGet(REMAINING))
+            .op(Op::LocalGet(start))
+            .op(Op::I64Ne)
+            .op(Op::If(BlockType::Empty));
+        self.integer(
+            Alu::Cmp,
+            tail.compare,
+            DataOperand::Register(tail.limit),
+            Width::W32,
+            None,
+        );
+        self.op(Op::End);
+    }
+
+    fn emit_batched_flat_copy(
+        &mut self,
+        instructions: &[Instruction],
+        copy: FlatVectorCopy,
+        loop_depth: u32,
+        spans: (SpanCache, SpanCache),
+        start: u32,
+        laps: u32,
+    ) {
+        let FlatVectorCopy { group, tail } = copy;
+        let tail = tail.expect("batched copy carries an advancing tail");
+        let count = copy.instruction_count();
+        self.op(Op::LocalGet(REMAINING)).op(Op::LocalSet(start));
+        self.op(Op::Loop(BlockType::Empty));
+        self.guard_linear_copy(
+            instructions,
+            group.source,
+            group.destination,
+            group.width,
+            spans,
+        );
+        // Copy only the complete laps covered by both spans and the exact quota.
+        // A stop inside the repeated instruction sequence rejects the guard.
+        self.flat_copy_bytes_left(LHS, spans.0);
+        self.op(Op::LocalSet(LHS));
+        self.flat_copy_bytes_left(RHS, spans.1);
+        self.op(Op::LocalSet(RHS));
+        self.select_smaller_copy_bound();
+        self.op(Op::I64Const(i64::from(group.width)))
+            .op(Op::I64DivU)
+            .op(Op::LocalSet(LHS))
+            .op(Op::LocalGet(REMAINING))
+            .op(Op::I64Const(i64::from(count)))
+            .op(Op::I64DivU)
+            .op(Op::LocalSet(RHS));
+        self.select_smaller_copy_bound();
+        self.op(Op::I32WrapI64).op(Op::LocalSet(laps));
+        self.op(Op::Loop(BlockType::Empty));
+        self.current_operation = instructions.last().unwrap().operation;
+        self.stores = false;
+        self.emit_flat_copy_lap(group, tail, count, true);
+        self.cloned_condition(
+            tail.condition,
+            Some(super::loop_cfg::ConditionSource::Operands(Width::W32)),
+        );
+        self.op(Op::If(BlockType::Empty))
+            .op(Op::LocalGet(STORE_STATUS))
+            .op(Op::I32Const(group.width as i32))
+            .op(Op::I32Add)
+            .op(Op::LocalSet(STORE_STATUS))
+            .op(Op::LocalGet(ADDRESS))
+            .op(Op::I64Const(i64::from(group.width)))
+            .op(Op::I64Add)
+            .op(Op::LocalSet(ADDRESS))
+            .op(Op::LocalGet(laps))
+            .op(Op::I32Const(1))
+            .op(Op::I32Sub)
+            .op(Op::LocalTee(laps))
+            .op(Op::BrIf(1))
+            .op(Op::I64Const(instructions[0].pc as i64))
+            .op(Op::LocalSet(RIP))
+            .op(Op::Br(5))
+            .op(Op::End);
+        self.arithmetic_result(Alu::Cmp, Width::W32);
+        self.arithmetic_flags(Alu::Cmp, Width::W32);
+        self.op(Op::I64Const(tail.next_pc as i64))
+            .op(Op::LocalSet(RIP));
+        self.route(tail.next_pc, loop_depth + 5, loop_depth + 6);
+        for _ in 0..5 {
+            self.op(Op::End);
+        }
+        self.restore_flat_copy_flags(tail, start);
+    }
+
+    fn emit_flat_copy_lap(
+        &mut self,
+        group: CopyGroup,
+        tail: FlatCopyTail,
+        count: u32,
+        defer_flags: bool,
+    ) {
+        let omit = self.omit_result_status;
+        self.omit_result_status = true;
+        self.copy_ordered_vectors(group);
+        self.integer(
+            Alu::Add,
+            tail.advance,
+            DataOperand::Immediate(tail.step),
+            Width::W32,
+            None,
+        );
+        self.omit_result_status = defer_flags;
+        self.integer(
+            Alu::Cmp,
+            tail.compare,
+            DataOperand::Register(tail.limit),
+            Width::W32,
+            None,
+        );
+        self.omit_result_status = omit;
+        self.retire_instructions(count);
+    }
+
+    fn select_smaller_copy_bound(&mut self) {
+        self.op(Op::LocalGet(LHS))
+            .op(Op::LocalGet(RHS))
+            .op(Op::LocalGet(LHS))
+            .op(Op::LocalGet(RHS))
+            .op(Op::I64LtU)
+            .op(Op::Select);
     }
 
     fn guard_linear_copy(

@@ -2247,6 +2247,20 @@ fn emit_body(
             start
         });
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let flat_copy_window = linear_vector_copy_prefixes
+        .as_ref()
+        .filter(|(prefixes, _)| {
+            prefixes
+                .iter()
+                .any(|(_, copy)| copy.can_defer_flags() && copy.can_retain_window())
+        })
+        .map(|_| {
+            let window = next_local;
+            locals.push((1, ValType::I32));
+            next_local += 1;
+            window
+        });
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let read_loop_diamond = loop_body.and_then(|body| {
         let enabled = if paged {
             optional.paged_read_diamond
@@ -3131,6 +3145,7 @@ fn emit_body(
                 loop_depth,
                 spans,
                 flat_copy_start_remaining,
+                flat_copy_window,
             );
         }
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
