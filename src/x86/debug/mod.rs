@@ -228,9 +228,3 @@ impl Source {
 
 #[cfg(test)]
 mod tests;
-
-#[cfg(test)]
-mod source_tests;
-
-#[cfg(test)]
-mod completion_tests;

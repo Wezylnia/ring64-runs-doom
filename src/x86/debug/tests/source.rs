@@ -1,4 +1,4 @@
-use super::*;
+use super::super::*;
 use crate::x86::{context::ExecutionContext, exception::ExceptionEvent};
 
 #[test]
