@@ -325,6 +325,38 @@ test('a warm dword loop sees read permission revoked by guest WRPKRU', async () 
   );
 });
 
+test('2 MiB dword reads stop at the first denied 4 KiB physical page', async (t) => {
+  const slowReads = countGuardedDwordReads(t);
+  const bytes = new Uint8Array(4096);
+  const indices = Array.from({ length: 96 }, (_, i) => BigInt(i === 95 ? 1024 : i + 1));
+  bytes.set(little(indices, 4));
+  await usingPaged(
+    compiler,
+    {
+      words: [
+        [0x3010n, 0x2000e7n],
+        [0x3018n, 0x4000e7n],
+      ],
+      spans: [
+        { physical: 0x200000n, bytes: hex(pagedDwordLoop + 'f4'), execute: true },
+        { physical: 0x400000n, bytes },
+        { physical: 0x401000n, bytes: new Uint8Array(4096), read: false },
+      ],
+    },
+    async (cpu) => {
+      cpu.setState(initial(PC, { 0: 0n, 1: 32n, 7: 0x600000n }));
+      const result = await cpu.run({ budget: 250n });
+      assert.equal(result.reason, 'physical-memory-fault');
+      assert.equal(result.retired, 144n);
+      assert.equal(result.state.rip, PC);
+      assert.equal(result.state.registers[0], 1024n);
+      assert.equal(result.physicalMemoryFault?.phase, 'final-access');
+      assert.equal(result.physicalMemoryFault?.physicalAddress, 0x401000n);
+      assert.ok(slowReads() > 0 && slowReads() < 24, `96 reads used ${slowReads()} slow lookups`);
+    },
+  );
+});
+
 test('a read loop interleaving stack and data still faults at the first denied stack operand', async () => {
   const code = hex('8b048c8b1e48ffc14839d175f3f4');
   // MOV EAX,[RSP+RCX*4]; MOV EBX,[RSI]; INC RCX; CMP RCX,RDX; JNE head; HLT

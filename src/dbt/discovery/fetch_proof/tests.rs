@@ -79,7 +79,7 @@ const USER_EXEC: Request = Request {
 
 #[cfg(not(feature = "parallel"))]
 #[test]
-fn guarded_dword_walk_import_requires_a_small_executable_leaf_and_keeps_the_cap_fallback() {
+fn guarded_dword_reads_accept_both_executable_leaf_sizes_and_keep_the_cap_fallback() {
     use crate::{dbt::wasm::emit_profile, x86::context::ExecutionContext};
 
     let mut image = ram();
@@ -126,22 +126,26 @@ fn guarded_dword_walk_import_requires_a_small_executable_leaf_and_keeps_the_cap_
     let with_wide_proof = emit_profile(&wide, true, true, usize::MAX);
     let tight_cap = with_wide_proof.len() - 1;
     let wide_tight = emit_profile(&wide, true, true, tight_cap);
-    wide.fetch_proof = Default::default();
-    assert_eq!(emit_profile(&wide, true, true, usize::MAX), with_wide_proof);
-    assert_eq!(emit_profile(&wide, true, true, tight_cap), wide_tight);
+    assert_eq!(
+        emit_profile(&small, true, true, usize::MAX),
+        with_wide_proof
+    );
     assert_eq!(emit_profile(&small, true, true, tight_cap), wide_tight);
-    let mut with_small_proof = emit_profile(&small, true, true, usize::MAX);
-    for (selected, ordinary) in [
-        (&b"paged_loop_walk_dword"[..], &b"paged_loop_read_dword"[..]),
-        (&b"paged_walk_guard"[..], &b"paged_loop_guard"[..]),
-    ] {
-        let start = with_small_proof
-            .windows(selected.len())
-            .position(|part| part == selected)
-            .unwrap();
-        with_small_proof[start..start + selected.len()].copy_from_slice(ordinary);
+    assert!(wide_tight.len() <= tight_cap);
+    wide.fetch_proof = Default::default();
+    let without_proof = emit_profile(&wide, true, true, usize::MAX);
+    for import in [&b"paged_loop_walk_dword"[..], &b"paged_walk_guard"[..]] {
+        assert!(
+            with_wide_proof
+                .windows(import.len())
+                .any(|part| part == import)
+        );
+        assert!(
+            !without_proof
+                .windows(import.len())
+                .any(|part| part == import)
+        );
     }
-    assert_eq!(with_small_proof, with_wide_proof);
 }
 
 #[test]

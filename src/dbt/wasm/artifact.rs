@@ -1520,7 +1520,7 @@ fn emit_body(
             let dword_replay = paged_read_dword
                 && (body.forward_edges()
                     || body.paged_sse() && body.paged_read_span.is_some()
-                    || !paged_read_byte && body.can_walk_paged_dword(unit));
+                    || !paged_read_byte && body.guarded_dword_reads(unit));
             let read_only_replay =
                 !paged_write_byte && !paged_write_dword && (dword_replay || paged_dense_bytes);
             let writable_byte_replay = paged_write_byte && paged_read_byte;
@@ -1758,7 +1758,7 @@ fn emit_body(
     let paged_dword_walk = !mmio
         && !paged_read_byte
         && paged_read_dword
-        && loop_body.is_some_and(|body| body.can_walk_paged_dword(unit));
+        && loop_body.is_some_and(|body| body.guarded_dword_reads(unit));
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let register_prefix_guard =
         register_prefix_guard_type.map(|index| import_function("paged_loop_guard", index));

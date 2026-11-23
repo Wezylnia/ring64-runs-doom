@@ -208,22 +208,29 @@ impl StructuredLoop {
     }
 
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
-    pub(super) fn can_walk_paged_dword(self, unit: &super::Unit) -> bool {
-        self.kind == LoopKind::PagedReads && self.paged_source_is_4k(unit)
+    pub(super) fn guarded_dword_reads(self, unit: &super::Unit) -> bool {
+        self.kind == LoopKind::PagedReads
+            && self.paged_source_span(unit).is_some_and(|(linear, bytes)| {
+                unit.fetch_proof.physical_span(linear, bytes).is_some()
+            })
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn paged_source_is_4k(self, unit: &super::Unit) -> bool {
+        self.paged_source_span(unit)
+            .is_some_and(|(linear, _)| unit.fetch_proof.leaf_is_4k(linear))
     }
 
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
-    pub(super) fn paged_source_is_4k(self, unit: &super::Unit) -> bool {
-        let Some(bytes) = self.paged_fetch_bytes else {
-            return false;
-        };
+    fn paged_source_span(self, unit: &super::Unit) -> Option<(u64, u32)> {
+        let bytes = self.paged_fetch_bytes?;
         let pc = unit.instructions[self.earlier as usize].pc;
         let linear = if unit.context.is_long64() {
-            Some(pc)
+            pc
         } else {
-            unit.context.nonwrapping_code32_fetch(pc, bytes)
+            unit.context.nonwrapping_code32_fetch(pc, bytes)?
         };
-        linear.is_some_and(|address| unit.fetch_proof.leaf_is_4k(address))
+        Some((linear, bytes))
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
