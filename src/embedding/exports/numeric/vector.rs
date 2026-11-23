@@ -119,7 +119,8 @@ fn core_vector_load_impl<const OBSERVED: bool, const PAGED: bool>(
         else {
             return 0;
         };
-        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        // This helper returns a pointer in the private memory containing vector_scratch.
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32", not(guest_memory64)))]
         if !OBSERVED
             && !PAGED
             && width == 16

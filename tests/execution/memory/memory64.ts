@@ -1,6 +1,7 @@
 import { createCpu } from '../../../sdk/src/index.js';
 import { observeArtifactImports } from '../../support/artifact-imports.js';
 import { equal, hex, initial, LIMITS, memory, same, throws } from '../../support/fixture.js';
+import { context } from '../processor/modes/fixture.js';
 import { BANK, little, word } from './paging/fixture.js';
 import { mapping, RW, RX } from './mappings/fixture.js';
 
@@ -95,6 +96,28 @@ export async function checkMemory64(compiler: WebAssembly.Module) {
       cpu.writeMemory(0xc001n, hex('ff'));
       cpu.setMappings(maps);
       cpu.removeBacking('temp');
+    }
+    // Protected32 stack loop: copy [ESP] to [ESP+4] and increment [ESP+8] three times.
+    const stackCode = hex('8b042489442404ff4424084975f290');
+    cpu.addBacking({ id: 'stack-code', bytes: stackCode });
+    cpu.setContext(context());
+    const stackMaps = (offset: number) => [
+      mapping(entry, 'stack-code', stackCode.length, RX),
+      mapping(source, 'ram', 12, RW, offset),
+      mapping(low, 'ram', 12, RW),
+      mapping(alias, 'ram', 12, RW, boundary),
+    ];
+    cpu.setMappings(stackMaps(boundary));
+    cpu.writeMemory(low, hex('110000000000000001000000'));
+    cpu.writeMemory(alias, hex('220000000000000002000000'));
+    for (const offset of [boundary, 0]) {
+      if (offset === 0) cpu.setMappings(stackMaps(0));
+      cpu.setState(initial(entry, { 1: 3n, 4: source }));
+      const result = await cpu.run({ stop: entry + 14n, budget: 100n });
+      equal(result.reason, 'stop', 'protected32 stack loop');
+      equal(result.retired, 15n, 'all three stack updates retire');
+      memory(cpu, alias, '220000002200000005000000');
+      memory(cpu, low, offset === 0 ? '110000001100000004000000' : '110000000000000001000000');
     }
   } finally {
     cpu.dispose();

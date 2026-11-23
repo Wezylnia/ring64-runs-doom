@@ -3,9 +3,9 @@ use wasm_encoder::{Instruction as Op, MemArg, ValType};
 
 impl Emitter {
     #[cfg(guest_memory64)]
-    fn paged_ram_address(&mut self, argument: &mut MemArg) {
-        use crate::memory::paged_windows::{WINDOW_SHIFT, biases_pointer};
-        let token = self.paged_ram_locals;
+    fn ram_window_address(&mut self, argument: &mut MemArg) {
+        use crate::memory::guest_windows::{WINDOW_SHIFT, biases_pointer};
+        let token = self.ram_operand_locals;
         self.op(Op::LocalTee(token))
             .op(Op::I32Const(WINDOW_SHIFT as i32))
             .op(Op::I32ShrU)
@@ -30,8 +30,8 @@ impl Emitter {
         #[cfg(guest_memory64)]
         let mut argument = argument;
         #[cfg(guest_memory64)]
-        if self.paged {
-            self.paged_ram_address(&mut argument);
+        if argument.memory_index == 0 {
+            self.ram_window_address(&mut argument);
         }
         self.op(instruction(argument))
     }
@@ -45,8 +45,8 @@ impl Emitter {
         #[cfg(guest_memory64)]
         let mut argument = argument;
         #[cfg(guest_memory64)]
-        if self.paged {
-            let value = self.paged_ram_locals
+        if argument.memory_index == 0 {
+            let value = self.ram_operand_locals
                 + match _value {
                     ValType::I32 => 1,
                     ValType::I64 => 2,
@@ -54,7 +54,7 @@ impl Emitter {
                     _ => unreachable!(),
                 };
             self.op(Op::LocalSet(value));
-            self.paged_ram_address(&mut argument);
+            self.ram_window_address(&mut argument);
             self.op(Op::LocalGet(value));
         }
         self.op(instruction(argument))

@@ -110,7 +110,8 @@ pub extern "C" fn core_x87(
 #[inline(always)]
 fn flat_pair_segment(context: &ExecutionContext, segment: Segment) -> bool {
     use crate::x86::context::SegmentType;
-    if !matches!(segment, Segment::Ds | Segment::Ss) {
+    // This helper dereferences the retained address as a private Rust pointer.
+    if cfg!(guest_memory64) || !matches!(segment, Segment::Ds | Segment::Ss) {
         return false;
     }
     match context.mode() {

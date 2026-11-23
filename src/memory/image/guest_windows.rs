@@ -1,4 +1,4 @@
-// Paging proofs carry 32-bit offsets. Each offset names bytes in a window of
+// Direct spans carry 32-bit offsets. Each offset names bytes in a window of
 // the guest arena. Its bias stays fixed while generated code can use the proof.
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;

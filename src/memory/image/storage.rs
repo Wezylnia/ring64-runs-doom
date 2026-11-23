@@ -35,30 +35,18 @@ impl Backing {
         }
     }
 
-    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) fn host_pointer(&self, offset: BackingOffset) -> Option<*const u8> {
-        #[cfg(guest_memory64)]
-        {
-            let _ = offset;
-            None
-        }
-        #[cfg(not(guest_memory64))]
-        {
-            Some(self.bytes.as_ptr().wrapping_add(offset as usize))
-        }
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32", not(guest_memory64)))]
+    pub(super) fn host_pointer(&self, offset: BackingOffset) -> *const u8 {
+        self.bytes.as_ptr().wrapping_add(offset as usize)
     }
 
-    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
-    pub(super) fn host_pointer_mut(&mut self, offset: BackingOffset) -> Option<*mut u8> {
-        #[cfg(guest_memory64)]
-        {
-            let _ = offset;
-            None
-        }
-        #[cfg(not(guest_memory64))]
-        {
-            Some(self.bytes.as_mut_ptr().wrapping_add(offset as usize))
-        }
+    #[cfg(all(
+        not(feature = "parallel"),
+        any(target_arch = "wasm32", test),
+        not(guest_memory64)
+    ))]
+    pub(super) fn host_pointer_mut(&mut self, offset: BackingOffset) -> *mut u8 {
+        self.bytes.as_mut_ptr().wrapping_add(offset as usize)
     }
 }
 

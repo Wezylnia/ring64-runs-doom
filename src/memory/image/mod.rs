@@ -10,9 +10,9 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 #[cfg(guest_memory64)]
-mod memory64;
+pub(crate) mod guest_windows;
 #[cfg(guest_memory64)]
-pub(crate) mod paged_windows;
+mod memory64;
 #[cfg(guest_memory64)]
 pub(crate) use memory64::GuestSpan;
 mod storage;
@@ -426,18 +426,19 @@ impl Image {
         // The installed mapping covers canonical addresses and a stable backing slice.
         let backing = &self.backings[mapping.backing];
         #[cfg(guest_memory64)]
-        if self.physical {
-            return paged_windows::span(
+        {
+            guest_windows::span(
                 mapping,
                 backing.extent.base + mapping.offset,
                 address,
                 width,
-            );
+            )
         }
+        #[cfg(not(guest_memory64))]
         Some(DirectSpan {
             base: mapping.base,
             length: mapping.length,
-            host: backing.host_pointer(mapping.offset)? as u32,
+            host: backing.host_pointer(mapping.offset) as u32,
         })
     }
 
@@ -459,7 +460,7 @@ impl Image {
             }
             #[cfg(not(guest_memory64))]
             let read_span = DirectSpan {
-                host: self.backings[mapping.backing].host_pointer_mut(mapping.offset)? as u32,
+                host: self.backings[mapping.backing].host_pointer_mut(mapping.offset) as u32,
                 ..read_span
             };
             return Some((read_span, read_span));
@@ -491,25 +492,28 @@ impl Image {
     fn writable_direct_span(&mut self, address: u64, width: u32) -> Option<DirectSpan> {
         let (mapping, _) = self.writable_direct_mapping(address, width)?;
         #[cfg(guest_memory64)]
-        if self.physical {
-            return paged_windows::span(
+        {
+            guest_windows::span(
                 mapping,
                 self.backings[mapping.backing].extent.base + mapping.offset,
                 address,
                 width,
-            );
+            )
         }
-        let (base, length, offset, backing) = (
-            mapping.base,
-            mapping.length,
-            mapping.offset,
-            mapping.backing,
-        );
-        Some(DirectSpan {
-            base,
-            length,
-            host: self.backings[backing].host_pointer_mut(offset)? as u32,
-        })
+        #[cfg(not(guest_memory64))]
+        {
+            let (base, length, offset, backing) = (
+                mapping.base,
+                mapping.length,
+                mapping.offset,
+                mapping.backing,
+            );
+            Some(DirectSpan {
+                base,
+                length,
+                host: self.backings[backing].host_pointer_mut(offset) as u32,
+            })
+        }
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -569,14 +573,16 @@ impl Image {
         let store = if write_ready() && self.direct_mapping_writable(mapping, relative, 1) {
             #[cfg(guest_memory64)]
             {
-                paged_windows::byte_token(self.backings[backing].extent.base + index)
+                guest_windows::byte_token(self.backings[backing].extent.base + index)
                     .map(|token| token as usize)
             }
             #[cfg(not(guest_memory64))]
             {
-                self.backings[backing]
-                    .host_pointer_mut(index)
-                    .map(|pointer| pointer.expose_provenance())
+                Some(
+                    self.backings[backing]
+                        .host_pointer_mut(index)
+                        .expose_provenance(),
+                )
             }
         } else {
             None

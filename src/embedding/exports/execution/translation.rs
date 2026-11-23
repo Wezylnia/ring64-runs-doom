@@ -127,16 +127,19 @@ impl Core {
         self.invalidate_runtime_sources();
     }
 
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    fn clear_flat_spans(&mut self) {
+        self.state.flat_reads = Default::default();
+        self.state.flat_stack_pointer_read = Default::default();
+        self.state.flat_data_write = Default::default();
+        self.state.flat_stack_write = Default::default();
+        self.state.x87_long64_reads = Default::default();
+        self.state.x87_long64_writes = Default::default();
+    }
+
     pub(in crate::embedding::exports) fn revoke_host_translations(&mut self) {
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-        {
-            self.state.flat_reads = Default::default();
-            self.state.flat_stack_pointer_read = Default::default();
-            self.state.flat_data_write = Default::default();
-            self.state.flat_stack_write = Default::default();
-            self.state.x87_long64_reads = Default::default();
-            self.state.x87_long64_writes = Default::default();
-        }
+        self.clear_flat_spans();
         self.translation_cache.clear();
         self.paging_work.clear();
         self.retire_translations();
@@ -145,14 +148,7 @@ impl Core {
 
     pub(in crate::embedding::exports) fn memory_admin_changed(&mut self) {
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-        {
-            self.state.flat_reads = Default::default();
-            self.state.flat_stack_pointer_read = Default::default();
-            self.state.flat_data_write = Default::default();
-            self.state.flat_stack_write = Default::default();
-            self.state.x87_long64_reads = Default::default();
-            self.state.x87_long64_writes = Default::default();
-        }
+        self.clear_flat_spans();
         self.paging_work.clear();
         if self.paging.is_some() {
             self.translation_cache.clear();
@@ -419,7 +415,8 @@ pub extern "C" fn core_activate(owner: u64) -> i32 {
         // Only the external entry boundary guarantees that no generated
         // locals retain a paging span. In-entry owner revalidation does not.
         #[cfg(guest_memory64)]
-        if crate::memory::paged_windows::recycle_if_exhausted() {
+        if crate::memory::guest_windows::recycle_if_exhausted() {
+            core.clear_flat_spans();
             core.retire_paged_ram_windows();
         }
         i32::from(core.activate_owner(owner))

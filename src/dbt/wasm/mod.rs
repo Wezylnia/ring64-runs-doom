@@ -44,7 +44,7 @@ struct Emitter {
     #[cfg(guest_memory64)]
     guest64_cache: Option<memory::guest64::SpanLocals>,
     #[cfg(guest_memory64)]
-    paged_ram_locals: u32,
+    ram_operand_locals: u32,
     paged: bool,
     quiet_fetch_page: Option<u32>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
