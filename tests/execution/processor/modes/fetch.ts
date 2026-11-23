@@ -1,5 +1,5 @@
 import { createCpu } from '../../../../sdk/src/index.js';
-import { check, equal, exit, hex, memory } from '../../../support/fixture.js';
+import { LIMITS, check, equal, exit, hex, memory } from '../../../support/fixture.js';
 import { changed, context, input, using, segmentFault, type Scenario } from './fixture.js';
 
 export function fetchScenarios(compiler: WebAssembly.Module): Scenario[] {
