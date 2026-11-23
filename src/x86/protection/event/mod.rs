@@ -1,3 +1,4 @@
+use super::access::DescriptorWrite;
 use super::{ExecutionContext, GuestMemory, ProtectionFault, ProtectionPhase, SystemMemoryFault};
 #[cfg(test)]
 use crate::memory::Image;
@@ -146,6 +147,31 @@ fn fault(
 
 fn selector_fault(selector: u16, vector: u8, ext: u16, phase: ProtectionPhase) -> EventFailure {
     fault(vector, (selector & 0xfffc) | ext, phase, Some(selector))
+}
+
+fn publish_descriptors(
+    image: &mut impl GuestMemory,
+    code_write: Option<DescriptorWrite>,
+    stack_write: Option<DescriptorWrite>,
+) -> Result<(), EventFailure> {
+    image.prepare_publication().map_err(|failure| {
+        if let Some(write) = code_write
+            .into_iter()
+            .chain(stack_write)
+            .find(|write| write.contains(failure))
+        {
+            descriptor_failure(write.failure(failure))
+        } else {
+            EventFailure::Operand {
+                segment: Segment::Ss,
+                failure,
+            }
+        }
+    })?;
+    for write in code_write.into_iter().chain(stack_write) {
+        write.commit(image);
+    }
+    Ok(())
 }
 
 fn descriptor_failure(failure: super::Failure) -> EventFailure {

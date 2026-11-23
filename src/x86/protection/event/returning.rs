@@ -172,23 +172,7 @@ pub(super) fn execute(
     if outer {
         clear_inaccessible(&mut prepared, cpl);
     }
-    image.prepare_publication().map_err(|failure| {
-        if let Some(write) = code_write
-            .into_iter()
-            .chain(stack_write)
-            .find(|write| write.contains(failure))
-        {
-            descriptor_failure(write.failure(failure))
-        } else {
-            EventFailure::Operand {
-                segment: Segment::Ss,
-                failure,
-            }
-        }
-    })?;
-    for write in code_write.into_iter().chain(stack_write) {
-        write.commit(image);
-    }
+    publish_descriptors(image, code_write, stack_write)?;
     let context_changed = *context != prepared;
     *context = prepared;
     Ok(EventOutcome {

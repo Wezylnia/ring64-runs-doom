@@ -251,23 +251,7 @@ pub(super) fn execute(
             .map_err(|failure| linear_failure(failure, Segment::Ss))?;
         observe(slot.address, slot.width, Access::Write);
     }
-    image.prepare_publication_ordered().map_err(|fault| {
-        let mut descriptors = code_write.into_iter().chain(stack_write);
-        // A page A alias can replace the authority between admissions of the
-        // same linear address. The captured order identifies the actual owner.
-        let descriptor = match fault.index {
-            Some(index) => descriptors.nth(index),
-            None => descriptors.find(|write| write.contains(fault.failure)),
-        };
-        if let Some(write) = descriptor {
-            system_failure(write.failure(fault.failure))
-        } else {
-            linear_failure(fault.failure, Segment::Ss)
-        }
-    })?;
-    for write in code_write.into_iter().chain(stack_write) {
-        write.commit(image);
-    }
+    publish_descriptors(image, code_write, stack_write)?;
     for slot in &frame.writes[..frame.count] {
         image
             .write(slot.address, slot.width, slot.value)
