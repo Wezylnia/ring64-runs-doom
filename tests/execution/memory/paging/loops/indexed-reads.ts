@@ -1,4 +1,4 @@
-import { context } from '../../../modes/fixture.js';
+import { context } from '../../../processor/modes/fixture.js';
 import { BANK, equal, initial, little, same, usingPaged, type Scenario } from '../fixture.js';
 
 export function indexedReadLoopScenarios(compiler: WebAssembly.Module): Scenario[] {

@@ -1,5 +1,5 @@
 import { initial, snapshot, loadedCode, loadedData } from '../software-events/fixture.js';
-import type { Data } from '../../modes/fixture.js';
+import type { Data } from '../../processor/modes/fixture.js';
 
 export {
   using,

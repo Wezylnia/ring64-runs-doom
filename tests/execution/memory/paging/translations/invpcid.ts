@@ -1,7 +1,7 @@
 import { createCpu } from '../../../../../sdk/src/index.js';
 import { hex } from '../../../../support/fixture.js';
-import { context as legacyContext } from '../../../modes/fixture.js';
-import { RESET_BANK, resetContext } from '../../../reset/fixture.js';
+import { context as legacyContext } from '../../../processor/modes/fixture.js';
+import { RESET_BANK, resetContext } from '../../../processor/reset/fixture.js';
 import {
   AC,
   AUX,

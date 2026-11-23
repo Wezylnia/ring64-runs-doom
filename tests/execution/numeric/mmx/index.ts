@@ -4,7 +4,7 @@ import { boundaryScenarios } from './boundaries.js';
 import { unpackMemoryScenario } from './unpack.js';
 import { restoreScenarios } from './restore.js';
 import { optimizedScenarios } from './optimized.js';
-import type { Scenario } from '../../modes/fixture.js';
+import type { Scenario } from '../../processor/modes/fixture.js';
 
 export function numericStateScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [

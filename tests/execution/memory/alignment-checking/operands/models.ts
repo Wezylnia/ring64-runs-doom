@@ -1,4 +1,4 @@
-import { using as usingModel, type Profile } from '../../../identity-time/oracle.js';
+import { using as usingModel, type Profile } from '../../../processor/identity-time/oracle.js';
 import { stack, ONE } from '../../../numeric/x87/fixture.js';
 import { banks } from '../../../numeric/simd/fixture.js';
 import { packets } from './classes.js';

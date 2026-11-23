@@ -1,6 +1,6 @@
 import type { Cpu, ExecutionContext, State } from '../../../../../sdk/src/index.js';
 import { initial, exit, equal, hex, type Scenario } from '../../../../support/fixture.js';
-import { LONG, context, using, type Data } from '../../../modes/fixture.js';
+import { LONG, context, using, type Data } from '../../../processor/modes/fixture.js';
 
 export { equal, hex, type Scenario };
 export { same, put, preserved } from '../../../memory/supervisor-access/fixture.js';

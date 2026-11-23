@@ -5,9 +5,9 @@ import type {
   SegmentSnapshot,
   RunResult,
 } from '../../../../sdk/src/index.js';
-import { context } from '../../modes/fixture.js';
+import { context } from '../../processor/modes/fixture.js';
 export { createCpu } from '../../../../sdk/src/index.js';
-export { using, input as initial, changed } from '../../modes/fixture.js';
+export { using, input as initial, changed } from '../../processor/modes/fixture.js';
 export { equal, check, state, hex, same, LIMITS, type Scenario } from '../../../support/fixture.js';
 import { equal, fingerprint } from '../../../support/fixture.js';
 

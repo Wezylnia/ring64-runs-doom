@@ -12,7 +12,7 @@ export type {
   ExecutionContextSnapshot,
   StateSnapshot,
 } from '../../../../sdk/src/index.js';
-export { using } from '../../modes/fixture.js';
+export { using } from '../../processor/modes/fixture.js';
 export {
   check,
   equal,
@@ -34,7 +34,7 @@ export {
   DATA32,
   preserveNumeric,
 } from '../../control-flow/far/fixture.js';
-export { initial, outcome, debug } from '../../system-flags/fixture.js';
+export { initial, outcome, debug } from '../../processor/system-flags/fixture.js';
 
 export const FILL = 'a5'.repeat(256);
 export const STACK = 0x6f80n;

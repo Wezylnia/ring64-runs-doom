@@ -1,4 +1,8 @@
-import { using as usingModel, profiles, type Profile } from '../../../identity-time/oracle.js';
+import {
+  using as usingModel,
+  profiles,
+  type Profile,
+} from '../../../processor/identity-time/oracle.js';
 import {
   createCpu,
   AC,

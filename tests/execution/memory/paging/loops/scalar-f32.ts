@@ -1,5 +1,5 @@
 import { BANK, PC, equal, initial, little, usingPaged, type Scenario } from '../fixture.js';
-import { context } from '../../../modes/fixture.js';
+import { context } from '../../../processor/modes/fixture.js';
 
 // Integer preload warms the data page before the six-instruction SSE loop.
 const code = '8b17f30f1007f30f5906f30f58c183c00183e90175ec';

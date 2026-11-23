@@ -18,7 +18,7 @@ import {
 } from '../../../memory/alignment-checking/fixture.js';
 import { preserveNumeric } from '../../../control-flow/far/fixture.js';
 import { legacyOptions, little } from '../../../memory/legacy-paging/fixture.js';
-import { context, LONG, using } from '../../../modes/fixture.js';
+import { context, LONG, using } from '../../../processor/modes/fixture.js';
 
 export function boundaryScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [

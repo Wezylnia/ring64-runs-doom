@@ -1,7 +1,14 @@
 import type { Cpu, RunResult, X87State } from '../../../../sdk/src/index.js';
 import { equal } from '../../../support/fixture.js';
 import { banks, xmm } from '../simd/fixture.js';
-export { LONG, context, input, changed, using, type Scenario } from '../../modes/fixture.js';
+export {
+  LONG,
+  context,
+  input,
+  changed,
+  using,
+  type Scenario,
+} from '../../processor/modes/fixture.js';
 export { outcome } from '../../instructions/strings/fixture.js';
 export { banks, xmm, bytes, profiles } from '../simd/fixture.js';
 export { equal, hex, memory, fault, throws } from '../../../support/fixture.js';

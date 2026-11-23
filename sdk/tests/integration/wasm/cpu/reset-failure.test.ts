@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
 import { Core } from '../../../../src/wasm/core.js';
-import { physicalCpu } from '../../../../../tests/execution/reset/fixture.js';
+import { physicalCpu } from '../../../../../tests/execution/processor/reset/fixture.js';
 
 test('a trap while releasing reset owners leaves the existing CPU failed', async () => {
   const compiler = await WebAssembly.compile(

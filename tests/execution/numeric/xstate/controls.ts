@@ -1,4 +1,4 @@
-import { controls, input, using, type Profile } from '../../identity-time/oracle.js';
+import { controls, input, using, type Profile } from '../../processor/identity-time/oracle.js';
 import {
   CPUID,
   CONTROL,

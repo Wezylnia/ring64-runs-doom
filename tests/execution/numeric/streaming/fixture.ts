@@ -8,7 +8,7 @@ import {
 } from '../../../../sdk/src/index.js';
 import { LIMITS, hex } from '../../../support/fixture.js';
 export * from '../x87/fixture.js';
-export { segment } from '../../modes/fixture.js';
+export { segment } from '../../processor/modes/fixture.js';
 
 export const DATA = 0x1f1e1d1c1b1a19181716151413121110n;
 export const MASK64 = (1n << 64n) - 1n;

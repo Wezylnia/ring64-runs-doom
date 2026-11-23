@@ -1,5 +1,5 @@
 import { observeArtifactImports } from '../../../../support/artifact-imports.js';
-import { context } from '../../../modes/fixture.js';
+import { context } from '../../../processor/modes/fixture.js';
 import {
   BANK,
   check,

@@ -1,5 +1,5 @@
-import { context } from '../modes/fixture.js';
-import { RESET_BANK, resetContext } from '../reset/fixture.js';
+import { context } from '../processor/modes/fixture.js';
+import { RESET_BANK, resetContext } from '../processor/reset/fixture.js';
 import type { Scenario } from '../../support/fixture.js';
 import {
   ENTRY,

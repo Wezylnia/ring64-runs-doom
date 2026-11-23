@@ -1,4 +1,8 @@
-import { input, using as usingProfile, type Profile } from '../../identity-time/oracle.js';
+import {
+  input,
+  using as usingProfile,
+  type Profile,
+} from '../../processor/identity-time/oracle.js';
 import { createFixture, initial } from '../../../support/fixture.js';
 import {
   AUX,

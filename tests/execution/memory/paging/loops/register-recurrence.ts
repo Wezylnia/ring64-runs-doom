@@ -1,5 +1,5 @@
 import { PC, equal, initial, usingPaged, type Cpu, type Scenario } from '../fixture.js';
-import { context, using } from '../../../modes/fixture.js';
+import { context, using } from '../../../processor/modes/fixture.js';
 
 export function pagedRegisterRecurrenceScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [

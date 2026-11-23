@@ -6,7 +6,7 @@ import {
   input,
   execution,
   type Profile,
-} from '../../../identity-time/oracle.js';
+} from '../../../processor/identity-time/oracle.js';
 import {
   fixture,
   using,

@@ -1,5 +1,5 @@
 import { BANK, initial, little, PC, same, usingPaged } from '../../memory/paging/fixture.js';
-import { physicalCpu, resetContext } from '../../reset/fixture.js';
+import { physicalCpu, resetContext } from '../../processor/reset/fixture.js';
 import {
   changed,
   context,

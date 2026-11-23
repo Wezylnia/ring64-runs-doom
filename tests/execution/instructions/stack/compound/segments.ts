@@ -1,6 +1,6 @@
 import { createCpu } from '../../../../../sdk/src/index.js';
 import { exit, memory as scalarMemory, initial } from '../../../../support/fixture.js';
-import { using as usingProfile, type Profile } from '../../../identity-time/oracle.js';
+import { using as usingProfile, type Profile } from '../../../processor/identity-time/oracle.js';
 import {
   PC,
   compoundProfiles,

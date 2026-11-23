@@ -1,4 +1,11 @@
-export { LONG, context, input, changed, using, type Scenario } from '../../modes/fixture.js';
+export {
+  LONG,
+  context,
+  input,
+  changed,
+  using,
+  type Scenario,
+} from '../../processor/modes/fixture.js';
 export { bytes, outcome, patch } from '../../control-flow/near/fixture.js';
 
 export function mask(width: number): bigint {

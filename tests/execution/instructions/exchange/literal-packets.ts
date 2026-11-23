@@ -1,6 +1,6 @@
 import { createCpu } from '../../../../sdk/src/index.js';
 import { LIMITS, check, equal, fault, hex, memory } from '../../../support/fixture.js';
-import { LONG, changed, input, using, type Scenario } from '../../modes/fixture.js';
+import { LONG, changed, input, using, type Scenario } from '../../processor/modes/fixture.js';
 import { outcome } from '../strings/fixture.js';
 
 export function literalPackets(compiler: WebAssembly.Module): Scenario[] {

@@ -1,5 +1,5 @@
 import { snapshot } from '../../../control-flow/far/fixture.js';
-import { context } from '../../../modes/fixture.js';
+import { context } from '../../../processor/modes/fixture.js';
 import { BANK, equal, initial, little, usingPaged, type Scenario } from '../fixture.js';
 
 export function byteReadLoopScenarios(compiler: WebAssembly.Module): Scenario[] {

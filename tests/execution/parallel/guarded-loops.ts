@@ -1,5 +1,5 @@
 import type { Registers } from '../../../sdk/src/index.js';
-import { context } from '../modes/fixture.js';
+import { context } from '../processor/modes/fixture.js';
 import { changed, exit, fault, type Scenario } from '../../support/fixture.js';
 import {
   ENTRY,
