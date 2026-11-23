@@ -4,6 +4,7 @@ use super::{DecodeError, cursor::Cursor, prefix::Prefixes};
 
 mod escaped;
 mod primary;
+mod three_byte;
 
 pub(super) fn refine<F>(
     opcode: u8,
@@ -49,7 +50,7 @@ where
     }
     let opcode = cursor.byte()?;
     if opcode == 0xae && prefixes.repeat == Some(0xf3) {
-        return super::streaming::segment_base(prefixes, cursor);
+        return super::numeric::streaming::segment_base(prefixes, cursor);
     }
     // preserve multi-selector frontiers outside the existing fsgsbase path.
     if multiple_repeats {

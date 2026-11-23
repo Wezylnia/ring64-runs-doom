@@ -6,7 +6,7 @@ use crate::x86::instruction::{
 };
 
 use super::super::{
-    self as decoder, DecodeError, cursor::Cursor, operand::ModRm, prefix::Prefixes,
+    DecodeError, cursor::Cursor, numeric, operand::ModRm, prefix::Prefixes, system,
 };
 use super::{branch, byte_or_wide, escaped, relative_displacement};
 
@@ -18,23 +18,23 @@ pub(super) fn decode<F>(
 where
     F: FnMut(u64) -> Result<u8, DecodeError>,
 {
-    if let Some(result) = decoder::io::refine(opcode, prefixes, cursor) {
+    if let Some(result) = system::io::refine(opcode, prefixes, cursor) {
         return result;
     }
-    if let Some(result) = decoder::software_events::one_byte(opcode, prefixes, cursor) {
+    if let Some(result) = system::software_events::one_byte(opcode, prefixes, cursor) {
         return result;
     }
-    if let Some(result) = decoder::system_flags::one_byte(opcode, prefixes) {
+    if let Some(result) = system::system_flags::one_byte(opcode, prefixes) {
         return result;
     }
-    if let Some(result) = decoder::far::one_byte(opcode, prefixes, cursor) {
+    if let Some(result) = system::far::one_byte(opcode, prefixes, cursor) {
         return result;
     }
-    if let Some(result) = decoder::protection::one_byte(opcode, prefixes, cursor) {
+    if let Some(result) = system::protection::one_byte(opcode, prefixes, cursor) {
         return result;
     }
     if matches!(opcode, 0x9b | 0xd8..=0xdf) {
-        return decoder::x87::refine(opcode, prefixes, cursor);
+        return numeric::x87::refine(opcode, prefixes, cursor);
     }
     let string_kind = match opcode {
         0xa4 | 0xa5 => Some(StringKind::Movs),
@@ -220,7 +220,7 @@ where
                 });
             }
             match operands.selector {
-                3 | 5 => decoder::far::memory(&operands, prefixes, cursor),
+                3 | 5 => system::far::memory(&operands, prefixes, cursor),
                 2 => Ok(Operation::Call {
                     target: stack_operand(operands.location(cursor, prefixes, near_width)?),
                     width: near_width,

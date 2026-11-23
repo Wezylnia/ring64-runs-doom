@@ -1,7 +1,7 @@
-use super::{DecodeError, cursor::Cursor, operand::ModRm, prefix::Prefixes};
+use crate::x86::decode::{DecodeError, cursor::Cursor, operand::ModRm, prefix::Prefixes};
 use crate::x86::instruction::{FarInstruction, FarKind, FarOperand, Operation};
 
-pub(super) fn one_byte<F>(
+pub(in crate::x86::decode) fn one_byte<F>(
     opcode: u8,
     prefixes: Prefixes,
     cursor: &mut Cursor<F>,
@@ -58,7 +58,7 @@ where
     })())
 }
 
-pub(super) fn memory<F>(
+pub(in crate::x86::decode) fn memory<F>(
     operands: &ModRm,
     prefixes: Prefixes,
     cursor: &mut Cursor<F>,

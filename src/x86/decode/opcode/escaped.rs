@@ -1,7 +1,7 @@
 use crate::x86::instruction::{Bit, BitIndex, Count, DoubleShift, Operation, Width};
 
 use super::super::{
-    self as decoder, DecodeError, cursor::Cursor, operand::ModRm, prefix::Prefixes,
+    DecodeError, cursor::Cursor, numeric, operand::ModRm, prefix::Prefixes, system,
 };
 use super::{branch, byte_or_wide, condition};
 
@@ -25,9 +25,9 @@ where
         };
     }
     if matches!(opcode, 0x38 | 0x3a) {
-        return decoder::three_byte::decode(opcode, prefixes, cursor);
+        return super::three_byte::decode(opcode, prefixes, cursor);
     }
-    if let Some(result) = decoder::paging::two_byte(opcode, prefixes, cursor) {
+    if let Some(result) = system::paging::two_byte(opcode, prefixes, cursor) {
         return result;
     }
     if matches!(opcode, 0x21 | 0x23) {
@@ -56,10 +56,10 @@ where
     if opcode == 0x0b && prefixes.repeat.is_none() {
         return Err(DecodeError::Undefined);
     }
-    if let Some(result) = decoder::protection::two_byte(opcode, prefixes, cursor) {
+    if let Some(result) = system::protection::two_byte(opcode, prefixes, cursor) {
         return result;
     }
-    if let Some(result) = decoder::streaming::refine(opcode, prefixes, cursor) {
+    if let Some(result) = numeric::streaming::refine(opcode, prefixes, cursor) {
         return result;
     }
     if let Some(result) = simd(opcode, prefixes, cursor) {
@@ -236,13 +236,13 @@ pub(super) fn simd<F>(
 where
     F: FnMut(u64) -> Result<u8, DecodeError>,
 {
-    if let Some(result) = decoder::mmx::refine(opcode, prefixes, cursor) {
+    if let Some(result) = numeric::mmx::refine(opcode, prefixes, cursor) {
         return Some(result);
     }
-    if let Some(result) = decoder::float::refine(opcode, prefixes, cursor) {
+    if let Some(result) = numeric::float::refine(opcode, prefixes, cursor) {
         return Some(result);
     }
-    decoder::vector::refine(opcode, prefixes, cursor).map(|result| result.map(Operation::Vector))
+    numeric::vector::refine(opcode, prefixes, cursor).map(|result| result.map(Operation::Vector))
 }
 
 pub(super) fn scan<F>(

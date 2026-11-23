@@ -1,4 +1,6 @@
-use super::{DecodeError, cursor::Cursor, operand::ModRm, paging, prefix::Prefixes};
+use crate::x86::decode::{
+    DecodeError, cursor::Cursor, operand::ModRm, prefix::Prefixes, system::paging,
+};
 use crate::x86::instruction::{Operation, Ssse3Op, VectorInstruction, VectorOperand};
 use crate::x86::mmx;
 

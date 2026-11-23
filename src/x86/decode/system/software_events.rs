@@ -1,7 +1,7 @@
-use super::{DecodeError, cursor::Cursor, prefix::Prefixes};
+use crate::x86::decode::{DecodeError, cursor::Cursor, prefix::Prefixes};
 use crate::x86::instruction::{Operation, SoftwareEventDescriptor, SoftwareEventKind, Width};
 
-pub(super) fn one_byte<F>(
+pub(in crate::x86::decode) fn one_byte<F>(
     opcode: u8,
     prefixes: Prefixes,
     cursor: &mut Cursor<F>,

@@ -1,8 +1,8 @@
-use super::{DecodeError, cursor::Cursor, operand::ModRm, prefix::Prefixes};
 use crate::x86::context::{Mode, Segment};
+use crate::x86::decode::{DecodeError, cursor::Cursor, operand::ModRm, prefix::Prefixes};
 use crate::x86::instruction::{Operation, ProtectionInstruction, ProtectionKind as Kind, Width};
 
-pub(super) fn one_byte<F>(
+pub(in crate::x86::decode) fn one_byte<F>(
     opcode: u8,
     prefixes: Prefixes,
     cursor: &mut Cursor<F>,
@@ -19,7 +19,7 @@ where
     Some((|| {
         let byte = cursor.byte()?;
         if opcode == 0xc4 && (prefixes.long64 || byte >> 6 == 3) {
-            return super::bmi::vex(byte, prefixes, cursor);
+            return crate::x86::decode::bmi::vex(byte, prefixes, cursor);
         }
         let operands = ModRm::from_byte(byte, prefixes.rex);
         let (kind, width, register) = match opcode {
@@ -74,7 +74,7 @@ where
     })())
 }
 
-pub(super) fn two_byte<F>(
+pub(in crate::x86::decode) fn two_byte<F>(
     opcode: u8,
     prefixes: Prefixes,
     cursor: &mut Cursor<F>,

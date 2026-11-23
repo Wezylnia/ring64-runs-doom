@@ -5,23 +5,11 @@ use super::instruction::Instruction;
 
 mod bmi;
 mod cursor;
-mod far;
-mod float;
-mod io;
-mod mmx;
-mod numeric_image;
+mod numeric;
 mod opcode;
 mod operand;
-mod packed;
-mod paging;
 mod prefix;
-mod protection;
-mod software_events;
-mod streaming;
-mod system_flags;
-mod three_byte;
-mod vector;
-mod x87;
+mod system;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DecodeError {

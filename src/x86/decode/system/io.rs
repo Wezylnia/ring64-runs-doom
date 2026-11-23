@@ -1,8 +1,8 @@
-use super::{DecodeError, cursor::Cursor, prefix::Prefixes};
 use crate::x86::context::Segment;
+use crate::x86::decode::{DecodeError, cursor::Cursor, prefix::Prefixes};
 use crate::x86::instruction::{Operation, Repeat, StringKind, Width};
 
-pub(super) fn refine<F>(
+pub(in crate::x86::decode) fn refine<F>(
     opcode: u8,
     prefixes: Prefixes,
     cursor: &mut Cursor<F>,

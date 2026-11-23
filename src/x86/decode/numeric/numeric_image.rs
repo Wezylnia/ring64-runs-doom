@@ -1,5 +1,5 @@
-use super::{DecodeError, cursor::Cursor, operand::ModRm, prefix::Prefixes};
 use crate::x86::context::Mode;
+use crate::x86::decode::{DecodeError, cursor::Cursor, operand::ModRm, prefix::Prefixes};
 use crate::x86::instruction::{Operation, Width};
 use crate::x86::numeric_images::{Format, ImageOp, Kind};
 

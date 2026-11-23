@@ -1,7 +1,10 @@
-use super::{DecodeError, prefix::Prefixes};
+use crate::x86::decode::{DecodeError, prefix::Prefixes};
 use crate::x86::instruction::{Operation, SystemFlagsDescriptor, SystemFlagsKind, Width};
 
-pub(super) fn one_byte(opcode: u8, prefixes: Prefixes) -> Option<Result<Operation, DecodeError>> {
+pub(in crate::x86::decode) fn one_byte(
+    opcode: u8,
+    prefixes: Prefixes,
+) -> Option<Result<Operation, DecodeError>> {
     if opcode == 0x17 {
         return Some(if prefixes.long64 {
             Err(DecodeError::Invalid)
