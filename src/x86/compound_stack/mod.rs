@@ -240,5 +240,4 @@ fn canonical_small_stack(context: &ExecutionContext) -> bool {
 }
 
 #[cfg(test)]
-#[path = "compound_stack/tests.rs"]
 mod tests;
