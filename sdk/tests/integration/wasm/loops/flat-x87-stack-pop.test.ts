@@ -33,6 +33,50 @@ test('inline x87 operations preserve raw bank bits and checked retirement bounda
     return env;
   };
   try {
+    // FXCH ST(1); FUCOMIP ST(1) swaps slots 7 and 0 before comparing.
+    await using(compiler, 'd9c9dfe9', context('protected'), async (cpu) => {
+      const left = 0x4000c000000000000000n;
+      const right = 0x40008000000000000000n;
+      const run = async (source: bigint, stop: bigint) => {
+        const registers = [source, ...original.registers.slice(1, 7), left];
+        const before = { ...original, registers, tagWord: 0xbffc };
+        cpu.setState(input(pc, {}, 0xcd7n));
+        cpu.setX87State(before);
+        helperCalls = 0;
+        const execution = await cpu.run({ budget: 8n, stop });
+        return { before, execution };
+      };
+      for (const [source, calls] of [
+        [right, 0],
+        [0n, 1],
+      ] as const) {
+        const { before, execution } = await run(source, pc + 4n);
+        assert.equal(execution.reason, 'stop');
+        assert.equal(execution.retired, 2n);
+        assert.equal(execution.state.flags, 0x403n);
+        assert.equal(helperCalls, calls);
+        assert.deepEqual(cpu.readX87State(), {
+          ...before,
+          registers: [left, ...before.registers.slice(1, 7), source],
+          statusWord: 0x4500,
+          tagWord: 0xfffc,
+          instructionPointer: pc + 2n,
+        });
+      }
+      const { before, execution } = await run(right, pc + 2n);
+      assert.equal(execution.reason, 'stop');
+      assert.equal(execution.retired, 1n);
+      assert.equal(execution.state.flags, 0xcd7n);
+      assert.equal(helperCalls, 1);
+      assert.deepEqual(cpu.readX87State(), {
+        ...before,
+        registers: [left, ...before.registers.slice(1, 7), right],
+        statusWord: 0x7d00,
+        tagWord: 0x3ffc,
+        instructionPointer: pc,
+      });
+    });
+
     // FSTP ST(1); FSTP ST(0)
     await using(compiler, 'ddd9ddd8', context('protected'), async (cpu) => {
       const enter = (entry = pc, x87 = original) => {

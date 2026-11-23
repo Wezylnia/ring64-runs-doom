@@ -254,38 +254,41 @@ impl Emitter {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    fn inline_x87_subtract(&mut self, pc: u64, index: u8) {
+    fn inline_x87_operands(&mut self, index: u8, pc64: bool) {
         use crate::x86::x87::State;
         let bank = offset_of!(RunState, x87);
         let status = x87_mem(bank + offset_of!(State, status_word), 1);
         let control = x87_mem(bank + offset_of!(State, control_word), 1);
         let tags = x87_mem(bank + offset_of!(State, tag_word), 1);
-        let registers = bank + offset_of!(State, registers);
-        let significand = x87_mem(registers, 0);
-        let exponent = x87_mem(registers + 8, 0);
-
+        let significand = x87_mem(bank + offset_of!(State, registers), 0);
         // Waiting instructions cannot bypass pending exceptions or empty tags.
-        // Both precision encodings with PC bit 8 set use 64 significand bits.
         self.op(Wasm::LocalGet(0))
             .op(Wasm::I32Load16U(status))
             .op(Wasm::LocalTee(REASON))
-            .op(Wasm::LocalGet(0))
-            .op(Wasm::I64Load16U(control))
-            .op(Wasm::LocalTee(VALUE))
-            .op(Wasm::I32WrapI64)
-            .op(Wasm::I32Const(-1))
+            .op(Wasm::LocalGet(0));
+        if pc64 {
+            self.op(Wasm::I64Load16U(control))
+                .op(Wasm::LocalTee(VALUE))
+                .op(Wasm::I32WrapI64);
+        } else {
+            self.op(Wasm::I32Load16U(control));
+        }
+        self.op(Wasm::I32Const(-1))
             .op(Wasm::I32Xor)
             .op(Wasm::I32And)
             .op(Wasm::I32Const(63))
             .op(Wasm::I32And)
-            .op(Wasm::I32Eqz)
-            .op(Wasm::LocalGet(VALUE))
-            .op(Wasm::I32WrapI64)
-            .op(Wasm::I32Const(0x100))
-            .op(Wasm::I32And)
-            .op(Wasm::I32Eqz)
-            .op(Wasm::I32Eqz)
-            .op(Wasm::I32And);
+            .op(Wasm::I32Eqz);
+        if pc64 {
+            // Both precision encodings with PC bit 8 set use 64 significand bits.
+            self.op(Wasm::LocalGet(VALUE))
+                .op(Wasm::I32WrapI64)
+                .op(Wasm::I32Const(0x100))
+                .op(Wasm::I32And)
+                .op(Wasm::I32Eqz)
+                .op(Wasm::I32Eqz)
+                .op(Wasm::I32And);
+        }
         self.op(Wasm::LocalGet(REASON))
             .op(Wasm::I32Const(11))
             .op(Wasm::I32ShrU)
@@ -325,6 +328,20 @@ impl Emitter {
                 .op(Wasm::I64Load(significand))
                 .op(Wasm::LocalSet(raw));
         }
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    fn inline_x87_subtract(&mut self, pc: u64, index: u8) {
+        use crate::x86::x87::State;
+        let bank = offset_of!(RunState, x87);
+        let status = x87_mem(bank + offset_of!(State, status_word), 1);
+        let control = x87_mem(bank + offset_of!(State, control_word), 1);
+        let tags = x87_mem(bank + offset_of!(State, tag_word), 1);
+        let registers = bank + offset_of!(State, registers);
+        let significand = x87_mem(registers, 0);
+        let exponent = x87_mem(registers + 8, 0);
+
+        self.inline_x87_operands(index, true);
         // Canonical short significands with equal signed exponents subtract
         // exactly. The normalization is the equal-exponent case of the Rust kernel.
         self.op(Wasm::LocalGet(LHS))
@@ -470,6 +487,153 @@ impl Emitter {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    fn inline_x87_exchange_compare(&mut self, pc: u64, index: u8, pop: bool) {
+        use crate::x86::x87::State;
+        let bank = offset_of!(RunState, x87);
+        let status = x87_mem(bank + offset_of!(State, status_word), 1);
+        let tags = x87_mem(bank + offset_of!(State, tag_word), 1);
+        let registers = bank + offset_of!(State, registers);
+        let significand = x87_mem(registers, 0);
+        let exponent = x87_mem(registers + 8, 0);
+        self.inline_x87_operands(index, false);
+        self.op(Wasm::LocalGet(LHS))
+            .op(Wasm::LocalGet(RHS))
+            .op(Wasm::I64And)
+            .op(Wasm::I64Const(0))
+            .op(Wasm::I64LtS)
+            .op(Wasm::I32And)
+            .op(Wasm::LocalGet(ADDRESS))
+            .op(Wasm::I32WrapI64)
+            .op(Wasm::I64Load16U(exponent))
+            .op(Wasm::LocalTee(RESULT))
+            .op(Wasm::I32WrapI64);
+        for pointer in [ADDRESS, VALUE] {
+            if pointer == VALUE {
+                self.op(Wasm::LocalGet(VALUE))
+                    .op(Wasm::I32WrapI64)
+                    .op(Wasm::I32Load16U(exponent))
+                    .op(Wasm::LocalTee(REASON));
+            }
+            self.op(Wasm::I32Const(0x7fff))
+                .op(Wasm::I32And)
+                .op(Wasm::I32Const(1))
+                .op(Wasm::I32Sub)
+                .op(Wasm::I32Const(0x7ffe))
+                .op(Wasm::I32LtU)
+                .op(Wasm::I32And);
+        }
+        self.op(Wasm::If(BlockType::Empty));
+        for (pointer, raw, signed_exp, store) in [
+            (ADDRESS, RHS, REASON, Wasm::I32Store16(exponent)),
+            (VALUE, LHS, RESULT, Wasm::I64Store16(exponent)),
+        ] {
+            self.op(Wasm::LocalGet(pointer))
+                .op(Wasm::I32WrapI64)
+                .op(Wasm::LocalGet(raw))
+                .op(Wasm::I64Store(significand))
+                .op(Wasm::LocalGet(pointer))
+                .op(Wasm::I32WrapI64)
+                .op(Wasm::LocalGet(signed_exp))
+                .op(store);
+        }
+
+        // The exchange makes the original ST(i) the left comparison operand.
+        // For equal signs, (exponent, significand) orders the magnitudes.
+        self.op(Wasm::LocalGet(REASON))
+            .op(Wasm::I64ExtendI32U)
+            .op(Wasm::LocalGet(RESULT))
+            .op(Wasm::I64Eq)
+            .op(Wasm::I64ExtendI32U)
+            .op(Wasm::LocalSet(VALUE))
+            .op(Wasm::LocalGet(RHS))
+            .op(Wasm::LocalGet(LHS))
+            .op(Wasm::I64Eq)
+            .op(Wasm::LocalGet(VALUE))
+            .op(Wasm::I32WrapI64)
+            .op(Wasm::I32And)
+            .op(Wasm::I64ExtendI32U)
+            .op(Wasm::LocalSet(ADDRESS))
+            .op(Wasm::LocalGet(0));
+        self.full_flags();
+        self.op(Wasm::I64Const(!0x8d5))
+            .op(Wasm::I64And)
+            .op(Wasm::LocalGet(REASON))
+            .op(Wasm::I64ExtendI32U)
+            .op(Wasm::LocalGet(RESULT))
+            .op(Wasm::I64LtU)
+            .op(Wasm::LocalGet(VALUE))
+            .op(Wasm::I32WrapI64)
+            .op(Wasm::LocalGet(RHS))
+            .op(Wasm::LocalGet(LHS))
+            .op(Wasm::I64LtU)
+            .op(Wasm::I32And)
+            .op(Wasm::I32Or)
+            .op(Wasm::LocalGet(REASON))
+            .op(Wasm::LocalGet(RESULT))
+            .op(Wasm::I32WrapI64)
+            .op(Wasm::I32Xor)
+            .op(Wasm::I32Const(15))
+            .op(Wasm::I32ShrU)
+            .op(Wasm::I32Eqz)
+            .op(Wasm::I32And)
+            .op(Wasm::LocalGet(REASON))
+            .op(Wasm::I32Const(15))
+            .op(Wasm::I32ShrU)
+            .op(Wasm::I32Xor)
+            .op(Wasm::LocalGet(ADDRESS))
+            .op(Wasm::I64Eqz)
+            .op(Wasm::I32And)
+            .op(Wasm::I64ExtendI32U)
+            .op(Wasm::I64Or)
+            .op(Wasm::LocalGet(ADDRESS))
+            .op(Wasm::I64Const(6))
+            .op(Wasm::I64Shl)
+            .op(Wasm::I64Or)
+            .op(Wasm::I64Store(x87_mem(offset_of!(RunState, flags), 3)));
+        self.reload_x87_flags();
+
+        self.op(Wasm::LocalGet(0))
+            .op(Wasm::LocalGet(0))
+            .op(Wasm::I32Load16U(tags));
+        for (logical, empty) in [(0, pop), (index, false)] {
+            self.op(Wasm::I32Const(3)).op(Wasm::LocalGet(STORE_STATUS));
+            if logical != 0 {
+                self.op(Wasm::I32Const(i32::from(logical)))
+                    .op(Wasm::I32Add)
+                    .op(Wasm::I32Const(7))
+                    .op(Wasm::I32And);
+            }
+            self.op(Wasm::I32Const(1)).op(Wasm::I32Shl).op(Wasm::I32Shl);
+            if empty {
+                self.op(Wasm::I32Or);
+            } else {
+                self.op(Wasm::I32Const(-1))
+                    .op(Wasm::I32Xor)
+                    .op(Wasm::I32And);
+            }
+        }
+        self.op(Wasm::I32Store16(tags))
+            .op(Wasm::LocalGet(0))
+            .op(Wasm::LocalGet(0))
+            .op(Wasm::I32Load16U(status));
+        if pop {
+            self.op(Wasm::LocalTee(REASON))
+                .op(Wasm::I32Const(!(0x8080 | 0x200 | 0x3800)))
+                .op(Wasm::I32And)
+                .op(Wasm::LocalGet(REASON))
+                .op(Wasm::I32Const(0x800))
+                .op(Wasm::I32Add)
+                .op(Wasm::I32Const(0x3800))
+                .op(Wasm::I32And)
+                .op(Wasm::I32Or);
+        } else {
+            self.op(Wasm::I32Const(!(0x8080 | 0x200))).op(Wasm::I32And);
+        }
+        self.op(Wasm::I32Store16(status));
+        self.inline_x87_environment(pc);
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     pub(super) fn emit_x87_pair(
         &mut self,
         first: Instruction,
@@ -505,13 +669,18 @@ impl Emitter {
                 .op(Wasm::I32And);
         }
         self.op(Wasm::If(BlockType::Empty));
-        if register_store_pop(a.op)
+        let pop_pair = register_store_pop(a.op)
             && a.op.index == 1
             && register_store_pop(b.op)
-            && b.op.index == 0
-            && self.can_inline_x87_bank_operation()
-        {
-            self.inline_x87_stack_bank(second.pc, 2, 1);
+            && b.op.index == 0;
+        let exchange_compare =
+            register_exchange_compare(a.op, b.op) && a.op.index != 0 && a.op.index == b.op.index;
+        if (pop_pair || exchange_compare) && self.can_inline_x87_bank_operation() {
+            if pop_pair {
+                self.inline_x87_stack_bank(second.pc, 2, 1);
+            } else {
+                self.inline_x87_exchange_compare(second.pc, a.op.index, b.op.pop != 0);
+            }
             self.op(Wasm::I64Const(second.next_pc as i64))
                 .op(Wasm::LocalSet(RIP));
             self.retire_instructions(2);
