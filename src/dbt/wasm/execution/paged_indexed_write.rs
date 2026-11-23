@@ -1,10 +1,13 @@
-use super::{ADDRESS, Emitter, STORE_STATUS, StructuredLoop, Unit, VALUE};
+use super::control::InstructionRetirement;
+use super::{ADDRESS, Emitter, RESULT, RIP, STORE_STATUS, StructuredLoop, Unit, VALUE};
 use crate::embedding::layout::INDEXED_WRITE_UNSUPPORTED_LEAF;
 use crate::x86::paging::cache::IndexedDwordWrite;
 use crate::x86::paging::cache::IndexedReadTable;
 use crate::x86::{
     context::Segment,
-    instruction::{Address, AddressBase, Alu, Condition, DataOperand, Location, Operation, Width},
+    instruction::{
+        Address, AddressBase, Alu, Condition, DataOperand, Location, Operation, RegisterView, Width,
+    },
 };
 use std::mem::offset_of;
 use wasm_encoder::{BlockType, Instruction as Op, MemArg};
@@ -14,6 +17,10 @@ pub(super) struct IndexedWrite {
     pub(super) index: u32,
     pub(super) lookup: u32,
     pub(super) store: u32,
+    index_register: RegisterView,
+    value_register: RegisterView,
+    next_pc: u64,
+    zero_target: u64,
     table: Address,
     destination: Address,
 }
@@ -108,6 +115,10 @@ impl IndexedWrite {
                 index: first,
                 lookup: first + 3,
                 store: first + 4,
+                index_register,
+                value_register: value,
+                next_pc: store.next_pc,
+                zero_target: target,
                 table: Address {
                     index: None,
                     ..table
@@ -153,7 +164,7 @@ impl Emitter {
             self.op(Op::I32Const(0))
                 .op(Op::LocalSet(group.host))
                 .op(Op::Block(BlockType::Empty));
-            self.reuse_indexed_write(group, address, next_pc);
+            self.reuse_indexed_write(group, address, next_pc, exit_depth);
             self.op(Op::LocalGet(group.record))
                 .op(Op::I32Const(unsupported))
                 .op(Op::I32Ne)
@@ -202,7 +213,36 @@ impl Emitter {
         }
     }
 
-    fn reuse_indexed_write(&mut self, group: GuardedIndexedWrite, address: Address, next_pc: u64) {
+    fn finish_admitted_indexed_write(&mut self, group: GuardedIndexedWrite, exit_depth: u32) {
+        // A host pointer proves a nonzero byte and both complete dwords. The
+        // lap already excluded intermediate stops, and funded all five PCs.
+        if group.shape.index_register != group.shape.value_register {
+            self.op(Op::LocalGet(VALUE));
+            self.write_register(group.shape.index_register, Width::W32);
+        }
+        // TEST on a zero-extended byte has the same status in 32 and 64 bits.
+        self.op(Op::LocalGet(VALUE)).op(Op::LocalSet(RESULT));
+        self.logical_flags(Width::W32);
+        self.op(Op::LocalGet(group.value)).op(Op::I64ExtendI32U);
+        self.write_register(group.shape.value_register, Width::W32);
+        self.op(Op::LocalGet(group.host))
+            .op(Op::LocalGet(group.value))
+            .op(Op::I32Store(field(0, 2)))
+            .op(Op::I64Const(group.shape.next_pc as i64))
+            .op(Op::LocalSet(RIP));
+        self.retire_instructions(5);
+        self.route(group.shape.next_pc, exit_depth - 1, exit_depth);
+    }
+
+    fn reuse_indexed_write(
+        &mut self,
+        group: GuardedIndexedWrite,
+        address: Address,
+        next_pc: u64,
+        exit_depth: u32,
+    ) {
+        let funded = self.loop_gates_prechecked
+            && matches!(self.instruction_retirement, InstructionRetirement::One);
         self.op(Op::Block(BlockType::Empty))
             .op(Op::LocalGet(group.record))
             .op(Op::I32Const(INDEXED_WRITE_UNSUPPORTED_LEAF as i32))
@@ -246,7 +286,22 @@ impl Emitter {
             .op(Op::I64Eqz)
             .op(Op::If(BlockType::Empty));
         self.touch_indexed_slots(group, &[0, 3]);
-        self.op(Op::Br(2)).op(Op::End);
+        if funded
+            && crate::memory::canonical48(group.shape.zero_target)
+            && self.entries.contains_key(&group.shape.zero_target)
+        {
+            self.op(Op::I64Const(0));
+            self.write_register(group.shape.index_register, Width::W32);
+            self.op(Op::I64Const(0x46))
+                .op(Op::LocalSet(super::FLAGS))
+                .op(Op::I64Const(group.shape.zero_target as i64))
+                .op(Op::LocalSet(RIP));
+            self.retire_instructions(3);
+            self.route(group.shape.zero_target, exit_depth + 2, exit_depth + 3);
+        } else {
+            self.op(Op::Br(2));
+        }
+        self.op(Op::End);
         self.address(group.shape.table, 0);
         self.op(Op::LocalGet(VALUE))
             .op(Op::I64Const(2))
@@ -259,7 +314,12 @@ impl Emitter {
         self.indexed_page_host(group, 2, 4);
         self.op(Op::LocalSet(group.host));
         self.touch_indexed_slots(group, &[0, 1, 2, 3]);
-        self.op(Op::Br(1)).op(Op::End);
+        if funded {
+            self.finish_admitted_indexed_write(group, exit_depth + 2);
+        } else {
+            self.op(Op::Br(1));
+        }
+        self.op(Op::End);
     }
 
     // One tag checks the entire canonical page and the dword alignment.

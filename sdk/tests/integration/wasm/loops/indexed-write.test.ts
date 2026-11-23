@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Core } from '../../../../src/wasm/core.js';
-import { PC, initial, usingPaged } from '../../../../../tests/execution/paging/fixture.js';
+import { BANK, PC, initial, usingPaged } from '../../../../../tests/execution/paging/fixture.js';
 import { compiler } from './fixture.js';
 
 test('an indexed write loop bypasses grouping on a large data leaf', async () => {
@@ -160,6 +160,96 @@ test('indexed stores reuse full pages and reload the palette through a writable 
   } finally {
     prototype.artifactImports = imports;
   }
+});
+
+test('an admitted indexed store publishes both registers and TEST flags before the next fault', async () => {
+  // MOVZX EAX,[RDI]; TEST EAX,EAX; JZ head; MOV EDX,[RBX+RAX*4]; MOV [RSI],EDX;
+  // MOV EBP,[R8] exposes the completed group's state on a fault.
+  const code = 'ffc9741848ffc74883c6040fb60785c074ee8b14838916418b28ebe4';
+  const data = PC + 0x1000n;
+  const ram = new Uint8Array(4096);
+  const words = new DataView(ram.buffer);
+  ram.fill(3, 0, 32);
+  words.setUint32(0x8c, 0xfedcba98, true);
+  await usingPaged(
+    compiler,
+    {
+      code,
+      bank: { ...BANK, cr0: BANK.cr0 | 0x10000n },
+      words: [
+        [0x4008n, 0xa067n],
+        [0x4018n, 0xa065n],
+      ],
+      spans: [{ physical: 0xa000n, bytes: ram }],
+    },
+    async (cpu) => {
+      const end = PC + BigInt(code.length / 2);
+      const start = (suffix = data, destination = data) =>
+        initial(PC, {
+          0: 0xffffffffffffffffn,
+          1: 33n,
+          2: 7n,
+          3: data + 0x80n,
+          6: destination + 0xfcn,
+          7: data - 1n,
+          8: suffix,
+        });
+      cpu.setState(start());
+      assert.equal((await cpu.run({ stop: end, budget: 1000n })).reason, 'stop');
+      const out = 0xa100n;
+      const readOut = () => new DataView(cpu.readPhysicalMemory(out, 4).buffer).getUint32(0, true);
+      for (const [index, flags] of [
+        [3, 6n],
+        [1, 2n],
+      ] as const) {
+        cpu.writePhysicalMemory(0xa000n, Uint8Array.of(index));
+        cpu.writePhysicalMemory(out, new Uint8Array(4));
+        cpu.setState(start());
+        const inside = await cpu.run({ stop: PC + 18n, budget: 1000n });
+        assert.equal(inside.retired, 7n);
+        assert.equal(inside.state.registers[0], BigInt(index));
+        assert.equal(inside.state.registers[2], 7n);
+        assert.equal(inside.state.flags, flags);
+        assert.equal(readOut(), 0);
+
+        cpu.setState(start());
+        const short = await cpu.run({ stop: end, budget: 8n });
+        const color = index === 3 ? 0xfedcba98 : 0;
+        assert.equal(short.state.rip, PC + 21n);
+        assert.equal(short.state.registers[2], BigInt(color));
+        assert.equal(readOut(), 0);
+
+        cpu.setState(start(data + 4096n));
+        const fault = await cpu.run({ stop: end, budget: 1000n });
+        assert.equal(fault.reason, 'page-fault');
+        assert.equal(fault.retired, 9n);
+        assert.equal(fault.state.rip, PC + 23n);
+        assert.equal(fault.state.registers[0], BigInt(index));
+        assert.equal(fault.state.registers[2], BigInt(color));
+        assert.equal(fault.state.flags, flags);
+        assert.equal(readOut(), color);
+      }
+
+      cpu.writePhysicalMemory(0xa000n, Uint8Array.of(3));
+      cpu.writePhysicalMemory(out, new Uint8Array(4));
+      cpu.setState(start(data, data + 8192n));
+      const denied = await cpu.run({ stop: end, budget: 1000n });
+      assert.equal(denied.reason, 'page-fault');
+      assert.equal(denied.retired, 8n);
+      assert.equal(denied.state.rip, PC + 21n);
+      assert.equal(denied.state.registers[2], 0xfedcba98n);
+      assert.equal(denied.state.flags, 6n);
+      assert.equal(readOut(), 0);
+
+      cpu.writePhysicalMemory(0xa000n, Uint8Array.of(0));
+      cpu.setState(start(data + 4096n, data + 8192n));
+      const transparent = await cpu.run({ stop: end, budget: 7n });
+      assert.equal(transparent.state.rip, PC);
+      assert.equal(transparent.state.registers[2], 7n);
+      assert.equal(transparent.state.flags, 0x46n);
+      assert.equal(readOut(), 0);
+    },
+  );
 });
 
 test('paired dword reads keep live aliases and retire before a split-page fault', async () => {
