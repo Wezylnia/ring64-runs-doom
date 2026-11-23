@@ -4,6 +4,7 @@ import {
   usingPaged,
   word,
   equal,
+  little,
   same,
   hex,
   initial,
@@ -13,6 +14,32 @@ import {
 
 export function pagingVectorAccessScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [
+    {
+      name: 'paged MOVUPS copy reads the updated loop limit from its stack alias',
+      async run() {
+        // Load two vectors from [RDI+RAX], store both at [RSI+RAX], then
+        // ADD RAX,32; CMP [RSP],RAX; JNE back to the first load.
+        const code = '0f1004070f104c07100f1104060f114c06104883c0204839042475e4';
+        const page = new Uint8Array(4096);
+        page.set(Uint8Array.from({ length: 128 }, (_, i) => i + 1));
+        page.set(little([96n]), 8);
+        page.fill(0xa5, 256, 384);
+        page.set(little([32n]), 264); // The first store overwrites the old limit with 96.
+        await usingPaged(
+          compiler,
+          { code, words: [[0x4008n, 0xa067n]], spans: [{ physical: 0xa000n, bytes: page }] },
+          async (cpu) => {
+            cpu.setState(initial(PC, { 0: 0n, 4: 0x401108n, 6: 0x401100n, 7: 0x401000n }));
+            const run = await cpu.run({ budget: 56n, stop: PC + 28n });
+            equal(run.reason, 'stop', 'the guest stack limit terminates the copy');
+            equal(run.retired, 21n, 'three seven-instruction laps');
+            equal(run.state.registers[0], 96n, 'final byte count');
+            same(cpu.readPhysicalMemory(0xa100n, 96), page.slice(0, 96), 'three copied blocks');
+            same(cpu.readPhysicalMemory(0xa160n, 32), page.slice(352, 384), 'next block untouched');
+          },
+        );
+      },
+    },
     {
       name: 'paging access MOVDQU preserves complete vectors and payloads across a nonadjacent page failure and repaired admission',
       async run() {
