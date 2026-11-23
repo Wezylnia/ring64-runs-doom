@@ -88,6 +88,59 @@ fn x87_register_store_pop_matches_the_full_evaluator() {
 
 #[cfg(not(feature = "parallel"))]
 #[test]
+fn x87_register_subtract_matches_the_full_evaluator() {
+    initialize(0x1000, &[0xf4]);
+    let values = [
+        (0x3fff_8000_0000_0000_0000, 0),
+        (0x3fff_8000_0000_0000_0001, 0),
+        (0xbfff_8000_0000_0000_0001, 0),
+        (0x8000_0000_0000_0000_0000, 1),
+        (0x7fff_8000_0000_0000_0001, 2),
+        (0x7fff_c000_0000_0000_0001, 2),
+        (0x7fff_8000_0000_0000_0000, 0),
+        (0x3fff_0000_0000_0000_0001, 2),
+        (1, 2),
+        (0, 3),
+    ];
+    for top in 0..8 {
+        for index in [0, 1, 5] {
+            let op = Op {
+                index,
+                ..operation(Kind::Sub, Format::Register, 0xe0 + u16::from(index))
+            };
+            for (a, a_tag) in values {
+                for (b, b_tag) in values {
+                    for control_word in [0x37f, 0x077f, 0x0a7f, 0x007f, 0x37e, 0x35d] {
+                        let mut prior = X87State {
+                            control_word,
+                            status_word: (top << 11) | 0x4700,
+                            data_pointer: 0x4000,
+                            opcode: 0x123,
+                            ..X87State::default()
+                        };
+                        let other = prior.physical(index);
+                        prior.set_raw(usize::from(top), a);
+                        prior.set_tag(usize::from(top), a_tag);
+                        prior.set_raw(other, b);
+                        prior.set_tag(other, b_tag);
+                        let mut expected = prior;
+                        crate::x86::x87::eval(&mut expected, op, 0, 0x202);
+                        expected.instruction_pointer = 0x1000;
+                        if expected.pending() != 0 {
+                            expected.opcode = op.encoding;
+                        }
+                        install(prior);
+                        assert_eq!(invoke(op, 0, 0x1000, 0x202, 0), 0);
+                        assert_eq!(snapshot(), expected);
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(not(feature = "parallel"))]
+#[test]
 fn x87_register_pairs_keep_numeric_and_environment_effects_or_refuse_before_either() {
     use crate::x86::x87::REGISTER_PAIR_SEGMENT;
 

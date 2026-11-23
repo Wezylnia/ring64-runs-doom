@@ -446,9 +446,16 @@ fn core_x87_impl<const OBSERVED: bool, const PAGED: bool>(
             return core.pending_x87_reason();
         }
         #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
-        if !OBSERVED && !PAGED && x87::register_store_pop(operation) {
+        if !OBSERVED && !PAGED && operation.format == x87::Format::Register {
             let state = unsafe { &mut (*core.state.get()).x87 };
-            if state.store_register_pop(operation.index) {
+            let handled = match operation.kind {
+                x87::Kind::Store if operation.pop == 1 => state.store_register_pop(operation.index),
+                x87::Kind::Sub if !operation.dest_index && operation.pop == 0 => {
+                    x87::subtract_register(state, operation.index)
+                }
+                _ => false,
+            };
+            if handled {
                 x87_environment(&core.context, state, operation, instruction_pc, None);
                 return 0;
             }

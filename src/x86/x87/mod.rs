@@ -2,7 +2,7 @@ mod execute;
 mod number;
 
 #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
-pub(crate) use execute::admitted_exchange_compare;
+pub(crate) use execute::{admitted_exchange_compare, subtract_register};
 
 #[cfg(test)]
 mod tests;

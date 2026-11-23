@@ -70,6 +70,25 @@ fn finish_numeric(state: &mut State, destination: usize, r: number::Result, pop:
 }
 
 #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+#[inline(always)]
+pub(crate) fn subtract_register(state: &mut State, index: u8) -> bool {
+    let top = state.top();
+    let other = state.physical(index);
+    if state.tag(top) == 3 || state.tag(other) == 3 {
+        return false;
+    }
+    let result = number::binary(
+        Kind::Sub,
+        state.raw(top),
+        state.raw(other),
+        state.control_word,
+        0,
+    );
+    finish_numeric(state, top, result, 0);
+    true
+}
+
+#[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
 pub(crate) fn admitted_exchange_compare(
     state: &mut State,
     exchange: u8,
