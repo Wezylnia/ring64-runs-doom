@@ -1,4 +1,5 @@
 mod abi;
+mod binary;
 mod operation_uses;
 pub(super) mod placement;
 
@@ -25,7 +26,7 @@ use abi::{BaseSignatures, add_function_type};
 use operation_uses::OperationUses;
 use wasm_encoder::{
     BlockType, CodeSection, EntityType, ExportKind, ExportSection, Function, FunctionSection,
-    ImportSection, Instruction as Op, MemoryType, Module, Section, TypeSection, ValType,
+    ImportSection, Instruction as Op, MemoryType, Module, TypeSection, ValType,
 };
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -2792,43 +2793,31 @@ fn emit_body(
         .section(&imports)
         .section(&functions)
         .section(&exports);
-    let mut bytes = module.finish();
-    let hints_start = bytes.len();
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    let outline_has_hints = outlined_functions
-        .iter()
-        .any(|(_, _, hints)| !hints.is_empty());
+    let outline_hints = outlined_functions
+        .into_iter()
+        .map(|(function, _, branches)| (function, branches));
     #[cfg(any(feature = "parallel", not(target_arch = "wasm32")))]
-    let outline_has_hints = false;
-    if !emitter.branch_hints.is_empty() || outline_has_hints {
-        let mut hints = wasm_encoder::BranchHints::new();
-        if !emitter.branch_hints.is_empty() {
-            hints.function_hints(run_index, emitter.branch_hints);
-        }
-        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-        for (function, _, branches) in outlined_functions {
-            if !branches.is_empty() {
-                hints.function_hints(function, branches);
-            }
-        }
-        hints.append_to(&mut bytes);
-    }
-    let code_start = bytes.len();
-    code.append_to(&mut bytes);
+    let outline_hints = std::iter::empty();
+    let mut artifact = binary::EncodedArtifact::new(
+        module,
+        &code,
+        std::iter::once((run_index, emitter.branch_hints)).chain(outline_hints),
+    );
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if retouch_prefix_fetch
-        && bytes.len() > max_artifact_bytes
-        && bytes.len() - (code_start - hints_start) <= max_artifact_bytes
+        && artifact.bytes.len() > max_artifact_bytes
+        && artifact.code_fits(max_artifact_bytes)
     {
         // Preserve the ordinary call region when only its miss hints exceed the limit.
-        bytes.drain(hints_start..code_start);
+        artifact.discard_hints();
     }
     #[cfg(any(feature = "parallel", not(target_arch = "wasm32")))]
     let extra_spans = false;
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let extra_spans = write_span.is_some() || stack_read_span.is_some();
-    if bytes.len() <= max_artifact_bytes {
-        return (bytes, extra_spans);
+    if artifact.bytes.len() <= max_artifact_bytes {
+        return (artifact.bytes, extra_spans);
     }
     let retry_body = |reads, lowering| {
         emit_body(
@@ -3028,7 +3017,7 @@ fn emit_body(
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if paged_read_span.is_some_and(|(proof, _, _)| proof.is_countdown()) {
-        return (bytes, false);
+        return (artifact.bytes, false);
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if paged_float_sticky {
@@ -3081,7 +3070,7 @@ fn emit_body(
         );
     }
     if paged_sse_write {
-        return (bytes, false);
+        return (artifact.bytes, false);
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if cyclic_vector_store {
@@ -3155,7 +3144,7 @@ fn emit_body(
     }
     #[cfg(not(feature = "parallel"))]
     if loop_body.is_some_and(StructuredLoop::paged_sse) {
-        return (bytes, false);
+        return (artifact.bytes, false);
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if emitter.used_direct_vector_load {
@@ -3202,7 +3191,7 @@ fn emit_body(
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     if loop_body.is_some_and(StructuredLoop::shared_memory_prechecked) {
         // Retry the original placement before trading a memory window for the clone.
-        return (bytes, false);
+        return (artifact.bytes, false);
     }
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     if let GuardedReads::Shared {
@@ -3323,10 +3312,10 @@ fn emit_body(
         );
     }
     // Optional annotations never displace executable code under the owner's limit.
-    bytes.drain(hints_start..code_start);
+    artifact.discard_hints();
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    if float_outline.is_some() && bytes.len() > max_artifact_bytes {
+    if float_outline.is_some() && artifact.bytes.len() > max_artifact_bytes {
         return retry_body(GuardedReads::Inline, optional);
     }
-    (bytes, extra_spans)
+    (artifact.bytes, extra_spans)
 }
