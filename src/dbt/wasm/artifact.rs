@@ -2211,6 +2211,9 @@ fn emit_body(
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let read_span = read_span.map(&mut span_cache);
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let stack_dword_bound =
+        complete_flat_call && unit.context.segment(Segment::Ss).limit == u32::MAX;
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let flat_stack_pointer_span = stack_read_span
         .filter(|_| {
             !paged
@@ -2219,11 +2222,17 @@ fn emit_body(
                 && unit.context.mode() == crate::x86::context::Mode::Protected
                 && unit.context.code32()
         })
-        .map(&mut span_cache);
+        .map(&mut span_cache)
+        .map(|span| span.with_dword_bound(stack_dword_bound));
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let stack_read_span = stack_read_span.map(&mut span_cache);
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    let write_caches = write_segments.map(|used| write_span.filter(|_| used).map(&mut span_cache));
+    let mut write_caches =
+        write_segments.map(|used| write_span.filter(|_| used).map(&mut span_cache));
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    {
+        write_caches[1] = write_caches[1].map(|span| span.with_dword_bound(stack_dword_bound));
+    }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let linear_scalar_copy_prefix =
         (!paged && !observed && !mmio && optional.scalar_copy_prefix && !unit.context.is_long64())

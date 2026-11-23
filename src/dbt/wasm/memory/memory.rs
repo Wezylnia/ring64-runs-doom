@@ -21,6 +21,7 @@ pub(super) struct SpanCache {
     length: u32,
     host: u32,
     descriptor: u32,
+    dword_bound: bool,
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -83,7 +84,13 @@ impl SpanCache {
             length: first + 1,
             host: first + 2,
             descriptor: first + 3,
+            dword_bound: false,
         }
+    }
+
+    pub(super) fn with_dword_bound(mut self, enabled: bool) -> Self {
+        self.dword_bound = enabled;
+        self
     }
 }
 
@@ -992,6 +999,7 @@ impl Emitter {
                 .op(Op::LocalGet(0))
                 .op(Op::I32Load(field(offset_of!(DirectSpan, host), 2)))
                 .op(Op::LocalSet(cache.host));
+            self.publish_dword_span_bound(cache);
         }
     }
 
@@ -1198,6 +1206,12 @@ impl Emitter {
             .op(Op::I32Sub)
             .op(Op::I64ExtendI32U)
             .op(Op::LocalTee(VALUE));
+        if bytes == 4 && span.dword_bound {
+            self.op(Op::I32WrapI64)
+                .op(Op::LocalGet(span.descriptor))
+                .op(Op::I32LtU);
+            return;
+        }
         if bytes > 1 {
             self.op(Op::I64Const(i64::from(bytes - 1))).op(Op::I64Add);
         }
@@ -1231,6 +1245,26 @@ impl Emitter {
                 2,
             )))
             .op(Op::LocalSet(span.host));
+        self.publish_dword_span_bound(span);
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    fn publish_dword_span_bound(&mut self, span: SpanCache) {
+        if !span.dword_bound {
+            return;
+        }
+        // Once the descriptor has been read, its temporary holds the
+        // saturating dword offset bound until the next span refill.
+        self.op(Op::LocalGet(span.length))
+            .op(Op::I32WrapI64)
+            .op(Op::I32Const(3))
+            .op(Op::I32Sub)
+            .op(Op::I32Const(0))
+            .op(Op::LocalGet(span.length))
+            .op(Op::I64Const(3))
+            .op(Op::I64GtU)
+            .op(Op::Select)
+            .op(Op::LocalSet(span.descriptor));
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]

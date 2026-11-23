@@ -6,6 +6,64 @@ import { protectedSnapshot } from '../../../../../tests/support/context.js';
 import { LIMITS, hex, initial } from '../../../../../tests/support/fixture.js';
 import { compiler } from './fixture.js';
 
+test('restored dword stack bounds distinguish narrow retained spans from exact fits', async () => {
+  const head = 0x31800n;
+  const stack = 0x32000n;
+  // MOVZX EAX,BYTE [ESP]; MOV ECX,[ESP]; CALL EBX; DEC EDX; JNZ head; RET; RET.
+  const code = hex('0fb604248b0c24ffd34a75f4c3c3');
+  const seeds = [0n, 4n, 7n, 9n, 10n, 12n, 13n].map((pc) => head + pc);
+  const mapping = (base: bigint, backing: string, length: number, execute: boolean) => ({
+    base,
+    backing,
+    offset: 0,
+    length,
+    permissions: { read: true, write: !execute, execute },
+  });
+  const core = await Core.create(
+    compiler,
+    {
+      entry: head,
+      backings: [
+        { id: 'code', bytes: code },
+        { id: 'short', bytes: hex('112233') },
+        { id: 'full', bytes: hex('44556677') },
+      ],
+      mappings: [
+        mapping(head, 'code', code.length, true),
+        mapping(stack, 'short', 3, false),
+        mapping(stack + 0x100n, 'full', 4, false),
+      ],
+      memoryLimits: { maxBackings: 3, maxMappings: 3, maxBackingBytes: code.length + 7 },
+    },
+    protectedSnapshot(),
+  );
+  const compiled = core.compile(head, LIMITS, seeds, true);
+  assert.ok(compiled);
+  const { owner, entries } = compiled.metadata;
+  assert.ok(core.publish(owner));
+  const run = core.instantiate(new WebAssembly.Module(compiled.bytes));
+  try {
+    core.setState(initial(head, { 0: 0n, 1: 0n, 3: head + 13n, 4: stack }));
+    assert.ok(core.activate(owner));
+    assert.equal(core.execute(run, entries.indexOf(head), 8n, undefined, 0n), 'data-fault');
+    assert.equal(core.current().rip, head + 4n);
+    assert.equal(core.current().remaining, 7n);
+    assert.equal(core.snapshot().registers[0], 0x11n);
+    assert.equal(core.snapshot().registers[1], 0n);
+
+    core.setState(initial(head, { 0: 0n, 1: 0n, 3: head + 13n, 4: stack + 0x100n }));
+    assert.ok(core.activate(owner));
+    assert.equal(core.execute(run, entries.indexOf(head), 2n, undefined, 0n), 'budget');
+    assert.equal(core.current().rip, head + 7n);
+    assert.equal(core.current().remaining, 0n);
+    assert.equal(core.snapshot().registers[0], 0x44n);
+    assert.equal(core.snapshot().registers[1], 0x77665544n);
+  } finally {
+    core.release(owner);
+    core.releaseIo();
+  }
+});
+
 test('flat sampled integer groups preserve precise budgets, stops, and interior entries', async () => {
   const head = 0x31000n;
   const stack = 0x32000n;
