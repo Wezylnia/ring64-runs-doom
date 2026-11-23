@@ -2819,6 +2819,7 @@ fn emit_body(
     if artifact.bytes.len() <= max_artifact_bytes {
         return (artifact.bytes, extra_spans);
     }
+    let mut optional = optional;
     let retry_body = |reads, lowering| {
         emit_body(
             unit,
@@ -2832,188 +2833,98 @@ fn emit_body(
     };
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if emitter.direct_loop_reads {
-        return retry_body(
-            _guard_reads,
-            OptionalLowering {
-                direct_loop_reads: false,
-                ..optional
-            },
-        );
+        optional.direct_loop_reads = false;
+        return retry_body(_guard_reads, optional);
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if flat_integer_groups.is_some() {
-        return retry_body(
-            _guard_reads,
-            OptionalLowering {
-                flat_integer_groups: false,
-                ..optional
-            },
-        );
+        optional.flat_integer_groups = false;
+        return retry_body(_guard_reads, optional);
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if indexed_dword_prefixes {
-        return retry_body(
-            _guard_reads,
-            OptionalLowering {
-                indexed_dword_prefixes: false,
-                ..optional
-            },
-        );
+        optional.indexed_dword_prefixes = false;
+        return retry_body(_guard_reads, optional);
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if indexed_scalar_stamp.is_some() {
-        return retry_body(
-            _guard_reads,
-            OptionalLowering {
-                indexed_scalar_read: false,
-                ..optional
-            },
-        );
+        optional.indexed_scalar_read = false;
+        return retry_body(_guard_reads, optional);
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if quiet_fetch_page.is_some() || emitter.used_paged_quiet_completion {
-        return retry_body(
-            _guard_reads,
-            OptionalLowering {
-                paged_quiet_completion: quiet_fetch_page.is_some(),
-                paged_quiet_fetch: false,
-                ..optional
-            },
-        );
+        optional.paged_quiet_completion = quiet_fetch_page.is_some();
+        optional.paged_quiet_fetch = false;
+        return retry_body(_guard_reads, optional);
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if paged_indexed_write.is_some() {
-        return retry_body(
-            _guard_reads,
-            OptionalLowering {
-                paged_indexed_write: false,
-                ..optional
-            },
-        );
+        optional.paged_indexed_write = false;
+        return retry_body(_guard_reads, optional);
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if scalar_copy_prefix.is_some()
         || linear_scalar_copy_prefix.is_some()
         || linear_vector_copy_prefixes.is_some()
     {
-        return retry_body(
-            _guard_reads,
-            OptionalLowering {
-                scalar_copy_prefix: false,
-                ..optional
-            },
-        );
+        optional.scalar_copy_prefix = false;
+        return retry_body(_guard_reads, optional);
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if copy_prefix.is_some() || preloaded_copy_prefix.is_some() {
-        return retry_body(
-            _guard_reads,
-            OptionalLowering {
-                copy_prefix: false,
-                ..optional
-            },
-        );
+        optional.copy_prefix = false;
+        return retry_body(_guard_reads, optional);
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if additional_copy.is_some() {
-        return retry_body(
-            _guard_reads,
-            OptionalLowering {
-                additional_copy: None,
-                ..optional
-            },
-        );
+        optional.additional_copy = None;
+        return retry_body(_guard_reads, optional);
     }
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     if parallel_native_lock_memo.is_some() {
-        return retry_body(
-            _guard_reads,
-            OptionalLowering {
-                parallel_native_lock_memo: false,
-                ..optional
-            },
-        );
+        optional.parallel_native_lock_memo = false;
+        return retry_body(_guard_reads, optional);
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if paged_vector_retouch.is_some() {
-        return retry_body(
-            _guard_reads,
-            OptionalLowering {
-                paged_vector_retouch: false,
-                ..optional
-            },
-        );
+        optional.paged_vector_retouch = false;
+        return retry_body(_guard_reads, optional);
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if paged_vector_window.is_some_and(|window| window.last_early_page.is_some()) {
-        return retry_body(
-            _guard_reads,
-            OptionalLowering {
-                paged_vector_rearm: false,
-                ..optional
-            },
-        );
+        optional.paged_vector_rearm = false;
+        return retry_body(_guard_reads, optional);
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if paged_vector_window.is_some() {
-        return retry_body(
-            _guard_reads,
-            OptionalLowering {
-                paged_vector_window: false,
-                ..optional
-            },
-        );
+        optional.paged_vector_window = false;
+        return retry_body(_guard_reads, optional);
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if linear_recurrence.is_some() {
-        return retry_body(
-            _guard_reads,
-            OptionalLowering {
-                linear_recurrence: false,
-                ..optional
-            },
-        );
+        optional.linear_recurrence = false;
+        return retry_body(_guard_reads, optional);
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if register_prefix_guard.is_some() {
-        return retry_body(
-            _guard_reads,
-            OptionalLowering {
-                paged_register_prefixes: false,
-                ..optional
-            },
-        );
+        optional.paged_register_prefixes = false;
+        return retry_body(_guard_reads, optional);
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if x87_register_pairs {
-        return retry_body(
-            _guard_reads,
-            OptionalLowering {
-                x87_register_pairs: false,
-                ..optional
-            },
-        );
+        optional.x87_register_pairs = false;
+        return retry_body(_guard_reads, optional);
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if paged_dword_read_pair.is_some() {
-        return retry_body(
-            _guard_reads,
-            OptionalLowering {
-                paged_dword_read_pair: false,
-                ..optional
-            },
-        );
+        optional.paged_dword_read_pair = false;
+        return retry_body(_guard_reads, optional);
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if paged_byte_write_pair.is_some() {
-        return retry_body(
-            _guard_reads,
-            OptionalLowering {
-                paged_byte_write_pair: optional.paged_byte_write_pointer,
-                paged_byte_write_pointer: false,
-                ..optional
-            },
-        );
+        optional.paged_byte_write_pair = optional.paged_byte_write_pointer;
+        optional.paged_byte_write_pointer = false;
+        return retry_body(_guard_reads, optional);
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if paged_read_span.is_some_and(|(proof, _, _)| proof.is_countdown()) {
@@ -3021,126 +2932,69 @@ fn emit_body(
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if paged_float_sticky {
-        return retry_body(
-            _guard_reads,
-            OptionalLowering {
-                paged_float_sticky: false,
-                ..optional
-            },
-        );
+        optional.paged_float_sticky = false;
+        return retry_body(_guard_reads, optional);
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if paged_f32_read_pair.is_some_and(|(_, _, split)| split.is_some()) {
-        return retry_body(
-            _guard_reads,
-            OptionalLowering {
-                paged_f32_split_pair: false,
-                ..optional
-            },
-        );
+        optional.paged_f32_split_pair = false;
+        return retry_body(_guard_reads, optional);
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if paged_preamble.is_some() && paged_preamble_latch {
-        return retry_body(
-            _guard_reads,
-            OptionalLowering {
-                paged_preamble_latch: false,
-                ..optional
-            },
-        );
+        optional.paged_preamble_latch = false;
+        return retry_body(_guard_reads, optional);
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if paged_preamble.is_some() {
-        return retry_body(
-            _guard_reads,
-            OptionalLowering {
-                paged_preamble: false,
-                ..optional
-            },
-        );
+        optional.paged_preamble = false;
+        return retry_body(_guard_reads, optional);
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if paged_split_vectors {
-        return retry_body(
-            _guard_reads,
-            OptionalLowering {
-                paged_split_vectors: false,
-                ..optional
-            },
-        );
+        optional.paged_split_vectors = false;
+        return retry_body(_guard_reads, optional);
     }
     if paged_sse_write {
         return (artifact.bytes, false);
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if cyclic_vector_store {
-        return retry_body(
-            _guard_reads,
-            OptionalLowering {
-                direct_vector_stores: false,
-                ..optional
-            },
-        );
+        optional.direct_vector_stores = false;
+        return retry_body(_guard_reads, optional);
     }
     if optional.inline_cmpnleps
         && unit.instructions.iter().any(|instruction| {
             matches!(instruction.operation, Operation::Float(float) if super::float::is_cmpnleps(float))
         })
     {
-        return retry_body(_guard_reads, OptionalLowering {
-                inline_cmpnleps: false,
-                ..optional
-            });
+        optional.inline_cmpnleps = false;
+        return retry_body(_guard_reads, optional);
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if paged && read_loop_diamond.is_some() {
-        return retry_body(
-            _guard_reads,
-            OptionalLowering {
-                paged_read_diamond: false,
-                ..optional
-            },
-        );
+        optional.paged_read_diamond = false;
+        return retry_body(_guard_reads, optional);
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if paged_read_rearm.is_some() {
-        return retry_body(
-            _guard_reads,
-            OptionalLowering {
-                paged_read_rearm: false,
-                ..optional
-            },
-        );
+        optional.paged_read_rearm = false;
+        return retry_body(_guard_reads, optional);
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if paged_f32_read_pair.is_some() {
-        return retry_body(
-            _guard_reads,
-            OptionalLowering {
-                paged_f32_read_pair: false,
-                ..optional
-            },
-        );
+        optional.paged_f32_read_pair = false;
+        return retry_body(_guard_reads, optional);
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if paged_dense_read_span.is_some() {
-        return retry_body(
-            _guard_reads,
-            OptionalLowering {
-                paged_dense_read_span: false,
-                ..optional
-            },
-        );
+        optional.paged_dense_read_span = false;
+        return retry_body(_guard_reads, optional);
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if paged_float_dyadic.is_some() {
-        return retry_body(
-            _guard_reads,
-            OptionalLowering {
-                paged_float_dyadic: false,
-                ..optional
-            },
-        );
+        optional.paged_float_dyadic = false;
+        return retry_body(_guard_reads, optional);
     }
     #[cfg(not(feature = "parallel"))]
     if loop_body.is_some_and(StructuredLoop::paged_sse) {
@@ -3148,23 +3002,16 @@ fn emit_body(
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if emitter.used_direct_vector_load {
-        return retry_body(
-            _guard_reads,
-            OptionalLowering {
-                direct_vector_loads: false,
-                ..optional
-            },
-        );
+        optional.direct_vector_loads = false;
+        return retry_body(_guard_reads, optional);
     }
     if optional.inline_f32_packed
         && unit.instructions.iter().any(|instruction| {
             matches!(instruction.operation, Operation::Float(float) if super::float::is_packed_f32_arithmetic(float))
         })
     {
-        return retry_body(_guard_reads, OptionalLowering {
-                inline_f32_packed: false,
-                ..optional
-            });
+        optional.inline_f32_packed = false;
+        return retry_body(_guard_reads, optional);
     }
     if optional.inline_f32_sub
         && unit.instructions.iter().any(|instruction| {
@@ -3172,10 +3019,8 @@ fn emit_body(
         })
     {
         // Drop the new arithmetic path before reducing the compare or loop placement.
-        return retry_body(_guard_reads, OptionalLowering {
-                inline_f32_sub: false,
-                ..optional
-            });
+        optional.inline_f32_sub = false;
+        return retry_body(_guard_reads, optional);
     }
     if optional.inline_f32_compares
         && unit.instructions.iter().any(|instruction| {
@@ -3183,10 +3028,8 @@ fn emit_body(
         })
     {
         // Keep the original placement if the direct compare exceeds its cap.
-        return retry_body(_guard_reads, OptionalLowering {
-                inline_f32_compares: false,
-                ..optional
-            });
+        optional.inline_f32_compares = false;
+        return retry_body(_guard_reads, optional);
     }
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     if loop_body.is_some_and(StructuredLoop::shared_memory_prechecked) {
@@ -3240,13 +3083,8 @@ fn emit_body(
     }
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     if parallel_vector_span.is_some() {
-        return retry_body(
-            _guard_reads,
-            OptionalLowering {
-                extra_spans: false,
-                ..optional
-            },
-        );
+        optional.extra_spans = false;
+        return retry_body(_guard_reads, optional);
     }
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     if parallel_vector_dword.is_some()
