@@ -508,7 +508,7 @@ pub struct Cache {
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
     last_dword_write: Cell<Option<NonZeroU8>>,
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
-    last_byte_read: Cell<Option<NonZeroU8>>,
+    last_scalar_read: Cell<Option<NonZeroU8>>,
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
     last_dword_read: Cell<Option<DwordReadMemo>>,
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
@@ -545,7 +545,7 @@ impl Cache {
             #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
             last_dword_write: Cell::new(None),
             #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
-            last_byte_read: Cell::new(None),
+            last_scalar_read: Cell::new(None),
             #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
             last_dword_read: Cell::new(None),
             #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
@@ -1139,7 +1139,7 @@ impl Cache {
 
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
     #[inline]
-    pub(crate) fn read_byte_then_fetch<T>(
+    pub(crate) fn read_scalar_then_fetch<const WIDTH: u32, T>(
         &self,
         state: &State,
         request: Request,
@@ -1147,15 +1147,15 @@ impl Cache {
         access: impl FnOnce(u64) -> Option<T>,
     ) -> Option<T> {
         let slot = self
-            .last_byte_read
+            .last_scalar_read
             .get()
             .map(|slot| usize::from(slot.get() - 1));
-        self.data_with_slot_then_fetch::<false, 1, false, T>(
+        self.data_with_slot_then_fetch::<false, WIDTH, false, T>(
             state,
             request,
             keys,
             slot,
-            Some(&self.last_byte_read),
+            Some(&self.last_scalar_read),
             |_, translation| access(translation.physical),
         )
     }
@@ -1333,7 +1333,12 @@ impl Cache {
         let fetch = entries
             .hint()
             .filter(|&index| entries.slots[index].is_some())?;
-        let found = entries.find(state, request);
+        // A guarded loop keeps the fetch in the hint. Most data misses can
+        // skip matching that entry and decoding its address-space identity.
+        let candidates = entries.lookup_index.candidates(request.linear);
+        let found = (candidates != 0)
+            .then(|| entries.find(state, request))
+            .flatten();
         let Some(data) = found else {
             drop(entries);
             return self.fill_dword_miss_then_fetch(image, state, request, fetch, peek);

@@ -1,20 +1,21 @@
 use super::{CAPACITY, Entry};
 
-const WIDE: usize = CAPACITY;
-const VACANT: u8 = u8::MAX;
+const PAGE_BUCKETS: usize = 512;
+const WIDE: usize = PAGE_BUCKETS;
+const VACANT: u16 = u16::MAX;
 
 /// Indexes candidate slots. The entries still own translation and recency.
 pub(super) struct LookupIndex {
-    buckets: [u64; CAPACITY + 1],
+    buckets: [u64; PAGE_BUCKETS + 1],
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
     occupied: u64,
-    bucket_by_slot: [u8; CAPACITY],
+    bucket_by_slot: [u16; CAPACITY],
 }
 
 impl Default for LookupIndex {
     fn default() -> Self {
         Self {
-            buckets: [0; CAPACITY + 1],
+            buckets: [0; PAGE_BUCKETS + 1],
             #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
             occupied: 0,
             bucket_by_slot: [VACANT; CAPACITY],
@@ -56,7 +57,7 @@ impl LookupIndex {
         {
             self.occupied |= 1u64 << index;
         }
-        self.bucket_by_slot[index] = bucket as u8;
+        self.bucket_by_slot[index] = bucket as u16;
     }
 
     pub(super) fn remove(&mut self, index: usize) {
@@ -73,5 +74,5 @@ impl LookupIndex {
 }
 
 fn bucket(address: u64) -> usize {
-    ((address >> 12).wrapping_mul(0x9e37_79b9_7f4a_7c15) >> (64 - CAPACITY.ilog2())) as usize
+    ((address >> 12).wrapping_mul(0x9e37_79b9_7f4a_7c15) >> (64 - PAGE_BUCKETS.ilog2())) as usize
 }

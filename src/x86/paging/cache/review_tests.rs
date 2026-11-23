@@ -172,7 +172,7 @@ fn guarded_byte_store_slot_keeps_write_authority_and_fetch_recency() {
 
 #[cfg(not(feature = "parallel"))]
 #[test]
-fn guarded_byte_read_memo_rechecks_the_live_slot_and_access_class() {
+fn guarded_scalar_read_memo_rechecks_width_live_slot_and_access_class() {
     let (mut image, mut first, read) = fixture();
     first.cr4 |= 1 << 17;
     first.cr3 = 0x1001;
@@ -195,23 +195,44 @@ fn guarded_byte_read_memo_rechecks_the_live_slot_and_access_class() {
     fill(&image, &first, read);
     fill(&image, &first, fetch);
     assert_eq!(
-        cache.read_byte_then_fetch(&first, read, &Keys::ZERO, Some),
+        cache.read_scalar_then_fetch::<1, _>(&first, read, &Keys::ZERO, Some),
         Some(0xa234)
     );
-    let slot = cache.last_byte_read.get().unwrap();
+    let slot = cache.last_scalar_read.get().unwrap();
+
+    let end = Request {
+        linear: 0x1ffc,
+        ..read
+    };
+    assert_eq!(
+        cache.read_scalar_then_fetch::<4, _>(&first, end, &Keys::ZERO, Some),
+        Some(0xaffc)
+    );
+    let split = Request {
+        linear: 0x1ffd,
+        ..read
+    };
+    let before = cache.entries.borrow().recency().clock;
+    assert_eq!(
+        cache.read_scalar_then_fetch::<4, _>(&first, split, &Keys::ZERO, |_| {
+            panic!("a memoized leaf cannot admit a dword beyond its end")
+        }),
+        None::<()>
+    );
+    assert_eq!(cache.entries.borrow().recency().clock, before);
 
     // A different PCID can replace the memo's occupant with the same address.
     fill(&image, &second, read);
     assert_eq!(
-        cache.read_byte_then_fetch(&first, read, &Keys::ZERO, Some),
+        cache.read_scalar_then_fetch::<4, _>(&first, read, &Keys::ZERO, Some),
         None
     );
     fill(&image, &second, fetch);
     assert_eq!(
-        cache.read_byte_then_fetch(&second, read, &Keys::ZERO, Some),
+        cache.read_scalar_then_fetch::<4, _>(&second, read, &Keys::ZERO, Some),
         Some(0xb234)
     );
-    assert_eq!(cache.last_byte_read.get(), Some(slot));
+    assert_eq!(cache.last_scalar_read.get(), Some(slot));
 
     cache.invalidate_pcid(second.pcid());
     image.physical_write(0x8008, 8, 0xb063).unwrap();
@@ -221,10 +242,10 @@ fn guarded_byte_read_memo_rechecks_the_live_slot_and_access_class() {
     };
     fill(&image, &second, supervisor_read);
     fill(&image, &second, fetch);
-    assert_eq!(cache.last_byte_read.get(), Some(slot));
+    assert_eq!(cache.last_scalar_read.get(), Some(slot));
     let before = cache.entries.borrow().recency().clock;
     assert_eq!(
-        cache.read_byte_then_fetch(&second, read, &Keys::ZERO, |_| {
+        cache.read_scalar_then_fetch::<4, _>(&second, read, &Keys::ZERO, |_| {
             panic!("A retained supervisor translation cannot satisfy the same user read")
         }),
         None::<()>
