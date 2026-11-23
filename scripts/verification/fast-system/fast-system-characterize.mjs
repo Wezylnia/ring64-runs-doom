@@ -4,14 +4,8 @@ import { dirname, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import os from 'node:os';
 import { chromium } from 'playwright';
-import {
-  assertFastCandidate,
-  encode,
-  freeze,
-  hash,
-  manifest,
-  root,
-} from './fast-system-support.mjs';
+import { assertFastCandidate } from './fast-system-support.mjs';
+import { encode, freeze, hash, manifest, root } from '../artifacts.mjs';
 import { measureFast, fastNames } from './fast-system-kernels.mjs';
 import { systemChromeExecutable } from '../../support/browser.mjs';
 

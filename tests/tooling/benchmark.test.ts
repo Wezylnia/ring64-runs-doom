@@ -178,9 +178,7 @@ WebAssembly.compile = async function(input, ...options) {
 
 test('freezing a second build preserves the existing snapshot', async () => {
   const { freeze }: { freeze(path: string, name: string): Promise<{ path: string }> } =
-    await import(
-      new URL('../../scripts/verification/paging/paging-support.mjs', import.meta.url).href
-    );
+    await import(new URL('../../scripts/verification/artifacts.mjs', import.meta.url).href);
   const source = await mkdtemp(join(tmpdir(), 'ring64-snapshot-'));
   try {
     const binary = join(source, 'build/ring64.wasm');

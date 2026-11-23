@@ -1,5 +1,5 @@
 import { resolve } from 'node:path';
-import { manifest } from '../paging/paging-support.mjs';
+import { manifest } from '../artifacts.mjs';
 
 export const contextBaseline = '/tmp/ring64-context-baseline-c956';
 export async function checkedContextBaseline(path = contextBaseline) {

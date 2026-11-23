@@ -1,9 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { manifest } from '../paging/paging-support.mjs';
+import { manifest } from '../artifacts.mjs';
 
-export { encode, freeze, hash, manifest, root } from '../paging/paging-support.mjs';
 export const baseline = '/tmp/ring64-fast-baseline-8a7ee06';
 export const baselineCommit = '8a7ee067bb9d036b4d19434458706490506ce44a';
 

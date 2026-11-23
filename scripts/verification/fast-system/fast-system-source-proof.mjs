@@ -1,15 +1,8 @@
 import { execFileSync } from 'node:child_process';
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { relative, resolve } from 'node:path';
-import { benchmarkScript } from '../paging/paging-support.mjs';
-import {
-  baselineCommit,
-  checkedBaseline,
-  encode,
-  hash,
-  manifest,
-  root,
-} from './fast-system-support.mjs';
+import { baselineCommit, checkedBaseline } from './fast-system-support.mjs';
+import { benchmarkScript, encode, hash, manifest, root } from '../artifacts.mjs';
 
 const args = process.argv.slice(2);
 const value = (name, fallback) => (args.includes(name) ? args[args.indexOf(name) + 1] : fallback);

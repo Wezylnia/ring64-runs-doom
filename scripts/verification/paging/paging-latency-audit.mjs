@@ -3,7 +3,7 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { resolve, dirname, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import os from 'node:os';
-import { freeze, manifest, hash, encode, root } from './paging-support.mjs';
+import { freeze, manifest, hash, encode, root } from '../artifacts.mjs';
 import { measurePaging, pagingWorkloads } from './paging-latency-kernels.mjs';
 import {
   measureReusePair,

@@ -4,16 +4,8 @@ import { dirname, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { chromium } from 'playwright';
 import { coreModulePath } from '../../bench/emitted-host.mjs';
-import {
-  assertFastCandidate,
-  baseline,
-  checkedBaseline,
-  encode,
-  freeze,
-  hash,
-  manifest,
-  root,
-} from './fast-system-support.mjs';
+import { assertFastCandidate, baseline, checkedBaseline } from './fast-system-support.mjs';
+import { encode, freeze, hash, manifest, root } from '../artifacts.mjs';
 import {
   checkedContextBaseline,
   contextBaseline,

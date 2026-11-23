@@ -2,7 +2,7 @@ import { cp, mkdir, mkdtemp, readFile, symlink, writeFile } from 'node:fs/promis
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
-import { encode, hash, root } from '../paging/paging-support.mjs';
+import { encode, hash, root } from '../artifacts.mjs';
 
 // An explicit campaign supplies exact anchors and exact assertion diagnostics.
 // Each mutant runs in a copied source sandbox; the working repository is never patched.

@@ -1,6 +1,6 @@
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { encode, hash, manifest, root } from './paging-support.mjs';
+import { encode, hash, manifest, root } from '../artifacts.mjs';
 
 const families = {
   'src/embedding/exports/memory/scalar.rs': [

@@ -4,7 +4,7 @@ import { dirname, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import os from 'node:os';
 import { chromium } from 'playwright';
-import { encode, freeze, hash, manifest, root } from '../paging/paging-support.mjs';
+import { encode, freeze, hash, manifest, root } from '../artifacts.mjs';
 import { supervisorAccessNames, supervisorAccessPlan } from './supervisor-access-kernels.mjs';
 import { systemChromeExecutable } from '../../support/browser.mjs';
 
@@ -57,7 +57,7 @@ const current = values.snapshot
 const sourcePaths = [
   'scripts/verification/supervisor-access/supervisor-access-performance.mjs',
   'scripts/verification/supervisor-access/supervisor-access-kernels.mjs',
-  'scripts/verification/paging/paging-support.mjs',
+  'scripts/verification/artifacts.mjs',
 ];
 const sourceHashes = async () =>
   Object.fromEntries(

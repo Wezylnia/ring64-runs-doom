@@ -2,7 +2,8 @@ import { spawn } from 'node:child_process';
 import { createWriteStream } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { baseline, benchmarkScript, encode, freeze, manifest, root } from './paging-support.mjs';
+import { benchmarkScript, encode, freeze, manifest, root } from '../artifacts.mjs';
+import { baseline } from './baseline.mjs';
 
 const args = process.argv.slice(2);
 const value = (name, fallback) => (args.includes(name) ? args[args.indexOf(name) + 1] : fallback);

@@ -4,7 +4,7 @@ import { dirname, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import os from 'node:os';
 import { chromium } from 'playwright';
-import { encode, freeze, hash, manifest, root } from '../paging/paging-support.mjs';
+import { encode, freeze, hash, manifest, root } from '../artifacts.mjs';
 import { callGateNames, checkCallGates, measureCallGates } from './call-gate-kernels.mjs';
 import { systemChromeExecutable } from '../../support/browser.mjs';
 
@@ -52,7 +52,7 @@ if (knobs.workloads.some((name) => !callGateNames.includes(name)))
 const sourcePaths = [
   'scripts/verification/call-gates/call-gates-audit.mjs',
   'scripts/verification/call-gates/call-gate-kernels.mjs',
-  'scripts/verification/paging/paging-support.mjs',
+  'scripts/verification/artifacts.mjs',
 ];
 const sourceHashes = async () =>
   Object.fromEntries(

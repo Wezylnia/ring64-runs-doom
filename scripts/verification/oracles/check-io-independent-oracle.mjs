@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { freeze, manifest, encode } from '../paging/paging-support.mjs';
+import { freeze, manifest, encode } from '../artifacts.mjs';
 
 const values = {},
   args = process.argv.slice(2);

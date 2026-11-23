@@ -4,16 +4,8 @@ import { dirname, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import os from 'node:os';
 import { chromium } from 'playwright';
-import {
-  assertFastCandidate,
-  baseline,
-  checkedBaseline,
-  encode,
-  freeze,
-  hash,
-  manifest,
-  root,
-} from './fast-system-support.mjs';
+import { assertFastCandidate, baseline, checkedBaseline } from './fast-system-support.mjs';
+import { encode, freeze, hash, manifest, root } from '../artifacts.mjs';
 import { measurePaging, pagingNames } from '../paging/paging-kernels.mjs';
 import { measurePagingPair } from './fast-system-paging-pair.mjs';
 import { measureInheritedMsr, inheritedMsrNames } from './fast-system-kernels.mjs';

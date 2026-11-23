@@ -4,10 +4,9 @@ import { existsSync } from 'node:fs';
 import { cp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { hostIdentity } from '../../bench/emitted-host.mjs';
+import { hostIdentity } from '../bench/emitted-host.mjs';
 
-export const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-export const baseline = '/tmp/ring64-paging-baseline-c1380a4';
+export const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 export const encode = (value) =>
   JSON.stringify(value, (_, item) => (typeof item === 'bigint' ? item.toString() : item), 2) + '\n';
 export const hash = (bytes) => createHash('sha256').update(bytes).digest('hex');
@@ -45,7 +44,7 @@ export async function manifest(path) {
   };
 }
 
-// Freeze artifacts, not a source build: no Cargo invocation or shared target directory.
+// compare the source and copy before publishing a frozen build.
 export async function freeze(path, name) {
   const before = await manifest(path);
   const target = resolve(root, 'build/verification', name);

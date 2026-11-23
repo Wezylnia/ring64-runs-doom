@@ -3,7 +3,7 @@ import { createServer } from 'node:http';
 import { dirname, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import os from 'node:os';
-import { freeze, manifest, hash, encode, root } from '../paging/paging-support.mjs';
+import { freeze, manifest, hash, encode, root } from '../artifacts.mjs';
 import {
   measureTranslationCaches,
   translationCacheNames,
@@ -76,7 +76,7 @@ const baseline = values.baseline ? await manifest(resolve(values.baseline)) : un
 const sourcePaths = [
   'scripts/verification/translation-cache/translation-cache-characterize.mjs',
   'scripts/verification/translation-cache/translation-cache-kernels.mjs',
-  'scripts/verification/paging/paging-support.mjs',
+  'scripts/verification/artifacts.mjs',
 ];
 const sources = async () =>
   Object.fromEntries(

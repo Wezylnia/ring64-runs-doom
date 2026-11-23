@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { resolve } from 'node:path';
-import { assertFastCandidate, baseline, checkedBaseline, root } from './fast-system-support.mjs';
+import { assertFastCandidate, baseline, checkedBaseline } from './fast-system-support.mjs';
+import { root } from '../artifacts.mjs';
 
 const args = process.argv.slice(2);
 const value = (name, fallback) => (args.includes(name) ? args[args.indexOf(name) + 1] : fallback);

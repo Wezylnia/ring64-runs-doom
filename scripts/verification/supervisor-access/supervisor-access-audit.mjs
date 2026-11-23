@@ -4,7 +4,7 @@ import { dirname, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import os from 'node:os';
 import { chromium } from 'playwright';
-import { root, freeze, manifest, hash, encode } from '../paging/paging-support.mjs';
+import { root, freeze, manifest, hash, encode } from '../artifacts.mjs';
 import { systemChromeExecutable } from '../../support/browser.mjs';
 
 const args = process.argv.slice(2);
@@ -33,7 +33,7 @@ const oracleFiles = (await readdir(resolve(root, 'tests/execution/supervisor-acc
   .sort();
 const sources = [
   'scripts/verification/supervisor-access/supervisor-access-audit.mjs',
-  'scripts/verification/paging/paging-support.mjs',
+  'scripts/verification/artifacts.mjs',
   ...oracleFiles.flatMap((name) => [
     `tests/execution/supervisor-access/${name}`,
     `build/tests/execution/supervisor-access/${name.replace(/\.ts$/, '.js')}`,

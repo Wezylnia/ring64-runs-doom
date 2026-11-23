@@ -4,14 +4,7 @@ import { dirname, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import os from 'node:os';
 import { chromium } from 'playwright';
-import {
-  benchmarkScript,
-  encode,
-  freeze,
-  hash,
-  manifest,
-  root,
-} from '../paging/paging-support.mjs';
+import { benchmarkScript, encode, freeze, hash, manifest, root } from '../artifacts.mjs';
 import {
   alignmentPerformanceNames,
   alignmentPerformancePlan,
@@ -182,7 +175,7 @@ const current = values.snapshot
 const sourcePaths = [
   'scripts/verification/alignment-checking/alignment-checking-performance.mjs',
   'scripts/verification/alignment-checking/alignment-checking-performance-kernels.mjs',
-  'scripts/verification/paging/paging-support.mjs',
+  'scripts/verification/artifacts.mjs',
 ];
 const sourceHashes = async () =>
   Object.fromEntries(

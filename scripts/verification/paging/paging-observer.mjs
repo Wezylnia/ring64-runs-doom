@@ -4,7 +4,8 @@ import { dirname, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { chromium } from 'playwright';
 import { coreModulePath } from '../../bench/emitted-host.mjs';
-import { baseline, encode, freeze, manifest, root } from './paging-support.mjs';
+import { encode, freeze, manifest, root } from '../artifacts.mjs';
+import { baseline } from './baseline.mjs';
 import { systemChromeExecutable } from '../../support/browser.mjs';
 
 const args = process.argv.slice(2);

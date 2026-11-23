@@ -1,6 +1,6 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { encode } from './paging-support.mjs';
+import { encode } from '../artifacts.mjs';
 
 const args = process.argv.slice(2),
   outputAt = args.indexOf('--output');

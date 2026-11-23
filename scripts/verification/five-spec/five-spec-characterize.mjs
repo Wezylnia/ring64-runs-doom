@@ -4,7 +4,7 @@ import { dirname, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import os from 'node:os';
 import { chromium } from 'playwright';
-import { encode, freeze, hash, manifest, root } from '../paging/paging-support.mjs';
+import { encode, freeze, hash, manifest, root } from '../artifacts.mjs';
 import { measureFive, newSpecNames } from './five-spec-kernels.mjs';
 import { systemChromeExecutable } from '../../support/browser.mjs';
 

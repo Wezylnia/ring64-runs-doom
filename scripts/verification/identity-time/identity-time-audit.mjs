@@ -4,7 +4,7 @@ import { dirname, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import os from 'node:os';
 import { chromium } from 'playwright';
-import { root, freeze, manifest, hash, encode } from '../paging/paging-support.mjs';
+import { root, freeze, manifest, hash, encode } from '../artifacts.mjs';
 import { systemChromeExecutable } from '../../support/browser.mjs';
 
 const args = process.argv.slice(2);
@@ -30,7 +30,7 @@ const current = values.snapshot
   : await freeze(resolve(values.current ?? root), `identity-time-build-${tag}`);
 const sources = [
   'scripts/verification/identity-time/identity-time-audit.mjs',
-  'scripts/verification/paging/paging-support.mjs',
+  'scripts/verification/artifacts.mjs',
   'tests/execution/identity-time/oracle.ts',
   'build/tests/execution/identity-time/oracle.js',
 ];
