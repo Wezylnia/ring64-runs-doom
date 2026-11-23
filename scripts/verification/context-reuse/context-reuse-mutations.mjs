@@ -107,8 +107,8 @@ const mutants = [
     name: 'host-ignores-activation-refusal',
     kind: 'public-cpu',
     file: 'sdk/src/cpu/cpu.ts',
-    old: 'if (this.#engine.activate(candidate.artifact.metadata.owner)) {',
-    replacement: 'if (this.#engine.activate(candidate.artifact.metadata.owner) || true) {',
+    old: 'if (engine.activate(candidate.artifact.metadata.owner)) {',
+    replacement: 'if (engine.activate(candidate.artifact.metadata.owner) || true) {',
     filter: 'keeps dormant FS variants',
   },
   {
@@ -157,9 +157,9 @@ const mutants = [
     name: 'candidate-scan-falsely-updates-lru',
     kind: 'host-owner',
     file: 'sdk/src/cpu/translations.ts',
-    old: '    return entries.get(pc) ?? EMPTY;',
+    old: '    const entries = (boundaryObserved ? this.#observedEntries : this.#entries).get(pc) ?? EMPTY;',
     replacement:
-      '    const found = entries.get(pc) ?? EMPTY;\n    for (const entry of found) this.touch(entry.artifact);\n    return found;',
+      '    const entries = (boundaryObserved ? this.#observedEntries : this.#entries).get(pc) ?? EMPTY;\n    for (const entry of entries) this.touch(entry.artifact);',
     testFile: 'sdk/tests/unit/cpu/translations.test.ts',
     filter:
       'same-PC context candidates retain every owner and middle alias without changing recency',
