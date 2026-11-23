@@ -281,6 +281,39 @@ impl Emitter {
             self.load_indexed_dword(dst, window, next_pc, exit_depth);
             return;
         }
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if self.guarded_paged_lap
+            && self.loop_gates_prechecked
+            && width == Width::W32
+            && self
+                .structured_loop
+                .is_some_and(|(body, _)| body.straight_paged_reads())
+            && let Some((source, [_, limit, host])) = self.direct_read_range
+            && address == source
+        {
+            let index = address.index.unwrap().register;
+            self.register(index, address.size);
+            self.op(Op::LocalGet(limit))
+                .op(Op::I64LtU)
+                .op(Op::If(BlockType::Empty))
+                .op(Op::LocalGet(host));
+            self.register(index, address.size);
+            self.op(Op::I32WrapI64)
+                .op(Op::I32Const(2))
+                .op(Op::I32Shl)
+                .op(Op::I32Add)
+                .op(Op::I64Load32U(MemArg {
+                    offset: 0,
+                    align: 2,
+                    memory_index: 0,
+                }));
+            self.write_register(dst, width);
+            self.op(Op::Else);
+            self.load_value(address, width, next_pc, false, exit_depth + 1);
+            self.write_loaded_value(dst, width);
+            self.op(Op::End);
+            return;
+        }
         self.load_value(address, width, next_pc, false, exit_depth);
         self.write_loaded_value(dst, width);
     }
@@ -502,10 +535,58 @@ impl Emitter {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn refresh_direct_read_range(
+        &mut self,
+        (address, [origin, limit, host]): (Address, [u32; 3]),
+    ) {
+        use crate::embedding::layout::{StateStorage, paging::LoopReadRange};
+        use std::mem::offset_of;
+        let field = |offset: usize, align| MemArg {
+            offset: (offset_of!(StateStorage, loop_read_range) + offset) as u64,
+            align,
+            memory_index: 0,
+        };
+        let length = field(offset_of!(LoopReadRange, dwords), 2);
+        self.address(
+            Address {
+                index: None,
+                ..address
+            },
+            0,
+        );
+        self.op(Op::LocalTee(origin))
+            .op(Op::LocalGet(0))
+            .op(Op::I64Load(field(offset_of!(LoopReadRange, base), 3)))
+            .op(Op::I64Sub)
+            .op(Op::I64Const(2))
+            .op(Op::I64Rotr)
+            .op(Op::LocalSet(limit))
+            .op(Op::LocalGet(0))
+            .op(Op::I64Load32U(length))
+            .op(Op::LocalGet(limit))
+            .op(Op::I64GtU)
+            .op(Op::If(BlockType::Result(wasm_encoder::ValType::I64)))
+            .op(Op::LocalGet(0))
+            .op(Op::I64Load32U(length))
+            .op(Op::LocalGet(limit))
+            .op(Op::I64Sub)
+            .op(Op::Else)
+            .op(Op::I64Const(0))
+            .op(Op::End)
+            .op(Op::LocalSet(limit))
+            .op(Op::LocalGet(origin))
+            .op(Op::I32WrapI64)
+            .op(Op::LocalGet(0))
+            .op(Op::I32Load(field(offset_of!(LoopReadRange, host_bias), 2)))
+            .op(Op::I32Add)
+            .op(Op::LocalSet(host));
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     fn load_loop_read_page(&mut self, read: u32) {
         use crate::embedding::layout::{
             StateStorage,
-            paging::{LOOP_READ_PAGES, LoopReadPage, LoopReadRange},
+            paging::{LOOP_READ_PAGES, LoopReadPage},
         };
         use std::mem::{offset_of, size_of};
         use wasm_encoder::ValType;
@@ -515,38 +596,45 @@ impl Emitter {
             align,
             memory_index: 0,
         };
-        let range = offset_of!(StateStorage, loop_read_range);
+        let range = self.direct_read_range.filter(|_| {
+            self.structured_loop
+                .is_some_and(|(body, _)| body.straight_paged_reads())
+        });
         self.op(Op::LocalSet(ADDRESS))
-            .op(Op::Block(BlockType::Result(ValType::I64)))
-            .op(Op::LocalGet(ADDRESS))
-            .op(Op::LocalGet(0))
-            .op(Op::I64Load(field(
-                range + offset_of!(LoopReadRange, base),
-                3,
-            )))
-            .op(Op::I64Sub)
-            // Rotate the alignment bits above the dword offset for one bounds check.
-            .op(Op::I64Const(2))
-            .op(Op::I64Rotr)
-            .op(Op::LocalGet(0))
-            .op(Op::I64Load32U(field(
-                range + offset_of!(LoopReadRange, dwords),
-                2,
-            )))
-            .op(Op::I64LtU)
-            .op(Op::If(BlockType::Empty))
-            .op(Op::LocalGet(0))
-            .op(Op::I32Load(field(
-                range + offset_of!(LoopReadRange, host_bias),
-                2,
-            )))
-            .op(Op::LocalGet(ADDRESS))
-            .op(Op::I32WrapI64)
-            .op(Op::I32Add)
-            .op(Op::I64Load32U(field(0, 2)))
-            .op(Op::Br(1))
-            .op(Op::End)
-            .op(Op::Block(BlockType::Empty))
+            .op(Op::Block(BlockType::Result(ValType::I64)));
+        if range.is_none() {
+            use crate::embedding::layout::paging::LoopReadRange;
+            let range = offset_of!(StateStorage, loop_read_range);
+            self.op(Op::LocalGet(ADDRESS))
+                .op(Op::LocalGet(0))
+                .op(Op::I64Load(field(
+                    range + offset_of!(LoopReadRange, base),
+                    3,
+                )))
+                .op(Op::I64Sub)
+                // Rotate the alignment bits above the dword offset for one bounds check.
+                .op(Op::I64Const(2))
+                .op(Op::I64Rotr)
+                .op(Op::LocalGet(0))
+                .op(Op::I64Load32U(field(
+                    range + offset_of!(LoopReadRange, dwords),
+                    2,
+                )))
+                .op(Op::I64LtU)
+                .op(Op::If(BlockType::Empty))
+                .op(Op::LocalGet(0))
+                .op(Op::I32Load(field(
+                    range + offset_of!(LoopReadRange, host_bias),
+                    2,
+                )))
+                .op(Op::LocalGet(ADDRESS))
+                .op(Op::I32WrapI64)
+                .op(Op::I32Add)
+                .op(Op::I64Load32U(field(0, 2)))
+                .op(Op::Br(1))
+                .op(Op::End);
+        }
+        self.op(Op::Block(BlockType::Empty))
             .op(Op::LocalGet(0))
             .op(Op::I32Load(field(
                 offset_of!(StateStorage, loop_read_table),
@@ -592,8 +680,11 @@ impl Emitter {
             .op(Op::Br(1))
             .op(Op::End)
             .op(Op::LocalGet(ADDRESS))
-            .op(Op::Call(read))
-            .op(Op::End);
+            .op(Op::Call(read));
+        if let Some(range) = range {
+            self.refresh_direct_read_range(range);
+        }
+        self.op(Op::End);
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]

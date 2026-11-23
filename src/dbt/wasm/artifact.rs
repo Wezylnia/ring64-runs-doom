@@ -2220,6 +2220,27 @@ fn emit_body(
     let mut vector_registers = [None; 16];
     let mut next_local = 35 + 2 * u32::from(has_repeat);
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let direct_read_range = loop_body.and_then(|body| {
+        if !paged_dword_walk
+            || !optional.direct_loop_reads
+            || !unit.context.is_long64()
+            || !body.straight_paged_reads()
+        {
+            return None;
+        }
+        let address = read_loop::IndexedReadWindow::recognize(
+            &unit.context,
+            &unit.instructions[body.head as usize..=body.tail as usize],
+        )?;
+        if address.index?.scale != 4 {
+            return None;
+        }
+        let first = next_local;
+        locals.extend([(2, ValType::I64), (1, ValType::I32)]);
+        next_local += 3;
+        Some((address, [first, first + 1, first + 2]))
+    });
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let preloaded_loop = preloaded_tail.zip(preloaded_tail_read).map(|(tail, read)| {
         let local = next_local;
         locals.push((4, ValType::I32));
@@ -3062,6 +3083,8 @@ fn emit_body(
         paged_loop_read_dword,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         direct_loop_reads: paged_dword_walk && optional.direct_loop_reads,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        direct_read_range,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_loop_read_block,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]

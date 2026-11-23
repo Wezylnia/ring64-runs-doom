@@ -2113,6 +2113,13 @@ impl Emitter {
         {
             self.emit_linear_recurrence(recurrence);
         }
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if self.guarded_paged_lap
+            && body.straight_paged_reads()
+            && let Some(range) = self.direct_read_range
+        {
+            self.refresh_direct_read_range(range);
+        }
         let current_index = self.current_index;
         for (bank, upper) in self.register_upper_dwords.into_iter().enumerate() {
             if let Some(upper) = upper {

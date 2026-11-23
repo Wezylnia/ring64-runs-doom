@@ -276,6 +276,8 @@ struct Emitter {
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     direct_loop_reads: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    direct_read_range: Option<(crate::x86::instruction::Address, [u32; 3])>,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_loop_read_block: Option<(u32, bool)>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_loop_write_block: Option<u32>,
