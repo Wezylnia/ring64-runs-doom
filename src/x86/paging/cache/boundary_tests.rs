@@ -874,6 +874,68 @@ fn paired_data_spans_commit_recency_only_after_both_succeed() {
 
 #[cfg(not(feature = "parallel"))]
 #[test]
+fn a_cold_copy_source_cannot_keep_a_destination_the_load_would_evict() {
+    let (mut image, state, read) = fixture();
+    let write = Request {
+        linear: 0x2234,
+        access: Access::Write,
+        ..read
+    };
+    let code = Request {
+        linear: 0x3234,
+        access: Access::Execute,
+        ..read
+    };
+    let other = Request {
+        linear: 0x4234,
+        ..read
+    };
+    let keys = &ProtectionKeys::ZERO;
+    let cache = Cache::with_capacity(3);
+    for (entry, word) in [(0x4010, 0xb067), (0x4018, 0xc067), (0x4020, 0xd067)] {
+        image.physical_write(entry, 8, word).unwrap();
+    }
+    for request in [write, other, code] {
+        insert(&cache, &mut image, &state, request);
+    }
+    let clock = cache.entries.borrow().recency().clock;
+    assert_eq!(
+        cache.ready_copy_operand(
+            &mut image,
+            &state,
+            [read, write],
+            keys,
+            16,
+            |_, _, _, _, _| panic!("the checked source allocation would evict the destination")
+        ),
+        None
+    );
+    assert_eq!(cache.entries.borrow().recency().clock, clock);
+    for request in [write, code] {
+        cache.lookup(&state, request, keys).unwrap().unwrap();
+    }
+    assert_eq!(
+        cache.ready_copy_operand(
+            &mut image,
+            &state,
+            [read, write],
+            keys,
+            16,
+            |_, r, w, earlier_writes, _| {
+                assert_eq!((r, w, earlier_writes), (0xa234, 0xb234, 0));
+                Some(())
+            }
+        ),
+        Some(())
+    );
+    assert!(cache.observe(&state, other, keys).unwrap().is_none());
+    for request in [read, write, code] {
+        assert!(cache.observe(&state, request, keys).unwrap().is_some());
+    }
+}
+
+#[cfg(not(feature = "parallel"))]
+#[test]
 fn a_ready_copy_fills_the_destination_after_admitting_both_operands() {
     let (mut image, state, read) = fixture();
     let write = Request {
@@ -901,7 +963,7 @@ fn a_ready_copy_fills_the_destination_after_admitting_both_operands() {
     for leaf in [0xb007, 0xb027, 0xb065, 0xb067] {
         image.physical_write(0x4010, 8, leaf).unwrap();
         assert_eq!(
-            cache.ready_copy_destination(
+            cache.ready_copy_operand(
                 &mut image,
                 &state,
                 [read, write],
@@ -919,7 +981,7 @@ fn a_ready_copy_fills_the_destination_after_admitting_both_operands() {
         assert!(cache.observe(&state, write, keys).unwrap().is_none());
     }
     assert_eq!(
-        cache.ready_copy_destination(
+        cache.ready_copy_operand(
             &mut image,
             &state,
             [read, write],
@@ -969,7 +1031,7 @@ fn a_split_destination_fills_only_after_its_prefix_and_walk_are_admitted() {
     for leaf in [0xd067, 0xc027, 0xc067] {
         image.physical_write(0x4018, 8, leaf).unwrap();
         assert_eq!(
-            cache.ready_copy_destination(
+            cache.ready_copy_operand(
                 &mut image,
                 &state,
                 [read, write],
@@ -988,7 +1050,7 @@ fn a_split_destination_fills_only_after_its_prefix_and_walk_are_admitted() {
         assert!(cache.observe(&state, next, keys).unwrap().is_none());
     }
     cache
-        .ready_copy_destination(
+        .ready_copy_operand(
             &mut image,
             &state,
             [read, write],

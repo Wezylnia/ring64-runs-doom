@@ -1134,7 +1134,7 @@ impl Cache {
 
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
     #[cold]
-    pub(crate) fn ready_copy_destination(
+    pub(crate) fn ready_copy_operand(
         &self,
         image: &mut crate::memory::Image,
         state: &State,
@@ -1156,15 +1156,27 @@ impl Cache {
         {
             return None;
         }
-        let (source, retained) = entries.retained_data_span::<false>(state, read, keys, width)?;
-        if entries.slots[source].as_ref()?.global {
+        let (held, retained, missing) = if let Some((slot, translation)) =
+            entries.retained_data_span::<false>(state, read, keys, width)
+        {
+            (slot, translation, write)
+        } else {
+            let (slot, translation) =
+                entries.retained_data_span::<true>(state, write, keys, width)?;
+            (slot, translation, read)
+        };
+        if entries.slots[held].as_ref()?.global {
             return None;
         }
-        let first = entries.find(state, write);
+        let filling_write = missing.access == Access::Write;
+        let first = entries.find(state, missing);
         let (prefix, physical) = if let Some(slot) = first {
             let entry = entries.slots[slot].as_ref()?;
-            let (physical, remaining) =
-                Entries::checked_data_extent::<true>(&entry.translation, state, write, keys, 1)?;
+            let (physical, remaining) = if filling_write {
+                Entries::checked_data_extent::<true>(&entry.translation, state, missing, keys, 1)?
+            } else {
+                Entries::checked_data_extent::<false>(&entry.translation, state, missing, keys, 1)?
+            };
             if entry.global || remaining >= u64::from(width) || entries.capacity < 4 {
                 return None;
             }
@@ -1173,38 +1185,60 @@ impl Cache {
             (0, None)
         };
         let next = Request {
-            linear: write.linear.checked_add(prefix)?,
-            ..write
+            linear: missing.linear.checked_add(prefix)?,
+            ..missing
         };
         if prefix != 0 && entries.find(state, next).is_some() {
             return None;
         }
-        let destination = image.probe_physical_read(|image| {
+        // A cold read can precede its first store. If it would evict the
+        // retained destination, replay so that store observes its own walk.
+        if !filling_write
+            && held != fetch
+            && entries
+                .lookup_index
+                .first_vacancy(entries.capacity)
+                .is_none()
+            && !(0..entries.capacity).any(|slot| {
+                slot != fetch
+                    && Some(slot) != first
+                    && entries.recency().ages[slot] < entries.recency().ages[held]
+            })
+        {
+            return None;
+        }
+        let translation = image.probe_physical_read(|image| {
             let translation = super::walk::peek(image, state, next, keys).ok()?;
             (translation.span == 4096
                 && translation.accessed
-                && !translation.dirty
+                && (!filling_write || !translation.dirty)
                 && translation.remaining >= u64::from(width) - prefix
                 && !(translation.global && state.cr4 & (1 << 7) != 0)
                 && physical.is_none_or(|first| first + prefix == translation.physical))
             .then_some(translation)
         })?;
-        admit(
-            image,
-            retained.physical,
-            physical.unwrap_or(destination.physical),
-            prefix,
-            &destination,
-        )?;
+        let start = physical.unwrap_or(translation.physical);
+        let (source, destination, earlier_stores) = if filling_write {
+            (retained.physical, start, prefix)
+        } else {
+            (
+                start,
+                retained.physical,
+                if prefix == 0 { 0 } else { u64::from(width) },
+            )
+        };
+        admit(image, source, destination, earlier_stores, &translation)?;
         drop(entries);
         // The checked reads, writes and intervening fetches precede this fill.
         // Keep all operands of the group resident across its one allocation.
-        for slot in [Some(source), first].into_iter().flatten() {
+        for slot in [Some(held), first].into_iter().flatten() {
             if slot != fetch {
                 self.entries.borrow_mut().touch_data_and_fetch(slot, fetch);
             }
         }
-        self.install_known_local_miss(state, destination, fetch);
+        let installed = self.fill(state, next, translation);
+        debug_assert!(installed.cache_id.is_some());
+        self.entries.borrow_mut().touch(fetch);
         Some(())
     }
 

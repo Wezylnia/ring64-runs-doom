@@ -1298,7 +1298,7 @@ pub extern "C" fn core_paged_loop_copy_window(source: u64, destination: u64, wid
             };
             let (source_host, destination_host, length) =
                 resolve(&mut core.image).or_else(|| {
-                    core.translation_cache.ready_copy_destination(
+                    core.translation_cache.ready_copy_operand(
                         &mut core.image,
                         paging,
                         [read, write],
