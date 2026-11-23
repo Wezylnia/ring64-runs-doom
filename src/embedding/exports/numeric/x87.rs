@@ -113,6 +113,42 @@ pub extern "C" fn core_x87(
     core_x87_impl::<false, false>(operation, offset, segment, instruction_pc, flags, rax)
 }
 
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[inline(always)]
+fn flat_pair_segment(context: &ExecutionContext, segment: Segment) -> bool {
+    use crate::x86::context::SegmentType;
+    if !matches!(segment, Segment::Ds | Segment::Ss) || context.mode() != Mode::Protected {
+        return false;
+    }
+    let loaded = context.segment(segment);
+    loaded.base == 0
+        && loaded.limit == u32::MAX
+        && loaded.usable
+        && loaded.kind == SegmentType::ReadWrite
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[inline(always)]
+fn flat_pair_pointer(
+    span: &mut crate::memory::DirectSpan,
+    offset: u64,
+    width: u32,
+    refill: impl FnOnce() -> Option<crate::memory::DirectSpan>,
+) -> Option<u32> {
+    const END: u64 = 1 << 32;
+    if offset > END - u64::from(width) {
+        return None;
+    }
+    let relative = offset.wrapping_sub(span.base);
+    if width <= span.length && relative <= u64::from(span.length - width) {
+        return Some(span.host + relative as u32);
+    }
+    let mut next = refill()?;
+    next.length = u64::from(next.length).min(END - next.base) as u32;
+    *span = next;
+    Some(next.host + (offset - next.base) as u32)
+}
+
 #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
 #[inline(never)]
 fn core_x87_memory_first_pair(
@@ -146,31 +182,97 @@ fn core_x87_memory_first_pair(
         }
         // Both operands must be available before publishing any instruction effects.
         let width = first.memory_bytes();
-        let Ok(head) = core
-            .context
-            .translate(offsets[0], width, head_segment, Access::Read, false)
-        else {
-            return -1;
+        #[cfg(target_arch = "wasm32")]
+        let flat_head = flat_pair_segment(&core.context, head_segment);
+        #[cfg(target_arch = "wasm32")]
+        let direct_read = if flat_head {
+            flat_pair_pointer(
+                &mut core.state.flat_reads[usize::from(head_segment == Segment::Ss)],
+                offsets[0],
+                width,
+                || core.image.direct_read_span(offsets[0], width),
+            )
+        } else {
+            None
         };
-        let Ok(source) = core.image.read(head, width) else {
-            return -1;
-        };
-        let (data, diagnostic_segment) = if second.is_store() {
-            let width = second.memory_bytes();
-            let Ok(tail) =
+        #[cfg(not(target_arch = "wasm32"))]
+        let direct_read: Option<u32> = None;
+        let source = if let Some(host) = direct_read {
+            // The retained read span was resolved in the current Image mapping.
+            // Execute-only and cross-mapping operands keep the checked path.
+            unsafe {
+                if width == 8 {
+                    std::ptr::read_unaligned(host as *const u64)
+                } else {
+                    u64::from(std::ptr::read_unaligned(host as *const u32))
+                }
+            }
+        } else {
+            let Ok(head) =
                 core.context
-                    .translate(offsets[1], width, tail_segment, Access::Write, false)
+                    .translate(offsets[0], width, head_segment, Access::Read, false)
             else {
                 return -1;
             };
-            let Ok(write) = core.image.prepare_linear_write(tail, width) else {
+            let Ok(source) = core.image.read(head, width) else {
                 return -1;
+            };
+            source
+        };
+        let (data, diagnostic_segment) = if second.is_store() {
+            let width = second.memory_bytes();
+            #[cfg(target_arch = "wasm32")]
+            let direct_write = if if tail_segment == head_segment {
+                flat_head
+            } else {
+                flat_pair_segment(&core.context, tail_segment)
+            } {
+                let slot = if tail_segment == Segment::Ss {
+                    &mut core.state.flat_stack_write
+                } else {
+                    &mut core.state.flat_data_write
+                };
+                flat_pair_pointer(slot, offsets[1], width, || {
+                    core.image.direct_write_span(offsets[1], width)
+                })
+            } else {
+                None
+            };
+            #[cfg(not(target_arch = "wasm32"))]
+            let direct_write: Option<u32> = None;
+            let write = if direct_write.is_none() {
+                let Ok(tail) =
+                    core.context
+                        .translate(offsets[1], width, tail_segment, Access::Write, false)
+                else {
+                    return -1;
+                };
+                let Ok(write) = core.image.prepare_linear_write(tail, width) else {
+                    return -1;
+                };
+                Some(write)
+            } else {
+                None
             };
             let Some(value) = run.x87.memory_arithmetic_store(first, source, second) else {
                 return -1;
             };
             if let Some(value) = value {
-                write.publish(&value.to_le_bytes()[..width as usize]);
+                if let Some(host) = direct_write {
+                    // Retained writable spans exclude executable aliases and
+                    // are cleared when source dependencies or mappings change.
+                    unsafe {
+                        if width == 8 {
+                            std::ptr::write_unaligned(host as *mut u64, value);
+                        } else {
+                            std::ptr::write_unaligned(host as *mut u32, value as u32);
+                        }
+                    }
+                } else {
+                    write
+                        .expect("admitted x87 write")
+                        .publish(&value.to_le_bytes()[..width as usize]);
+                }
             }
             ((offsets[1], tail_segment), tail_segment)
         } else {
