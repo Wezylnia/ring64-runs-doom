@@ -1,6 +1,6 @@
 use super::float;
-use super::instruction::{Ssse3Op, VectorBinary, VectorShift, Width};
 use super::x87;
+use crate::x86::instruction::{Ssse3Op, VectorBinary, VectorShift, Width};
 
 mod integer;
 #[cfg(test)]

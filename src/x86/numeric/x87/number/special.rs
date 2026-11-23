@@ -6,7 +6,12 @@ fn finish(n: Num, cw: u16, pre: u16) -> Result {
     result
 }
 
-pub(in crate::x86::x87) fn remainder(a: u128, b: u128, nearest: bool, cw: u16) -> (Result, u16) {
+pub(in crate::x86::numeric::x87) fn remainder(
+    a: u128,
+    b: u128,
+    nearest: bool,
+    cw: u16,
+) -> (Result, u16) {
     if let Some(result) = nan(a, b) {
         return (result, 0);
     }
@@ -83,7 +88,7 @@ pub(in crate::x86::x87) fn remainder(a: u128, b: u128, nearest: bool, cw: u16) -
     (result, flags)
 }
 
-pub(in crate::x86::x87) fn scale(a: u128, b: u128, cw: u16) -> Result {
+pub(in crate::x86::numeric::x87) fn scale(a: u128, b: u128, cw: u16) -> Result {
     if let Some(result) = nan(a, b) {
         return result;
     }
@@ -136,7 +141,7 @@ pub(in crate::x86::x87) fn scale(a: u128, b: u128, cw: u16) -> Result {
     finish(value, cw, pre)
 }
 
-pub(in crate::x86::x87) fn extract(raw: u128) -> (Result, u128) {
+pub(in crate::x86::numeric::x87) fn extract(raw: u128) -> (Result, u128) {
     if let Some(result) = nan(raw, raw) {
         return (result, result.value);
     }

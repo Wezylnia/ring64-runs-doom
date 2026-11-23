@@ -89,12 +89,12 @@ fn finite(x: u128, cw: u16) -> (Result, Result) {
     (finish(s, 0, true, cw), finish(c, 0, true, cw))
 }
 
-pub(in crate::x86::x87) fn sincos_out_of_range(x: u128) -> bool {
+pub(in crate::x86::numeric::x87) fn sincos_out_of_range(x: u128) -> bool {
     x & !SIGN >= RANGE_LIMIT && class(x) == Class::Finite
 }
 
 #[inline(never)]
-pub(in crate::x86::x87) fn sincos(x: u128, cw: u16) -> (Result, u128) {
+pub(in crate::x86::numeric::x87) fn sincos(x: u128, cw: u16) -> (Result, u128) {
     if let Some(result) = nan(x, x) {
         return (result, result.value);
     }

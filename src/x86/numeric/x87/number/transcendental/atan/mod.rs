@@ -152,7 +152,7 @@ fn finite(x: u128, y: u128, cw: u16) -> Result {
 }
 
 #[inline(never)]
-pub(in crate::x86::x87) fn atan2(x: u128, y: u128, cw: u16) -> Result {
+pub(in crate::x86::numeric::x87) fn atan2(x: u128, y: u128, cw: u16) -> Result {
     if let Some(result) = nan(x, y) {
         return result;
     }

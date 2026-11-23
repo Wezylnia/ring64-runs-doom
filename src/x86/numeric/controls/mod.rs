@@ -1,5 +1,5 @@
-use super::instruction::Operation;
-use super::{mmx, numeric_images, x87};
+use super::{images, mmx, x87};
+use crate::x86::instruction::Operation;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
@@ -47,10 +47,7 @@ pub fn family(operation: Operation) -> Option<Family> {
         Operation::X87(_) | Operation::X87CompatibilityNop => Family::X87,
         Operation::NumericImage { op, .. } if op.is_xstate() => Family::XstateImage,
         Operation::NumericImage { op, .. } => {
-            if matches!(
-                op.kind,
-                numeric_images::Kind::SaveFx | numeric_images::Kind::RestoreFx
-            ) {
+            if matches!(op.kind, images::Kind::SaveFx | images::Kind::RestoreFx) {
                 Family::FxImage
             } else {
                 Family::X87

@@ -6,8 +6,8 @@ mod sincos;
 #[cfg(test)]
 mod tests;
 
-pub(in crate::x86::x87) use atan::atan2;
-pub(in crate::x86::x87) use sincos::{sincos, sincos_out_of_range};
+pub(in crate::x86::numeric::x87) use atan::atan2;
+pub(in crate::x86::numeric::x87) use sincos::{sincos, sincos_out_of_range};
 
 const ONE: u128 = 0x3fff_8000_0000_0000_0000;
 // Largest binary80 magnitude within the FYL2XP1 interval 1 − sqrt(2)/2.
@@ -68,7 +68,12 @@ fn logarithm_special(plus_one: bool, x: u128, y: u128) -> Option<Result> {
     None
 }
 
-pub(in crate::x86::x87) fn transcendental(kind: Kind, x: u128, y: u128, cw: u16) -> Result {
+pub(in crate::x86::numeric::x87) fn transcendental(
+    kind: Kind,
+    x: u128,
+    y: u128,
+    cw: u16,
+) -> Result {
     let unary = kind == Kind::Exp2MinusOne;
     if let Some(result) = nan(x, if unary { x } else { y }) {
         return result;

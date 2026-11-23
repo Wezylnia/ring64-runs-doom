@@ -134,8 +134,8 @@ impl ImageOp {
             1
         }
     }
-    pub fn alignment_intent(self) -> super::alignment::Intent {
-        use super::alignment::Intent;
+    pub fn alignment_intent(self) -> crate::x86::alignment::Intent {
+        use crate::x86::alignment::Intent;
         match self.format {
             Format::Protected16 | Format::Real16 => Intent::Natural(2),
             Format::Protected32 | Format::Real32 => Intent::Natural(4),

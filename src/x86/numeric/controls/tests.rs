@@ -35,7 +35,7 @@ fn decoded_forms_follow_all_32_independent_enable_truth_tables() {
         }
         assert_eq!(counts, expected, "{bytes:x?}");
     }
-    for kind in [numeric_images::Kind::SaveX, numeric_images::Kind::RestoreX] {
+    for kind in [images::Kind::SaveX, images::Kind::RestoreX] {
         let Operation::NumericImage { mut op, address } =
             decode::decode(0, |pc| Ok([0x0f, 0xae, 0x03][pc as usize]))
                 .unwrap()

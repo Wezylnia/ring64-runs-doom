@@ -10,19 +10,19 @@ pub fn valid_xcr0(value: u64) -> bool {
 
 pub enum ControlFault {
     Disabled,
-    GeneralProtection(super::protection::ProtectionPhase),
+    GeneralProtection(crate::x86::protection::ProtectionPhase),
 }
 
 pub fn access_xcr0(
     xcr0: &mut u64,
     cr4: u64,
-    context: &super::context::ExecutionContext,
+    context: &crate::x86::context::ExecutionContext,
     index: u32,
     write: Option<u64>,
 ) -> Result<u64, ControlFault> {
-    use super::context::Mode;
-    use super::protection::ProtectionPhase;
-    if cr4 & super::paging::CR4_OSXSAVE == 0 {
+    use crate::x86::context::Mode;
+    use crate::x86::protection::ProtectionPhase;
+    if cr4 & crate::x86::paging::CR4_OSXSAVE == 0 {
         return Err(ControlFault::Disabled);
     }
     if write.is_some() && context.mode() != Mode::Real && context.cpl() != 0 {

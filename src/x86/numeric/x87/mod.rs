@@ -448,8 +448,8 @@ impl Op {
             _ => 0,
         }
     }
-    pub fn alignment_intent(self) -> super::alignment::Intent {
-        use super::alignment::Intent;
+    pub fn alignment_intent(self) -> crate::x86::alignment::Intent {
+        use crate::x86::alignment::Intent;
         match self.format {
             Format::F80 | Format::Bcd | Format::F64 | Format::I64 => Intent::Natural(8),
             Format::F32 | Format::I32 => Intent::Natural(4),
