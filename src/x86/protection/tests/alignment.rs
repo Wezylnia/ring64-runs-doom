@@ -1,4 +1,4 @@
-use super::*;
+use super::super::*;
 use crate::memory::{MappingInput, MemoryLimits, Permissions};
 use crate::x86::alignment;
 use crate::x86::paging::{

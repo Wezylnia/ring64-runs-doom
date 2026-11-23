@@ -1,3 +1,10 @@
+mod alignment;
+mod descriptor_bounds;
+mod descriptor_publication;
+mod paging;
+mod segment_loads;
+mod stack_segment;
+
 use super::*;
 use crate::memory::{MappingInput, MemoryLimits, Permissions};
 use crate::x86::context::TableRegister;

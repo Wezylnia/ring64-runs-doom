@@ -1,4 +1,4 @@
-use super::*;
+use super::super::*;
 use crate::x86::context::{TableRegister, TaskRegister};
 use crate::x86::protection::tests::{context, image, mapping};
 

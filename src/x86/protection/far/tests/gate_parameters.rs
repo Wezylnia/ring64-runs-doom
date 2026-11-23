@@ -1,5 +1,5 @@
-use super::gate_tests::{call, fixture};
-use super::*;
+use super::super::*;
+use super::call_gates::{call, fixture};
 
 pub(super) fn gate(image: &mut Image, width: Width, count: u8, selector: u16) {
     let mut bytes = [0x00, 0x20, 0, 0, count | 0xe0, 0xe4, 0xcd, 0xab];

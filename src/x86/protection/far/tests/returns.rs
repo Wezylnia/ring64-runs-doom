@@ -1,5 +1,5 @@
-use super::tests::{context, image, run};
-use super::*;
+use super::super::*;
+use super::{context, image, run};
 use crate::memory::{Cause, MappingInput, MemoryLimits, Permissions};
 use crate::x86::context::{SegmentCause, SegmentFault, TableRegister};
 use crate::x86::protection::{SystemMemoryFault, SystemPhase, SystemReference, Table};

@@ -1,4 +1,4 @@
-use super::*;
+use super::super::*;
 use crate::memory::{Cause, MappingInput, MemoryLimits, Permissions};
 use crate::x86::context::TableRegister;
 use crate::x86::paging::{
@@ -14,7 +14,7 @@ fn put(bytes: &mut [u8], at: usize, value: u32) {
 
 #[test]
 fn frame_dirty_failure_after_a_remap_is_not_an_earlier_descriptor_write() {
-    let (mut context, _) = gate_tests::fixture("protected");
+    let (mut context, _) = super::call_gates::fixture("protected");
     context.set_gdtr(TableRegister {
         base: 0xff0,
         limit: 0x3fff,
@@ -120,7 +120,7 @@ fn frame_dirty_failure_after_a_remap_is_not_an_earlier_descriptor_write() {
 
 #[test]
 fn ordinary_call_frame_dirty_refusal_keeps_its_own_prepared_origin() {
-    let (mut context, _) = gate_tests::fixture("protected");
+    let (mut context, _) = super::call_gates::fixture("protected");
     context.set_gdtr(TableRegister {
         base: 0xff0,
         limit: 0x3fff,

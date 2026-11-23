@@ -1,5 +1,5 @@
-use super::tests::{context, flat, image, mapping, run};
-use super::*;
+use super::super::*;
+use super::{context, flat, image, mapping, run};
 use crate::x86::context::{LdtRegister, SegmentType};
 
 #[test]

@@ -1,6 +1,6 @@
-use super::gate_review_tests::{expected_fault, gate};
-use super::gate_tests::{call, fixture};
-use super::*;
+use super::super::*;
+use super::call_gates::{call, fixture};
+use super::gate_parameters::{expected_fault, gate};
 use crate::memory::{Cause, MappingInput, Permissions};
 use crate::x86::context::{LdtRegister, TableRegister};
 use crate::x86::protection::{SystemMemoryFault, SystemPhase, SystemReference, Table};

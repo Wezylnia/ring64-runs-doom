@@ -15,15 +15,6 @@ mod system;
 #[cfg(test)]
 mod tests;
 
-#[cfg(test)]
-mod entry_priority_tests;
-
-#[cfg(test)]
-mod exception_tests;
-
-#[cfg(test)]
-mod return_tests;
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct EventInputs {
     pub flags: u64,

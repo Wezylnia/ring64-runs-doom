@@ -1,4 +1,4 @@
-use super::*;
+use super::super::*;
 use crate::x86::context::{TableRegister, TaskRegister};
 
 pub(super) fn fixture(mode: &str) -> (ExecutionContext, Image) {

@@ -580,24 +580,3 @@ fn system_failure(failure: super::Failure) -> FarFailure {
 
 #[cfg(test)]
 mod tests;
-
-#[cfg(test)]
-mod boundary_tests;
-
-#[cfg(test)]
-mod review_tests;
-
-#[cfg(test)]
-mod gate_tests;
-
-#[cfg(test)]
-mod gate_review_tests;
-
-#[cfg(test)]
-mod gate_boundary_tests;
-
-#[cfg(test)]
-mod gate_phase_tests;
-
-#[cfg(test)]
-mod gate_paging_review_tests;

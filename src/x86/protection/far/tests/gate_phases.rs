@@ -1,6 +1,6 @@
-use super::gate_review_tests::{expected_fault, gate};
-use super::gate_tests::fixture;
-use super::*;
+use super::super::*;
+use super::call_gates::fixture;
+use super::gate_parameters::{expected_fault, gate};
 use crate::memory::{Cause, Fault};
 use std::cell::RefCell;
 

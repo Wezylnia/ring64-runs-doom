@@ -21,25 +21,7 @@ mod reload;
 pub mod task;
 
 #[cfg(test)]
-mod paging_tests;
-
-#[cfg(test)]
 mod tests;
-
-#[cfg(test)]
-mod load_tests;
-
-#[cfg(test)]
-mod boundary_tests;
-
-#[cfg(test)]
-mod review_tests;
-
-#[cfg(test)]
-mod ss_tests;
-
-#[cfg(test)]
-mod alignment_tests;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Outcome {

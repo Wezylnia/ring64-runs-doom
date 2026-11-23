@@ -1,3 +1,7 @@
+mod entry_priority;
+mod exception;
+mod returns;
+
 use super::*;
 use crate::x86::context::TaskRegister;
 use crate::x86::context::{Mode, Segment};

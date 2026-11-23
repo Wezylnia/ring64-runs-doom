@@ -1,5 +1,5 @@
-use super::tests::{context, image, run};
-use super::*;
+use super::super::*;
+use super::{context, image, run};
 use crate::memory::{Cause, MappingInput, Permissions};
 use crate::x86::context::{SegmentCause, SegmentFault};
 
@@ -510,13 +510,15 @@ fn late_stack_a_admission_failure_keeps_earlier_code_a_zero() {
     );
     assert!(matches!(
         result,
-        Err(FarFailure::SystemMemory(super::super::SystemMemoryFault {
-            address: 0x1025,
-            width: 1,
-            reference: super::super::SystemReference::Selector(0x23),
-            phase: super::super::SystemPhase::AccessedWrite,
-            ..
-        }))
+        Err(FarFailure::SystemMemory(
+            super::super::super::SystemMemoryFault {
+                address: 0x1025,
+                width: 1,
+                reference: super::super::super::SystemReference::Selector(0x23),
+                phase: super::super::super::SystemPhase::AccessedWrite,
+                ..
+            }
+        ))
     ));
     assert_eq!(context, original);
     assert_eq!(image.read(0x1018, 8).unwrap(), 0x00af_fa00_0000_ffff);

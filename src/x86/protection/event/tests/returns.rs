@@ -1,4 +1,4 @@
-use super::*;
+use super::super::*;
 use crate::x86::context::{LoadedSegment, SegmentAttributes, SegmentType};
 use crate::x86::instruction::{SoftwareEventKind as Kind, Width};
 use crate::x86::protection::{
@@ -212,7 +212,7 @@ fn iret_nt_and_v86_iopl_admission_precede_frame_reads() {
             "protected",
             0,
             0x4002,
-            EventFailure::Task(super::super::task::switch32::Start::nested_return(0)),
+            EventFailure::Task(super::super::super::task::switch32::Start::nested_return(0)),
         ),
         (
             "compatibility",

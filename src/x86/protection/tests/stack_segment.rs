@@ -1,5 +1,5 @@
-use super::tests::{context, image, mapping, run};
-use super::*;
+use super::super::*;
+use super::{context, image, mapping, run};
 
 #[test]
 fn mov_ss_captures_aliased_selector_before_accessed_write_and_denial_is_atomic() {
@@ -79,7 +79,7 @@ fn mov_ss_exact_word_source_at_last_u64_byte_uses_long_null_rules() {
     assert!(!context.segment(Segment::Ss).usable);
     assert_eq!(context.segment(Segment::Ss).base, 0);
 
-    let mut context = super::tests::context("long64", 3);
+    let mut context = super::context("long64", 3);
     let before = context.clone();
     assert_eq!(
         run(

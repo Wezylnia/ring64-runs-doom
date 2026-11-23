@@ -1,3 +1,11 @@
+mod bounds;
+mod call_gates;
+mod gate_boundary;
+mod gate_paging;
+mod gate_parameters;
+mod gate_phases;
+mod returns;
+
 use super::*;
 use crate::memory::{MappingInput, MemoryLimits, Permissions};
 use crate::x86::context::{Mode, TableRegister};
