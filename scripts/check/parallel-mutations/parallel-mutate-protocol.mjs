@@ -40,7 +40,7 @@ export const protocolMutations = [
   },
   {
     name: 'worker-apply-invalidation',
-    path: 'sdk/src/parallel/worker.ts',
+    path: 'sdk/src/parallel/worker/entry.ts',
     from: '          this.#applyInvalidation(core);\n',
     to: '',
     check: [

@@ -102,10 +102,13 @@ async function instrument() {
       '            this.latencyTrace.span(traceEvents.provider, started, message.ticket, peer.id);\n            this.#inProvider = false;',
     ],
   ]);
-  await patch('parallel/worker.js', [
+  const nestedWorker = existsSync(resolve(build, 'host/parallel/worker/entry.js'));
+  const worker = nestedWorker ? 'parallel/worker/entry.js' : 'parallel/worker.js';
+  const workerTrace = nestedWorker ? '../latency-trace.js' : './latency-trace.js';
+  await patch(worker, [
     [
       'class WorkerRuntime {',
-      "import { LatencyTrace, latencyEvents as traceEvents } from './latency-trace.js';\nclass WorkerRuntime {",
+      `import { LatencyTrace, latencyEvents as traceEvents } from '${workerTrace}';\nclass WorkerRuntime {`,
     ],
     [
       '        this.#control = new SharedControl(data.shared);',
@@ -162,9 +165,9 @@ async function instrument() {
             if (paused !== 0n) this.latencyTrace.mark(traceEvents.pauseSafe, paused);`,
     ],
   ]);
-  const nativeExecution = existsSync(resolve(build, 'host/parallel/core.js'))
-    ? 'wasm/core.js'
-    : 'parallel/core.generated.js';
+  const nativeExecution = existsSync(resolve(build, 'host/parallel/core.generated.js'))
+    ? 'parallel/core.generated.js'
+    : 'wasm/core.js';
   await patch(nativeExecution, [
     [
       '            return this.reason(run(this.#statePointer, budget, stop ?? 0n, stop === undefined ? 0 : 1, entryIndex), true);',
