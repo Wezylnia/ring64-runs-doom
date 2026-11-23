@@ -1,11 +1,10 @@
+import { once } from 'node:events';
 import { chromium } from 'playwright';
 import { systemChromeExecutable } from '../support/browser.mjs';
 
 export async function evaluateInChromium(server, evaluate, argument) {
-  await new Promise((ready, failed) => {
-    server.once('error', failed);
-    server.listen(0, '127.0.0.1', ready);
-  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
   let browser;
   try {
     const executablePath = process.env.RING64_BROWSER || (await systemChromeExecutable());
