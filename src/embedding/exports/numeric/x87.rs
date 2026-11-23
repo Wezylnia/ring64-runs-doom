@@ -408,6 +408,14 @@ fn core_x87_register_pair(
             x87_environment(&core.context, &mut run.x87, second, second_pc, None);
             return 0;
         }
+        if compare
+            && let Some(flags) =
+                x87::admitted_exchange_compare(&mut run.x87, first.index, second, flags)
+        {
+            run.flags = flags;
+            x87_environment(&core.context, &mut run.x87, second, second_pc, None);
+            return 0;
+        }
         // An admitted register move cannot raise a new exception. The second
         // numeric operation still produces its original exception response.
         x87::eval(&mut run.x87, first, 0, 0);

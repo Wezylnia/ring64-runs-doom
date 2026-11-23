@@ -1,6 +1,9 @@
 mod execute;
 mod number;
 
+#[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+pub(crate) use execute::admitted_exchange_compare;
+
 #[cfg(test)]
 mod tests;
 

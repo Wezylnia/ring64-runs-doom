@@ -70,6 +70,56 @@ fn finish_numeric(state: &mut State, destination: usize, r: number::Result, pop:
 }
 
 #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+pub(crate) fn admitted_exchange_compare(
+    state: &mut State,
+    exchange: u8,
+    compare: Op,
+    flags: u64,
+) -> Option<u64> {
+    let top = state.top();
+    let exchange = state.physical(exchange);
+    let compare_slot = state.physical(compare.index);
+    let old_top = state.raw(top);
+    let lhs = state.raw(exchange);
+    let rhs = if compare_slot == top {
+        lhs
+    } else if compare_slot == exchange {
+        old_top
+    } else {
+        if state.tag(compare_slot) == 3 {
+            return None;
+        }
+        state.raw(compare_slot)
+    };
+    let key = |raw: u128| {
+        let magnitude = raw & (SIGN - 1);
+        if magnitude == 0 {
+            return Some(SIGN);
+        }
+        let exponent = (magnitude >> 64) as u16;
+        if exponent.wrapping_sub(1) >= 0x7ffe || (raw as u64) >> 63 == 0 {
+            return None;
+        }
+        // Normal binary80 magnitudes are lexicographic (exponent, significand).
+        Some(if raw & SIGN == 0 {
+            SIGN | magnitude
+        } else {
+            (SIGN - 1) ^ magnitude
+        })
+    };
+    let code = match key(lhs)?.cmp(&key(rhs)?) {
+        Ordering::Less => 1,
+        Ordering::Equal => 0x40,
+        Ordering::Greater => 0,
+    };
+    state.status_word &= !(0x8080 | 0x200);
+    state.put(top, lhs);
+    state.put(exchange, old_top);
+    pops(state, compare.pop);
+    Some((flags & !0x8d5) | code)
+}
+
+#[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
 pub(super) fn load_memory_arithmetic(state: &mut State, index: u8, op: Op, source: u128) {
     let (destination, lhs) = state.load_admitted_register(index);
     let rhs = number::widen(source, op.format);

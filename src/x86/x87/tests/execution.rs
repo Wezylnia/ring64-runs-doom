@@ -524,6 +524,68 @@ fn flags_comparisons_do_not_report_denormal_operands() {
     );
     assert_eq!(s.status_word & 0xbaff, 0x8082);
 }
+
+#[cfg(not(feature = "parallel"))]
+#[test]
+fn admitted_exchange_compare_matches_separate_numeric_operations() {
+    let inputs = [
+        0,
+        number::SIGN,
+        one(),
+        number::SIGN | one(),
+        one() + 1,
+        0x0001_8000_0000_0000_0000,
+        0x7ffe_ffff_ffff_ffff_ffff,
+        1,
+        number::INFINITY,
+        number::INFINITY | 1,
+        number::INFINITY | number::QUIET,
+        0x4000_0000_0000_0000_0001,
+    ];
+    let flags = 0xcd7;
+    for (left_class, left) in inputs.into_iter().enumerate() {
+        for (right_class, right) in inputs.into_iter().enumerate() {
+            for index in [0, 1, 2, 5] {
+                for kind in [Kind::CompareFlags, Kind::CompareUnorderedFlags] {
+                    for pop in [0, 1] {
+                        let mut actual = stacked(&[left, right, 0]);
+                        actual.top_to(7);
+                        actual.set_raw(7, right);
+                        for slot in [0, 1, 7] {
+                            actual.set_tag(slot, 2);
+                        }
+                        actual.control_word = 0x37e;
+                        actual.status_word |= 0x4700;
+                        let before = actual;
+                        let exchange = Op {
+                            index: 1,
+                            ..op(Kind::Exchange, Format::Register)
+                        };
+                        let compare = Op {
+                            index,
+                            pop,
+                            ..op(kind, Format::Register)
+                        };
+                        let result =
+                            admitted_exchange_compare(&mut actual, exchange.index, compare, flags);
+                        let ordered = left_class < 7
+                            && (index == 0 || matches!(index, 1 | 2) && right_class < 7);
+                        assert_eq!(result.is_some(), ordered);
+                        if let Some(result) = result {
+                            let mut expected = before;
+                            eval(&mut expected, exchange, 0, 0);
+                            assert_eq!(result, eval(&mut expected, compare, 0, flags).flags);
+                            assert_eq!(actual, expected);
+                        } else {
+                            assert_eq!(actual, before);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[test]
 fn round_to_integer_preserves_signed_zero_and_carry_into_bit_63() {
     let half = 0x3ffe_8000_0000_0000_0000;
