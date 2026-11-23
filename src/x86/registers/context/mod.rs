@@ -1,5 +1,5 @@
-use super::instruction::Width;
 use crate::memory::{Access, Cause, Fault, Image, canonical48};
+use crate::x86::instruction::Width;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u32)]
@@ -195,8 +195,8 @@ pub struct SegmentFault {
 pub enum AccessFailure {
     Segment(SegmentFault),
     Linear(Fault),
-    Paging(super::paging::walk::Failure),
-    AlignmentCheck(super::alignment::Fault),
+    Paging(crate::x86::paging::walk::Failure),
+    AlignmentCheck(crate::x86::alignment::Fault),
 }
 
 impl ExecutionContext {

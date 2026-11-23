@@ -1,6 +1,6 @@
 use super::context::{ExecutionContext, Mode};
-use super::instruction::Width;
-use super::protection::{ProtectionFault, ProtectionPhase};
+use crate::x86::instruction::Width;
+use crate::x86::protection::{ProtectionFault, ProtectionPhase};
 
 pub const IMPORTED_MASK: u64 = 0x3d7fd7;
 pub const TF: u64 = 1 << 8;
