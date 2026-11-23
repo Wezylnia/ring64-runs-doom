@@ -72,12 +72,12 @@ export function bindGuestMemory64() {
   let pages = 0n;
   let highWater = 0n;
 
-  function allocate(length: bigint): bigint {
-    let base = 0n;
+  function allocate(length: bigint, minimum = 0): bigint {
+    let base = BigInt(minimum);
     let index = 0;
     for (const extent of extents) {
       if (base + length <= extent.base) break;
-      base = extent.end;
+      if (extent.end > base) base = extent.end;
       index++;
     }
     const end = base + length;

@@ -129,7 +129,7 @@ export async function checkMemory64(compiler: WebAssembly.Module) {
 async function checkFirstBackingByte(compiler: WebAssembly.Module) {
   const entry = 0x1000n;
   const data = 0x8000n;
-  // INC byte [EDI]. Place the data extent first, at arena offset zero.
+  // INC byte [EDI]. Place the data extent first so its first byte exercises the lowest backing address.
   const code = hex('fe0790');
   const cpu = await createCpu({
     compiler,

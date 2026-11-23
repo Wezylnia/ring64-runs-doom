@@ -7,9 +7,7 @@ impl Emitter {
         use crate::memory::guest_windows::{WINDOW_SHIFT, biases_pointer};
         argument.memory_index = 1;
         if crate::memory::guest_windows::use_direct_offsets() {
-            self.op(Op::I64ExtendI32U)
-                .op(Op::I64Const(1))
-                .op(Op::I64Sub);
+            self.op(Op::I64ExtendI32U);
             return;
         }
         let token = self.ram_operand_locals;

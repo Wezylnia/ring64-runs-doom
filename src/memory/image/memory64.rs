@@ -2,7 +2,7 @@
 // These addresses never identify bytes in Rust's own address space.
 #[link(wasm_import_module = "guest64")]
 unsafe extern "C" {
-    fn allocate(length: u64) -> u64;
+    fn allocate(length: u64, minimum: u32) -> u64;
     fn release(base: u64);
     fn read(destination: *mut u8, source: u64, length: u32);
     fn write(destination: u64, source: *const u8, length: u32);
@@ -15,8 +15,12 @@ pub(super) struct Extent {
 }
 
 impl Extent {
-    pub(super) fn new(length: u64, initial: &[u8]) -> Result<Self, super::MemoryError> {
-        let base = unsafe { allocate(length) };
+    pub(super) fn new(
+        length: u64,
+        initial: &[u8],
+        minimum: u32,
+    ) -> Result<Self, super::MemoryError> {
+        let base = unsafe { allocate(length, minimum) };
         if base == u64::MAX {
             return Err(super::MemoryError::Capacity("memory64 allocation refused"));
         }

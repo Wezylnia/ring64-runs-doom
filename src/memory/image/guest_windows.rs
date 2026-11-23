@@ -1,4 +1,4 @@
-// Direct spans carry nonzero 32-bit tokens. Small arenas use offset + 1.
+// Direct spans carry nonzero 32-bit tokens. Small arenas use the RAM offset.
 // Larger arenas use windows with a stable bias for the lifetime of a proof.
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
@@ -22,15 +22,26 @@ pub(crate) fn use_direct_offsets() -> bool {
     DIRECT_OFFSETS.get()
 }
 
-impl super::Image {
-    pub(crate) fn configure_guest_windows(&self) {
+impl super::MemoryLimits {
+    pub(super) fn guest_arena_start(self) -> u32 {
+        // Keep ordinary backing alignment when reserving the null address.
+        const FIRST_OFFSET: u32 = 16;
         // First-fit skips at most one gap per live backing, each smaller than
         // the requested extent. This bounds the arena end even after churn.
         let bound = self
-            .limits
             .max_backing_bytes
-            .saturating_mul(u64::from(self.limits.max_backings));
-        DIRECT_OFFSETS.set(bound <= u64::from(u32::MAX));
+            .saturating_mul(u64::from(self.max_backings));
+        if bound <= u64::from(u32::MAX - FIRST_OFFSET) {
+            FIRST_OFFSET
+        } else {
+            0
+        }
+    }
+}
+
+impl super::Image {
+    pub(crate) fn configure_guest_windows(&self) {
+        DIRECT_OFFSETS.set(self.limits.guest_arena_start() != 0);
     }
 }
 
@@ -75,7 +86,7 @@ fn window_token(base: u64) -> Option<u32> {
 
 pub(super) fn byte_token(ram: u64) -> Option<u32> {
     if use_direct_offsets() {
-        return u32::try_from(ram.checked_add(1)?).ok();
+        return u32::try_from(ram).ok().filter(|&token| token != 0);
     }
     let inside = ram % PAYLOAD;
     Some(window_token(ram - inside)? + inside as u32)
