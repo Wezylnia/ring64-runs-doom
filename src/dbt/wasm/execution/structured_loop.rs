@@ -1857,9 +1857,26 @@ impl Emitter {
             // The copy body already proved a single fetch page. A live quiet
             // SSE admission can fund its entry just as it funds a finite copy.
             self.newest_prefix_fetch(pc, false, true);
-            self.op(Op::If(BlockType::Result(wasm_encoder::ValType::I32)))
-                .op(Op::I32Const(1))
-                .op(Op::Else);
+            self.op(Op::If(BlockType::Result(wasm_encoder::ValType::I32)));
+            if let Some(page) = self.quiet_fetch_page
+                && let Some(window) = self.paged_copy_window
+                && !body.forward_edges()
+            {
+                let order = body.order();
+                if (window.group.instruction_count()..order.len()).all(|position| {
+                    let ordinal = order.at(position) as usize;
+                    let operation = instructions[ordinal].operation;
+                    inside_register_body(operation)
+                        || position + 1 == order.len() && matches!(operation, Operation::Jcc { .. })
+                }) {
+                    // The proved copy window keeps fetch newest and excludes
+                    // writes to code or page-table backing. The register tail
+                    // can hand that admission to the next same-page entry.
+                    self.op(Op::I64Const(((pc & !4095) | 1) as i64))
+                        .op(Op::LocalSet(page));
+                }
+            }
+            self.op(Op::I32Const(1)).op(Op::Else);
         }
         self.op(Op::I64Const(pc as i64))
             .op(Op::I32Const(body.paged_fetch_bytes.unwrap() as i32));

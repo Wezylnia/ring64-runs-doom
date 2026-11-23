@@ -743,6 +743,7 @@ impl Emitter {
         // instructions before entering its checked label.
         self.op(Op::If(BlockType::Empty));
         self.restore_preceding_read_state();
+        self.clear_quiet_fetch();
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         if self.paged_preamble_latch
             && let Some((_, handoff, inherited)) = self.paged_preamble

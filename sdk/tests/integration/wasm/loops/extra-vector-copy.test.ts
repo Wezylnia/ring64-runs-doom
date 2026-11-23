@@ -147,6 +147,7 @@ test('a sampled copy loop reuses quiet SSE fetch admission and keeps checked exi
   const head = PC + 12n;
   const inside = head + 8n;
   const stop = PC + 39n;
+  const afterSuccessor = stop + 3n;
   const source = PC + 0x1010n;
   const seed = Uint8Array.from({ length: 16 }, (_, index) => index + 1);
   const bytes = new Uint8Array(4096);
@@ -159,9 +160,12 @@ test('a sampled copy loop reuses quiet SSE fetch admission and keeps checked exi
   const imports = prototype.artifactImports;
   let guards = 0;
   let windows = 0;
+  let successorBegins = 0;
+  let copyBegins = 0;
+  let refuseWindow = false;
   Core.prototype.compile = function (pc, limits, seeds, regionPoints) {
     if (pc === PC && !seeds?.length) {
-      const points = [0, 3, 6, 9, 12, 16, 20, 25, 30, 34, 37, 39].map(
+      const points = [0, 3, 6, 9, 12, 16, 20, 25, 30, 34, 37, 39, 42].map(
         (offset) => PC + BigInt(offset),
       );
       return compile.call(this, pc, limits, points, true);
@@ -180,9 +184,18 @@ test('a sampled copy loop reuses quiet SSE fetch admission and keeps checked exi
     const window = env.paged_loop_copy_window;
     if (typeof window === 'function') {
       env.paged_loop_copy_window = (...args: unknown[]) => {
+        if (refuseWindow) return 0;
         const result = window(...args);
         if (result) windows++;
         return result;
+      };
+    }
+    const begin = env.debug_begin;
+    if (typeof begin === 'function') {
+      env.debug_begin = (pc: bigint, ...args: unknown[]) => {
+        if (pc === stop) successorBegins++;
+        if (pc === head) copyBegins++;
+        return begin(pc, ...args);
       };
     }
     return env;
@@ -192,13 +205,13 @@ test('a sampled copy loop reuses quiet SSE fetch admission and keeps checked exi
     await usingPaged(
       compiler,
       {
-        code: prefix + copy + 'f4',
+        code: prefix + copy + '49ffc1f4', // INC R9; HLT.
         words: [[0x4008n, 0xa063n]],
         spans: [{ physical: 0xa000n, bytes }],
       },
       async (cpu) => {
         const enter = () =>
-          cpu.setState(initial(PC, { 0: 0n, 1: 64n, 6: source + 16n, 7: source }));
+          cpu.setState(initial(PC, { 0: 0n, 1: 64n, 6: source + 16n, 7: source, 9: 0n }));
         for (let wave = 0; wave < 4; wave++) {
           enter();
           guards = 0;
@@ -210,6 +223,24 @@ test('a sampled copy loop reuses quiet SSE fetch admission and keeps checked exi
         }
         assert.equal(guards, 0, 'the admitted copy avoids the checked SSE wrapper');
         assert.ok(windows > 0, 'the structured two-transfer copy still uses the paired data proof');
+
+        enter();
+        successorBegins = 0;
+        const afterCopy = await cpu.run({ stop: afterSuccessor, budget: 32n });
+        assert.equal(afterCopy.reason, 'stop');
+        assert.equal(afterCopy.retired, 19n);
+        assert.equal(afterCopy.state.registers[9], 1n);
+        assert.equal(successorBegins, 0, 'the same-page successor receives the live fetch proof');
+
+        enter();
+        copyBegins = 0;
+        refuseWindow = true;
+        const replayed = await cpu.run({ stop: afterSuccessor, budget: 32n });
+        refuseWindow = false;
+        assert.equal(replayed.reason, 'stop');
+        assert.equal(replayed.retired, 19n);
+        assert.equal(replayed.state.registers[9], 1n);
+        assert.ok(copyBegins > 0, 'a refused operand re-enters at its checked instruction');
 
         enter();
         cpu.setMxcsr(0x1f00);
@@ -231,6 +262,13 @@ test('a sampled copy loop reuses quiet SSE fetch admission and keeps checked exi
         assert.equal(debug.reason, 'debug-exception');
         assert.equal(debug.retired, 6n);
         assert.equal(debug.state.rip, inside);
+
+        cpu.setDebugState({ addresses: [stop, 0n, 0n, 0n], dr6: 0n, dr7: 1n });
+        enter();
+        const successorDebug = await cpu.run({ stop: afterSuccessor, budget: 32n });
+        assert.equal(successorDebug.reason, 'debug-exception');
+        assert.equal(successorDebug.retired, 18n);
+        assert.equal(successorDebug.state.rip, stop);
       },
     );
   } finally {
