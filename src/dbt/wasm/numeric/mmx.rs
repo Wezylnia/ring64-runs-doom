@@ -1,10 +1,10 @@
-use super::{ADDRESS, Emitter, RESULT, RHS, VALUE};
+use super::{ADDRESS, Emitter, RESULT, VALUE};
 use crate::embedding::layout::{RunState, X87_EXCEPTION};
 use crate::x86::instruction::{Address, RegisterView, VectorBinary, VectorShift, Width};
 use crate::x86::mmx::{Kind, Op as MmxOp};
 use crate::x86::x87::State as X87State;
 use std::mem::offset_of;
-use wasm_encoder::{BlockType, Instruction as Op, MemArg, ValType};
+use wasm_encoder::{BlockType, Instruction as Op, MemArg};
 
 const PUNPCKLDQ: Kind = Kind::Binary(VectorBinary::UnpackLow(Width::W32));
 
@@ -283,37 +283,15 @@ impl Emitter {
 
     fn mmx_shift(&mut self, operation: MmxOp, kind: VectorShift) {
         let [left, _, _] = self.vector_temps();
-        let width = match kind {
-            VectorShift::Left(width)
-            | VectorShift::Right(width)
-            | VectorShift::ArithmeticRight(width) => width,
-            _ => unreachable!("no byte-vector shifts in MMX"),
-        };
         self.mmx_read_vector(operation.dst);
         self.op(Op::LocalSet(left));
-        if operation.immediate_count {
-            if u32::from(operation.immediate) >= width.bits() {
-                self.vector_overshift(kind, width, left);
-            } else {
-                self.op(Op::LocalGet(left))
-                    .op(Op::I32Const(i32::from(operation.immediate)));
-                self.vector_shift_op(kind);
-            }
+        let count = if operation.immediate_count {
+            Some(operation.immediate)
         } else {
             self.mmx_source(operation);
-            self.op(Op::LocalSet(RHS))
-                .op(Op::LocalGet(RHS))
-                .op(Op::I64Const(i64::from(width.bits())))
-                .op(Op::I64GeU)
-                .op(Op::If(BlockType::Result(ValType::V128)));
-            self.vector_overshift(kind, width, left);
-            self.op(Op::Else)
-                .op(Op::LocalGet(left))
-                .op(Op::LocalGet(RHS))
-                .op(Op::I32WrapI64);
-            self.vector_shift_op(kind);
-            self.op(Op::End);
-        }
+            None
+        };
+        self.shift_packed_lanes(kind, left, count);
         self.op(Op::I64x2ExtractLane(0)).op(Op::LocalSet(RESULT));
     }
 }

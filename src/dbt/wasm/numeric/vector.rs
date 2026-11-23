@@ -964,7 +964,7 @@ impl Emitter {
         }
     }
 
-    pub(super) fn vector_shift_op(&mut self, kind: VectorShift) {
+    fn vector_shift_op(&mut self, kind: VectorShift) {
         self.op(match kind {
             VectorShift::Left(Width::W16) => Op::I16x8Shl,
             VectorShift::Left(Width::W32) => Op::I32x4Shl,
@@ -978,7 +978,7 @@ impl Emitter {
         });
     }
 
-    pub(super) fn vector_overshift(&mut self, kind: VectorShift, width: Width, left: u32) {
+    fn vector_overshift(&mut self, kind: VectorShift, width: Width, left: u32) {
         if matches!(kind, VectorShift::ArithmeticRight(_)) {
             self.op(Op::LocalGet(left))
                 .op(Op::I32Const(width.bits() as i32 - 1));
@@ -1021,6 +1021,21 @@ impl Emitter {
             }
             return;
         }
+        let immediate = match count {
+            VectorCount::Immediate(count) => Some(count),
+            VectorCount::Vector(operand) => {
+                self.vector_operand(operand, 16, true, next_pc, exit_depth);
+                self.op(Op::LocalSet(right))
+                    .op(Op::LocalGet(right))
+                    .op(Op::I64x2ExtractLane(0));
+                None
+            }
+        };
+        self.shift_packed_lanes(kind, left, immediate);
+    }
+
+    // A register or memory count leaves its low qword on the Wasm stack.
+    pub(super) fn shift_packed_lanes(&mut self, kind: VectorShift, left: u32, count: Option<u8>) {
         let width = match kind {
             VectorShift::Left(width)
             | VectorShift::Right(width)
@@ -1028,7 +1043,7 @@ impl Emitter {
             _ => unreachable!(),
         };
         match count {
-            VectorCount::Immediate(count) => {
+            Some(count) => {
                 if u32::from(count) >= width.bits() {
                     self.vector_overshift(kind, width, left);
                 } else {
@@ -1037,12 +1052,8 @@ impl Emitter {
                     self.vector_shift_op(kind);
                 }
             }
-            VectorCount::Vector(operand) => {
-                self.vector_operand(operand, 16, true, next_pc, exit_depth);
-                self.op(Op::LocalSet(right))
-                    .op(Op::LocalGet(right))
-                    .op(Op::I64x2ExtractLane(0))
-                    .op(Op::LocalSet(RHS))
+            None => {
+                self.op(Op::LocalSet(RHS))
                     .op(Op::LocalGet(RHS))
                     .op(Op::I64Const(i64::from(width.bits())))
                     .op(Op::I64GeU)
