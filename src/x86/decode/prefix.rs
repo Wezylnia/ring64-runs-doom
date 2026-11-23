@@ -25,6 +25,10 @@ pub(super) struct Prefixes {
 }
 
 impl Prefixes {
+    pub(super) fn mandatory(self) -> Option<u8> {
+        self.repeat.or(self.operand_override.then_some(0x66))
+    }
+
     pub(super) fn width(self) -> Width {
         if self.long64 {
             if self.rex.width() == Width::W64 {

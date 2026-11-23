@@ -12,6 +12,7 @@ mod mmx;
 mod numeric_image;
 mod opcode;
 mod operand;
+mod packed;
 mod paging;
 mod prefix;
 mod protection;

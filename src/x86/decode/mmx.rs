@@ -1,5 +1,5 @@
 use super::{DecodeError, cursor::Cursor, operand::ModRm, prefix::Prefixes};
-use crate::x86::instruction::{Operation, VectorBinary, VectorShift, Width};
+use crate::x86::instruction::{Operation, VectorShift, Width};
 use crate::x86::mmx::{Kind, Op};
 
 pub(super) fn refine<F>(
@@ -10,9 +10,7 @@ pub(super) fn refine<F>(
 where
     F: FnMut(u64) -> Result<u8, DecodeError>,
 {
-    let mandatory = prefixes
-        .repeat
-        .or(prefixes.operand_override.then_some(0x66));
+    let mandatory = prefixes.mandatory();
     let kind = match (mandatory, opcode) {
         (None, 0x77) => Kind::Empty,
         (None, 0x6e) => Kind::FromGpr,
@@ -34,7 +32,7 @@ where
         (None, 0xd1..=0xd3) => Kind::Shift(VectorShift::Right(lane(opcode - 0xd1))),
         (None, 0xe1..=0xe2) => Kind::Shift(VectorShift::ArithmeticRight(lane(opcode - 0xe1))),
         (None, 0xf1..=0xf3) => Kind::Shift(VectorShift::Left(lane(opcode - 0xf1))),
-        (None, _) => Kind::Binary(binary(opcode)?),
+        (None, _) => Kind::Binary(super::packed::binary(opcode)?),
         _ => return None,
     };
     Some(decode(kind, opcode, prefixes, cursor))
@@ -134,59 +132,4 @@ where
         op.immediate = cursor.byte()?;
     }
     Ok(Operation::Mmx { op, address })
-}
-
-fn binary(opcode: u8) -> Option<VectorBinary> {
-    use VectorBinary as B;
-    use Width::*;
-    Some(match opcode {
-        0xdb => B::And,
-        0xdf => B::AndNot,
-        0xeb => B::Or,
-        0xef => B::Xor,
-        0xfc => B::Add(W8),
-        0xfd => B::Add(W16),
-        0xfe => B::Add(W32),
-        0xd4 => B::Add(W64),
-        0xf8 => B::Sub(W8),
-        0xf9 => B::Sub(W16),
-        0xfa => B::Sub(W32),
-        0xfb => B::Sub(W64),
-        0xec => B::SignedSaturatingAdd(W8),
-        0xed => B::SignedSaturatingAdd(W16),
-        0xdc => B::UnsignedSaturatingAdd(W8),
-        0xdd => B::UnsignedSaturatingAdd(W16),
-        0xe8 => B::SignedSaturatingSub(W8),
-        0xe9 => B::SignedSaturatingSub(W16),
-        0xd8 => B::UnsignedSaturatingSub(W8),
-        0xd9 => B::UnsignedSaturatingSub(W16),
-        0x74 => B::CompareEqual(W8),
-        0x75 => B::CompareEqual(W16),
-        0x76 => B::CompareEqual(W32),
-        0x64 => B::CompareGreater(W8),
-        0x65 => B::CompareGreater(W16),
-        0x66 => B::CompareGreater(W32),
-        0xda => B::MinUnsignedByte,
-        0xde => B::MaxUnsignedByte,
-        0xea => B::MinSignedWord,
-        0xee => B::MaxSignedWord,
-        0xe0 => B::Average(W8),
-        0xe3 => B::Average(W16),
-        0xd5 => B::MulLowWord,
-        0xe5 => B::MulHighWord { signed: true },
-        0xe4 => B::MulHighWord { signed: false },
-        0xf4 => B::MulUnsignedDword,
-        0xf5 => B::MaddSignedWord,
-        0xf6 => B::SumAbsoluteByteDifferences,
-        0x63 => B::PackSigned(W16),
-        0x6b => B::PackSigned(W32),
-        0x67 => B::PackUnsignedWord,
-        0x60 => B::UnpackLow(W8),
-        0x61 => B::UnpackLow(W16),
-        0x62 => B::UnpackLow(W32),
-        0x68 => B::UnpackHigh(W8),
-        0x69 => B::UnpackHigh(W16),
-        0x6a => B::UnpackHigh(W32),
-        _ => return None,
-    })
 }

@@ -17,9 +17,7 @@ where
     if !matches!(opcode, 0x18 | 0x2b | 0xae | 0xc3 | 0xe7 | 0xf7) {
         return None;
     }
-    let mandatory = prefixes
-        .repeat
-        .or(prefixes.operand_override.then_some(0x66));
+    let mandatory = prefixes.mandatory();
     if opcode == 0xae && mandatory == Some(0xf3) {
         return Some(segment_base(prefixes, cursor));
     }

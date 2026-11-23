@@ -10,9 +10,7 @@ pub(super) fn refine<F>(
 where
     F: FnMut(u64) -> Result<u8, DecodeError>,
 {
-    let mandatory = prefixes
-        .repeat
-        .or(prefixes.operand_override.then_some(0x66));
+    let mandatory = prefixes.mandatory();
     let scalar = matches!(mandatory, Some(0xf2 | 0xf3));
     let format = if matches!(mandatory, Some(0x66 | 0xf2)) {
         Format::F64
