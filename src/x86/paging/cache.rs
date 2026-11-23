@@ -86,6 +86,22 @@ struct DwordReadMemo {
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 #[derive(Default)]
+#[repr(C)]
+pub(crate) struct IndexedDwordWrite {
+    // Published for one synchronous guarded entry, after proving whole RAM pages.
+    pub(crate) tags: [u64; 3],
+    pub(crate) biases: [u32; 3],
+    pub(crate) ages: [u32; 4],
+    pub(crate) recency: u32,
+    pub(crate) generation: u64,
+    pub(crate) fetch: u32,
+    pub(crate) index: u32,
+    pub(crate) value: u32,
+    pub(crate) host: u32,
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[derive(Default)]
 pub(crate) struct IndexedWriteMemo {
     index: [Option<IndexedWriteSlot>; 4],
     table: Option<IndexedWriteSlot>,
@@ -142,6 +158,8 @@ pub(crate) struct IndexedReadTable {
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
     pub(crate) epoch: u64,
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    pub(crate) generation: u64,
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
     pub(crate) entries: [IndexedReadEntry; INDEXED_READ_ENTRIES],
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
     pub(crate) writes: [IndexedReadEntry; INDEXED_READ_ENTRIES],
@@ -151,6 +169,7 @@ pub(crate) struct IndexedReadTable {
 impl IndexedReadTable {
     fn retire_pages(&mut self) {
         // The low tag bits carry the epoch without truncating canonicality.
+        self.generation = self.generation.wrapping_add(1);
         self.epoch = (self.epoch + 4) & 0xffc;
         if self.epoch == 0 {
             self.entries.fill(IndexedReadEntry::default());
@@ -169,6 +188,8 @@ impl Default for IndexedReadTable {
             hint: u32::MAX,
             #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
             epoch: 0,
+            #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+            generation: 0,
             #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
             entries: [IndexedReadEntry::default(); INDEXED_READ_ENTRIES],
             #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
@@ -931,7 +952,7 @@ impl Cache {
         index: Request,
         (table, store): (u64, Request),
         memo: &mut IndexedWriteMemo,
-    ) -> Option<crate::memory::IndexedDwordWrite> {
+    ) -> Option<IndexedDwordWrite> {
         let mut entries = self.entries.borrow_mut();
         let fetch = entries
             .hint()
@@ -954,7 +975,7 @@ impl Cache {
             {
                 entries.touch_data_and_fetch(index_slot, fetch);
             }
-            return Some(crate::memory::IndexedDwordWrite::default());
+            return Some(IndexedDwordWrite::default());
         }
         let table = Request {
             linear: table.wrapping_add(u64::from(index_value) * 4),
@@ -995,11 +1016,39 @@ impl Cache {
         // No retained age changes before all operations are admitted. After
         // the straight group, the last uses are these operands and code.
         entries.touch_indexed_group([index_slot, table_slot, store_slot, fetch]);
-        Some(crate::memory::IndexedDwordWrite {
+        let mut proof = IndexedDwordWrite {
             index: u32::from(index_value),
             value,
             host,
-        })
+            ..Default::default()
+        };
+        let slots = [index_slot, table_slot, store_slot, fetch];
+        let target_page = target & !4095;
+        let offset = target_page.wrapping_sub(span.base);
+        if span.length < 4096
+            || offset > u64::from(span.length - 4096)
+            || index_slot == fetch
+            || index_slot == table_slot
+            || table_slot == store_slot
+            || store_slot == fetch
+        {
+            return Some(proof);
+        }
+        if let (Some(source), Some(palette)) = (
+            image.physical_direct_read_pointer(first & !4095, 4096),
+            image.physical_direct_read_pointer(lookup & !4095, 4096),
+        ) {
+            let pages = [index.linear, table.linear, store.linear].map(|address| address & !4095);
+            let hosts = [source, palette, span.host + offset as u32];
+            proof.tags = pages.map(|page| page | 4);
+            proof.biases = std::array::from_fn(|i| hosts[i].wrapping_sub(pages[i] as u32));
+            let table = entries.recency_mut();
+            proof.recency = table as *mut _ as u32;
+            proof.ages = slots.map(|slot| &raw mut table.ages[slot] as u32);
+            proof.generation = table.generation;
+            proof.fetch = fetch as u32;
+        }
+        Some(proof)
     }
 
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]

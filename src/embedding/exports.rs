@@ -129,7 +129,7 @@ struct Core {
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     guarded_dword_pair: Option<paging::GuardedDwordPair>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    indexed_dword_write: crate::memory::IndexedDwordWrite,
+    indexed_dword_write: crate::x86::paging::cache::IndexedDwordWrite,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     indexed_write_memo: crate::x86::paging::cache::IndexedWriteMemo,
     fast_system: crate::x86::fast_system::State,

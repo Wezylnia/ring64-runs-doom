@@ -1,10 +1,12 @@
-use super::{Emitter, StructuredLoop, Unit, VALUE};
+use super::{ADDRESS, Emitter, STORE_STATUS, StructuredLoop, Unit, VALUE};
 use crate::embedding::layout::INDEXED_WRITE_UNSUPPORTED_LEAF;
-use crate::memory::IndexedDwordWrite;
+use crate::x86::paging::cache::IndexedDwordWrite;
+use crate::x86::paging::cache::IndexedReadTable;
 use crate::x86::{
     context::Segment,
     instruction::{Address, AddressBase, Alu, Condition, DataOperand, Location, Operation, Width},
 };
+use std::mem::offset_of;
 use wasm_encoder::{BlockType, Instruction as Op, MemArg};
 
 #[derive(Clone, Copy)]
@@ -124,6 +126,7 @@ pub(super) struct GuardedIndexedWrite {
     pub(super) record: u32,
     pub(super) host: u32,
     pub(super) continuing: u32,
+    pub(super) value: u32,
 }
 
 impl Emitter {
@@ -145,16 +148,13 @@ impl Emitter {
         exit_depth: u32,
     ) {
         let first = self.current_index == group.shape.index;
-        let field = |offset: usize| MemArg {
-            offset: offset as u64,
-            align: 2,
-            memory_index: 0,
-        };
         let unsupported = INDEXED_WRITE_UNSUPPORTED_LEAF as i32;
         if first {
             self.op(Op::I32Const(0))
                 .op(Op::LocalSet(group.host))
-                .op(Op::LocalGet(group.record))
+                .op(Op::Block(BlockType::Empty));
+            self.reuse_indexed_write(group, address, next_pc);
+            self.op(Op::LocalGet(group.record))
                 .op(Op::I32Const(unsupported))
                 .op(Op::I32Ne)
                 .op(Op::If(BlockType::Empty));
@@ -168,31 +168,151 @@ impl Emitter {
                 .op(Op::LocalSet(group.continuing))
                 .op(Op::End);
         }
-        // One unsuitable leaf disables grouping until the guarded clone ends.
         self.op(Op::LocalGet(group.record))
             .op(Op::I32Const(unsupported))
             .op(Op::I32GtU)
             .op(Op::If(BlockType::Empty));
         if first {
             self.op(Op::LocalGet(group.record))
-                .op(Op::I32Load(field(std::mem::offset_of!(
-                    IndexedDwordWrite,
-                    host
-                ))))
-                .op(Op::LocalSet(group.host));
-        }
-        let offset = if first {
-            std::mem::offset_of!(IndexedDwordWrite, index)
+                .op(Op::I32Load(field(offset_of!(IndexedDwordWrite, host), 2)))
+                .op(Op::LocalSet(group.host))
+                .op(Op::LocalGet(group.record))
+                .op(Op::I32Load(field(offset_of!(IndexedDwordWrite, value), 2)))
+                .op(Op::LocalSet(group.value))
+                .op(Op::LocalGet(group.record))
+                .op(Op::I64Load32U(field(
+                    offset_of!(IndexedDwordWrite, index),
+                    2,
+                )));
         } else {
-            std::mem::offset_of!(IndexedDwordWrite, value)
-        };
-        self.op(Op::LocalGet(group.record))
-            .op(Op::I64Load32U(field(offset)))
-            .op(Op::LocalSet(VALUE))
-            .op(Op::Else);
+            self.op(Op::LocalGet(group.value)).op(Op::I64ExtendI32U);
+        }
+        self.op(Op::LocalSet(VALUE)).op(Op::Else);
         self.paged_indexed_write = None;
-        assert!(self.load_guarded_paged_value(address, width, next_pc, exit_depth + 1));
+        assert!(self.load_guarded_paged_value(
+            address,
+            width,
+            next_pc,
+            exit_depth + 1 + u32::from(first)
+        ));
         self.paged_indexed_write = Some(group);
         self.op(Op::End);
+        if first {
+            self.op(Op::End);
+        }
+    }
+
+    fn reuse_indexed_write(&mut self, group: GuardedIndexedWrite, address: Address, next_pc: u64) {
+        self.op(Op::Block(BlockType::Empty))
+            .op(Op::LocalGet(group.record))
+            .op(Op::I32Const(INDEXED_WRITE_UNSUPPORTED_LEAF as i32))
+            .op(Op::I32LeU)
+            .op(Op::BrIf(0))
+            .op(Op::LocalGet(group.record))
+            .op(Op::I32Load(field(
+                offset_of!(IndexedDwordWrite, recency),
+                2,
+            )))
+            .op(Op::LocalTee(STORE_STATUS))
+            .op(Op::I32Eqz)
+            .op(Op::BrIf(0))
+            .op(Op::LocalGet(STORE_STATUS))
+            .op(Op::I64Load(field(
+                offset_of!(IndexedReadTable, generation),
+                3,
+            )))
+            .op(Op::LocalGet(group.record))
+            .op(Op::I64Load(field(
+                offset_of!(IndexedDwordWrite, generation),
+                3,
+            )))
+            .op(Op::I64Ne)
+            .op(Op::BrIf(0))
+            .op(Op::LocalGet(STORE_STATUS))
+            .op(Op::I32Load(field(offset_of!(IndexedReadTable, hint), 2)))
+            .op(Op::LocalGet(group.record))
+            .op(Op::I32Load(field(offset_of!(IndexedDwordWrite, fetch), 2)))
+            .op(Op::I32Ne)
+            .op(Op::BrIf(0))
+            .op(Op::LocalGet(STORE_STATUS))
+            .op(Op::I64Load(field(offset_of!(IndexedReadTable, clock), 3)))
+            .op(Op::I64Const(-5))
+            .op(Op::I64GtU)
+            .op(Op::BrIf(0));
+        self.address(address, next_pc);
+        self.indexed_page_host(group, 0, 1);
+        self.op(Op::I64Load8U(field(0, 0)))
+            .op(Op::LocalTee(VALUE))
+            .op(Op::I64Eqz)
+            .op(Op::If(BlockType::Empty));
+        self.touch_indexed_slots(group, &[0, 3]);
+        self.op(Op::Br(2)).op(Op::End);
+        self.address(group.shape.table, 0);
+        self.op(Op::LocalGet(VALUE))
+            .op(Op::I64Const(2))
+            .op(Op::I64Shl)
+            .op(Op::I64Add);
+        self.indexed_page_host(group, 1, 4);
+        self.op(Op::I32Load(field(0, 2)))
+            .op(Op::LocalSet(group.value));
+        self.address(group.shape.destination, 0);
+        self.indexed_page_host(group, 2, 4);
+        self.op(Op::LocalSet(group.host));
+        self.touch_indexed_slots(group, &[0, 1, 2, 3]);
+        self.op(Op::Br(1)).op(Op::End);
+    }
+
+    // One tag checks the entire canonical page and the dword alignment.
+    fn indexed_page_host(&mut self, group: GuardedIndexedWrite, index: usize, width: i64) {
+        self.op(Op::LocalTee(ADDRESS))
+            .op(Op::I64Const(!4095 | (width - 1)))
+            .op(Op::I64And)
+            .op(Op::I64Const(4))
+            .op(Op::I64Or)
+            .op(Op::LocalGet(group.record))
+            .op(Op::I64Load(field(
+                offset_of!(IndexedDwordWrite, tags) + 8 * index,
+                3,
+            )))
+            .op(Op::I64Ne)
+            .op(Op::BrIf(0))
+            .op(Op::LocalGet(group.record))
+            .op(Op::I32Load(field(
+                offset_of!(IndexedDwordWrite, biases) + 4 * index,
+                2,
+            )))
+            .op(Op::LocalGet(ADDRESS))
+            .op(Op::I32WrapI64)
+            .op(Op::I32Add);
+    }
+
+    fn touch_indexed_slots(&mut self, group: GuardedIndexedWrite, slots: &[usize]) {
+        let clock = field(offset_of!(IndexedReadTable, clock), 3);
+        self.op(Op::LocalGet(STORE_STATUS))
+            .op(Op::I64Load(clock))
+            .op(Op::LocalSet(ADDRESS));
+        for &slot in slots {
+            self.op(Op::LocalGet(group.record))
+                .op(Op::I32Load(field(
+                    offset_of!(IndexedDwordWrite, ages) + 4 * slot,
+                    2,
+                )))
+                .op(Op::LocalGet(ADDRESS))
+                .op(Op::I64Const(1))
+                .op(Op::I64Add)
+                .op(Op::LocalTee(ADDRESS))
+                .op(Op::I64Store(field(0, 3)));
+        }
+        self.op(Op::LocalGet(STORE_STATUS))
+            .op(Op::LocalGet(ADDRESS))
+            .op(Op::I64Store(clock));
+    }
+}
+
+fn field(offset: usize, align: u32) -> MemArg {
+    MemArg {
+        offset: offset as u64,
+        align,
+        memory_index: 0,
     }
 }

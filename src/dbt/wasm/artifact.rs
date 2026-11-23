@@ -2708,14 +2708,15 @@ fn emit_body(
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let paged_indexed_write = paged_indexed_write.map(|(shape, resolve)| {
         let record = next_local;
-        locals.push((3, ValType::I32));
-        next_local += 3;
+        locals.push((4, ValType::I32));
+        next_local += 4;
         super::paged_indexed_write::GuardedIndexedWrite {
             shape,
             resolve,
             record,
             host: record + 1,
             continuing: record + 2,
+            value: record + 3,
         }
     });
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]

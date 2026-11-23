@@ -77,6 +77,82 @@ test('an indexed write loop bypasses grouping on a large data leaf', async () =>
   }
 });
 
+test('indexed stores reuse full pages and reload the palette through a writable alias', async () => {
+  const code = 'ffc9741548ffc74883c6040fb60785c074ee8b04838906ebe7';
+  const indices = PC + 0x1000n;
+  const palette = PC + 0x2000n;
+  const output = PC + 0x4000n;
+  const ram = new Uint8Array(4096);
+  ram.fill(1);
+  ram[0] = 2;
+  ram[7] = 0;
+  const colors = new Uint8Array(4096);
+  new DataView(colors.buffer).setUint32(8, 0x13572468, true);
+
+  const prototype = Core.prototype as unknown as {
+    artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
+  };
+  const imports = prototype.artifactImports;
+  let resolutions = 0;
+  prototype.artifactImports = function (observed) {
+    const env = imports.call(this, observed);
+    const resolve = env.paged_loop_indexed_dword_write;
+    if (typeof resolve === 'function') {
+      env.paged_loop_indexed_dword_write = (...args: [bigint, bigint, bigint, number]) => {
+        resolutions++;
+        return resolve(...args);
+      };
+    }
+    return env;
+  };
+  try {
+    await usingPaged(
+      compiler,
+      {
+        code,
+        words: [
+          [0x4008n, 0xa067n],
+          [0x4010n, 0xb067n],
+          [0x4020n, 0xb067n],
+        ],
+        spans: [
+          { physical: 0xa000n, bytes: ram },
+          { physical: 0xb000n, bytes: colors },
+        ],
+      },
+      async (cpu) => {
+        const stop = PC + BigInt(code.length / 2);
+        for (let wave = 0; wave < 2; wave++) {
+          cpu.writePhysicalMemory(0xb000n, colors);
+          cpu.setState(initial(PC, { 1: 65n, 3: palette, 6: output, 7: indices - 1n }));
+          const before = resolutions;
+          const full = await cpu.run({ stop, budget: 1000n });
+          assert.equal(full.reason, 'stop');
+          const bytes = cpu.readPhysicalMemory(0xb004n, 64 * 4);
+          const values = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+          for (let index = 0; index < 64; index++) {
+            assert.equal(values.getUint32(index * 4, true), index === 7 ? 0 : 0x13572468);
+          }
+          assert.ok(resolutions - before < 12, 'stable pages resolved repeatedly');
+        }
+        assert.ok(resolutions > 0, 'the generated indexed loop ran');
+
+        cpu.setState(initial(PC, { 1: 65n, 3: palette, 6: output + 4088n, 7: indices - 1n }));
+        const fault = await cpu.run({ stop, budget: 1000n });
+        assert.equal(fault.reason, 'page-fault');
+        assert.equal(fault.state.rip, PC + 21n);
+        assert.equal(fault.retired, 18n);
+        assert.equal(
+          new DataView(cpu.readPhysicalMemory(0xbffcn, 4).buffer).getUint32(0, true),
+          0x13572468,
+        );
+      },
+    );
+  } finally {
+    prototype.artifactImports = imports;
+  }
+});
+
 test('paired dword reads keep live aliases and retire before a split-page fault', async () => {
   // DEC ECX; JZ end; ADD EAX,[RBX]; ADD R12D,[RBX+4]; MOV EDI,[RBX+4];
   // TEST EDI,EDI; JZ head; MOV [RSI],EAX; JMP head.
