@@ -10,14 +10,8 @@ import {
 } from './embedding/memory.js';
 import { SharedControl, SIGNAL, SLOT, STARTUP_WORD, nextIdentity } from './parallel/control.js';
 import { handle, type ParallelCpu } from './parallel/handle.js';
-import {
-  captureMachine,
-  findOffset,
-  requirePlane,
-  seedBacking,
-  type BackingRecord,
-  type MachineOptions,
-} from './parallel/options.js';
+import { captureMachine, type MachineOptions } from './parallel/options.js';
+import { findOffset, seedBacking, type BackingRecord } from './parallel/memory/backings.js';
 import type {
   Command,
   FromWorker,
@@ -889,9 +883,17 @@ class ParallelMachine implements Machine {
     });
   }
 
-  #read(address: bigint, length: number, physical: boolean): Promise<Uint8Array> {
+  #checkMemoryPlane(physical: boolean): void {
     this.#check();
-    requirePlane(this.#active.memoryModel, physical);
+    const model = this.#active.memoryModel;
+    if (physical ? model === 'linear' : model !== 'linear')
+      throw new TypeError(
+        physical ? 'physical or ia32e-paged memory required' : 'linear memory required',
+      );
+  }
+
+  #read(address: bigint, length: number, physical: boolean): Promise<Uint8Array> {
+    this.#checkMemoryPlane(physical);
     unsigned64(address, 'address');
     byteLength(length, 'length');
     return this.#admin(
@@ -906,8 +908,7 @@ class ParallelMachine implements Machine {
   }
 
   #write(address: bigint, bytes: Uint8Array, physical: boolean): Promise<void> {
-    this.#check();
-    requirePlane(this.#active.memoryModel, physical);
+    this.#checkMemoryPlane(physical);
     unsigned64(address, 'address');
     const input = this.#capture(() => copyMemoryInput(bytes));
     return this.#admin(async (permit) => {

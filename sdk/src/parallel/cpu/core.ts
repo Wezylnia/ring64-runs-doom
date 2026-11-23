@@ -15,7 +15,7 @@ import {
   mappingInput,
   writeInput,
 } from '../../wasm/core.js';
-import type { BackingRecord } from '../options.js';
+import type { BackingRecord } from '../memory/backings.js';
 import type { Binding, Range } from '../protocol.js';
 
 export class ParallelCore extends Core {

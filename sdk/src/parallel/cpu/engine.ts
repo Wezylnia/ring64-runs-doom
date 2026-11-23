@@ -20,7 +20,7 @@ import type {
 } from '../../embedding/memory.js';
 import type { ExecutionContext } from '../../state/system/context.js';
 import { ParallelCore } from './core.js';
-import type { BackingRecord } from '../options.js';
+import type { BackingRecord } from '../memory/backings.js';
 import type { Binding, Command } from '../protocol.js';
 
 interface EngineOptions {

@@ -17,10 +17,10 @@ import {
   type MemoryBackingInput,
   type MemoryLimits,
   type MemoryMapping,
-  type MemoryModel,
 } from '../embedding/memory.js';
 import { capturePagingState, type PagingState } from '../state/system/paging.js';
 import { sharedLayout } from './control.js';
+import { backingAllocationBytes } from './memory/backings.js';
 
 interface Common {
   compiler: CompilerSource;
@@ -93,7 +93,7 @@ export function captureMachine(options: MachineOptions) {
     limits.maxCachedArtifacts,
   );
   const arenaBytes = backings.reduce(
-    (used, { bytes }) => used + Math.ceil(bytes.length / BACKING_PAGE) * BACKING_PAGE,
+    (used, { bytes }) => used + backingAllocationBytes(bytes.length),
     0,
   );
   if (arenaBytes > layout.ramCapacity)
@@ -131,50 +131,4 @@ export function captureMachine(options: MachineOptions) {
     io,
     compiler: compiler instanceof WebAssembly.Module ? compiler : copyMemoryInput(compiler),
   };
-}
-
-export interface BackingRecord {
-  id: string;
-  length: number;
-  offset: number;
-  incarnation: bigint;
-}
-
-const BACKING_PAGE = 4096;
-
-export function findOffset(
-  layout: { ramBase: number; ramCapacity: number },
-  records: Iterable<BackingRecord>,
-  length: number,
-): number {
-  let offset = layout.ramBase;
-  const pageBytes = Math.ceil(length / BACKING_PAGE) * BACKING_PAGE;
-  for (const entry of [...records].sort((a, b) => a.offset - b.offset)) {
-    if (offset + pageBytes <= entry.offset) return offset;
-    offset = entry.offset + Math.ceil(entry.length / BACKING_PAGE) * BACKING_PAGE;
-  }
-  if (offset + pageBytes > layout.ramBase + layout.ramCapacity)
-    throw new RangeError('parallel backing arena capacity exceeded');
-  return offset;
-}
-
-export function seedBacking(
-  storeLane: (offset: number, value: bigint) => void,
-  offset: number,
-  bytes: Uint8Array,
-): void {
-  const input = new DataView(bytes.buffer, bytes.byteOffset, bytes.length);
-  let i = 0;
-  for (; i + 8 <= bytes.length; i += 8) storeLane(offset + i, input.getBigUint64(i, true));
-  if (i === bytes.length) return;
-  let tail = 0n;
-  for (let j = i; j < bytes.length; j++) tail |= BigInt(bytes[j]!) << BigInt((j - i) * 8);
-  storeLane(offset + i, tail);
-}
-
-export function requirePlane(model: MemoryModel, physical: boolean): void {
-  if (physical ? model === 'linear' : model !== 'linear')
-    throw new TypeError(
-      physical ? 'physical or ia32e-paged memory required' : 'linear memory required',
-    );
 }

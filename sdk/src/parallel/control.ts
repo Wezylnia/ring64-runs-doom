@@ -1,4 +1,5 @@
-const BACKING_PAGE = 4096;
+import { BACKING_PAGE_BYTES } from './memory/backings.js';
+
 const HEADER = 64;
 const RECORD = 128;
 const U64_MAX = (1n << 64n) - 1n;
@@ -41,8 +42,8 @@ export function sharedLayout(
 ): SharedLayout {
   if (
     !Number.isSafeInteger(ramCapacity) ||
-    ramCapacity < BACKING_PAGE ||
-    ramCapacity % BACKING_PAGE !== 0
+    ramCapacity < BACKING_PAGE_BYTES ||
+    ramCapacity % BACKING_PAGE_BYTES !== 0
   )
     throw new TypeError('sharedRamCapacity must be a positive backing page multiple');
   const guardBase = HEADER + cpus * RECORD;
