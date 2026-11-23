@@ -2,7 +2,7 @@
 set -eu
 
 if [ "$#" -ne 1 ]; then
-  printf '%s\n' 'Usage: build-guest.sh OUTPUT_DIRECTORY' >&2
+  printf '%s\n' 'Usage: build.sh OUTPUT_DIRECTORY' >&2
   exit 2
 fi
 

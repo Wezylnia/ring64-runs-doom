@@ -1,8 +1,8 @@
 import { execFileSync } from 'node:child_process';
-import { access, copyFile, cp, mkdir, mkdtemp, readdir, rename, rm } from 'node:fs/promises';
+import { access, copyFile, cp, mkdir, mkdtemp, rename, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { build } from 'esbuild';
-import { writeSitePages } from './site-pages.mjs';
+import { writeSitePages } from './pages.mjs';
 
 const root = resolve(import.meta.dirname, '../..');
 const source = join(root, 'website');
@@ -31,26 +31,22 @@ try {
   const demo = join(staged, 'wet-ink');
   await mkdir(demo, { recursive: true });
 
-  const entries = await readdir(source, { withFileTypes: true });
   await writeSitePages(source, staged);
-  for (const entry of entries) {
-    if (entry.isFile() && entry.name.endsWith('.css'))
-      await copyFile(join(source, entry.name), join(staged, entry.name));
-  }
-  if (entries.some((entry) => entry.name === 'assets' && entry.isDirectory()))
-    await cp(join(source, 'assets'), assets, { recursive: true });
+  await copyFile(join(source, 'style.css'), join(staged, 'style.css'));
+  await copyFile(join(source, 'docs/style.css'), join(staged, 'docs.css'));
+  await cp(join(source, 'assets'), assets, { recursive: true });
   await cp(join(source, 'docs/examples'), join(staged, 'docs/examples'), { recursive: true });
   await mkdir(guestAssets, { recursive: true });
 
   await copyFile(join(root, 'assets/logo.svg'), join(assets, 'logo.svg'));
   await copyFile(join(wetInk, 'grain.png'), join(demo, 'grain.png'));
-  await copyFile(join(wetInk, 'ink.c'), join(guestAssets, 'ink.c.txt'));
+  await copyFile(join(wetInk, 'guest/ink.c'), join(guestAssets, 'ink.c.txt'));
   for (const name of ['ring64.wasm', 'LICENSE', 'THIRD_PARTY_NOTICES.txt'])
     await copyFile(join(sdk, name), join(demo, name));
   await build({
     entryPoints: {
       site: join(source, 'site.ts'),
-      docs: join(source, 'docs.ts'),
+      docs: join(source, 'docs/navigation.ts'),
       'wet-ink/index': join(wetInk, 'index.ts'),
       'wet-ink/worker': join(wetInk, 'worker.ts'),
     },
@@ -62,7 +58,7 @@ try {
     format: 'esm',
     target: 'es2022',
   });
-  execFileSync('sh', [join(wetInk, 'build-guest.sh'), guestAssets], {
+  execFileSync('sh', [join(wetInk, 'guest/build.sh'), guestAssets], {
     cwd: wetInk,
     stdio: 'inherit',
   });

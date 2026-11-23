@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "build": "node scripts/build/build.mjs",
-    "site:build": "node scripts/build/build-site.mjs",
-    "site:dev": "node scripts/serve/site.mjs",
+    "site:build": "node scripts/site/build.mjs",
+    "site:dev": "node scripts/site/serve.mjs",
     "check": "node scripts/check/check.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint --deny-warnings .",
