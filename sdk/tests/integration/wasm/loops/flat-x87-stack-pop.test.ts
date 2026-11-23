@@ -4,7 +4,7 @@ import { Core } from '../../../../src/wasm/core.js';
 import { context, input, using } from '../../../../../tests/execution/modes/fixture.js';
 import { compiler } from './fixture.js';
 
-test('inline x87 stack operations preserve raw bank bits and checked retirement boundaries', async () => {
+test('inline x87 operations preserve raw bank bits and checked retirement boundaries', async () => {
   const pc = 0x1000n;
   const rawTop = 0xffffdeadbeefcafebaben;
   const original = {
@@ -89,6 +89,36 @@ test('inline x87 stack operations preserve raw bank bits and checked retirement 
       assert.equal(trapped.retired, 0n);
       assert.equal(helperCalls, 2);
       assert.deepEqual(cpu.readX87State(), pending);
+    });
+
+    // FSUB ST(0), ST(1) with TOP=7 reads physical slot 0.
+    await using(compiler, 'd8e1', context('protected'), async (cpu) => {
+      const left = 0x4000c000000000000000n;
+      const right = 0x40008000000000000000n;
+      const one = 0x3fff8000000000000000n;
+      const negativeZero = 0x80000000000000000000n;
+      for (const [source, controlWord, expected, destinationTag, calls] of [
+        [right, 0x37f, one, 0, 0],
+        [left, 0x77f, negativeZero, 1, 0],
+        [right, 0x27f, one, 0, 1],
+      ] as const) {
+        const registers = [source, ...original.registers.slice(1, 7), left];
+        const before = { ...original, registers, controlWord, tagWord: 0xbffc };
+        cpu.setState(input(pc, {}, 2n));
+        cpu.setX87State(before);
+        helperCalls = 0;
+        const result = await cpu.run({ budget: 8n, stop: pc + 2n });
+        assert.equal(result.reason, 'stop');
+        assert.equal(result.retired, 1n);
+        assert.equal(helperCalls, calls);
+        assert.deepEqual(cpu.readX87State(), {
+          ...before,
+          registers: [...registers.slice(0, 7), expected],
+          tagWord: 0x3ffc | (destinationTag << 14),
+          statusWord: 0x7d00,
+          instructionPointer: pc,
+        });
+      }
     });
 
     // FSTP ST(2) from TOP=7 writes physical slot 1. The imported source

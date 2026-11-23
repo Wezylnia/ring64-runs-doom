@@ -7,12 +7,12 @@ use std::mem::offset_of;
 use wasm_encoder::{Instruction as Wasm, MemArg};
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-use super::{ADDRESS, REMAINING, RIP, SHADOW, VALUE};
+use super::{ADDRESS, LHS, REMAINING, RESULT, RHS, RIP, SHADOW, VALUE};
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 use crate::x86::{
     instruction::{Instruction, Operation},
     x87::{
-        MEMORY_FIRST_PAIR_SEGMENT, MEMORY_PAIR_SEGMENT, Op, PAGED_LOAD_PAIR_SEGMENT,
+        Format, MEMORY_FIRST_PAIR_SEGMENT, MEMORY_PAIR_SEGMENT, Op, PAGED_LOAD_PAIR_SEGMENT,
         PAGED_STORE_PAIR_SEGMENT, REGISTER_PAIR_SEGMENT, memory_first_pair,
         register_exchange_compare, register_load_arithmetic, register_load_memory_arithmetic,
         register_store_pop,
@@ -56,13 +56,24 @@ pub(super) fn paged_x87_memory_pair(first: Instruction, second: Instruction) -> 
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-pub(super) fn inline_x87_stack_operation(op: Op) -> bool {
-    register_store_pop(op) || op.kind == Kind::Constant && op.index == 6
+pub(super) fn inline_x87_bank_operation(op: Op) -> bool {
+    register_store_pop(op)
+        || op.kind == Kind::Constant && op.index == 6
+        || op.kind == Kind::Sub && op.format == Format::Register && !op.dest_index && op.pop == 0
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+fn x87_mem(offset: usize, align: u32) -> MemArg {
+    MemArg {
+        offset: offset as u64,
+        align,
+        memory_index: 0,
+    }
 }
 
 impl Emitter {
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    fn can_inline_x87_stack_operation(&self) -> bool {
+    fn can_inline_x87_bank_operation(&self) -> bool {
         use crate::x86::context::Mode;
         self.x87_register_pairs
             && !self.observed
@@ -76,11 +87,7 @@ impl Emitter {
     fn inline_x87_stack_bank(&mut self, pc: u64, delta: i32, destination: u8) {
         use crate::x86::x87::State;
         let x87 = offset_of!(RunState, x87);
-        let mem = |offset, align| MemArg {
-            offset: offset as u64,
-            align,
-            memory_index: 0,
-        };
+        let mem = x87_mem;
         let status = mem(x87 + offset_of!(State, status_word), 1);
         let control = mem(x87 + offset_of!(State, control_word), 1);
         let tags = mem(x87 + offset_of!(State, tag_word), 1);
@@ -242,24 +249,222 @@ impl Emitter {
                 .op(Wasm::I32Shl)
                 .op(Wasm::I32Or);
         }
+        self.op(Wasm::I32Store16(tags));
+        self.inline_x87_environment(pc);
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    fn inline_x87_subtract(&mut self, pc: u64, index: u8) {
+        use crate::x86::x87::State;
+        let bank = offset_of!(RunState, x87);
+        let status = x87_mem(bank + offset_of!(State, status_word), 1);
+        let control = x87_mem(bank + offset_of!(State, control_word), 1);
+        let tags = x87_mem(bank + offset_of!(State, tag_word), 1);
+        let registers = bank + offset_of!(State, registers);
+        let significand = x87_mem(registers, 0);
+        let exponent = x87_mem(registers + 8, 0);
+
+        // Waiting instructions cannot bypass pending exceptions or empty tags.
+        // Both precision encodings with PC bit 8 set use 64 significand bits.
+        self.op(Wasm::LocalGet(0))
+            .op(Wasm::I32Load16U(status))
+            .op(Wasm::LocalTee(REASON))
+            .op(Wasm::LocalGet(0))
+            .op(Wasm::I64Load16U(control))
+            .op(Wasm::LocalTee(VALUE))
+            .op(Wasm::I32WrapI64)
+            .op(Wasm::I32Const(-1))
+            .op(Wasm::I32Xor)
+            .op(Wasm::I32And)
+            .op(Wasm::I32Const(63))
+            .op(Wasm::I32And)
+            .op(Wasm::I32Eqz)
+            .op(Wasm::LocalGet(VALUE))
+            .op(Wasm::I32WrapI64)
+            .op(Wasm::I32Const(0x100))
+            .op(Wasm::I32And)
+            .op(Wasm::I32Eqz)
+            .op(Wasm::I32Eqz)
+            .op(Wasm::I32And);
+        self.op(Wasm::LocalGet(REASON))
+            .op(Wasm::I32Const(11))
+            .op(Wasm::I32ShrU)
+            .op(Wasm::I32Const(7))
+            .op(Wasm::I32And)
+            .op(Wasm::LocalSet(STORE_STATUS));
+        for (logical, pointer, raw) in [(0, ADDRESS, LHS), (index, VALUE, RHS)] {
+            self.op(Wasm::LocalGet(0))
+                .op(Wasm::I32Load16U(tags))
+                .op(Wasm::LocalGet(STORE_STATUS));
+            if logical != 0 {
+                self.op(Wasm::I32Const(i32::from(logical)))
+                    .op(Wasm::I32Add)
+                    .op(Wasm::I32Const(7))
+                    .op(Wasm::I32And);
+            }
+            self.op(Wasm::I64ExtendI32U)
+                .op(Wasm::LocalTee(pointer))
+                .op(Wasm::I32WrapI64)
+                .op(Wasm::I32Const(1))
+                .op(Wasm::I32Shl)
+                .op(Wasm::I32ShrU)
+                .op(Wasm::I32Const(3))
+                .op(Wasm::I32And)
+                .op(Wasm::I32Const(3))
+                .op(Wasm::I32Ne)
+                .op(Wasm::I32And)
+                .op(Wasm::LocalGet(0))
+                .op(Wasm::LocalGet(pointer))
+                .op(Wasm::I32WrapI64)
+                .op(Wasm::I32Const(10))
+                .op(Wasm::I32Mul)
+                .op(Wasm::I32Add)
+                .op(Wasm::I64ExtendI32U)
+                .op(Wasm::LocalTee(pointer))
+                .op(Wasm::I32WrapI64)
+                .op(Wasm::I64Load(significand))
+                .op(Wasm::LocalSet(raw));
+        }
+        // Canonical short significands with equal signed exponents subtract
+        // exactly. The normalization is the equal-exponent case of the Rust kernel.
+        self.op(Wasm::LocalGet(LHS))
+            .op(Wasm::LocalGet(RHS))
+            .op(Wasm::I64Or)
+            .op(Wasm::I32WrapI64)
+            .op(Wasm::I32Eqz)
+            .op(Wasm::I32And)
+            .op(Wasm::LocalGet(LHS))
+            .op(Wasm::LocalGet(RHS))
+            .op(Wasm::I64And)
+            .op(Wasm::I64Const(0))
+            .op(Wasm::I64LtS)
+            .op(Wasm::I32And)
+            .op(Wasm::LocalGet(LHS))
+            .op(Wasm::LocalGet(RHS))
+            .op(Wasm::I64LtU)
+            .op(Wasm::LocalSet(REASON))
+            .op(Wasm::LocalGet(RHS))
+            .op(Wasm::LocalGet(LHS))
+            .op(Wasm::I64Sub)
+            .op(Wasm::LocalGet(LHS))
+            .op(Wasm::LocalGet(RHS))
+            .op(Wasm::I64Sub)
+            .op(Wasm::LocalGet(REASON))
+            .op(Wasm::Select)
+            .op(Wasm::LocalSet(RESULT))
+            .op(Wasm::LocalGet(ADDRESS))
+            .op(Wasm::I32WrapI64)
+            .op(Wasm::I64Load16U(exponent))
+            .op(Wasm::LocalTee(LHS))
+            .op(Wasm::LocalGet(VALUE))
+            .op(Wasm::I32WrapI64)
+            .op(Wasm::I64Load16U(exponent))
+            .op(Wasm::I64Eq)
+            .op(Wasm::I32And)
+            .op(Wasm::LocalGet(LHS))
+            .op(Wasm::I64Const(0x7fff))
+            .op(Wasm::I64And)
+            .op(Wasm::LocalTee(RHS))
+            .op(Wasm::I64Const(1))
+            .op(Wasm::I64Sub)
+            .op(Wasm::I64Const(0x7ffe))
+            .op(Wasm::I64LtU)
+            .op(Wasm::I32And)
+            .op(Wasm::LocalGet(RESULT))
+            .op(Wasm::I64Clz)
+            .op(Wasm::LocalTee(VALUE))
+            .op(Wasm::LocalGet(RHS))
+            .op(Wasm::I64LtU)
+            .op(Wasm::LocalGet(RESULT))
+            .op(Wasm::I64Eqz)
+            .op(Wasm::I32Or)
+            .op(Wasm::I32And)
+            .op(Wasm::If(BlockType::Empty));
+
+        self.op(Wasm::LocalGet(ADDRESS))
+            .op(Wasm::I32WrapI64)
+            .op(Wasm::LocalGet(RESULT))
+            .op(Wasm::LocalGet(VALUE))
+            .op(Wasm::I64Shl)
+            .op(Wasm::I64Store(significand))
+            .op(Wasm::LocalGet(ADDRESS))
+            .op(Wasm::I32WrapI64)
+            .op(Wasm::LocalGet(RHS))
+            .op(Wasm::LocalGet(VALUE))
+            .op(Wasm::I64Sub)
+            .op(Wasm::LocalGet(LHS))
+            .op(Wasm::I64Const(0x8000))
+            .op(Wasm::I64And)
+            .op(Wasm::LocalGet(REASON))
+            .op(Wasm::I64ExtendI32U)
+            .op(Wasm::I64Const(15))
+            .op(Wasm::I64Shl)
+            .op(Wasm::I64Xor)
+            .op(Wasm::I64Or)
+            .op(Wasm::LocalGet(0))
+            .op(Wasm::I64Load16U(control))
+            .op(Wasm::I64Const(0xc00))
+            .op(Wasm::I64And)
+            .op(Wasm::I64Const(0x400))
+            .op(Wasm::I64Eq)
+            .op(Wasm::I64ExtendI32U)
+            .op(Wasm::I64Const(15))
+            .op(Wasm::I64Shl)
+            .op(Wasm::LocalGet(RESULT))
+            .op(Wasm::I64Eqz)
+            .op(Wasm::I32Eqz)
+            .op(Wasm::Select)
+            .op(Wasm::I64Store16(exponent))
+            .op(Wasm::LocalGet(0))
+            .op(Wasm::LocalGet(0))
+            .op(Wasm::I32Load16U(tags))
+            .op(Wasm::I32Const(3))
+            .op(Wasm::LocalGet(STORE_STATUS))
+            .op(Wasm::I32Const(1))
+            .op(Wasm::I32Shl)
+            .op(Wasm::LocalTee(REASON))
+            .op(Wasm::I32Shl)
+            .op(Wasm::I32Const(-1))
+            .op(Wasm::I32Xor)
+            .op(Wasm::I32And)
+            .op(Wasm::LocalGet(RESULT))
+            .op(Wasm::I64Eqz)
+            .op(Wasm::LocalGet(REASON))
+            .op(Wasm::I32Shl)
+            .op(Wasm::I32Or)
+            .op(Wasm::I32Store16(tags))
+            .op(Wasm::LocalGet(0))
+            .op(Wasm::LocalGet(0))
+            .op(Wasm::I32Load16U(status))
+            .op(Wasm::I32Const(!(0x8080 | 0x200)))
+            .op(Wasm::I32And)
+            .op(Wasm::I32Store16(status));
+        self.inline_x87_environment(pc);
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    fn inline_x87_environment(&mut self, pc: u64) {
+        use crate::x86::x87::State;
         let saved_pc = if self.context.is_long64() {
             pc
         } else {
             u64::from(pc as u32)
         };
-        self.op(Wasm::I32Store16(tags))
-            .op(Wasm::LocalGet(0))
+        self.op(Wasm::LocalGet(0))
             .op(Wasm::I64Const(saved_pc as i64))
-            .op(Wasm::I64Store(mem(
-                x87 + offset_of!(State, instruction_pointer),
+            .op(Wasm::I64Store(x87_mem(
+                offset_of!(RunState, x87) + offset_of!(State, instruction_pointer),
                 3,
             )))
             .op(Wasm::LocalGet(0))
             .op(Wasm::I64Const(0))
-            .op(Wasm::I64Store(mem(offset_of!(RunState, target), 3)))
+            .op(Wasm::I64Store(x87_mem(offset_of!(RunState, target), 3)))
             .op(Wasm::LocalGet(0))
             .op(Wasm::I32Const(Segment::Cs as i32))
-            .op(Wasm::I32Store(mem(offset_of!(RunState, fault_segment), 2)))
+            .op(Wasm::I32Store(x87_mem(
+                offset_of!(RunState, fault_segment),
+                2,
+            )))
             .op(Wasm::I32Const(0))
             .op(Wasm::LocalSet(REASON));
     }
@@ -304,7 +509,7 @@ impl Emitter {
             && a.op.index == 1
             && register_store_pop(b.op)
             && b.op.index == 0
-            && self.can_inline_x87_stack_operation()
+            && self.can_inline_x87_bank_operation()
         {
             self.inline_x87_stack_bank(second.pc, 2, 1);
             self.op(Wasm::I64Const(second.next_pc as i64))
@@ -401,14 +606,13 @@ impl Emitter {
     ) {
         let operation = instruction.op;
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-        let inlined =
-            inline_x87_stack_operation(operation) && self.can_inline_x87_stack_operation();
+        let inlined = inline_x87_bank_operation(operation) && self.can_inline_x87_bank_operation();
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         if inlined {
-            if operation.kind == Kind::Constant {
-                self.inline_x87_stack_bank(pc, -1, 0);
-            } else {
-                self.inline_x87_stack_bank(pc, 1, operation.index);
+            match operation.kind {
+                Kind::Constant => self.inline_x87_stack_bank(pc, -1, 0),
+                Kind::Sub => self.inline_x87_subtract(pc, operation.index),
+                _ => self.inline_x87_stack_bank(pc, 1, operation.index),
             }
             self.op(Wasm::Else);
         }
