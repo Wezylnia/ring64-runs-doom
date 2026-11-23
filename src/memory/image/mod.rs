@@ -287,7 +287,7 @@ impl Image {
             .map_err(|_| MemoryError::Capacity("backing allocation refused"))?;
         self.backings.push(Backing {
             id,
-            extent: memory64::Extent::new(length, initial, self.limits.guest_arena_start())?,
+            extent: memory64::Extent::new(length, initial, self.limits.guest_arena_alignment())?,
             incarnation: Rc::new(()),
             has_sources: false,
         });

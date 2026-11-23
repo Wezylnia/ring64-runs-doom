@@ -23,16 +23,16 @@ pub(crate) fn use_direct_offsets() -> bool {
 }
 
 impl super::MemoryLimits {
-    pub(super) fn guest_arena_start(self) -> u32 {
-        // Keep ordinary backing alignment when reserving the null address.
-        const FIRST_OFFSET: u32 = 16;
-        // First-fit skips at most one gap per live backing, each smaller than
-        // the requested extent. This bounds the arena end even after churn.
+    pub(super) fn guest_arena_alignment(self) -> u32 {
+        const ALIGNMENT: u32 = 16;
+        // First-fit can skip one gap per live backing. Bound each placement by
+        // the logical byte budget plus its worst-case alignment padding.
         let bound = self
             .max_backing_bytes
+            .saturating_add(u64::from(ALIGNMENT - 1))
             .saturating_mul(u64::from(self.max_backings));
-        if bound <= u64::from(u32::MAX - FIRST_OFFSET) {
-            FIRST_OFFSET
+        if bound <= u64::from(u32::MAX - ALIGNMENT) {
+            ALIGNMENT
         } else {
             0
         }
@@ -41,7 +41,7 @@ impl super::MemoryLimits {
 
 impl super::Image {
     pub(crate) fn configure_guest_windows(&self) {
-        DIRECT_OFFSETS.set(self.limits.guest_arena_start() != 0);
+        DIRECT_OFFSETS.set(self.limits.guest_arena_alignment() != 0);
     }
 }
 

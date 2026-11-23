@@ -24,3 +24,29 @@ test(
     assert.throws(bindGuestMemory64, /memory64.*multi-memory/);
   },
 );
+
+test(
+  'bounded memory64 backings stay aligned when first-fit reuses a hole',
+  {
+    skip: !supportsMemory64(),
+  },
+  () => {
+    const { allocate, release, ram } = bindGuestMemory64().guest64;
+    const code = allocate(89n, 16, 16);
+    const data = allocate(7n, 16, 16);
+    const neighbor = allocate(31n, 16, 16);
+    assert.equal(data % 16n, 0n);
+    assert.equal(neighbor % 16n, 0n);
+    const bytes = new Uint8Array(ram.buffer);
+    bytes.fill(0xcc, Number(data), Number(data) + 7);
+    bytes[Number(neighbor)] = 0xab;
+    release(data);
+    const reused = allocate(7n, 16, 16);
+    assert.equal(reused, data);
+    assert.deepEqual(bytes.slice(Number(data), Number(data) + 7), new Uint8Array(7));
+    assert.equal(bytes[Number(neighbor)], 0xab);
+    release(neighbor);
+    release(reused);
+    release(code);
+  },
+);
