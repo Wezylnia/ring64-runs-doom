@@ -2814,6 +2814,7 @@ fn emit_body(
         && optional.indexed_scalar_read
         && unit.instructions.iter().any(|instruction| {
             super::instruction::indexed_scalar_read(instruction.operation)
+                || super::vector::indexed_vector_operand(instruction.operation)
                 || indexed_store_fill.is_some()
                     && super::instruction::indexed_scalar_write(instruction.operation, unit.sampled)
         }))

@@ -1,4 +1,6 @@
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+use super::instruction::IndexedOperand;
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 use super::memory::{DirectOperand, PagedReadWindow};
 use super::{ADDRESS, Emitter, REASON, RHS, STORE_STATUS};
 use crate::dbt::unit::Unit;
@@ -156,7 +158,55 @@ pub(super) fn unaligned_store_address(operation: Operation) -> Option<Address> {
     }
 }
 
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+pub(super) fn indexed_vector_operand(operation: Operation) -> bool {
+    matches!(
+        operation,
+        Operation::Vector(VectorInstruction::Move {
+            operand: VectorOperand::Memory(Address {
+                segment: crate::x86::context::Segment::Ds | crate::x86::context::Segment::Ss,
+                ..
+            }),
+            bytes: 16,
+            ..
+        })
+    )
+}
+
 impl Emitter {
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn uses_indexed_vector_operand(&self, operation: Operation) -> bool {
+        self.indexed_scalar_stamp.is_some()
+            && !self.guarded_paged_lap
+            && indexed_vector_operand(operation)
+    }
+
+    fn vector_helper_width(&self, bytes: u8) -> i32 {
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if bytes == 16 && self.uses_indexed_vector_operand(self.current_operation) {
+            return (u32::from(bytes) | crate::embedding::layout::paging::INDEXED_VECTOR_ACCESS)
+                as i32;
+        }
+        i32::from(bytes)
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    fn indexed_vector_host(&mut self, aligned: bool, operand: IndexedOperand) {
+        if aligned {
+            // Let the checked access report a misaligned operand before touching its data leaf.
+            self.op(Op::LocalGet(ADDRESS))
+                .op(Op::I32WrapI64)
+                .op(Op::I32Const(15))
+                .op(Op::I32And)
+                .op(Op::I32Eqz)
+                .op(Op::If(BlockType::Result(ValType::I32)));
+        }
+        self.indexed_read_host(self.indexed_paged_read.unwrap(), 16, false, operand);
+        if aligned {
+            self.op(Op::Else).op(Op::I32Const(0)).op(Op::End);
+        }
+    }
+
     pub(super) fn xmm(&self, bank: u8) -> u32 {
         self.vector_registers[usize::from(bank)].expect("selected XMM bank")
     }
@@ -212,6 +262,8 @@ impl Emitter {
         }
         self.address(address, next_pc);
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        let mut rearm = None;
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         if bytes == 16
             && !aligned
             && address.segment == crate::x86::context::Segment::Ds
@@ -244,11 +296,32 @@ impl Emitter {
             if let Some((ready, order)) = self.paged_read_rearm
                 && order.position(self.current_index).is_some()
             {
-                self.op(Op::LocalTee(ADDRESS));
-                self.vector_load_offset(bytes, aligned, exit_depth);
-                self.rearm_paged_access(bytes, ready);
-                return;
+                rearm = Some(ready);
             }
+        }
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if bytes == 16 && self.uses_indexed_vector_operand(self.current_operation) {
+            self.op(Op::LocalSet(ADDRESS));
+            self.indexed_vector_host(aligned, IndexedOperand::Read);
+            self.op(Op::LocalTee(STORE_STATUS))
+                .op(Op::If(BlockType::Result(ValType::V128)))
+                .op(Op::LocalGet(STORE_STATUS))
+                .op(Op::V128Load(memory(0)))
+                .op(Op::Else)
+                .op(Op::LocalGet(ADDRESS));
+            self.vector_load_offset(bytes, aligned, exit_depth + 1);
+            self.op(Op::End);
+            if let Some(ready) = rearm {
+                self.rearm_paged_access(bytes, ready);
+            }
+            return;
+        }
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if let Some(ready) = rearm {
+            self.op(Op::LocalTee(ADDRESS));
+            self.vector_load_offset(bytes, aligned, exit_depth);
+            self.rearm_paged_access(bytes, ready);
+            return;
         }
         #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
         if bytes == 4 && !aligned {
@@ -345,6 +418,10 @@ impl Emitter {
     }
 
     fn vector_load_offset(&mut self, bytes: u8, aligned: bool, exit_depth: u32) {
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if self.uses_indexed_vector_operand(self.current_operation) {
+            self.require_checked_access_finish();
+        }
         let helper = self.vector_load.expect("vector load import");
         let segment = self.segment as i32;
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -357,7 +434,7 @@ impl Emitter {
         if rearm.is_some() {
             self.op(Op::LocalTee(ADDRESS));
         }
-        self.op(Op::I32Const(i32::from(bytes)))
+        self.op(Op::I32Const(self.vector_helper_width(bytes)))
             .op(Op::I32Const(segment))
             .op(Op::I32Const(if aligned { 16 } else { 1 }))
             .op(Op::Call(helper))
@@ -435,6 +512,24 @@ impl Emitter {
                 return;
             }
         }
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if bytes == 16 && self.uses_indexed_vector_operand(self.current_operation) {
+            self.address(address, next_pc);
+            self.op(Op::LocalSet(ADDRESS));
+            self.indexed_vector_host(aligned, IndexedOperand::Write);
+            self.op(Op::LocalTee(STORE_STATUS))
+                .op(Op::If(BlockType::Empty))
+                .op(Op::LocalGet(STORE_STATUS))
+                .op(Op::LocalGet(value))
+                .op(Op::V128Store(memory(0)))
+                .op(Op::I32Const(1))
+                .op(Op::LocalSet(STORE_STATUS))
+                .op(Op::Else);
+            self.vector_store_scratch(value);
+            self.vector_store_offset(bytes, aligned, exit_depth + 1);
+            self.op(Op::End);
+            return;
+        }
         self.vector_store_scratch(value);
         self.address(address, next_pc);
         self.op(Op::LocalSet(ADDRESS));
@@ -448,10 +543,15 @@ impl Emitter {
     }
 
     fn vector_store_offset(&mut self, bytes: u8, aligned: bool, exit_depth: u32) {
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if self.uses_indexed_vector_operand(self.current_operation) {
+            self.require_checked_access_finish();
+        }
         let helper = self.vector_store.expect("vector store import");
         let segment = self.segment as i32;
+        let width = self.vector_helper_width(bytes);
         self.op(Op::LocalGet(ADDRESS))
-            .op(Op::I32Const(i32::from(bytes)))
+            .op(Op::I32Const(width))
             .op(Op::I32Const(segment))
             .op(Op::I32Const(if aligned { 16 } else { 1 }))
             .op(Op::LocalGet(0))

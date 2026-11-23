@@ -741,3 +741,18 @@ fn indexed_read_collision_and_slot_reuse_preserve_translation_identity() {
         new_id
     );
 }
+
+#[cfg(not(feature = "parallel"))]
+#[test]
+fn indexed_page_epoch_wrap_retires_both_access_banks() {
+    let mut table = IndexedReadTable::default();
+    table.entries[0] = IndexedReadEntry::new(0, 0, 0, 4096, false);
+    table.writes[0] = IndexedReadEntry::new(0, 0, 0, 4096, true);
+
+    for _ in 0..1024 {
+        table.retire_pages();
+    }
+
+    assert_eq!(table.epoch, 0);
+    assert_eq!((table.entries[0].tag, table.writes[0].tag), (0, 0));
+}

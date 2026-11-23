@@ -65,7 +65,7 @@ impl Emitter {
         }
     }
 
-    pub(super) fn can_complete_paged_write_quietly(&self, operation: Operation) -> bool {
+    pub(super) fn can_complete_paged_access_quietly(&self, operation: Operation) -> bool {
         #[cfg(any(feature = "parallel", not(target_arch = "wasm32")))]
         {
             let _ = operation;
@@ -73,6 +73,9 @@ impl Emitter {
         }
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         {
+            if self.uses_indexed_vector_operand(operation) {
+                return self.paged_quiet_completion;
+            }
             self.paged_quiet_completion
                 && self.context.is_long64()
                 && !self.sampled_region
@@ -97,15 +100,15 @@ impl Emitter {
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     pub(super) fn can_reuse_paged_rmw_fetch(&self, next_pc: u64) -> bool {
         self.uses_indexed_scalar_rmw()
-            && self.can_complete_paged_write_quietly(self.current_operation)
+            && self.can_complete_paged_access_quietly(self.current_operation)
             && next_pc > self.current_pc
             && (next_pc - 1) >> 12 == self.current_pc >> 12
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) fn require_checked_store_finish(&mut self) {
-        if self.can_complete_paged_write_quietly(self.current_operation) {
-            // Only a direct write can keep begin's quiet completion proof.
+    pub(super) fn require_checked_access_finish(&mut self) {
+        if self.can_complete_paged_access_quietly(self.current_operation) {
+            // A checked operand can invalidate code or record a data breakpoint.
             let result = self.boundary_result.unwrap();
             self.op(Op::I32Const(0)).op(Op::LocalSet(result));
         }
@@ -248,7 +251,7 @@ impl Emitter {
         }
         use crate::embedding::layout::debug::CONTINUE_ACTIVE;
         let quiet_registers = self.can_complete_paged_quietly(operation);
-        let quiet_completion = quiet_registers || self.can_complete_paged_write_quietly(operation);
+        let quiet_completion = quiet_registers || self.can_complete_paged_access_quietly(operation);
         let page = self.current_pc & !4095;
         let retained = self.quiet_fetch_page.filter(|_| {
             quiet_registers && next_pc > self.current_pc && (next_pc - 1) & !4095 == page
@@ -302,6 +305,11 @@ impl Emitter {
         if self.uses_indexed_scalar_read(operation) || self.uses_indexed_scalar_write(operation) {
             self.op(Op::I32Const(
                 crate::embedding::layout::debug::PAGED_INDEXED_SCALAR_READ as i32,
+            ))
+            .op(Op::I32Or);
+        } else if self.uses_indexed_vector_operand(operation) {
+            self.op(Op::I32Const(
+                crate::embedding::layout::debug::PAGED_INDEXED_VECTOR as i32,
             ))
             .op(Op::I32Or);
         }
@@ -385,7 +393,7 @@ impl Emitter {
         let result = self.boundary_result.unwrap();
         let quiet_completion = completed
             && (self.can_complete_paged_quietly(self.current_operation)
-                || self.can_complete_paged_write_quietly(self.current_operation));
+                || self.can_complete_paged_access_quietly(self.current_operation));
         if quiet_completion {
             self.op(Op::LocalGet(result))
                 .op(Op::I32Const(

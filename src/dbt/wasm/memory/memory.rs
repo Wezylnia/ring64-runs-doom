@@ -1804,7 +1804,7 @@ impl Emitter {
             self.op(Op::LocalTee(ADDRESS));
         }
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-        self.require_checked_store_finish();
+        self.require_checked_access_finish();
         let bytes = i32::from(width.bytes());
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         let store_width = if self.paged
@@ -1873,7 +1873,7 @@ impl Emitter {
         };
         if self.guarded_paged_lap
             || !self.retouch_prefix_fetch
-            || !self.can_complete_paged_write_quietly(instruction.operation)
+            || !self.can_complete_paged_access_quietly(instruction.operation)
             || instruction.next_pc <= instruction.pc
             || (instruction.next_pc - 1) >> 12 != instruction.pc >> 12
         {

@@ -1866,11 +1866,15 @@ pub extern "C" fn core_paged_debug_begin(pc: u64, flags: u64, shadow: u32) -> i3
         let core = bridge.core.as_mut().unwrap();
         core.clear_paged_instruction();
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-        let (indexed_scalar, shadow) = {
-            use crate::embedding::layout::debug::PAGED_INDEXED_SCALAR_READ;
+        let (indexed_data, indexed_vector, shadow) = {
+            use crate::embedding::layout::debug::{
+                PAGED_INDEXED_SCALAR_READ, PAGED_INDEXED_VECTOR,
+            };
+            let indexed_bits = PAGED_INDEXED_SCALAR_READ | PAGED_INDEXED_VECTOR;
             (
-                shadow & PAGED_INDEXED_SCALAR_READ != 0,
-                shadow & !PAGED_INDEXED_SCALAR_READ,
+                shadow & indexed_bits != 0,
+                shadow & PAGED_INDEXED_VECTOR != 0,
+                shadow & !indexed_bits,
             )
         };
         #[cfg(not(feature = "parallel"))]
@@ -1887,10 +1891,15 @@ pub extern "C" fn core_paged_debug_begin(pc: u64, flags: u64, shadow: u32) -> i3
             return debug;
         }
         #[cfg(not(feature = "parallel"))]
-        if core.warm_guarded_code_page(pc, !near_transfer) {
+        let integer_only = !near_transfer;
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        let integer_only =
+            integer_only && !(indexed_vector && core.numeric_admission_unrestricted());
+        #[cfg(not(feature = "parallel"))]
+        if core.warm_guarded_code_page(pc, integer_only) {
             core.reconcile_translation_changes();
             #[cfg(target_arch = "wasm32")]
-            if indexed_scalar {
+            if indexed_data {
                 if core.debug_completion_quiet() {
                     core.admit_indexed_paged_reads();
                     if core.state.indexed_paged_reads != 0 {
@@ -1911,7 +1920,7 @@ pub extern "C" fn core_paged_debug_begin(pc: u64, flags: u64, shadow: u32) -> i3
             return 0;
         }
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-        if indexed_scalar {
+        if indexed_data {
             core.state.indexed_paged_reads = 0;
         }
         #[cfg(not(feature = "parallel"))]

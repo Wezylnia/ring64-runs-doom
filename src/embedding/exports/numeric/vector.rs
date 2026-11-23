@@ -1,5 +1,19 @@
 use super::*;
 
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+fn indexed_vector_width<const OBSERVED: bool, const PAGED: bool>(width: u32) -> (u32, bool) {
+    use crate::embedding::layout::paging::INDEXED_VECTOR_ACCESS;
+    let indexed = OBSERVED && PAGED && width & INDEXED_VECTOR_ACCESS != 0;
+    (
+        if indexed {
+            width & !INDEXED_VECTOR_ACCESS
+        } else {
+            width
+        },
+        indexed,
+    )
+}
+
 pub(super) struct AlignmentFault {
     pub(super) segment: Segment,
     pub(super) offset: u64,
@@ -106,6 +120,8 @@ fn core_vector_load_impl<const OBSERVED: bool, const PAGED: bool>(
     segment: u32,
     alignment: u32,
 ) -> u32 {
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let (width, indexed) = indexed_vector_width::<OBSERVED, PAGED>(width);
     BRIDGE.with_borrow_mut(|bridge| {
         let core = bridge.core.as_mut().unwrap();
         let Some(address) = core.vector_address(offset, width, segment, alignment, Access::Read)
@@ -130,6 +146,10 @@ fn core_vector_load_impl<const OBSERVED: bool, const PAGED: bool>(
             Ok(bytes) => unsafe {
                 if OBSERVED {
                     core.debug_operand(address, width, Access::Read);
+                }
+                #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+                if indexed {
+                    core.remember_indexed_scalar_read(address, width);
                 }
                 let state = &mut *core.state.get();
                 state.vector_scratch = bytes;
@@ -209,6 +229,8 @@ fn core_vector_store_impl<const OBSERVED: bool, const PAGED: bool>(
     alignment: u32,
     value_ptr: u32,
 ) -> i32 {
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let (width, indexed) = indexed_vector_width::<OBSERVED, PAGED>(width);
     BRIDGE.with_borrow_mut(|bridge| {
         let core = bridge.core.as_mut().unwrap();
         let bytes = unsafe {
@@ -245,6 +267,10 @@ fn core_vector_store_impl<const OBSERVED: bool, const PAGED: bool>(
             Ok(()) => {
                 if OBSERVED {
                     core.debug_operand(address, width, Access::Write);
+                }
+                #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+                if indexed {
+                    core.remember_indexed_scalar_write(address, width);
                 }
                 if core.image.active_changed() { 2 } else { 1 }
             }
