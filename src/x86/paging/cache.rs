@@ -1252,7 +1252,7 @@ impl Cache {
         keys: &ProtectionKeys,
         width: u32,
         widths: [u32; 4],
-        admit: impl FnOnce(u64, u64) -> Option<T>,
+        admit: impl FnOnce(u64, u64, [usize; 2]) -> Option<T>,
     ) -> Option<T> {
         let mut entries = self.entries.borrow_mut();
         let fetch = entries
@@ -1262,7 +1262,10 @@ impl Cache {
             entries.retained_copy_span::<false>(state, read, keys, width)?,
             entries.retained_copy_span::<true>(state, write, keys, width)?,
         ];
-        let value = admit(spans[0].physical, spans[1].physical)?;
+        let last = spans
+            .each_ref()
+            .map(|span| span.split.map_or(span.first, |(_, last)| last));
+        let value = admit(spans[0].physical, spans[1].physical, last)?;
         // Each admitted load and store touches its operand leaves before the next fetch.
         let mut offset = 0;
         for part in widths {

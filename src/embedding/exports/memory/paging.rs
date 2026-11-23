@@ -1237,7 +1237,53 @@ pub extern "C" fn core_paged_loop_copy_window(source: u64, destination: u64, wid
                 class,
             };
             let mut indexed = [None; 2];
+            let mut readable_destination = false;
             let mut resolve = |image: &mut Image| {
+                let mut admit =
+                    |[(read, read_remaining), (write, write_remaining)]: [(u64, u64); 2],
+                     [read_slot, write_slot]: [usize; 2]| {
+                        let (read_span, write_span) =
+                            image.physical_direct_copy_spans(read, write, width)?;
+                        let read_offset = (read - read_span.base) as u32;
+                        let write_offset = (write - write_span.base) as u32;
+                        if populate && core.state.indexed_paged_reads != 0 {
+                            let end = width - 1;
+                            readable_destination = read_span.base == write_span.base;
+                            indexed = [
+                                indexed_copy_page(
+                                    source + u64::from(end),
+                                    read_offset + end,
+                                    read_span,
+                                    read_slot,
+                                ),
+                                indexed_copy_page(
+                                    destination + u64::from(end),
+                                    write_offset + end,
+                                    write_span,
+                                    write_slot,
+                                ),
+                            ];
+                        }
+                        // Only the proved group may cross a page. The next lap can
+                        // request a fresh window using the separately indexed end pages.
+                        let length = if split {
+                            width
+                        } else {
+                            page_remaining(source)
+                                .min(page_remaining(destination))
+                                .min(read_remaining)
+                                .min(write_remaining)
+                                .min(u64::from(read_span.length - read_offset))
+                                .min(u64::from(write_span.length - write_offset))
+                                as u32
+                        };
+                        debug_assert!(length >= width);
+                        Some((
+                            read_span.host + read_offset,
+                            write_span.host + write_offset,
+                            length,
+                        ))
+                    };
                 if split {
                     core.translation_cache.copy_split_pair_then_fetch(
                         paging,
@@ -1245,14 +1291,8 @@ pub extern "C" fn core_paged_loop_copy_window(source: u64, destination: u64, wid
                         &state.protection_keys,
                         width,
                         parts,
-                        |physical_read, physical_write| {
-                            let source =
-                                image.physical_direct_read_pointer(physical_read, width)?;
-                            let destination =
-                                image.physical_direct_write_span(physical_write, width)?;
-                            let offset = (physical_write - destination.base) as u32;
-                            // No subsequent range inherits a split proof.
-                            Some((source, destination.host + offset, width))
+                        |read, write, slots| {
+                            admit([(read, u64::from(width)), (write, u64::from(width))], slots)
                         },
                     )
                 } else {
@@ -1261,38 +1301,7 @@ pub extern "C" fn core_paged_loop_copy_window(source: u64, destination: u64, wid
                         [read, write],
                         &state.protection_keys,
                         width,
-                        |[(read, read_remaining), (write, write_remaining)],
-                         [read_slot, write_slot]| {
-                            let (read_span, write_span) =
-                                image.physical_direct_copy_spans(read, write, width)?;
-                            let read_offset = (read - read_span.base) as u32;
-                            let write_offset = (write - write_span.base) as u32;
-                            if populate && core.state.indexed_paged_reads != 0 {
-                                indexed = [
-                                    indexed_copy_page(source, read_offset, read_span, read_slot),
-                                    indexed_copy_page(
-                                        destination,
-                                        write_offset,
-                                        write_span,
-                                        write_slot,
-                                    ),
-                                ];
-                            }
-                            // A 4 KiB window also bounds potential shadowing by overlapping local leaves.
-                            let length = page_remaining(source)
-                                .min(page_remaining(destination))
-                                .min(read_remaining)
-                                .min(write_remaining)
-                                .min(u64::from(read_span.length - read_offset))
-                                .min(u64::from(write_span.length - write_offset))
-                                as u32;
-                            debug_assert!(length >= width);
-                            Some((
-                                read_span.host + read_offset,
-                                write_span.host + write_offset,
-                                length,
-                            ))
-                        },
+                        admit,
                     )
                 }
             };
@@ -1327,13 +1336,24 @@ pub extern "C" fn core_paged_loop_copy_window(source: u64, destination: u64, wid
                     )?;
                     resolve(&mut core.image)
                 })?;
+            if let Some((slot, page, host)) = indexed[1] {
+                core.translation_cache.remember_indexed_write(
+                    slot,
+                    page,
+                    host,
+                    readable_destination,
+                );
+                // Both ranges share a readable RAM mapping, and a permitted
+                // x86 data write also permits reading at the same privilege.
+                if readable_destination {
+                    core.translation_cache
+                        .remember_indexed_read(slot, page, host);
+                }
+            }
+            // Keep the source on a direct-mapped read-index collision.
             if let Some((slot, page, host)) = indexed[0] {
                 core.translation_cache
                     .remember_indexed_read(slot, page, host);
-            }
-            if let Some((slot, page, host)) = indexed[1] {
-                core.translation_cache
-                    .remember_indexed_write(slot, page, host, false);
             }
             let scratch = &mut state.vector_scratch;
             scratch[..4].copy_from_slice(&source_host.to_le_bytes());

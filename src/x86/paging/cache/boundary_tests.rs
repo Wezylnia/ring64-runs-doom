@@ -1060,9 +1060,9 @@ fn a_split_destination_fills_only_after_its_prefix_and_walk_are_admitted() {
         )
         .unwrap();
     assert_eq!(
-        cache.copy_split_pair_then_fetch(&state, [read, write], keys, 32, [16; 4], |a, b| Some((
-            a, b
-        ))),
+        cache.copy_split_pair_then_fetch(&state, [read, write], keys, 32, [16; 4], |a, b, _| Some(
+            (a, b)
+        )),
         Some((0xa234, 0xbff8))
     );
 }
@@ -1245,7 +1245,7 @@ fn split_copy_preflights_rights_and_keeps_ordered_recency() {
             keys,
             32,
             [16; 4],
-            |_, _| None::<()>
+            |_, _, _| None::<()>
         ),
         None
     );
@@ -1257,8 +1257,9 @@ fn split_copy_preflights_rights_and_keeps_ordered_recency() {
             keys,
             32,
             [16; 4],
-            |source, destination| {
+            |source, destination, last| {
                 assert_eq!((source, destination), (0xaff8, 0xcff0));
+                assert_eq!(last, [1, 3]);
                 Some(())
             }
         ),
@@ -1273,9 +1274,14 @@ fn split_copy_preflights_rights_and_keeps_ordered_recency() {
 
     // The last two-byte write starts on the second page after the last read.
     assert_eq!(
-        cache.copy_split_pair_then_fetch(&state, [read, write], keys, 18, [8, 8, 2, 0], |_, _| {
-            Some(())
-        }),
+        cache.copy_split_pair_then_fetch(
+            &state,
+            [read, write],
+            keys,
+            18,
+            [8, 8, 2, 0],
+            |_, _, _| { Some(()) }
+        ),
         Some(())
     );
     {
@@ -1297,7 +1303,7 @@ fn split_copy_preflights_rights_and_keeps_ordered_recency() {
             keys,
             32,
             [16; 4],
-            |_, _| -> Option<()> {
+            |_, _, _| -> Option<()> {
                 unreachable!("a denied second destination leaf cannot reach backing admission")
             }
         ),
