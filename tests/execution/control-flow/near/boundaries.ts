@@ -30,6 +30,50 @@ function segmentFault(result: RunResult, expected: SegmentFault): void {
 export function boundaryScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [
     {
+      name: 'flat long-mode regions preserve high return addresses and validate indirect targets',
+      async run() {
+        const pc = 0xffff800000001000n;
+        const handler = pc + 32n;
+        const stack = pc + 0x1040n;
+        // CALL RAX; DEC ECX; JNZ start. Handler: ADD EBX,1; RET.
+        const code = 'ffd0ffc975fa90'.padEnd(64, 'cc') + '83c301c3';
+        await using(
+          compiler,
+          code,
+          LONG,
+          async (cpu) => {
+            const start = input(pc, { 0: handler, 1: 2048n, 3: 0n, 4: stack }, 2n);
+            const execute = async (increment: bigint) => {
+              cpu.setState(start);
+              const result = await cpu.run({ stop: pc + 6n, budget: 12000n });
+              equal(result.reason, 'stop', 'all high-address calls returned');
+              equal(result.retired, 10240n, 'completed calls, handler and loop');
+              equal(result.state.registers[3], 2048n * increment, 'executed current handler');
+              equal(result.state.registers[4], stack, 'restored the full stack pointer');
+              memory(cpu, stack - 8n, bytes(pc + 2n, 8));
+            };
+            await execute(1n);
+            await execute(1n);
+            check(
+              cpu
+                .inspectTranslations()
+                .some((unit) => unit.entries.includes(handler) && unit.entries.includes(pc + 2n)),
+              'the caller and indirect target share a compiled region',
+            );
+            cpu.writeMemory(handler + 2n, Uint8Array.of(3));
+            await execute(3n);
+            cpu.setState(input(pc, { 0: 0x800000000000n, 4: stack }, 2n));
+            const refused = await cpu.run({ budget: 2n });
+            equal(refused.reason, 'target-fault', 'a noncanonical target still faults');
+            equal(refused.retired, 0n, 'the failing call does not retire');
+            equal(refused.state.registers[4], stack, 'the failing call does not push');
+            memory(cpu, stack - 8n, bytes(pc + 2n, 8));
+          },
+          { entry: pc, codeWrite: true, data: [{ base: stack - 64n, bytes: '00'.repeat(64) }] },
+        );
+      },
+    },
+    {
       name: 'guarded integer reads publish preceding arithmetic flags on direct-span miss and segment failure',
       async run() {
         const code = '0fb60683c0010fb6560183c2010fb65e020fb67e0383c60439ce75e490';

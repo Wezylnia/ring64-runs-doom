@@ -22,11 +22,7 @@ fn trace_profile(core: &Core) -> Option<Option<State>> {
         Some(paging) if paging.cr0 & (1 << 31) != 0 && core.context.is_long64() => {
             Some(Some(paging))
         }
-        None if core.context.mode() == crate::x86::context::Mode::Protected
-            && core.context.nonwrapping_code32_fetch(0, 1) == Some(0) =>
-        {
-            Some(None)
-        }
+        None if core.region_code_is_flat(0) => Some(None),
         _ => None,
     }
 }

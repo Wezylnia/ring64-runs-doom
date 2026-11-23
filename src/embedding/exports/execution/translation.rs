@@ -1,6 +1,16 @@
 use crate::embedding::exports::*;
 
 impl Core {
+    #[cfg(not(feature = "parallel"))]
+    pub(super) fn region_code_is_flat(&self, pc: u64) -> bool {
+        if self.context.is_long64() {
+            crate::memory::canonical48(pc)
+        } else {
+            self.context.mode() == crate::x86::context::Mode::Protected
+                && self.context.nonwrapping_code32_fetch(pc, 1) == Some(pc)
+        }
+    }
+
     fn owner_alive(&self, owner: u64) -> bool {
         self.translation_owners.contains(owner) && self.image.owner_valid(owner)
     }
@@ -237,8 +247,7 @@ pub extern "C" fn core_supports_linear_entries() -> i32 {
         let core = bridge.core.as_ref().unwrap();
         i32::from(
             core.paging.is_none()
-                && core.context.mode() == crate::x86::context::Mode::Protected
-                && core.context.nonwrapping_code32_fetch(0, 1) == Some(0)
+                && core.region_code_is_flat(0)
                 && !core.image.has_mmio()
                 && !core.io_present,
         )
@@ -317,15 +326,9 @@ pub(in crate::embedding::exports) fn compile_artifact(
         let observed = core.boundary_observed();
         #[cfg(not(feature = "parallel"))]
         if !matches!(entries, dbt::EntrySelection::Discover([])) {
-            let supported = if let Some(state) = core.paging {
-                state.cr0 & (1 << 31) != 0
-                    && (core.context.is_long64()
-                        || core.context.mode() == crate::x86::context::Mode::Protected
-                            && core.context.nonwrapping_code32_fetch(pc, 1) == Some(pc))
-            } else {
-                core.context.mode() == crate::x86::context::Mode::Protected
-                    && core.context.nonwrapping_code32_fetch(pc, 1) == Some(pc)
-                    && !observed
+            let supported = core.region_code_is_flat(pc) && match core.paging {
+                Some(state) => state.cr0 & (1 << 31) != 0,
+                None => !observed,
             };
             if !supported || core.image.has_mmio() || core.io_present {
                 return RESOURCE;
