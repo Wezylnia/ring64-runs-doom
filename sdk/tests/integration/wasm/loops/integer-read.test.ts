@@ -260,6 +260,36 @@ function countGuardedDwordReads(t: TestContext) {
   return () => slowReads;
 }
 
+test('a warm two-page dword range rejects a different high linear address', async (t) => {
+  const slowReads = countGuardedDwordReads(t);
+  const data = 0x500000n;
+  const high = data + 0x1_0000_0000n;
+  const bytes = new Uint8Array(8192);
+  new DataView(bytes.buffer).setUint32(0, 1024, true);
+  // Alternate between two adjacent pages, then replace RDI with its unmapped high alias.
+  const changeBase = '4889f7b91800000031c0ebe4';
+  await usingPaged(
+    compiler,
+    {
+      code: pagedDwordLoop + changeBase,
+      words: [
+        [0x4800n, 0xa067n],
+        [0x4808n, 0xb067n],
+      ],
+      spans: [{ physical: 0xa000n, bytes }],
+    },
+    async (cpu) => {
+      cpu.setState(initial(PC, { 0: 0n, 1: 24n, 6: high, 7: data }));
+      const result = await cpu.run({ budget: 400n });
+      assert.equal(result.reason, 'page-fault');
+      assert.equal(result.pageFault?.address, high);
+      assert.equal(result.state.rip, PC);
+      assert.equal(result.retired, 148n);
+      assert.ok(slowReads() >= 2 && slowReads() < 24);
+    },
+  );
+});
+
 test('direct paged dword reads follow guest INVLPG on remap and removal', async (t) => {
   const slowReads = countGuardedDwordReads(t);
   const data = 0x500000n;
