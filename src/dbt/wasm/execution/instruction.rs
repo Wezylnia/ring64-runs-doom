@@ -965,8 +965,38 @@ impl Emitter {
         let data_address = if preserve_fetch { data } else { fetch };
         // A record is never indexed by the final byte's page if the access
         // crosses a boundary. Its tag also distinguishes a default record.
-        self.op(Op::Block(BlockType::Result(ValType::I32)))
-            .op(Op::I32Const(0))
+        self.op(Op::Block(BlockType::Result(ValType::I32)));
+        // A proved data/fetch pair stays ordered until another indexed operand
+        // changes it or control enters Core. The host bias covers one whole page.
+        if let Some((page, bias, rights)) = self.ordered_operand {
+            if preserve_fetch {
+                let needed = match operand {
+                    IndexedOperand::Read => 1,
+                    IndexedOperand::Write => 2,
+                    IndexedOperand::ReadModifyWrite => 3,
+                };
+                self.op(Op::LocalGet(ADDRESS))
+                    .op(Op::LocalGet(page))
+                    .op(Op::I64Sub)
+                    .op(Op::I64Const(4096 - i64::from(width)))
+                    .op(Op::I64LeU)
+                    .op(Op::LocalGet(rights))
+                    .op(Op::I32Const(needed))
+                    .op(Op::I32And)
+                    .op(Op::I32Const(needed))
+                    .op(Op::I32Eq)
+                    .op(Op::I32And)
+                    .op(Op::If(BlockType::Empty))
+                    .op(Op::LocalGet(bias))
+                    .op(Op::LocalGet(ADDRESS))
+                    .op(Op::I32WrapI64)
+                    .op(Op::I32Add)
+                    .op(Op::Br(1))
+                    .op(Op::End);
+            }
+            self.op(Op::I32Const(0)).op(Op::LocalSet(rights));
+        }
+        self.op(Op::I32Const(0))
             .op(Op::Block(BlockType::Empty))
             .op(Op::LocalGet(0))
             .op(Op::I32Load(mem(
@@ -1101,12 +1131,45 @@ impl Emitter {
                 .op(Op::LocalGet(stamp))
                 .op(Op::I64Store(clock));
         }
-        self.op(Op::LocalGet(entry))
-            .op(Op::I32Load(mem(
-                records + offset_of!(IndexedReadEntry, host_bias),
-                2,
-            )))
-            .op(Op::LocalGet(ADDRESS))
+        if let Some((page, _, rights)) = self.ordered_operand.filter(|_| preserve_fetch) {
+            self.op(Op::LocalGet(ADDRESS))
+                .op(Op::I64Const(!4095))
+                .op(Op::I64And)
+                .op(Op::LocalSet(page));
+            // Reads grant no write access. A write grants read access only if
+            // the write record certified the identical readable backing.
+            if operand == IndexedOperand::Read {
+                self.op(Op::I32Const(1));
+            } else {
+                self.op(Op::LocalGet(entry))
+                    .op(Op::I32Load(mem(
+                        records + offset_of!(IndexedReadEntry, tag),
+                        2,
+                    )))
+                    .op(Op::I32Const(1))
+                    .op(Op::I32ShrU)
+                    .op(Op::I32Const(1))
+                    .op(Op::I32And)
+                    .op(Op::I32Const(2))
+                    .op(Op::I32Or);
+            }
+            // A pair may just have advanced the clock twice. Leave the next
+            // operation to the checked path when rebasing may be necessary.
+            self.op(Op::I32Const(0))
+                .op(Op::LocalGet(stamp))
+                .op(Op::I64Const(-5))
+                .op(Op::I64LeU)
+                .op(Op::Select)
+                .op(Op::LocalSet(rights));
+        }
+        self.op(Op::LocalGet(entry)).op(Op::I32Load(mem(
+            records + offset_of!(IndexedReadEntry, host_bias),
+            2,
+        )));
+        if let Some((_, bias, _)) = self.ordered_operand.filter(|_| preserve_fetch) {
+            self.op(Op::LocalTee(bias));
+        }
+        self.op(Op::LocalGet(ADDRESS))
             .op(Op::I32WrapI64)
             .op(Op::I32Add)
             .op(Op::Br(1))

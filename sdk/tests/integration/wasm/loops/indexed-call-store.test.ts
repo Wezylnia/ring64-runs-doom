@@ -13,9 +13,9 @@ import { compiler } from './fixture.js';
 
 test('an indexed near call preserves checked fetch and writes in a guarded handler', async () => {
   // CALL RAX; INC ECX; CMP ECX,4; JB start; HLT.
-  // Handler: MOV EDX,[RDI]; ADD EDX,1; MOV [RSI],EDX; ADD EDX,1; RET.
+  // Handler: MOV EDX,[RDI]; ADD EDX,1; MOV [RSI],EDX; MOV EDX,[RSI]; ADD EDX,1; RET.
   const target = PC + 16n;
-  const returnPc = target + 10n;
+  const returnPc = target + 12n;
   const stop = PC + 9n;
   const page = PC + 0x1000n;
   const rsp = page + 8n;
@@ -63,22 +63,26 @@ test('an indexed near call preserves checked fetch and writes in a guarded handl
     await usingPaged(
       compiler,
       {
-        code: 'ffd0ffc183f90472f7f49090909090908b1783c201891683c201c3',
-        words: [[0x4008n, 0xa003n]],
+        code: 'ffd0ffc183f90472f7f49090909090908b1783c20189168b1683c201c3',
+        bank: { ...BANK, cr0: BANK.cr0 | 0x10000n },
+        words: [
+          [0x4008n, 0xa003n],
+          [0x4018n, 0xa065n],
+        ],
         spans: [{ physical: 0xa000n, bytes: new Uint8Array(4096) }],
       },
       async (cpu) => {
-        const enter = (store = data) =>
-          cpu.setState(initial(PC, { 0: target, 1: 0n, 4: rsp, 6: store, 7: data }));
+        const enter = (store = data, source = data) =>
+          cpu.setState(initial(PC, { 0: target, 1: 0n, 4: rsp, 6: store, 7: source }));
         for (let wave = 1; wave <= 3; wave++) {
           handlerGuards = 0;
           callBegins = 0;
           guardedWrites = 0;
           returnBegins = 0;
           enter();
-          const result = await cpu.run({ stop, budget: 40n });
+          const result = await cpu.run({ stop, budget: 50n });
           assert.equal(result.reason, 'stop');
-          assert.equal(result.retired, 36n);
+          assert.equal(result.retired, 40n);
           assert.equal(result.state.registers[1], 4n);
           assert.equal(result.state.registers[2], BigInt(wave * 4 + 1));
           assert.equal(result.state.registers[4], rsp);
@@ -89,21 +93,21 @@ test('an indexed near call preserves checked fetch and writes in a guarded handl
         assert.equal(guardedWrites, 0, 'warm handler stores use the retained writable mapping');
         assert.equal(returnBegins, 0, 'warm returns reuse the admitted handler fetch');
         enter();
-        const inside = await cpu.run({ stop: target + 2n, budget: 40n });
+        const inside = await cpu.run({ stop: target + 2n, budget: 50n });
         assert.equal(inside.reason, 'stop');
         assert.equal(inside.retired, 2n);
         assert.equal(inside.state.rip, target + 2n);
 
         cpu.setDebugState({ addresses: [target, 0n, 0n, 0n], dr6: 0n, dr7: 1n });
         enter();
-        const watched = await cpu.run({ stop, budget: 40n });
+        const watched = await cpu.run({ stop, budget: 50n });
         assert.equal(watched.reason, 'debug-exception');
         assert.equal(watched.retired, 1n);
         assert.equal(watched.state.rip, target);
 
         cpu.setDebugState({ addresses: [data, 0n, 0n, 0n], dr6: 0n, dr7: 0xd0401n });
         enter();
-        const writeWatch = await cpu.run({ stop, budget: 40n });
+        const writeWatch = await cpu.run({ stop, budget: 50n });
         assert.equal(writeWatch.reason, 'debug-exception');
         assert.equal(writeWatch.debugException?.cause, 'data-breakpoint');
         assert.equal(writeWatch.retired, 4n);
@@ -111,9 +115,18 @@ test('an indexed near call preserves checked fetch and writes in a guarded handl
         assert.equal(word(cpu, 0xa040n), 13n);
 
         cpu.setDebugState({ addresses: [0n, 0n, 0n, 0n], dr6: 0n, dr7: 0n });
+        const readonly = data + 8192n;
+        enter(readonly, readonly);
+        const denied = await cpu.run({ stop, budget: 50n });
+        assert.equal(denied.reason, 'page-fault');
+        assert.equal(denied.retired, 3n);
+        assert.equal(denied.state.rip, target + 5n);
+        assert.equal(denied.state.registers[2], 14n);
+        assert.equal(word(cpu, 0xa040n), 13n);
+
         const end = page + 4096n;
         enter(end - 2n);
-        const split = await cpu.run({ stop, budget: 40n });
+        const split = await cpu.run({ stop, budget: 50n });
         assert.equal(split.reason, 'page-fault');
         assert.equal(split.pageFault?.address, end);
         assert.equal(split.retired, 3n);
@@ -122,7 +135,7 @@ test('an indexed near call preserves checked fetch and writes in a guarded handl
 
         cpu.setState(initial(returnPc, { 4: page }, 0x102n));
         returnBegins = 0;
-        const stepped = await cpu.run({ stop, budget: 40n });
+        const stepped = await cpu.run({ stop, budget: 50n });
         assert.equal(stepped.reason, 'debug-exception');
         assert.equal(stepped.debugException?.cause, 'single-step');
         assert.equal(stepped.retired, 1n);
@@ -131,7 +144,7 @@ test('an indexed near call preserves checked fetch and writes in a guarded handl
         assert.equal(returnBegins, 1);
 
         cpu.setState(initial(returnPc, { 4: end - 4n }));
-        const splitReturn = await cpu.run({ stop, budget: 40n });
+        const splitReturn = await cpu.run({ stop, budget: 50n });
         assert.equal(splitReturn.reason, 'page-fault');
         assert.equal(splitReturn.pageFault?.address, end);
         assert.equal(splitReturn.retired, 0n);

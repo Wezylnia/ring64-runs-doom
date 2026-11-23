@@ -2915,6 +2915,18 @@ fn emit_body(
         locals.push((1, ValType::I32));
         local
     });
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let ordered_operand = retained_fetch_slot
+        .filter(|_| {
+            copy_prefix.is_none()
+                && scalar_copy_prefix.is_none()
+                && optional.additional_copy.is_none()
+        })
+        .map(|_| {
+            let base = super::GPR + locals.iter().map(|(count, _)| count).sum::<u32>();
+            locals.extend([(1, ValType::I64), (2, ValType::I32)]);
+            (base, base + 1, base + 2)
+        });
     let mut emitter = Emitter {
         paged,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -2943,6 +2955,8 @@ fn emit_body(
         retouch_prefix_fetch,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         retained_fetch_slot,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        ordered_operand,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         used_paged_quiet_completion: false,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]

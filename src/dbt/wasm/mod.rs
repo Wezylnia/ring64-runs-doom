@@ -162,6 +162,8 @@ struct Emitter {
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     retained_fetch_slot: Option<u32>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    ordered_operand: Option<(u32, u32, u32)>,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     used_paged_quiet_completion: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     read_span: Option<memory::SpanCache>,
@@ -377,6 +379,10 @@ impl Emitter {
             // A successful helper can change code, translations, debug or event state.
             self.body.instruction(&Op::I32Const(0));
             self.body.instruction(&Op::LocalSet(slot));
+            if let Some((_, _, rights)) = self.ordered_operand {
+                self.body.instruction(&Op::I32Const(0));
+                self.body.instruction(&Op::LocalSet(rights));
+            }
         }
         self.body.instruction(&instruction);
         self
