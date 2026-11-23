@@ -4,7 +4,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { extname, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { chromium } from 'playwright';
-import { measureParallel, parallelWorkloads } from '../../benchmarks/parallel.mjs';
+import { measureParallel, parallelWorkloads } from '../../benchmarks/parallel/workloads.mjs';
 import { hostIdentity } from './emitted-host.mjs';
 import { chromiumExecutable } from '../support/browser.mjs';
 
@@ -93,7 +93,7 @@ if (runtime === 'node') {
     const root = prefix === 'candidate' ? current : prefix === 'baseline' ? previous : null;
     const exactHarness = pathname === '/parallel.mjs';
     const path = exactHarness
-      ? resolve('benchmarks/parallel.mjs')
+      ? resolve('benchmarks/parallel/workloads.mjs')
       : root
         ? resolve(root, ...suffix)
         : '';

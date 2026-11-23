@@ -1,4 +1,4 @@
-import { LatencyTrace, latencyCursors, latencyEvents } from './parallel-latency-trace.mjs';
+import { LatencyTrace, latencyCursors, latencyEvents } from './trace.mjs';
 
 const ENTRY = 0x1000n;
 const RAM = 0x4000_0000n;

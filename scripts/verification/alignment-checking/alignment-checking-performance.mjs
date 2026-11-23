@@ -3,7 +3,16 @@ import { createServer } from 'node:http';
 import { dirname, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import os from 'node:os';
-import { benchmarkScript, encode, freeze, hash, manifest, root } from '../artifacts.mjs';
+import {
+  benchmarkInputs,
+  inheritedBenchmarkInput,
+  benchmarkScript,
+  encode,
+  freeze,
+  hash,
+  manifest,
+  root,
+} from '../artifacts.mjs';
 import {
   alignmentPerformanceNames,
   alignmentPerformancePlan,
@@ -195,9 +204,10 @@ if (args.includes('--prepare-only')) {
   if (current.coreSha256 === old.coreSha256)
     throw Error('candidate is still the disabled-AM baseline Core; build the candidate first');
   const sourceReceipt = JSON.parse(await readFile(resolve(baselinePath, 'source.json'), 'utf8'));
+  const candidateInputs = await benchmarkInputs(current.path);
   for (const [name, expected] of Object.entries(sourceReceipt)) {
     const path = name.startsWith('benchmarks/')
-      ? resolve(current.path, name)
+      ? resolve(current.path, inheritedBenchmarkInput(candidateInputs, name))
       : name === 'scripts/benchmark.mjs' || name === 'scripts/bench/benchmark.mjs'
         ? benchmarkScript(current.path)
         : undefined;

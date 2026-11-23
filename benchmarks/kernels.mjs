@@ -1,14 +1,14 @@
-import { x87Rows } from './x87.mjs';
-import { numericStateRows } from './numeric-state.mjs';
-import { streamingRows } from './streaming.mjs';
-import { protectionRows } from './protection.mjs';
-import { farRows } from './far-control.mjs';
-import { systemFlagRows } from './system-flags.mjs';
-import { softwareEventRows } from './software-events.mjs';
-import { eventDeliveryNames, measureEventDelivery } from './event-delivery.mjs';
-import { externalInterruptNames, measureExternalInterrupts } from './external-interrupts.mjs';
-import { accessFaultNames, measureAccessFaults } from './access-faults.mjs';
-import { debugNames, measureDebug } from './debug.mjs';
+import { x87Rows } from './numeric/x87.mjs';
+import { numericStateRows } from './numeric/numeric-state.mjs';
+import { streamingRows } from './memory/streaming.mjs';
+import { protectionRows } from './system/protection.mjs';
+import { farRows } from './system/far-control.mjs';
+import { systemFlagRows } from './system/system-flags.mjs';
+import { softwareEventRows } from './events/software-events.mjs';
+import { eventDeliveryNames, measureEventDelivery } from './events/event-delivery.mjs';
+import { externalInterruptNames, measureExternalInterrupts } from './events/external-interrupts.mjs';
+import { accessFaultNames, measureAccessFaults } from './memory/access-faults.mjs';
+import { debugNames, measureDebug } from './system/debug.mjs';
 import { basicRows, RAM } from './basic-kernels.mjs';
 
 export async function loadSides(sides, { coldSetup, reverse }, instantiate) {

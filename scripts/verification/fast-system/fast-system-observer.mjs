@@ -1,10 +1,10 @@
-import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { dirname, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { coreModulePath } from '../../bench/emitted-host.mjs';
 import { assertFastCandidate, baseline, checkedBaseline } from './fast-system-support.mjs';
-import { encode, freeze, hash, manifest, root } from '../artifacts.mjs';
+import { benchmarkInputs, encode, freeze, hash, manifest, root } from '../artifacts.mjs';
 import {
   checkedContextBaseline,
   contextBaseline,
@@ -15,9 +15,7 @@ const args = process.argv.slice(2);
 const browserMode = args.includes('--browser');
 const contextReuse = args.includes('--context-reuse');
 const inputFiles = [
-  ...(await readdir(resolve(root, 'benchmarks')))
-    .filter((name) => name.endsWith('.mjs'))
-    .map((name) => 'benchmarks/' + name),
+  ...(await benchmarkInputs(root)),
   'scripts/verification/paging/paging-kernels.mjs',
   'scripts/verification/fast-system/fast-system-kernels.mjs',
   'scripts/verification/context-reuse/context-reuse-kernels.mjs',

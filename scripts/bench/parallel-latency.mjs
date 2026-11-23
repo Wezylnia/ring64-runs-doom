@@ -7,7 +7,7 @@ import { resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Worker } from 'node:worker_threads';
 import { chromium } from 'playwright';
-import { measureLatency } from '../../benchmarks/parallel-latency.mjs';
+import { measureLatency } from '../../benchmarks/parallel/latency.mjs';
 import { emittedModules } from './emitted-host.mjs';
 
 const [runtime, candidate, output, count = '128', order] = process.argv.slice(2);
@@ -24,9 +24,9 @@ if (
   throw Error('usage: parallel-latency.mjs node|chromium BUILD_DIR OUTPUT [SAMPLES] [--reverse]');
 }
 
-const benchmark = resolve(fileURLToPath(new URL('../../benchmarks/', import.meta.url)));
+const benchmark = resolve(fileURLToPath(new URL('../../benchmarks/parallel/', import.meta.url)));
 const build = resolve(candidate);
-const traceFile = resolve(benchmark, 'parallel-latency-trace.mjs');
+const traceFile = resolve(benchmark, 'trace.mjs');
 const wasm = await readFile(resolve(build, 'ring64-parallel.wasm'));
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const scratch = await mkdtemp(resolve(tmpdir(), 'ring64-parallel-latency-'));
@@ -222,7 +222,7 @@ async function browserMeasure() {
     const cases = await page.evaluate(
       async ({ samples, reverse }) => {
         if (!globalThis.crossOriginIsolated) throw Error('worker isolation required');
-        const benchmark = '/benchmark/parallel-latency.mjs';
+        const benchmark = '/benchmark/latency.mjs';
         const { measureLatency } = await import(benchmark);
         const compiler = await WebAssembly.compileStreaming(fetch('/clean/ring64-parallel.wasm'));
         const base = (path) => new URL(path, globalThis.location.href).href;

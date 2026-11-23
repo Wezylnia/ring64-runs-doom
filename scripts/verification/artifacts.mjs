@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { cp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
+import { cp, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { basename, dirname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { hostIdentity } from '../bench/emitted-host.mjs';
 
@@ -14,6 +14,22 @@ export const hash = (bytes) => createHash('sha256').update(bytes).digest('hex');
 export function benchmarkScript(path) {
   const current = resolve(path, 'scripts/bench/benchmark.mjs');
   return existsSync(current) ? current : resolve(path, 'scripts/benchmark.mjs');
+}
+
+export async function benchmarkInputs(path) {
+  const files = await readdir(resolve(path, 'benchmarks'), { recursive: true });
+  return files
+    .filter((name) => name.endsWith('.mjs'))
+    .map((name) => 'benchmarks/' + name.split(sep).join('/'))
+    .sort();
+}
+
+// The pinned receipts name the inputs from the original flat benchmark directory.
+export function inheritedBenchmarkInput(files, recordedPath) {
+  if (files.includes(recordedPath)) return recordedPath;
+  const matches = files.filter((file) => basename(file) === basename(recordedPath));
+  if (matches.length !== 1) throw Error(`cannot locate inherited benchmark input: ${recordedPath}`);
+  return matches[0];
 }
 
 export async function manifest(path) {

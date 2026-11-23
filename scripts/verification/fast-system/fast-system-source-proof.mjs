@@ -1,8 +1,16 @@
 import { execFileSync } from 'node:child_process';
-import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { relative, resolve } from 'node:path';
 import { baselineCommit, checkedBaseline } from './fast-system-support.mjs';
-import { benchmarkScript, encode, hash, manifest, root } from '../artifacts.mjs';
+import {
+  benchmarkInputs as listBenchmarkInputs,
+  inheritedBenchmarkInput,
+  benchmarkScript,
+  encode,
+  hash,
+  manifest,
+  root,
+} from '../artifacts.mjs';
 
 const args = process.argv.slice(2);
 const value = (name, fallback) => (args.includes(name) ? args[args.indexOf(name) + 1] : fallback);
@@ -35,11 +43,10 @@ const untouched = [
 const files = [],
   unchanged = [];
 const benchmarkInputs = [];
-for (const name of (await readdir(resolve(old.path, 'benchmarks')))
-  .filter((name) => name.endsWith('.mjs'))
-  .sort()) {
-  const path = 'benchmarks/' + name;
-  const before = await readFile(resolve(old.path, path)),
+const currentInputs = await listBenchmarkInputs(candidate.path);
+for (const originalPath of await listBenchmarkInputs(old.path)) {
+  const path = inheritedBenchmarkInput(currentInputs, originalPath);
+  const before = await readFile(resolve(old.path, originalPath)),
     now = await readFile(resolve(candidate.path, path));
   benchmarkInputs.push({
     path,

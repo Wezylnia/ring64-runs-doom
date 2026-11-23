@@ -222,17 +222,17 @@ const environment = {
 const benchmarkFiles = [
   'kernels.mjs',
   'basic-kernels.mjs',
-  'x87.mjs',
-  'numeric-state.mjs',
-  'streaming.mjs',
-  'protection.mjs',
-  'far-control.mjs',
-  'system-flags.mjs',
-  'software-events.mjs',
-  'event-delivery.mjs',
-  'external-interrupts.mjs',
-  'access-faults.mjs',
-  'debug.mjs',
+  'numeric/x87.mjs',
+  'numeric/numeric-state.mjs',
+  'memory/streaming.mjs',
+  'system/protection.mjs',
+  'system/far-control.mjs',
+  'system/system-flags.mjs',
+  'events/software-events.mjs',
+  'events/event-delivery.mjs',
+  'events/external-interrupts.mjs',
+  'memory/access-faults.mjs',
+  'system/debug.mjs',
 ];
 const benchmarkHash = createHash('sha256');
 for (const file of benchmarkFiles) {
