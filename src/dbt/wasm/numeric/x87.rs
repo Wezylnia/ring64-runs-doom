@@ -12,7 +12,7 @@ use super::{ADDRESS, REMAINING, RIP, SHADOW, VALUE};
 use crate::x86::{
     instruction::{Instruction, Operation},
     x87::{
-        MEMORY_FIRST_PAIR_SEGMENT, MEMORY_PAIR_SEGMENT, PAGED_LOAD_PAIR_SEGMENT,
+        MEMORY_FIRST_PAIR_SEGMENT, MEMORY_PAIR_SEGMENT, Op, PAGED_LOAD_PAIR_SEGMENT,
         PAGED_STORE_PAIR_SEGMENT, REGISTER_PAIR_SEGMENT, memory_first_pair,
         register_exchange_compare, register_load_arithmetic, register_load_memory_arithmetic,
         register_store_pop,
@@ -55,9 +55,14 @@ pub(super) fn paged_x87_memory_pair(first: Instruction, second: Instruction) -> 
     })
 }
 
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+pub(super) fn inline_x87_stack_operation(op: Op) -> bool {
+    register_store_pop(op) || op.kind == Kind::Constant && op.index == 6
+}
+
 impl Emitter {
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    fn can_inline_x87_pop(&self) -> bool {
+    fn can_inline_x87_stack_operation(&self) -> bool {
         use crate::x86::context::Mode;
         self.x87_register_pairs
             && !self.observed
@@ -68,7 +73,7 @@ impl Emitter {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    fn inline_x87_pop_bank(&mut self, pc: u64, count: i32, destination: u8) {
+    fn inline_x87_stack_bank(&mut self, pc: u64, delta: i32, destination: u8) {
         use crate::x86::x87::State;
         let x87 = offset_of!(RunState, x87);
         let mem = |offset, align| MemArg {
@@ -79,7 +84,8 @@ impl Emitter {
         let status = mem(x87 + offset_of!(State, status_word), 1);
         let control = mem(x87 + offset_of!(State, control_word), 1);
         let tags = mem(x87 + offset_of!(State, tag_word), 1);
-        // Only the nonempty, no-pending branch may skip numeric admission.
+        let push_zero = delta == -1;
+        // The ordinary helper handles pending exceptions and stack faults.
         self.op(Wasm::LocalGet(0))
             .op(Wasm::I32Load16U(status))
             .op(Wasm::LocalTee(REASON))
@@ -93,8 +99,11 @@ impl Emitter {
             .op(Wasm::I32Eqz)
             .op(Wasm::LocalGet(0))
             .op(Wasm::I32Load16U(tags))
-            .op(Wasm::LocalGet(REASON))
-            .op(Wasm::I32Const(11))
+            .op(Wasm::LocalGet(REASON));
+        if push_zero {
+            self.op(Wasm::I32Const(0x800)).op(Wasm::I32Sub);
+        }
+        self.op(Wasm::I32Const(11))
             .op(Wasm::I32ShrU)
             .op(Wasm::I32Const(7))
             .op(Wasm::I32And)
@@ -105,7 +114,7 @@ impl Emitter {
             .op(Wasm::I32Const(3))
             .op(Wasm::I32And)
             .op(Wasm::I32Const(3))
-            .op(Wasm::I32Ne)
+            .op(if push_zero { Wasm::I32Eq } else { Wasm::I32Ne })
             .op(Wasm::I32And)
             .op(Wasm::If(BlockType::Empty));
 
@@ -114,15 +123,28 @@ impl Emitter {
             .op(Wasm::I32Const(!(0x8080 | 0x3800 | 0x200)))
             .op(Wasm::I32And)
             .op(Wasm::LocalGet(REASON))
-            .op(Wasm::I32Const(count << 11))
+            .op(Wasm::I32Const(delta << 11))
             .op(Wasm::I32Add)
             .op(Wasm::I32Const(0x3800))
             .op(Wasm::I32And)
             .op(Wasm::I32Or)
             .op(Wasm::I32Store16(status));
 
-        let reclassify = destination != 0 && count == 1;
-        if destination != 0 {
+        let reclassify = destination != 0 && delta == 1;
+        if push_zero {
+            let registers = x87 + offset_of!(State, registers);
+            self.op(Wasm::LocalGet(0))
+                .op(Wasm::LocalGet(STORE_STATUS))
+                .op(Wasm::I32Const(10))
+                .op(Wasm::I32Mul)
+                .op(Wasm::I32Add)
+                .op(Wasm::LocalTee(REASON))
+                .op(Wasm::I64Const(0))
+                .op(Wasm::I64Store(mem(registers, 0)))
+                .op(Wasm::LocalGet(REASON))
+                .op(Wasm::I32Const(0))
+                .op(Wasm::I32Store16(mem(registers + 8, 0)));
+        } else if destination != 0 {
             self.op(Wasm::LocalGet(STORE_STATUS))
                 .op(Wasm::I32Const(i32::from(destination)))
                 .op(Wasm::I32Add)
@@ -165,13 +187,23 @@ impl Emitter {
         self.op(Wasm::LocalGet(0))
             .op(Wasm::LocalGet(0))
             .op(Wasm::I32Load16U(tags));
-        for top in [STORE_STATUS, REASON].into_iter().take(count as usize) {
-            self.op(Wasm::I32Const(3))
-                .op(Wasm::LocalGet(top))
+        if push_zero {
+            // The proven empty tag (3) becomes the zero tag (1).
+            self.op(Wasm::I32Const(2))
+                .op(Wasm::LocalGet(STORE_STATUS))
                 .op(Wasm::I32Const(1))
                 .op(Wasm::I32Shl)
                 .op(Wasm::I32Shl)
-                .op(Wasm::I32Or);
+                .op(Wasm::I32Xor);
+        } else {
+            for top in [STORE_STATUS, REASON].into_iter().take(delta as usize) {
+                self.op(Wasm::I32Const(3))
+                    .op(Wasm::LocalGet(top))
+                    .op(Wasm::I32Const(1))
+                    .op(Wasm::I32Shl)
+                    .op(Wasm::I32Shl)
+                    .op(Wasm::I32Or);
+            }
         }
         if reclassify {
             // The raw value owns the new tag, even for an imported bank whose
@@ -272,9 +304,9 @@ impl Emitter {
             && a.op.index == 1
             && register_store_pop(b.op)
             && b.op.index == 0
-            && self.can_inline_x87_pop()
+            && self.can_inline_x87_stack_operation()
         {
-            self.inline_x87_pop_bank(second.pc, 2, 1);
+            self.inline_x87_stack_bank(second.pc, 2, 1);
             self.op(Wasm::I64Const(second.next_pc as i64))
                 .op(Wasm::LocalSet(RIP));
             self.retire_instructions(2);
@@ -369,10 +401,15 @@ impl Emitter {
     ) {
         let operation = instruction.op;
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-        let inlined = register_store_pop(operation) && self.can_inline_x87_pop();
+        let inlined =
+            inline_x87_stack_operation(operation) && self.can_inline_x87_stack_operation();
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         if inlined {
-            self.inline_x87_pop_bank(pc, 1, operation.index);
+            if operation.kind == Kind::Constant {
+                self.inline_x87_stack_bank(pc, -1, 0);
+            } else {
+                self.inline_x87_stack_bank(pc, 1, operation.index);
+            }
             self.op(Wasm::Else);
         }
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]

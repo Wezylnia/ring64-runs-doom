@@ -4,7 +4,7 @@ import { Core } from '../../../../src/wasm/core.js';
 import { context, input, using } from '../../../../../tests/execution/modes/fixture.js';
 import { compiler } from './fixture.js';
 
-test('inline x87 stack pops preserve raw bank bits and checked retirement boundaries', async () => {
+test('inline x87 stack operations preserve raw bank bits and checked retirement boundaries', async () => {
   const pc = 0x1000n;
   const rawTop = 0xffffdeadbeefcafebaben;
   const original = {
@@ -116,6 +116,47 @@ test('inline x87 stack pops preserve raw bank bits and checked retirement bounda
           instructionPointer: pc,
         });
       }
+    });
+
+    // FLDZ wraps TOP=0 to slot 7 and overwrites its stale value.
+    await using(compiler, 'd9ee', context('protected'), async (cpu) => {
+      const before = { ...original, statusWord: 0x4700, tagWord: 0xffff };
+      const run = async (state = before) => {
+        cpu.setState(input(pc, {}, 2n));
+        cpu.setX87State(state);
+        helperCalls = 0;
+        return cpu.run({ budget: 8n, stop: pc + 2n });
+      };
+      const pushed = await run();
+      assert.equal(pushed.reason, 'stop');
+      assert.equal(pushed.retired, 1n);
+      assert.equal(helperCalls, 0);
+      assert.deepEqual(cpu.readX87State(), {
+        ...before,
+        registers: [...before.registers.slice(0, 7), 0n],
+        statusWord: 0x7d00,
+        tagWord: 0x7fff,
+        instructionPointer: pc,
+      });
+
+      const overflow = await run({ ...before, tagWord: 0x3fff });
+      assert.equal(overflow.reason, 'stop');
+      assert.equal(overflow.retired, 1n);
+      assert.equal(helperCalls, 1);
+      assert.deepEqual(cpu.readX87State(), {
+        ...before,
+        registers: [...before.registers.slice(0, 7), 0xffffc000000000000000n],
+        statusWord: 0x7f41,
+        tagWord: 0xbfff,
+        instructionPointer: pc,
+      });
+
+      const pending = { ...before, controlWord: 0x37e, statusWord: 0xc781 };
+      const trapped = await run(pending);
+      assert.equal(trapped.reason, 'x87-exception');
+      assert.equal(trapped.retired, 0n);
+      assert.equal(helperCalls, 1);
+      assert.deepEqual(cpu.readX87State(), pending);
     });
   } finally {
     prototype.artifactImports = imports;
