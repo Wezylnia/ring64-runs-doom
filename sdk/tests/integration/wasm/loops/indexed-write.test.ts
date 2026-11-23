@@ -137,6 +137,15 @@ test('indexed stores reuse full pages and reload the palette through a writable 
         }
         assert.ok(resolutions > 0, 'the generated indexed loop ran');
 
+        const debug = cpu.readDebugState();
+        cpu.setDebugState({ ...debug, addresses: [PC + 2n, 0n, 0n, 0n], dr7: 0x401n });
+        cpu.setState(initial(PC, { 1: 65n, 3: palette, 6: output, 7: indices - 1n }));
+        const watched = await cpu.run({ stop, budget: 1000n });
+        assert.equal(watched.reason, 'debug-exception');
+        assert.equal(watched.retired, 1n);
+        assert.equal(watched.state.rip, PC + 2n);
+        cpu.setDebugState(debug);
+
         cpu.setState(initial(PC, { 1: 65n, 3: palette, 6: output + 4088n, 7: indices - 1n }));
         const fault = await cpu.run({ stop, budget: 1000n });
         assert.equal(fault.reason, 'page-fault');

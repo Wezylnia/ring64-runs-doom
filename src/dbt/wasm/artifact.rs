@@ -2836,7 +2836,7 @@ fn emit_body(
         && paged
         && observed
         && !mmio
-        && unit.sampled
+        && (unit.sampled || paged_indexed_write.is_some())
         && unit.context.is_long64())
     .then(|| {
         let local = super::GPR + locals.iter().map(|(count, _)| count).sum::<u32>();
