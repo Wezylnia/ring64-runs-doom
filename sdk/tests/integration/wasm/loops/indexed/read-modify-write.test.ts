@@ -9,7 +9,7 @@ import {
   little,
   usingPaged,
   word,
-} from '../../../../../../tests/execution/paging/fixture.js';
+} from '../../../../../../tests/execution/memory/paging/fixture.js';
 import { compiler } from '../fixture.js';
 
 test('paged ADD and ROL reuse a writable and readable leaf and replay invalid accesses', async () => {

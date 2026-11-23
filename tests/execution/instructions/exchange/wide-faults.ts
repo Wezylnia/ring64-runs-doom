@@ -1,8 +1,8 @@
 import { createCpu } from '../../../../sdk/src/index.js';
 import { changed, check, equal, exit, initial, type Scenario } from '../../../support/fixture.js';
 import { preserveNumeric } from '../../far-control/fixture.js';
-import { fixture, same, using, word } from '../../supervisor-access/fixture.js';
-import { little } from '../../paging/fixture.js';
+import { fixture, same, using, word } from '../../memory/supervisor-access/fixture.js';
+import { little } from '../../memory/paging/fixture.js';
 
 const pc = 0x1000n,
   slot = 0x6000n,

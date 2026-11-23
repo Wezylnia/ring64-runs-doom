@@ -5,7 +5,7 @@ import {
   families,
   using,
   memory as physicalMemory,
-} from '../../../supervisor-access/fixture.js';
+} from '../../../memory/supervisor-access/fixture.js';
 import {
   PC,
   RAM_BASE,

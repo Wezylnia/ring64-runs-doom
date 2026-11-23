@@ -3,7 +3,7 @@ import { initial, exit, equal, hex, type Scenario } from '../../../../support/fi
 import { LONG, context, using, type Data } from '../../../modes/fixture.js';
 
 export { equal, hex, type Scenario };
-export { same, put, preserved } from '../../../supervisor-access/fixture.js';
+export { same, put, preserved } from '../../../memory/supervisor-access/fixture.js';
 export const PC = 0x1000n;
 export const RAM_BASE = 0x4000n;
 export const RAM_SIZE = 0x4000;

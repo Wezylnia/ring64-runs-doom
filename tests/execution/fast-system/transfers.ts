@@ -12,7 +12,7 @@ import {
   usingPaged,
   word,
   type Scenario,
-} from '../paging/fixture.js';
+} from '../memory/paging/fixture.js';
 
 const roots = [
   [0x1000n, 0x2027n],

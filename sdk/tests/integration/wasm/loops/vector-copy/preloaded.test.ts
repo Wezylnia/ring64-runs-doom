@@ -8,7 +8,7 @@ import {
   initial,
   little,
   usingPaged,
-} from '../../../../../../tests/execution/paging/fixture.js';
+} from '../../../../../../tests/execution/memory/paging/fixture.js';
 import { compiler } from '../fixture.js';
 
 test('a stack-bounded paged vector loop reuses its proved window and keeps precise replay', async () => {

@@ -11,7 +11,7 @@ import {
   same,
   usingPaged,
   type Scenario,
-} from '../paging/fixture.js';
+} from '../memory/paging/fixture.js';
 
 const TARGET = 0x401000n;
 const fast = (): FastSystemState => ({

@@ -1,4 +1,4 @@
-import { BANK, initial, little, PC, same, usingPaged } from '../../paging/fixture.js';
+import { BANK, initial, little, PC, same, usingPaged } from '../../memory/paging/fixture.js';
 import { physicalCpu, resetContext } from '../../reset/fixture.js';
 import {
   changed,

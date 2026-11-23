@@ -14,7 +14,7 @@ import {
   word,
   type PagedSetup,
   type Scenario,
-} from '../paging/fixture.js';
+} from '../memory/paging/fixture.js';
 
 const HANDLER = 0x401000n;
 const TOP = 0x405000n;

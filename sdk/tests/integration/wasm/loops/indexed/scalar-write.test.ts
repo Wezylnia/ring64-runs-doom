@@ -7,7 +7,7 @@ import {
   initial,
   little,
   usingPaged,
-} from '../../../../../../tests/execution/paging/fixture.js';
+} from '../../../../../../tests/execution/memory/paging/fixture.js';
 import { compiler } from '../fixture.js';
 
 test('an ordinary paged MOV reuses a writable leaf and replays for a data breakpoint', async () => {

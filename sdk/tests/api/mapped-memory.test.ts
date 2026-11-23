@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { createCpu, type MemoryMapping, type Options } from '../../src/index.js';
 import { LIMITS, hex } from '../../../tests/support/fixture.js';
-import { BASE, RW, RX, input, mapping } from '../../../tests/execution/mapped-memory/fixture.js';
+import { BASE, RW, RX, input, mapping } from '../../../tests/execution/memory/mappings/fixture.js';
 
 const compiler = await WebAssembly.compile(
   new Uint8Array(await readFile(new URL('../../../build/ring64.wasm', import.meta.url))),

@@ -1,4 +1,4 @@
-import { BANK, PC, usingPaged } from '../../../paging/fixture.js';
+import { BANK, PC, usingPaged } from '../../../memory/paging/fixture.js';
 import {
   LONG,
   OTHER_MXCSR,

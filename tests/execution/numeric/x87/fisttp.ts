@@ -6,7 +6,7 @@ import {
   same,
   usingPaged,
   type Scenario,
-} from '../../paging/fixture.js';
+} from '../../memory/paging/fixture.js';
 import { NUMERIC_STATUS, environment, equal, pending, pop, raw, stack, x87 } from './fixture.js';
 
 export function fisttpScenarios(compiler: WebAssembly.Module): Scenario[] {

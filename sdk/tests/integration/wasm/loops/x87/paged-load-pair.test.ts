@@ -7,7 +7,7 @@ import {
   initial,
   little,
   usingPaged,
-} from '../../../../../../tests/execution/paging/fixture.js';
+} from '../../../../../../tests/execution/memory/paging/fixture.js';
 import { compiler } from '../fixture.js';
 
 function observePairs(discriminator: number) {

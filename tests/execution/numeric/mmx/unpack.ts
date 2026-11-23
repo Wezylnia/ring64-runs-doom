@@ -1,4 +1,4 @@
-import { equal, initial, PC, usingPaged, type Scenario } from '../../paging/fixture.js';
+import { equal, initial, PC, usingPaged, type Scenario } from '../../memory/paging/fixture.js';
 import { clone, stack, x87 } from '../x87/fixture.js';
 
 export function unpackMemoryScenario(compiler: WebAssembly.Module): Scenario {

@@ -1,4 +1,4 @@
-import { BANK, PC, initial, little, same, usingPaged } from '../../../paging/fixture.js';
+import { BANK, PC, initial, little, same, usingPaged } from '../../../memory/paging/fixture.js';
 import {
   INDEFINITE,
   LONG,

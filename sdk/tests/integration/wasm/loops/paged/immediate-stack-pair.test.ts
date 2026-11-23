@@ -8,7 +8,7 @@ import {
   initial,
   usingPaged,
   word,
-} from '../../../../../../tests/execution/paging/fixture.js';
+} from '../../../../../../tests/execution/memory/paging/fixture.js';
 import { compiler } from '../fixture.js';
 
 test('sampled immediate push and pop preserve the stack store and precise intervening boundaries', async () => {

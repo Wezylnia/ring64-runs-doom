@@ -1,5 +1,5 @@
 import { CODE, createFixture, equal, initial, type Scenario } from '../../../support/fixture.js';
-import { BANK, PC, little, same, usingPaged } from '../../paging/fixture.js';
+import { BANK, PC, little, same, usingPaged } from '../../memory/paging/fixture.js';
 
 // Complete ELF .text, clang 21.0.0 -target x86_64-unknown-linux-gnu -O2
 // -ffreestanding -fno-vectorize -fno-slp-vectorize, with -mno-bmi or -mbmi:

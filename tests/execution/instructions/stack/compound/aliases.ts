@@ -1,6 +1,13 @@
 import { createCpu } from '../../../../../sdk/src/index.js';
 import { exit, initial } from '../../../../support/fixture.js';
-import { fixture, families, memory, put, same, using } from '../../../supervisor-access/fixture.js';
+import {
+  fixture,
+  families,
+  memory,
+  put,
+  same,
+  using,
+} from '../../../memory/supervisor-access/fixture.js';
 import { expected, merge, PC, equal, type Scenario } from './fixture.js';
 
 const permissions = { read: true, write: true, execute: true };

@@ -1,7 +1,7 @@
 import { type Cpu, createCpu } from '../../../sdk/src/index.js';
 import { Core } from '../../../sdk/src/wasm/core.js';
 import { check, equal, hex, initial, LIMITS, type Scenario } from '../../support/fixture.js';
-import { fixture, put, using } from '../supervisor-access/fixture.js';
+import { fixture, put, using } from '../memory/supervisor-access/fixture.js';
 
 const pc = 0x1000n,
   a = 0x6000n,

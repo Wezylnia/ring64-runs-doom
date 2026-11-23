@@ -10,7 +10,7 @@ import {
   same,
   state,
   using as usingPhysical,
-} from '../../../protection-keys/fixture.js';
+} from '../../../memory/protection-keys/fixture.js';
 import {
   OTHER_MXCSR,
   banks,

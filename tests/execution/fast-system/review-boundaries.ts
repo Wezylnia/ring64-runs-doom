@@ -12,7 +12,7 @@ import {
   same,
   usingPaged,
   type Scenario,
-} from '../paging/fixture.js';
+} from '../memory/paging/fixture.js';
 
 function bank(): FastSystemState {
   return {

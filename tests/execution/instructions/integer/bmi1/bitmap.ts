@@ -1,5 +1,5 @@
 import { initial, equal, type Scenario } from '../../../../support/fixture.js';
-import { PC, little, same, usingPaged } from '../../../paging/fixture.js';
+import { PC, little, same, usingPaged } from '../../../memory/paging/fixture.js';
 
 // R8 = occupied, R9 = eligible. R15 requests the hardware path when CPUID permits it.
 // The guest finds candidates in a 16-slot window and publishes the first allocation,

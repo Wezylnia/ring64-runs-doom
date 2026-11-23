@@ -1,6 +1,6 @@
 import { createCpu, type Cpu } from '../../../../sdk/src/index.js';
-import { PC, fixture, hex, same, state, using } from '../../protection-keys/fixture.js';
-import { context } from '../../supervisor-access/fixture.js';
+import { PC, fixture, hex, same, state, using } from '../../memory/protection-keys/fixture.js';
+import { context } from '../../memory/supervisor-access/fixture.js';
 export {
   DATA,
   PC,
@@ -13,7 +13,7 @@ export {
   state,
   word,
   type Scenario,
-} from '../../protection-keys/fixture.js';
+} from '../../memory/protection-keys/fixture.js';
 export { createCpu, type Cpu };
 export const OSXSAVE = 0x40000n;
 export const FULL = 0x203n;

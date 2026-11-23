@@ -12,7 +12,7 @@ import {
   same,
   usingPaged,
   type Scenario,
-} from '../paging/fixture.js';
+} from '../memory/paging/fixture.js';
 
 const bank = (): FastSystemState => ({
   star: 0x0020000800000000n,

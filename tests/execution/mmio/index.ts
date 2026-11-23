@@ -1,6 +1,6 @@
 import { createCpu, type Cpu, type MmioProvider } from '../../../sdk/src/index.js';
 import { createMachine, type MachineOptions } from '../../../sdk/src/machine.js';
-import { BANK, PC, little, usingPaged, word } from '../paging/fixture.js';
+import { BANK, PC, little, usingPaged, word } from '../memory/paging/fixture.js';
 import { protectedSnapshot } from '../../support/context.js';
 import {
   CODE,

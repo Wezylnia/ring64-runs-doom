@@ -1,5 +1,5 @@
 import { check, equal, type Scenario } from '../../../support/fixture.js';
-import { initial, little, PC, same, usingPaged } from '../../paging/fixture.js';
+import { initial, little, PC, same, usingPaged } from '../../memory/paging/fixture.js';
 
 // Clang -target x86_64-unknown-linux-gnu -O2 -mcx16:
 // _Bool replace_pair(unsigned __int128 *p, unsigned __int128 old, unsigned __int128 next) {

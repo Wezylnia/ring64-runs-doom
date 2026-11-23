@@ -11,7 +11,7 @@ import {
   little,
   hex,
   type Scenario,
-} from '../paging/fixture.js';
+} from '../memory/paging/fixture.js';
 import { same } from '../../support/fixture.js';
 
 export function numericControlScenarios(compiler: WebAssembly.Module): Scenario[] {

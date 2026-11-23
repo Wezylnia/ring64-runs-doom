@@ -10,9 +10,9 @@ import {
   initial,
   type Scenario,
 } from '../../../support/fixture.js';
-import { fixture, state, using } from '../../alignment-checking/fixture.js';
-import { BANK, PC, usingPaged } from '../../paging/fixture.js';
-import { word } from '../../supervisor-access/fixture.js';
+import { fixture, state, using } from '../../memory/alignment-checking/fixture.js';
+import { BANK, PC, usingPaged } from '../../memory/paging/fixture.js';
+import { word } from '../../memory/supervisor-access/fixture.js';
 
 const PADDING = [
   '0f1f00',

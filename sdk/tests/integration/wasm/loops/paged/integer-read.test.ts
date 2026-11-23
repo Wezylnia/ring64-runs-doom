@@ -3,7 +3,12 @@ import test, { type TestContext } from 'node:test';
 import { createCpu } from '../../../../../src/index.js';
 import { Core } from '../../../../../src/wasm/core.js';
 import { observeArtifactImports } from '../../../../../../tests/support/artifact-imports.js';
-import { BANK, PC, little, usingPaged } from '../../../../../../tests/execution/paging/fixture.js';
+import {
+  BANK,
+  PC,
+  little,
+  usingPaged,
+} from '../../../../../../tests/execution/memory/paging/fixture.js';
 import { protectedSnapshot } from '../../../../../../tests/support/context.js';
 import {
   LIMITS,

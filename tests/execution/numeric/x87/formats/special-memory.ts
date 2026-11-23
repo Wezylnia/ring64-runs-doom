@@ -1,6 +1,6 @@
 import { createCpu } from '../../../../../sdk/src/index.js';
 import { LIMITS } from '../../../../support/fixture.js';
-import { BANK, PC, little, usingPaged } from '../../../paging/fixture.js';
+import { BANK, PC, little, usingPaged } from '../../../memory/paging/fixture.js';
 import {
   LONG,
   input,

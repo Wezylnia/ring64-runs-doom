@@ -1,4 +1,4 @@
-import { BANK, PC, little } from '../paging/fixture.js';
+import { BANK, PC, little } from '../memory/paging/fixture.js';
 import type { Scenario } from '../../support/fixture.js';
 import {
   asBytes,

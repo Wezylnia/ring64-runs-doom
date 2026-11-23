@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { observeArtifactImports } from '../../../../../../tests/support/artifact-imports.js';
-import { BANK, PC, initial, usingPaged } from '../../../../../../tests/execution/paging/fixture.js';
+import {
+  BANK,
+  PC,
+  initial,
+  usingPaged,
+} from '../../../../../../tests/execution/memory/paging/fixture.js';
 import { compiler } from '../fixture.js';
 
 test('paged vector pairs retain both loads before either aliased store', async () => {

@@ -8,7 +8,7 @@ import {
   little,
   usingPaged,
   type Scenario,
-} from '../paging/fixture.js';
+} from '../memory/paging/fixture.js';
 
 export function siblingEntryScenario(compiler: WebAssembly.Module): Scenario {
   return {

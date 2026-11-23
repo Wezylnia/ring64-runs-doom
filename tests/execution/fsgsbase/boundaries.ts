@@ -8,7 +8,7 @@ import {
   using as withProfile,
   type Profile,
 } from '../identity-time/oracle.js';
-import { fixture, using } from '../supervisor-access/fixture.js';
+import { fixture, using } from '../memory/supervisor-access/fixture.js';
 import { LONG, using as linear } from '../modes/fixture.js';
 
 export function boundaryScenarios(compiler: WebAssembly.Module): Scenario[] {

@@ -6,7 +6,7 @@ import {
   initial,
   little,
   usingPaged,
-} from '../../../../../../tests/execution/paging/fixture.js';
+} from '../../../../../../tests/execution/memory/paging/fixture.js';
 import { compiler } from '../fixture.js';
 
 test('ordinary paged vector moves retain live read and write mappings and replay checked faults', async () => {

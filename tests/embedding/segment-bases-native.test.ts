@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { BANK, PC, initial, little, usingPaged } from '../execution/paging/fixture.js';
+import { BANK, PC, initial, little, usingPaged } from '../execution/memory/paging/fixture.js';
 
 test(
   'FS and GS widths match an OS-enabled x86-64 process on the identical instruction bytes',

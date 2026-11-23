@@ -13,7 +13,7 @@ import {
   using as usingEvents,
   withGate,
 } from '../../../exception-delivery/fixture.js';
-import { BANK, PC, initial, little, same, usingPaged } from '../../../paging/fixture.js';
+import { BANK, PC, initial, little, same, usingPaged } from '../../../memory/paging/fixture.js';
 import { physicalCpu, resetContext } from '../../../reset/fixture.js';
 import {
   INDEFINITE,

@@ -9,7 +9,7 @@ import {
   little,
   usingPaged,
   word,
-} from '../../../../../../tests/execution/paging/fixture.js';
+} from '../../../../../../tests/execution/memory/paging/fixture.js';
 import { compiler } from '../fixture.js';
 
 test('an indexed near call preserves checked fetch and writes in a guarded handler', async () => {

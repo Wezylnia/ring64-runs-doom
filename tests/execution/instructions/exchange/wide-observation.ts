@@ -8,8 +8,8 @@ import {
   initial,
   type Scenario,
 } from '../../../support/fixture.js';
-import { fixture, same, using, word } from '../../supervisor-access/fixture.js';
-import { little } from '../../paging/fixture.js';
+import { fixture, same, using, word } from '../../memory/supervisor-access/fixture.js';
+import { little } from '../../memory/paging/fixture.js';
 import { LONG, using as usingLinear } from './fixture.js';
 
 export function wideObservationScenarios(compiler: WebAssembly.Module): Scenario[] {

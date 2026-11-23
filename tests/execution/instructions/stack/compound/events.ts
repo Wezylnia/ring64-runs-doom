@@ -5,7 +5,7 @@ import {
   using,
   memory as physicalMemory,
   put,
-} from '../../../supervisor-access/fixture.js';
+} from '../../../memory/supervisor-access/fixture.js';
 import { gate } from '../../../software-events/fixture.js';
 import {
   PC,

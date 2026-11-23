@@ -13,7 +13,7 @@ import {
   usingPaged,
   type PagedSetup,
   type Scenario,
-} from '../paging/fixture.js';
+} from '../memory/paging/fixture.js';
 
 const HANDLER = 0x401000n;
 const TARGET = 0x407000n;

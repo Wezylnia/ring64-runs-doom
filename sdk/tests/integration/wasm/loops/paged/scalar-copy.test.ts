@@ -9,7 +9,7 @@ import {
   hex,
   initial,
   usingPaged,
-} from '../../../../../../tests/execution/paging/fixture.js';
+} from '../../../../../../tests/execution/memory/paging/fixture.js';
 import { LIMITS } from '../../../../../../tests/support/fixture.js';
 import { compiler } from '../fixture.js';
 

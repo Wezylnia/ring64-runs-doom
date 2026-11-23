@@ -15,7 +15,7 @@ import {
   preserved,
   same,
   hex,
-} from '../../../supervisor-access/fixture.js';
+} from '../../../memory/supervisor-access/fixture.js';
 import { expected, merge, PC, equal, type Scenario } from './fixture.js';
 
 const modelProfiles: Profile[] = [

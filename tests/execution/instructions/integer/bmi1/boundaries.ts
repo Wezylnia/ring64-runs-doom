@@ -15,9 +15,9 @@ import {
   runOne,
   state as userState,
   using as usingPhysical,
-} from '../../../alignment-checking/fixture.js';
+} from '../../../memory/alignment-checking/fixture.js';
 import { preserveNumeric } from '../../../far-control/fixture.js';
-import { legacyOptions, little } from '../../../legacy-paging/fixture.js';
+import { legacyOptions, little } from '../../../memory/legacy-paging/fixture.js';
 import { context, LONG, using } from '../../../modes/fixture.js';
 
 export function boundaryScenarios(compiler: WebAssembly.Module): Scenario[] {

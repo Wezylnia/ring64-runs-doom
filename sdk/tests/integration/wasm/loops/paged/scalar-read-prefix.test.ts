@@ -9,7 +9,7 @@ import {
   initial,
   little,
   usingPaged,
-} from '../../../../../../tests/execution/paging/fixture.js';
+} from '../../../../../../tests/execution/memory/paging/fixture.js';
 import { compiler } from '../fixture.js';
 
 test('sampled quiet completion keeps branch, single-step, and execute breakpoint handling', async () => {

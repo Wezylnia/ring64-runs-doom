@@ -1,5 +1,5 @@
 import { LIMITS } from '../../support/fixture.js';
-import { mapping, RX, RW } from '../mapped-memory/fixture.js';
+import { mapping, RX, RW } from '../memory/mappings/fixture.js';
 import {
   changed,
   check,

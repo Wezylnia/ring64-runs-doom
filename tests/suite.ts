@@ -4,9 +4,9 @@ import { mmioScenarios } from './execution/mmio/index.js';
 import { numericControlScenarios } from './execution/numeric/controls.js';
 import { integerScenarios } from './execution/instructions/integer/index.js';
 import { stackScenarios } from './execution/instructions/stack/index.js';
-import { addressingScenarios } from './execution/addressing/index.js';
-import { memoryScenarios } from './execution/memory.js';
-import { mappedMemoryScenarios } from './execution/mapped-memory/index.js';
+import { addressingScenarios } from './execution/memory/addressing/index.js';
+import { memoryScenarios } from './execution/memory/operands.js';
+import { mappedMemoryScenarios } from './execution/memory/mappings/index.js';
 import { controlScenarios } from './execution/control.js';
 import { translationsScenarios } from './execution/translations.js';
 import { embeddingScenarios } from '../sdk/tests/api/scenarios.js';
@@ -28,20 +28,20 @@ import { softwareEventScenarios } from './execution/software-events/index.js';
 import { exceptionDeliveryScenarios } from './execution/exception-delivery/index.js';
 import { externalInterruptScenarios } from './execution/external-interrupts/index.js';
 
-import { accessFaultScenarios } from './execution/access-faults/index.js';
+import { accessFaultScenarios } from './execution/memory/access-faults/index.js';
 
 import { hardwareDebugScenarios } from './execution/hardware-debug/index.js';
-import { legacyPagingScenarios } from './execution/legacy-paging/index.js';
-import { pagingScenarios } from './execution/paging/index.js';
+import { legacyPagingScenarios } from './execution/memory/legacy-paging/index.js';
+import { pagingScenarios } from './execution/memory/paging/index.js';
 import { fsgsbaseScenarios } from './execution/fsgsbase/index.js';
 import { fastSystemScenarios } from './execution/fast-system/index.js';
 import { contextReuseScenarios } from './execution/context-reuse/index.js';
 import { cr3CodeReuseScenarios } from './execution/cr3-code-reuse/index.js';
 import { identityTimeScenarios } from './execution/identity-time/index.js';
-import { supervisorAccessScenarios } from './execution/supervisor-access/index.js';
-import { alignmentCheckingScenarios } from './execution/alignment-checking/index.js';
+import { supervisorAccessScenarios } from './execution/memory/supervisor-access/index.js';
+import { alignmentCheckingScenarios } from './execution/memory/alignment-checking/index.js';
 import { xstateScenarios } from './execution/numeric/xstate/index.js';
-import { protectionKeysScenarios } from './execution/protection-keys/index.js';
+import { protectionKeysScenarios } from './execution/memory/protection-keys/index.js';
 
 export async function runScenarios(
   compiler: Uint8Array | WebAssembly.Module,

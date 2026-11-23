@@ -10,7 +10,7 @@ import {
   preserved,
   AC,
   SMAP,
-} from '../../../supervisor-access/fixture.js';
+} from '../../../memory/supervisor-access/fixture.js';
 import { equal, merge, expected, PC, type Scenario } from './fixture.js';
 
 const side = (compiler: WebAssembly.Module) => ({ createCpu, compiler });

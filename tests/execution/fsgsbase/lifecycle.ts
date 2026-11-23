@@ -1,8 +1,8 @@
 import { createCpu } from '../../../sdk/src/index.js';
 import { longSnapshot } from '../../support/context.js';
 import { check, equal, hex, initial, LIMITS, type Scenario } from '../../support/fixture.js';
-import { little, same } from '../paging/fixture.js';
-import { fixture, put, using, word } from '../supervisor-access/fixture.js';
+import { little, same } from '../memory/paging/fixture.js';
+import { fixture, put, using, word } from '../memory/supervisor-access/fixture.js';
 
 // Supervisor boot. R13 values are OS opt-out, CPUID-dispatched, forced enable,
 // and forced user instruction without enabling CR4. R14 communicates permission to CPL3.

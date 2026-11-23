@@ -8,7 +8,7 @@ import {
   type Scenario,
 } from '../../../../support/fixture.js';
 import { context, LONG, using } from '../../../modes/fixture.js';
-import { BANK, PC, usingPaged } from '../../../paging/fixture.js';
+import { BANK, PC, usingPaged } from '../../../memory/paging/fixture.js';
 
 export function decodeScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [
