@@ -41,7 +41,7 @@ try {
   await copyFile(join(root, 'assets/logo.svg'), join(assets, 'logo.svg'));
   await copyFile(join(wetInk, 'grain.png'), join(demo, 'grain.png'));
   await copyFile(join(wetInk, 'guest/ink.c'), join(guestAssets, 'ink.c.txt'));
-  for (const name of ['ring64.wasm', 'LICENSE', 'THIRD_PARTY_NOTICES.txt'])
+  for (const name of ['ring64.wasm', 'ring64-memory64.wasm', 'LICENSE', 'THIRD_PARTY_NOTICES.txt'])
     await copyFile(join(sdk, name), join(demo, name));
   await build({
     entryPoints: {

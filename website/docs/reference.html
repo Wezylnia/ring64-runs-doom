@@ -19,10 +19,14 @@
       <div>
         <dt id="loadCpuCompiler" tabindex="-1">
           <a href="#loadCpuCompiler"
-            ><code>loadCpuCompiler(): Promise&lt;WebAssembly.Module&gt;</code></a
+            ><code>loadCpuCompiler(guestMemory?): Promise&lt;WebAssembly.Module&gt;</code></a
           >
         </dt>
-        <dd>loads the packaged <code>ring64.wasm</code>. reuse the module across cpus.</dd>
+        <dd>
+          defaults to <code>memory64</code> on hosts with wasm memory64 and multi-memory support.
+          other hosts use <code>memory32</code>. pass <code>'memory32'</code> or
+          <code>'memory64'</code> to select a profile explicitly. reuse the module across cpus.
+        </dd>
       </div>
       <div>
         <dt id="createCpu" tabindex="-1">

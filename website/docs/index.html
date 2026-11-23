@@ -83,8 +83,8 @@
             <details>
               <summary>run in a browser</summary>
               <p id="browser-setup" tabindex="-1">
-                bundle the same <code>add.ts</code> and put <code>ring64.wasm</code> beside the
-                bundle.
+                bundle the same <code>add.ts</code> and put both standalone wasm files beside the
+                bundle. the sdk requests the one your browser supports.
               </p>
               <div class="docs-example">
                 <div class="docs-example-bar">
@@ -100,7 +100,7 @@
                 </div>
                 <pre><code id="browser-build">npx esbuild add.ts --bundle --format=esm \
   --outfile=public/add.js
-cp node_modules/ring64/ring64.wasm public/</code></pre>
+cp node_modules/ring64/ring64.wasm node_modules/ring64/ring64-memory64.wasm public/</code></pre>
               </div>
               <p>add this to <code>public/index.html</code>.</p>
               <div class="docs-example">
