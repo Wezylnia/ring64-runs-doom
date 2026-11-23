@@ -165,6 +165,22 @@ pub(crate) const REGISTER_PAIR_SEGMENT: u32 = u32::MAX;
 pub(crate) const MEMORY_PAIR_SEGMENT: u32 = 1 << 31;
 
 #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+pub(crate) const MEMORY_FIRST_PAIR_SEGMENT: u32 = 1 << 30;
+
+#[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+pub(crate) fn memory_first_pair(first: Op, second: Op) -> bool {
+    matches!(first.format, Format::F32 | Format::F64)
+        && (first.kind == Kind::Load
+            && second.kind == Kind::Load
+            && second.format == Format::Register
+            || matches!(
+                first.kind,
+                Kind::Add | Kind::Mul | Kind::Sub | Kind::SubReverse | Kind::Div | Kind::DivReverse
+            ) && second.kind == Kind::Store
+                && matches!(second.format, Format::F32 | Format::F64))
+}
+
+#[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
 pub(crate) fn register_load_memory_arithmetic(first: Op, second: Op) -> bool {
     first.kind == Kind::Load
         && first.format == Format::Register
@@ -225,6 +241,19 @@ impl State {
 
     pub(crate) fn load_memory_arithmetic(&mut self, index: u8, op: Op, source: u64) {
         execute::load_memory_arithmetic(self, index, op, u128::from(source));
+    }
+
+    pub(crate) fn load_memory_register(&mut self, format: Format, source: u64, index: u8) -> bool {
+        execute::load_memory_register(self, format, u128::from(source), index)
+    }
+
+    pub(crate) fn memory_arithmetic_store(
+        &mut self,
+        first: Op,
+        source: u64,
+        second: Op,
+    ) -> Option<Option<u64>> {
+        execute::memory_arithmetic_store(self, first, u128::from(source), second)
     }
 
     pub(crate) fn can_exchange_register(&self, index: u8) -> bool {

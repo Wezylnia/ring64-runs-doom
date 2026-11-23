@@ -100,7 +100,98 @@ pub extern "C" fn core_x87(
             rax,
         );
     }
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    if segment & x87::MEMORY_FIRST_PAIR_SEGMENT != 0 {
+        return core_x87_memory_first_pair(
+            operation,
+            rax,
+            segment ^ x87::MEMORY_FIRST_PAIR_SEGMENT,
+            [offset, flags],
+            instruction_pc,
+        );
+    }
     core_x87_impl::<false, false>(operation, offset, segment, instruction_pc, flags, rax)
+}
+
+#[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+#[inline(never)]
+fn core_x87_memory_first_pair(
+    first: u32,
+    second: u64,
+    segments: u32,
+    offsets: [u64; 2],
+    pc: u64,
+) -> i32 {
+    let (Ok(second), Some(&head_segment), Some(&tail_segment)) = (
+        u32::try_from(second),
+        Segment::ALL.get((segments & 7) as usize),
+        Segment::ALL.get((segments >> 3) as usize),
+    ) else {
+        return -1;
+    };
+    BRIDGE.with_borrow_mut(|bridge| {
+        let (Some(first), Some(second)) = (
+            bridge.x87_operations.get(first),
+            bridge.x87_operations.get(second),
+        ) else {
+            return -1;
+        };
+        if !x87::memory_first_pair(first, second) {
+            return -1;
+        }
+        let core = bridge.core.as_mut().unwrap();
+        let run = unsafe { &mut *core.state.get() };
+        if core.paging.is_some() || run.x87.pending() != 0 {
+            return -1;
+        }
+        // Both operands must be available before publishing any instruction effects.
+        let width = first.memory_bytes();
+        let Ok(head) = core
+            .context
+            .translate(offsets[0], width, head_segment, Access::Read, false)
+        else {
+            return -1;
+        };
+        let Ok(source) = core.image.read(head, width) else {
+            return -1;
+        };
+        let (data, diagnostic_segment) = if second.is_store() {
+            let width = second.memory_bytes();
+            let Ok(tail) =
+                core.context
+                    .translate(offsets[1], width, tail_segment, Access::Write, false)
+            else {
+                return -1;
+            };
+            let Ok(write) = core.image.prepare_linear_write(tail, width) else {
+                return -1;
+            };
+            let Some(value) = run.x87.memory_arithmetic_store(first, source, second) else {
+                return -1;
+            };
+            if let Some(value) = value {
+                write.publish(&value.to_le_bytes()[..width as usize]);
+            }
+            ((offsets[1], tail_segment), tail_segment)
+        } else {
+            if !run
+                .x87
+                .load_memory_register(first.format, source, second.index)
+            {
+                return -1;
+            }
+            ((offsets[0], head_segment), Segment::Cs)
+        };
+        // The first instruction cannot leave a pending exception in an admitted pair.
+        x87_environment(&core.context, &mut run.x87, second, pc, Some(data));
+        clear_x87_diagnostics(core);
+        unsafe { (*core.state.get()).fault_segment = diagnostic_segment as u32 };
+        if second.is_store() && core.image.active_changed() {
+            2
+        } else {
+            0
+        }
+    })
 }
 
 #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]

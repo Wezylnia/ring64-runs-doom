@@ -78,6 +78,59 @@ pub(super) fn load_memory_arithmetic(state: &mut State, index: u8, op: Op, sourc
     finish_numeric(state, destination, result, 0);
 }
 
+#[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+pub(super) fn load_memory_register(
+    state: &mut State,
+    format: Format,
+    source: u128,
+    index: u8,
+) -> bool {
+    let top = state.top();
+    let first = (top + 7) & 7;
+    let second = (top + 6) & 7;
+    let from = (first + usize::from(index)) & 7;
+    if state.tag(first) != 3 || state.tag(second) != 3 || from != first && state.tag(from) == 3 {
+        return false;
+    }
+    let result = number::load(source, format);
+    if (result.pre | result.post) & !state.control_word & 63 != 0 {
+        return false;
+    }
+    status(state, result);
+    push(state, result.value);
+    state.load_admitted_register(index);
+    true
+}
+
+#[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+pub(super) fn memory_arithmetic_store(
+    state: &mut State,
+    first: Op,
+    source: u128,
+    second: Op,
+) -> Option<Option<u64>> {
+    let top = state.top();
+    if state.tag(top) == 3 {
+        return None;
+    }
+    let cw = state.control_word;
+    let rhs = number::widen(source, first.format);
+    let extra = u16::from(number::memory_denormal(source, first.format)) << 1;
+    let arithmetic = number::binary(first.kind, state.raw(top), rhs, cw, extra);
+    if arithmetic.suppress || (arithmetic.pre | arithmetic.post) & !cw & 63 != 0 {
+        return None;
+    }
+    let store = number::store(arithmetic.value, second.format, cw);
+    // Even a suppressed store observes the first instruction's rounded register.
+    finish_numeric(state, top, arithmetic, 0);
+    status(state, store);
+    if store.suppress || store.pre & !cw & 63 != 0 {
+        return Some(None);
+    }
+    pops(state, second.pop);
+    Some(Some(store.value as u64))
+}
+
 fn examined(state: &mut State) {
     let p = state.top();
     let raw = state.raw(p);

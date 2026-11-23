@@ -217,6 +217,94 @@ fn x87_memory_pair_matches_separate_register_load_and_arithmetic() {
 
 #[cfg(not(feature = "parallel"))]
 #[test]
+fn x87_memory_first_pairs_match_separate_operations_or_leave_the_prefix_intact() {
+    use crate::x86::x87::MEMORY_FIRST_PAIR_SEGMENT;
+
+    initialize(0x1000, &[0xf4]);
+    let pair = |first: Op, second: Op, output| {
+        x87::core_x87(
+            first.encode(),
+            0x4000,
+            MEMORY_FIRST_PAIR_SEGMENT | Segment::Fs as u32 | ((Segment::Fs as u32) << 3),
+            0x1003,
+            output,
+            u64::from(second.encode()),
+        )
+    };
+    let values = [
+        (Format::F32, 4, [0x4040_0000, 1, 0x7f80_0010]),
+        (
+            Format::F64,
+            8,
+            [0x4008_0000_0000_0000, 1, 0x7ff0_0000_0000_0010],
+        ),
+    ];
+    let mut successes = 0;
+    let mut refusals = 0;
+    for (format, width, inputs) in values {
+        for (first, second) in [
+            (
+                operation(Kind::Load, format, 0x500),
+                operation(Kind::Load, Format::Register, 0x1c0),
+            ),
+            (
+                operation(Kind::DivReverse, format, 0x438),
+                Op {
+                    pop: 1,
+                    ..operation(Kind::Store, format, 0x518)
+                },
+            ),
+        ] {
+            for input in inputs {
+                assert_eq!(core_store(0x4000, width, input), 1);
+                for control_word in [0x37f, 0x37e, 0x37d, 0x077f, 0x0e5f] {
+                    for top in 0u16..8 {
+                        let mut prior = X87State {
+                            control_word,
+                            status_word: (top << 11) | 0x4700,
+                            opcode: 0x123,
+                            instruction_pointer: 0x7000,
+                            data_pointer: 0x8000,
+                            ..X87State::default()
+                        };
+                        prior.set_raw(usize::from(top), 0x4000_c000_0000_0000_0000);
+                        prior.set_tag(usize::from(top), 0);
+                        install(prior);
+                        assert_eq!(core_store(0x4008, 8, u64::MAX), 1);
+                        assert_eq!(invoke(first, 0x4000, 0x1000, 0, 0), 0);
+                        let separate_status = invoke(second, 0x4008, 0x1003, 0, 0);
+                        let separate = (snapshot(), core_load(0x4008, 8));
+
+                        install(prior);
+                        assert_eq!(core_store(0x4008, 8, u64::MAX), 1);
+                        if second.is_store() {
+                            assert_eq!(pair(first, second, 0x400f), -1);
+                            assert_eq!(snapshot(), prior);
+                            assert_eq!(core_load(0x4008, 8), u64::MAX);
+                        }
+                        match pair(first, second, 0x4008) {
+                            0 => {
+                                successes += 1;
+                                assert_eq!(separate_status, 0);
+                                assert_eq!((snapshot(), core_load(0x4008, 8)), separate);
+                            }
+                            -1 => {
+                                refusals += 1;
+                                assert_eq!(snapshot(), prior);
+                                assert_eq!(core_load(0x4008, 8), u64::MAX);
+                            }
+                            status => panic!("unexpected status {status}"),
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert!(successes > 0 && refusals > 0);
+}
+
+#[cfg(not(feature = "parallel"))]
+#[test]
 fn x87_register_pop_pair_matches_two_checked_writes_or_refuses_intact() {
     use crate::x86::x87::REGISTER_PAIR_SEGMENT;
 
