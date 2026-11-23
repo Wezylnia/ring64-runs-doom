@@ -9,6 +9,8 @@ pub mod fast_system;
 pub mod flags;
 pub mod float;
 pub mod instruction;
+#[cfg(any(target_arch = "wasm32", test))]
+pub(crate) mod integer;
 pub mod masked;
 pub mod mmx;
 pub mod numeric_controls;

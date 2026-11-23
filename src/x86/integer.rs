@@ -1,4 +1,4 @@
-pub(super) fn multiply_high(left: u64, right: u64, signed: bool) -> u64 {
+pub(crate) fn multiply_high(left: u64, right: u64, signed: bool) -> u64 {
     let product = if signed {
         ((left as i64 as i128) * (right as i64 as i128)) as u128
     } else {
@@ -7,7 +7,7 @@ pub(super) fn multiply_high(left: u64, right: u64, signed: bool) -> u64 {
     (product >> 64) as u64
 }
 
-pub(super) fn divide(high: u64, low: u64, divisor: u64, signed: bool) -> Option<u64> {
+pub(crate) fn divide(high: u64, low: u64, divisor: u64, signed: bool) -> Option<u64> {
     let dividend = (u128::from(high) << 64) | u128::from(low);
     if signed {
         let quotient = (dividend as i128).checked_div(divisor as i64 as i128)?;

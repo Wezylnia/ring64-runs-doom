@@ -352,12 +352,12 @@ pub extern "C" fn core_clear_fault() -> i32 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn core_multiply_high(left: u64, right: u64, signed: i32) -> u64 {
-    super::arithmetic::multiply_high(left, right, signed != 0)
+    crate::x86::integer::multiply_high(left, right, signed != 0)
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn core_divide(high: u64, low: u64, divisor: u64, signed: i32) -> u64 {
-    let result = super::arithmetic::divide(high, low, divisor, signed != 0);
+    let result = crate::x86::integer::divide(high, low, divisor, signed != 0);
     BRIDGE.with_borrow_mut(|bridge| {
         bridge.core.as_mut().unwrap().divide_failed = result.is_none();
     });
