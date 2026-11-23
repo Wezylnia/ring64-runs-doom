@@ -130,7 +130,7 @@ try {
     if (entry.build === 'host') {
       build('build-sdk.mjs');
     } else if (entry.build === 'core') {
-      build('parallel-core.mjs');
+      build('profile-core.mjs');
     }
     const mutatedCore = hash(await readFile(join(tree, 'build', core)));
     if (entry.build === 'core') assert.notEqual(mutatedCore, baselineCore);

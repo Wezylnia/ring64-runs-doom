@@ -10,6 +10,7 @@ crate-type = ["rlib", "cdylib"]
 
 [features]
 parallel = []
+memory64 = []
 
 [dependencies]
 rustc_apfloat = "=0.2.3"

@@ -1,6 +1,9 @@
 use super::Backing;
 
+#[cfg(not(guest_memory64))]
 pub type BackingOffset = u32;
+#[cfg(guest_memory64)]
+pub type BackingOffset = u64;
 
 impl Backing {
     #[inline]
@@ -12,27 +15,54 @@ impl Backing {
 
     #[inline]
     pub(in crate::memory) fn read_bytes(&self, offset: BackingOffset, output: &mut [u8]) {
-        let start = offset as usize;
-        copy_bytes(output, &self.bytes[start..start + output.len()]);
+        #[cfg(guest_memory64)]
+        self.extent.read(offset, output);
+        #[cfg(not(guest_memory64))]
+        {
+            let start = offset as usize;
+            copy_bytes(output, &self.bytes[start..start + output.len()]);
+        }
     }
 
     #[inline]
     pub(in crate::memory) fn write_bytes(&mut self, offset: BackingOffset, input: &[u8]) {
-        let start = offset as usize;
-        copy_bytes(&mut self.bytes[start..start + input.len()], input);
+        #[cfg(guest_memory64)]
+        self.extent.write(offset, input);
+        #[cfg(not(guest_memory64))]
+        {
+            let start = offset as usize;
+            copy_bytes(&mut self.bytes[start..start + input.len()], input);
+        }
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     pub(super) fn host_pointer(&self, offset: BackingOffset) -> Option<*const u8> {
-        Some(self.bytes.as_ptr().wrapping_add(offset as usize))
+        #[cfg(guest_memory64)]
+        {
+            let _ = offset;
+            None
+        }
+        #[cfg(not(guest_memory64))]
+        {
+            Some(self.bytes.as_ptr().wrapping_add(offset as usize))
+        }
     }
 
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
     pub(super) fn host_pointer_mut(&mut self, offset: BackingOffset) -> Option<*mut u8> {
-        Some(self.bytes.as_mut_ptr().wrapping_add(offset as usize))
+        #[cfg(guest_memory64)]
+        {
+            let _ = offset;
+            None
+        }
+        #[cfg(not(guest_memory64))]
+        {
+            Some(self.bytes.as_mut_ptr().wrapping_add(offset as usize))
+        }
     }
 }
 
+#[cfg(not(guest_memory64))]
 #[inline]
 fn copy_bytes(target: &mut [u8], source: &[u8]) {
     match target.len() {

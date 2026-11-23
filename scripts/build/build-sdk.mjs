@@ -10,7 +10,7 @@ await Promise.all(
 );
 
 execFileSync(process.execPath, ['node_modules/typescript/bin/tsc'], { stdio: 'inherit' });
-for (const name of ['ring64.wasm', 'ring64-parallel.wasm'])
+for (const name of ['ring64.wasm', 'ring64-parallel.wasm', 'ring64-memory64.wasm'])
   await copyFile(`build/${name}`, `${emitted}/${name}`);
 
 // Benchmarks use this artifact layout for both fresh and historical snapshots.

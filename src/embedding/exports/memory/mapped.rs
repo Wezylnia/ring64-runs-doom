@@ -1,3 +1,11 @@
+#![cfg_attr(
+    guest_memory64,
+    allow(
+        clippy::useless_conversion,
+        reason = "backing offsets widen from u32 only in the memory64 build"
+    )
+)]
+
 use crate::embedding::exports::*;
 use serde_json::Value;
 
@@ -23,6 +31,16 @@ fn word(value: &Value) -> Result<u32, MemoryError> {
         .and_then(|value| u32::try_from(value).ok())
         .ok_or_else(invalid)
 }
+#[cfg(guest_memory64)]
+fn backing_size(value: &Value) -> Result<u64, MemoryError> {
+    value
+        .as_u64()
+        .filter(|&n| n < (1 << 53))
+        .ok_or_else(invalid)
+}
+#[cfg(not(guest_memory64))]
+use word as backing_size;
+
 fn name(value: &Value) -> Result<&str, MemoryError> {
     value
         .as_str()
@@ -32,6 +50,7 @@ fn name(value: &Value) -> Result<&str, MemoryError> {
 fn array(value: &Value) -> Result<&Vec<Value>, MemoryError> {
     value.as_array().ok_or_else(invalid)
 }
+#[cfg(not(guest_memory64))]
 fn copy(bytes: &[u8]) -> Result<Vec<u8>, MemoryError> {
     let mut owned = Vec::new();
     owned
@@ -60,7 +79,7 @@ fn mappings(value: &Value, capacity: usize) -> Result<Vec<MappingInput>, MemoryE
         mappings.push(MappingInput {
             base,
             backing: name(&input["backing"])?.into(),
-            offset: word(&input["offset"])?,
+            offset: backing_size(&input["offset"])?,
             length: word(&input["length"])?,
             permissions: Permissions {
                 read: permissions["read"].as_bool().ok_or_else(invalid)?,
@@ -77,7 +96,7 @@ fn initial_image(input: &[u8], metadata_len: u32) -> Result<InitialImage, Memory
     let config = json(input.get(..metadata_len).ok_or_else(invalid)?)?;
     let caps = &config["memoryLimits"];
     let limits = MemoryLimits {
-        max_backing_bytes: word(&caps["maxBackingBytes"])?,
+        max_backing_bytes: backing_size(&caps["maxBackingBytes"])?,
         max_backings: word(&caps["maxBackings"])?,
         max_mappings: word(&caps["maxMappings"])?,
     };
@@ -90,7 +109,9 @@ fn initial_image(input: &[u8], metadata_len: u32) -> Result<InitialImage, Memory
     }
     let maps = mappings(&config["mappings"], limits.max_mappings as usize)?;
     let total = inputs.iter().try_fold(0u64, |total, input| {
-        Ok::<_, MemoryError>(total + u64::from(word(&input["length"])?))
+        total
+            .checked_add(u64::from(backing_size(&input["length"])?))
+            .ok_or_else(invalid)
     })?;
     if total > u64::from(limits.max_backing_bytes) {
         return Err(MemoryError::Capacity("backing byte capacity exceeded"));
@@ -101,8 +122,13 @@ fn initial_image(input: &[u8], metadata_len: u32) -> Result<InitialImage, Memory
     });
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     let payload_bytes = if shared.is_some() { 0 } else { total };
-    #[cfg(not(all(feature = "parallel", target_arch = "wasm32")))]
+    #[cfg(not(any(all(feature = "parallel", target_arch = "wasm32"), guest_memory64)))]
     let payload_bytes = total;
+    #[cfg(guest_memory64)]
+    let payload_bytes = inputs.iter().try_fold(0u64, |sum, row| {
+        sum.checked_add(u64::from(word(&row["initialLength"])?))
+            .ok_or_else(invalid)
+    })?;
     if payload_bytes != (input.len() - metadata_len) as u64 {
         return Err(invalid());
     }
@@ -116,9 +142,19 @@ fn initial_image(input: &[u8], metadata_len: u32) -> Result<InitialImage, Memory
         if shared.is_some() {
             break;
         }
+        #[cfg(not(guest_memory64))]
         let length = word(&description["length"])? as usize;
+        #[cfg(guest_memory64)]
+        let length = word(&description["initialLength"])? as usize;
         let id = name(&description["id"])?;
+        #[cfg(not(guest_memory64))]
         backings.push((id.into(), copy(&input[cursor..cursor + length])?));
+        #[cfg(guest_memory64)]
+        backings.push((
+            id,
+            backing_size(&description["length"])?,
+            &input[cursor..cursor + length],
+        ));
         cursor += length;
     }
     macro_rules! image {
@@ -135,8 +171,19 @@ fn initial_image(input: &[u8], metadata_len: u32) -> Result<InitialImage, Memory
             } else {
                 Image::$standalone(backings, maps, limits)
             }
-            #[cfg(not(all(feature = "parallel", target_arch = "wasm32")))]
-            Image::$standalone(backings, maps, limits)
+            #[cfg(not(any(all(feature = "parallel", target_arch = "wasm32"), guest_memory64)))]
+            {
+                Image::$standalone(backings, maps, limits)
+            }
+            #[cfg(guest_memory64)]
+            {
+                let mut image = Image::$standalone(Vec::new(), Vec::new(), limits)?;
+                for (id, length, initial) in backings {
+                    image.add_memory64_backing(id.into(), length, initial)?;
+                }
+                image.set_mappings(maps)?;
+                Ok::<Image, MemoryError>(image)
+            }
         }};
     }
     let initial = match config.get("memoryModel") {
@@ -268,8 +315,15 @@ pub extern "C" fn core_add_backing(metadata_len: u32) -> i32 {
             let id = name(&config["id"])?;
             let input = &bridge.input[metadata_len..];
             let image = &mut bridge.core.as_mut().unwrap().image;
-            image.check_backing(id, input.len())?;
-            image.add_backing(id.into(), copy(input)?)
+            #[cfg(guest_memory64)]
+            {
+                image.add_memory64_backing(id.into(), backing_size(&config["length"])?, input)
+            }
+            #[cfg(not(guest_memory64))]
+            {
+                image.check_backing(id, u32::try_from(input.len()).map_err(|_| invalid())?)?;
+                image.add_backing(id.into(), copy(input)?)
+            }
         })();
         match result {
             Ok(()) => {

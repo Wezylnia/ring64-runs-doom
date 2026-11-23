@@ -62,7 +62,7 @@ impl Image {
         let layout = self
             .shared
             .ok_or(MemoryError::Invalid("no shared RAM attachment"))?;
-        self.check_backing(&id, length as usize)?;
+        self.check_backing(&id, length)?;
         let record = SharedBacking {
             offset,
             incarnation,

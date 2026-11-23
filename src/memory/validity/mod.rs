@@ -1,7 +1,15 @@
+#![cfg_attr(
+    guest_memory64,
+    allow(
+        clippy::useless_conversion,
+        reason = "backing offsets widen from u32 only in the memory64 build"
+    )
+)]
+
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use super::image::{Backing, Mapping, locate};
+use super::image::{Backing, BackingOffset, Mapping, locate};
 use super::{Access, Image, MemoryError};
 
 #[derive(Debug)]
@@ -9,7 +17,7 @@ struct SourceSlice {
     guest: u64,
     length: u32,
     incarnation: Rc<()>,
-    offset: u32,
+    offset: BackingOffset,
     access: Access,
 }
 
@@ -26,8 +34,8 @@ pub(super) struct Validity {
     active: Option<u64>,
     active_invalid: bool,
     invalidated: bool,
-    sources: BTreeMap<usize, Vec<(u32, u64)>>,
-    completed_write: Option<(usize, u32, u64)>,
+    sources: BTreeMap<usize, Vec<(BackingOffset, u64)>>,
+    completed_write: Option<(usize, BackingOffset, u64)>,
 }
 
 impl Default for Validity {
@@ -90,7 +98,7 @@ impl Validity {
         }
     }
 
-    pub(super) fn write(&mut self, incarnation: &Rc<()>, offset: u32, length: u32) {
+    pub(super) fn write(&mut self, incarnation: &Rc<()>, offset: BackingOffset, length: u32) {
         let end = u64::from(offset) + u64::from(length);
         let identity = Rc::as_ptr(incarnation) as usize;
         if self.completed_write.is_some_and(|(backing, start, limit)| {
@@ -206,7 +214,7 @@ impl Image {
                     guest: cursor as u64,
                     length: count,
                     incarnation: self.backings[mapping.backing].incarnation.clone(),
-                    offset: mapping.offset + (cursor as u64 - mapping.base) as u32,
+                    offset: mapping.offset + (cursor as u64 - mapping.base) as BackingOffset,
                     access,
                 });
                 cursor += u128::from(count);

@@ -1,6 +1,16 @@
+#![cfg_attr(
+    guest_memory64,
+    allow(
+        clippy::useless_conversion,
+        reason = "backing offsets widen from u32 only in the memory64 build"
+    )
+)]
+
 use std::cell::Cell;
 use std::rc::Rc;
 
+#[cfg(guest_memory64)]
+mod memory64;
 mod storage;
 pub(super) use storage::BackingOffset;
 
@@ -9,7 +19,7 @@ use super::validity::Validity;
 
 #[derive(Clone, Copy, Debug)]
 pub struct MemoryLimits {
-    pub max_backing_bytes: u32,
+    pub max_backing_bytes: BackingOffset,
     pub max_backings: u32,
     pub max_mappings: u32,
 }
@@ -73,7 +83,10 @@ pub(crate) struct DirectSpan {
 #[derive(Debug)]
 pub(super) struct Backing {
     pub(super) id: String,
+    #[cfg(not(guest_memory64))]
     pub(super) bytes: Vec<u8>,
+    #[cfg(guest_memory64)]
+    extent: memory64::Extent,
     pub(super) incarnation: Rc<()>,
     pub(super) has_sources: bool,
     #[cfg(all(feature = "parallel", any(target_arch = "wasm32", test)))]
@@ -105,7 +118,7 @@ impl Image {
         let total = code
             .len()
             .checked_add(ram.len())
-            .and_then(|length| u32::try_from(length).ok())
+            .and_then(|length| BackingOffset::try_from(length).ok())
             .ok_or("combined image exceeds wasm32 input size")?;
         let mappings = vec![
             MappingInput {
@@ -199,24 +212,22 @@ impl Image {
         Ok(image)
     }
 
-    pub(crate) fn check_backing(&self, id: &str, length: usize) -> Result<(), MemoryError> {
+    pub(crate) fn check_backing(&self, id: &str, length: BackingOffset) -> Result<(), MemoryError> {
         if id.is_empty() || self.backings.iter().any(|backing| backing.id == id) {
             return Err(MemoryError::Invalid(
                 "backing name must be nonempty and unique",
             ));
         }
-        if length == 0 || u32::try_from(length).is_err() {
-            return Err(MemoryError::Invalid(
-                "backing bytes must be nonempty and fit wasm32",
-            ));
+        if length == 0 {
+            return Err(MemoryError::Invalid("backing bytes must be nonempty"));
         }
         let total: u64 = self
             .backings
             .iter()
-            .map(|backing| backing.logical_length() as u64)
+            .map(|backing| u64::from(backing.logical_length()))
             .sum();
         if self.backings.len() >= self.limits.max_backings as usize
-            || total + length as u64 > u64::from(self.limits.max_backing_bytes)
+            || u64::from(length) > u64::from(self.limits.max_backing_bytes) - total
         {
             return Err(MemoryError::Capacity("backing capacity exceeded"));
         }
@@ -230,17 +241,51 @@ impl Image {
                 "attached RAM requires a shared backing extent",
             ));
         }
-        self.check_backing(&id, bytes.len())?;
+        #[cfg(guest_memory64)]
+        {
+            self.add_memory64_backing(id, bytes.len() as u64, &bytes)
+        }
+        #[cfg(not(guest_memory64))]
+        {
+            self.check_backing(
+                &id,
+                u32::try_from(bytes.len())
+                    .map_err(|_| MemoryError::Invalid("backing exceeds wasm32"))?,
+            )?;
+            self.backings
+                .try_reserve(1)
+                .map_err(|_| MemoryError::Capacity("backing allocation refused"))?;
+            self.backings.push(Backing {
+                id,
+                bytes,
+                incarnation: Rc::new(()),
+                has_sources: false,
+                #[cfg(all(feature = "parallel", any(target_arch = "wasm32", test)))]
+                shared: None,
+            });
+            Ok(())
+        }
+    }
+
+    #[cfg(guest_memory64)]
+    pub(crate) fn add_memory64_backing(
+        &mut self,
+        id: String,
+        length: u64,
+        initial: &[u8],
+    ) -> Result<(), MemoryError> {
+        self.check_backing(&id, length)?;
+        if initial.len() as u64 > length {
+            return Err(MemoryError::Invalid("initial bytes exceed backing length"));
+        }
         self.backings
             .try_reserve(1)
             .map_err(|_| MemoryError::Capacity("backing allocation refused"))?;
         self.backings.push(Backing {
             id,
-            bytes,
+            extent: memory64::Extent::new(length, initial)?,
             incarnation: Rc::new(()),
             has_sources: false,
-            #[cfg(all(feature = "parallel", any(target_arch = "wasm32", test)))]
-            shared: None,
         });
         Ok(())
     }
@@ -286,8 +331,9 @@ impl Image {
                 .ok_or(MemoryError::Invalid("mapping refers to unknown backing"))?;
             if input.length == 0
                 || self.mapping_span_failure(input.base, u64::from(input.length))
-                || u64::from(input.offset) + u64::from(input.length)
-                    > self.backings[backing].logical_length() as u64
+                || u64::from(input.offset)
+                    .checked_add(u64::from(input.length))
+                    .is_none_or(|end| end > u64::from(self.backings[backing].logical_length()))
             {
                 return Err(MemoryError::Invalid(if self.physical {
                     "mapping must be a nonempty 52-bit physical backing slice"
@@ -574,12 +620,19 @@ pub(super) fn locate_index(mappings: &[Mapping], address: u64) -> Option<usize> 
 
 impl Backing {
     #[inline(always)]
-    fn logical_length(&self) -> usize {
+    fn logical_length(&self) -> BackingOffset {
         #[cfg(all(feature = "parallel", any(target_arch = "wasm32", test)))]
         if let Some(backing) = self.shared {
-            return backing.length as usize;
+            return backing.length;
         }
-        self.bytes.len()
+        #[cfg(not(guest_memory64))]
+        {
+            self.bytes.len() as u32
+        }
+        #[cfg(guest_memory64)]
+        {
+            self.extent.length
+        }
     }
 }
 
