@@ -1,5 +1,6 @@
 use super::*;
 use crate::x86::paging::{self, walk::Failure};
+#[cfg(not(feature = "parallel"))]
 use crate::x86::protection_keys::State as Keys;
 
 impl Core {
