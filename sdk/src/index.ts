@@ -4,6 +4,8 @@ export { createCpu } from './cpu/cpu.js';
 export async function loadCpuCompiler(
   guestMemory: 'memory32' | 'memory64' = 'memory32',
 ): Promise<WebAssembly.Module> {
+  if (guestMemory !== 'memory32' && guestMemory !== 'memory64')
+    throw new TypeError('guestMemory must be memory32 or memory64');
   const { loadCompiler } = await import('./wasm/load.js');
   return loadCompiler(
     guestMemory === 'memory64'

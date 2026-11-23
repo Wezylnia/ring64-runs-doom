@@ -56,7 +56,15 @@ function copyModule(): WebAssembly.Module {
 
 export function bindGuestMemory64() {
   const memory = new WebAssembly.Memory({ initial: 32 });
-  const helpers = new WebAssembly.Instance(copyModule(), { env: { memory } }).exports;
+  let compiled: WebAssembly.Module;
+  try {
+    compiled = copyModule();
+  } catch (cause) {
+    if (cause instanceof WebAssembly.CompileError)
+      throw new TypeError('guest RAM requires Wasm memory64 and multi-memory support', { cause });
+    throw cause;
+  }
+  const helpers = new WebAssembly.Instance(compiled, { env: { memory } }).exports;
   const ram = helpers.ram as WebAssembly.Memory;
   const clear = helpers.clear as (start: bigint, zero: number, length: bigint) => void;
   const extents: { base: bigint; end: bigint }[] = [];

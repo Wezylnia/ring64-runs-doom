@@ -44,6 +44,7 @@ test(
       'machine.d.ts',
       'ring64.wasm',
       'ring64-parallel.wasm',
+      'ring64-memory64.wasm',
       'parallel/worker/entry.js',
       'parallel/cpu/engine.js',
       'parallel/cpu/engine.d.ts',
