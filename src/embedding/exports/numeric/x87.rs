@@ -589,6 +589,96 @@ pub extern "C" fn core_paged_x87(
     core_x87_impl::<false, true>(operation, offset, segment, instruction_pc, flags, rax)
 }
 
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[inline(never)]
+fn core_paged_x87_load_pair(
+    operation: u32,
+    address: u64,
+    segment: u32,
+    pc: u64,
+    flags: u64,
+    next: u64,
+) -> i32 {
+    use crate::x86::flags::{AC, RF, TF};
+    use crate::x86::paging::walk::{AccessClass, Request};
+    let (Ok(next), Some(segment @ (Segment::Ds | Segment::Ss))) = (
+        u32::try_from(next),
+        Segment::ALL.get(segment as usize).copied(),
+    ) else {
+        return -1;
+    };
+    BRIDGE.with_borrow_mut(|bridge| {
+        let (Some(first), Some(second)) = (
+            bridge.x87_operations.get(operation),
+            bridge.x87_operations.get(next),
+        ) else {
+            return -1;
+        };
+        if first.kind != x87::Kind::Load
+            || second.is_store()
+            || !x87::memory_first_pair(first, second)
+        {
+            return -1;
+        }
+        let core = bridge.core.as_mut().unwrap();
+        let state = unsafe { &mut *core.state.get() };
+        let width = first.memory_bytes();
+        if address & u64::from(width - 1) != 0
+            || !crate::memory::canonical48(address)
+            || !core.context.is_long64()
+            || !core.numeric_admission_unrestricted()
+            || state.x87.pending() != 0
+            || state.event.kind != 0
+            || state.interrupts != Default::default()
+            || flags & (RF | TF) != 0
+            || !core.debug_completion_quiet()
+            || core.paged_region_trace.is_some()
+            || !core.warm_guarded_code_page(pc, false)
+        {
+            return -1;
+        }
+        // Both starts share the admitted fetch page. Only a retained data
+        // hit may precede the successor fetch: a walk could change A/D bits.
+        let request = Request {
+            linear: address,
+            access: Access::Read,
+            class: AccessClass::operand(core.context.cpl(), flags & AC != 0),
+        };
+        let paired = core.translation_cache.data_then_fetch::<false, _>(
+            core.paging.as_ref().expect("paged x87 pair"),
+            request,
+            &state.protection_keys,
+            width,
+            false,
+            |physical| {
+                let bits = if width == 8 {
+                    core.image.physical_read_mapped_qword(physical)
+                } else {
+                    core.image
+                        .physical_read_mapped_dword(physical)
+                        .map(u64::from)
+                }?;
+                state
+                    .x87
+                    .load_memory_register(first.format, bits, second.index)
+                    .then_some(())
+            },
+        );
+        if paired.is_none() {
+            return -1;
+        }
+        x87_environment(
+            &core.context,
+            &mut state.x87,
+            second,
+            pc,
+            Some((address, segment)),
+        );
+        clear_x87_diagnostics(core);
+        0
+    })
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn core_paged_x87_observed(
     operation: u32,
@@ -598,6 +688,17 @@ pub extern "C" fn core_paged_x87_observed(
     flags: u64,
     rax: u64,
 ) -> i32 {
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    if segment & x87::PAGED_LOAD_PAIR_SEGMENT != 0 {
+        return core_paged_x87_load_pair(
+            operation,
+            offset,
+            segment ^ x87::PAGED_LOAD_PAIR_SEGMENT,
+            instruction_pc,
+            flags,
+            rax,
+        );
+    }
     core_x87_impl::<true, true>(operation, offset, segment, instruction_pc, flags, rax)
 }
 

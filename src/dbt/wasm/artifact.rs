@@ -1030,13 +1030,20 @@ fn emit_body(
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let x87_register_pairs = optional.x87_register_pairs
         && has_x87
-        && !observed
-        && !paged
         && !mmio
-        && unit
-            .instructions
-            .windows(2)
-            .any(|pair| super::x87::x87_pair(pair[0], pair[1]).is_some());
+        && if paged {
+            unit.context.is_long64()
+                && unit
+                    .instructions
+                    .windows(2)
+                    .any(|pair| super::x87::paged_x87_load_pair(pair[0], pair[1]))
+        } else {
+            !observed
+                && unit
+                    .instructions
+                    .windows(2)
+                    .any(|pair| super::x87::x87_pair(pair[0], pair[1]).is_some())
+        };
     let has_mmx = unit
         .instructions
         .iter()

@@ -7,14 +7,14 @@ use std::mem::offset_of;
 use wasm_encoder::{Instruction as Wasm, MemArg};
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-use super::{REMAINING, RIP};
+use super::{REMAINING, RIP, SHADOW};
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 use crate::x86::{
     instruction::{Instruction, Operation},
     x87::{
-        MEMORY_FIRST_PAIR_SEGMENT, MEMORY_PAIR_SEGMENT, REGISTER_PAIR_SEGMENT, memory_first_pair,
-        register_exchange_compare, register_load_arithmetic, register_load_memory_arithmetic,
-        register_store_pop,
+        MEMORY_FIRST_PAIR_SEGMENT, MEMORY_PAIR_SEGMENT, PAGED_LOAD_PAIR_SEGMENT,
+        REGISTER_PAIR_SEGMENT, memory_first_pair, register_exchange_compare,
+        register_load_arithmetic, register_load_memory_arithmetic, register_store_pop,
     },
 };
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -41,6 +41,19 @@ pub(super) fn x87_pair(
     .then_some((a, b))
 }
 
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+pub(super) fn paged_x87_load_pair(first: Instruction, second: Instruction) -> bool {
+    x87_pair(first, second).is_some_and(|(head, tail)| {
+        head.op.kind == Kind::Load
+            && tail.address.is_none()
+            && head
+                .address
+                .is_some_and(|address| matches!(address.segment, Segment::Ds | Segment::Ss))
+            && second.next_pc > second.pc
+            && (second.next_pc - 1) >> 12 == first.pc >> 12
+    })
+}
+
 impl Emitter {
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     pub(super) fn emit_x87_pair(
@@ -51,6 +64,10 @@ impl Emitter {
         exit_depth: u32,
     ) {
         if !self.x87_register_pairs || self.structured_loop.is_some() {
+            return;
+        }
+        let paged = self.paged;
+        if paged && (self.guarded_paged_lap || !paged_x87_load_pair(first, second)) {
             return;
         }
         let Some((a, b)) = x87_pair(first, second) else {
@@ -67,8 +84,13 @@ impl Emitter {
             .op(Wasm::I64Eq)
             .op(Wasm::I32And)
             .op(Wasm::I32Eqz)
-            .op(Wasm::I32And)
-            .op(Wasm::If(BlockType::Empty));
+            .op(Wasm::I32And);
+        if paged {
+            self.op(Wasm::LocalGet(SHADOW))
+                .op(Wasm::I32Eqz)
+                .op(Wasm::I32And);
+        }
+        self.op(Wasm::If(BlockType::Empty));
         // The private discriminator is rejected by older cores. Both
         // operands and PCs fit the existing x87 import without JS mediation.
         let helper = self.x87.expect("x87 import");
@@ -76,12 +98,18 @@ impl Emitter {
         if let Some(address) = a.address {
             self.address(address, first.next_pc);
             let tail_segment = b.address.map_or(Segment::Cs, |tail| tail.segment);
+            let pair_kind = if paged {
+                PAGED_LOAD_PAIR_SEGMENT
+            } else {
+                MEMORY_FIRST_PAIR_SEGMENT
+            };
             self.op(Wasm::I32Const(
-                (MEMORY_FIRST_PAIR_SEGMENT | address.segment as u32 | ((tail_segment as u32) << 3))
-                    as i32,
+                (pair_kind | address.segment as u32 | ((tail_segment as u32) << 3)) as i32,
             ))
             .op(Wasm::I64Const(second.pc as i64));
-            if let Some(tail) = b.address {
+            if paged {
+                self.system_bits();
+            } else if let Some(tail) = b.address {
                 self.address(tail, second.next_pc);
             } else {
                 self.op(Wasm::I64Const(0));
@@ -124,7 +152,13 @@ impl Emitter {
             .op(Wasm::LocalSet(RIP));
         self.retire_instructions(2);
         self.stores = stores;
+        let was_guarded = self.guarded_paged_lap;
+        if paged {
+            // The pair helper checked both starts and excluded observers before committing.
+            self.guarded_paged_lap = true;
+        }
         self.route(second.next_pc, loop_depth + 2, exit_depth + 2);
+        self.guarded_paged_lap = was_guarded;
         self.stores = false;
         self.op(Wasm::End).op(Wasm::End);
     }

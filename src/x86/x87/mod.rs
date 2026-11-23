@@ -167,6 +167,9 @@ pub(crate) const MEMORY_PAIR_SEGMENT: u32 = 1 << 31;
 #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
 pub(crate) const MEMORY_FIRST_PAIR_SEGMENT: u32 = 1 << 30;
 
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+pub(crate) const PAGED_LOAD_PAIR_SEGMENT: u32 = 1 << 29;
+
 #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
 pub(crate) fn memory_first_pair(first: Op, second: Op) -> bool {
     matches!(first.format, Format::F32 | Format::F64)

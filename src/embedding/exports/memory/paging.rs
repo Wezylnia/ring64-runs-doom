@@ -90,7 +90,7 @@ impl Core {
 
     #[cfg(not(feature = "parallel"))]
     #[inline(always)]
-    fn warm_guarded_code_page(&self, pc: u64, integer_only: bool) -> bool {
+    pub(super) fn warm_guarded_code_page(&self, pc: u64, integer_only: bool) -> bool {
         if self.image.active_changed() || !self.context.is_long64() {
             return false;
         }
