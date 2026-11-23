@@ -215,11 +215,6 @@ export interface PdpteLoadFault {
 }
 export type PhysicalMemoryFault = PhysicalAccessFault | PdpteLoadFault;
 
-export interface Span {
-  base: bigint;
-  bytes: Uint8Array;
-}
-
 export interface CompileLimits {
   maxInstructions: number;
   maxSourceBytes: number;

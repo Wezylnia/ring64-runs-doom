@@ -1,10 +1,14 @@
 import { byteLength, unsigned64 } from './input.js';
-import type { Span } from '../wasm/core.js';
 import type { ExecutionContext } from '../state/system/context.js';
 import type { PagingState } from '../state/system/paging.js';
 import type { FastSystemState } from '../state/system/fast-system.js';
 
 export type MemoryModel = 'linear' | 'ia32e-paged' | 'physical';
+
+export interface Span {
+  base: bigint;
+  bytes: Uint8Array;
+}
 
 export interface MemoryBackingInput {
   id: string;

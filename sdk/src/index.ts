@@ -32,10 +32,10 @@ export type {
   SystemMemoryFault,
   PageFault,
   PhysicalMemoryFault,
-  Span,
   UnitMetadata,
 } from './wasm/core.js';
 export type {
+  Span,
   MemoryBackingInput,
   MemoryPermissions,
   MemoryMapping,
