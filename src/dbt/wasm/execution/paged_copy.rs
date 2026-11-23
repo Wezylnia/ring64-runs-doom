@@ -1,4 +1,4 @@
-use super::instruction::PagedPrefixFetch;
+use super::paged_prefix::PagedPrefixFetch;
 use super::{
     ADDRESS, Emitter, LHS, REMAINING, RHS, RIP, STORE_STATUS, StructuredLoop, Unit, VALUE,
     memory::SpanCache,

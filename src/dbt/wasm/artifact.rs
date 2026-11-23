@@ -8,6 +8,8 @@ use super::{
 use super::{
     float_dyadic, float_loop, loop_cfg, memory,
     paged_copy::{CopyGroup, ScalarCopyGroup},
+    paged_prefix,
+    paged_prefix::{paged_prefix_handoffs, paged_register_prefixes, register_prefix_operation},
     read_loop, stack_slots,
 };
 use crate::embedding::layout::DISPATCH;
@@ -19,18 +21,6 @@ use wasm_encoder::{
     BlockType, CodeSection, EntityType, ExportKind, ExportSection, Function, FunctionSection,
     ImportSection, Instruction as Op, MemoryType, Module, Section, TypeSection, ValType,
 };
-
-#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-pub(super) fn register_prefix_operation(operation: Operation) -> bool {
-    super::structured_loop::inside_register_body(operation)
-        || matches!(
-            operation,
-            Operation::Extend {
-                src: Location::Register(_),
-                ..
-            }
-        )
-}
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 fn flat_integer_groups(unit: &Unit, structured: Option<StructuredLoop>) -> Vec<Option<usize>> {
@@ -178,207 +168,6 @@ fn flat_call_order(instructions: &[Instruction]) -> Option<Vec<usize>> {
     let mut order = (0..instructions.len()).collect::<Vec<_>>();
     order[head..=latch].rotate_left(call + 1);
     Some(order)
-}
-
-// A clone can touch the executable leaf once when every admitted instruction
-// stays on that leaf and can neither access memory nor change the controls.
-#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-fn paged_register_prefixes(
-    unit: &Unit,
-    loops: [Option<StructuredLoop>; 2],
-    short_indexed_reads: bool,
-) -> Vec<Option<usize>> {
-    let instructions = &unit.instructions;
-    let long64 = unit.context.is_long64();
-    let short_register_prefixes = long64 && unit.sampled;
-    let interior_scalar_read = |instruction: Instruction| {
-        short_register_prefixes
-            && unit.context.cpl() == 0
-            && super::instruction::paged_prefix_narrow_read(instruction)
-    };
-    let maximum = if long64 { 12 } else { 8 };
-    let mut targets = vec![false; instructions.len()];
-    if long64 {
-        for instruction in instructions {
-            let target = match instruction.operation {
-                Operation::Jump { target }
-                | Operation::Jcc { target, .. }
-                | Operation::CountBranch { target, .. } => target,
-                _ => continue,
-            };
-            if let Ok(index) = instructions.binary_search_by_key(&target, |i| i.pc) {
-                targets[index] = true;
-            }
-        }
-    }
-    let local_backedge = |instruction: &Instruction| {
-        matches!(instruction.operation, Operation::Jump { target }
-            if target < instruction.pc
-                && target >> 12 == instruction.pc >> 12
-                && instructions.binary_search_by_key(&target, |i| i.pc).is_ok())
-    };
-    let terminal_branch = |instruction: &Instruction, has_read: bool, wide_read: bool| {
-        long64
-            && match instruction.operation {
-                Operation::Jcc { target, .. } => {
-                    crate::memory::canonical48(target)
-                        && ((short_register_prefixes
-                            && (!has_read || target >> 12 == instruction.pc >> 12))
-                            || wide_read
-                            || instructions.binary_search_by_key(&target, |i| i.pc).is_ok())
-                }
-                Operation::Jump { target } => {
-                    short_register_prefixes
-                        && !has_read
-                        && target >> 12 == instruction.pc >> 12
-                        && instructions.binary_search_by_key(&target, |i| i.pc).is_ok()
-                }
-                _ => false,
-            }
-    };
-    let mut prefixes = vec![None; instructions.len()];
-    let mut first = 0;
-    while first < instructions.len() {
-        let pc = instructions[first].pc;
-        let mut end = first;
-        let mut has_read = false;
-        let mut has_wide_read = false;
-        let mut has_branch = false;
-        while let Some(instruction) = instructions.get(end)
-            && end - first < maximum
-            && (end == first || !targets[end])
-            && !loops
-                .into_iter()
-                .flatten()
-                .any(|body| body.order().position(end as u32).is_some())
-            && (register_prefix_operation(instruction.operation)
-                || (if has_read {
-                    has_wide_read || end - first >= 2
-                } else {
-                    short_register_prefixes && (end > first || local_backedge(instruction))
-                } && terminal_branch(instruction, has_read, has_wide_read))
-                || interior_scalar_read(*instruction)
-                || (short_register_prefixes
-                    && !has_read
-                    && super::instruction::paged_prefix_wide_read(*instruction))
-                || (long64
-                    && !has_wide_read
-                    && if end == first {
-                        super::instruction::paged_prefix_read(*instruction).is_some()
-                    } else {
-                        super::instruction::paged_prefix_dword_read(*instruction)
-                            || has_read
-                                && super::instruction::paged_prefix_dword_store(*instruction)
-                    }))
-            && instruction.next_pc > instruction.pc
-            && instruction.next_pc.checked_sub(pc).is_some_and(|bytes| {
-                bytes <= 4096 && unit.context.single_page_code_span(pc, bytes as u32)
-            })
-            && (end == first || instructions[end - 1].next_pc == instruction.pc)
-        {
-            // Keep an already useful register-only prefix before a checked store.
-            has_wide_read |= super::instruction::paged_prefix_wide_read(*instruction);
-            has_read |= has_wide_read
-                || interior_scalar_read(*instruction)
-                || if end == first {
-                    super::instruction::paged_prefix_read(*instruction).is_some()
-                } else {
-                    super::instruction::paged_prefix_dword_read(*instruction)
-                };
-            end += 1;
-            if terminal_branch(instruction, has_read, has_wide_read) {
-                has_branch = true;
-                let extend_fallthrough = short_register_prefixes
-                    && matches!(instruction.operation, Operation::Jcc { target, .. }
-                        if target >> 12 == instruction.pc >> 12)
-                    && instructions.get(end).is_some_and(|next| {
-                        register_prefix_operation(next.operation)
-                            || interior_scalar_read(*next)
-                            || super::instruction::paged_prefix_dword_read(*next)
-                            || super::instruction::paged_prefix_wide_read(*next)
-                    });
-                if !extend_fallthrough {
-                    break;
-                }
-            }
-        }
-        // Each successful operand accounts for the next fetch. Leave a following
-        // in-prefix instruction so a stop or exhausted budget cannot omit it.
-        while end > first + 1
-            && (interior_scalar_read(instructions[end - 1])
-                || super::instruction::paged_prefix_dword_read(instructions[end - 1])
-                || super::instruction::paged_prefix_dword_store(instructions[end - 1])
-                || super::instruction::paged_prefix_wide_read(instructions[end - 1]))
-        {
-            end -= 1;
-        }
-        let minimum = if has_branch && local_backedge(&instructions[first]) {
-            1
-        } else if short_register_prefixes && (!has_read || has_wide_read && has_branch) {
-            2
-        } else if has_branch
-            || short_indexed_reads
-                && instructions[first..end]
-                    .iter()
-                    .copied()
-                    .any(super::instruction::paged_prefix_dword_read)
-        {
-            3
-        } else {
-            4
-        };
-        if end - first >= minimum {
-            prefixes[first] = Some(end);
-        }
-        first = end.max(first + 1);
-    }
-    prefixes
-}
-
-#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-#[derive(Clone, Copy, Default)]
-struct PrefixFetchEdge {
-    receives: bool,
-    destination: Option<usize>,
-}
-
-#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-// The admitted read-only clone leaves its executable translation newest and
-// cannot change code or controls. A same-page successor needs no new touch.
-fn paged_prefix_handoffs(
-    unit: &Unit,
-    prefixes: &[Option<usize>],
-    earlier_clones: [Option<usize>; 3],
-) -> Option<Vec<PrefixFetchEdge>> {
-    if !unit.context.is_long64() {
-        return None;
-    }
-    let instructions = &unit.instructions;
-    let mut edges = None;
-    for (start, &end) in prefixes.iter().enumerate() {
-        let Some(end) = end else { continue };
-        let Operation::Jcc { target, .. } = instructions[end - 1].operation else {
-            continue;
-        };
-        if target & !4095 != instructions[start].pc & !4095
-            || instructions[start..end]
-                .iter()
-                .copied()
-                .any(super::instruction::paged_prefix_dword_store)
-        {
-            continue;
-        }
-        if let Ok(destination) = instructions.binary_search_by_key(&target, |i| i.pc)
-            && prefixes[destination].is_some()
-            && !earlier_clones.contains(&Some(destination))
-        {
-            let edges =
-                edges.get_or_insert_with(|| vec![PrefixFetchEdge::default(); prefixes.len()]);
-            edges[destination].receives = true;
-            edges[start].destination = Some(destination);
-        }
-    }
-    edges
 }
 
 fn add_function_type<const PARAMS: usize, const RESULTS: usize>(
@@ -1347,11 +1136,11 @@ fn emit_body(
         .filter(|prefixes| {
             prefixes.iter().enumerate().any(|(first, end)| {
                 end.is_some_and(|end| {
-                    super::instruction::paged_prefix_read(unit.instructions[first]).is_some()
+                    paged_prefix::paged_prefix_read(unit.instructions[first]).is_some()
                         || unit.instructions[first..end].iter().copied().any(|i| {
-                            super::instruction::paged_prefix_narrow_read(i)
-                                || super::instruction::paged_prefix_dword_read(i)
-                                || super::instruction::paged_prefix_wide_read(i)
+                            paged_prefix::paged_prefix_narrow_read(i)
+                                || paged_prefix::paged_prefix_dword_read(i)
+                                || paged_prefix::paged_prefix_wide_read(i)
                         })
                 })
             })
@@ -1505,7 +1294,7 @@ fn emit_body(
                 unit.instructions[first + 1..end]
                     .iter()
                     .copied()
-                    .any(super::instruction::paged_prefix_dword_store)
+                    .any(paged_prefix::paged_prefix_dword_store)
             })
         })
     });
@@ -2910,7 +2699,7 @@ fn emit_body(
                     unit.instructions[start..end]
                         .iter()
                         .copied()
-                        .any(super::instruction::paged_prefix_dword_read)
+                        .any(paged_prefix::paged_prefix_dword_read)
                 })
             })
         });

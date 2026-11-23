@@ -77,6 +77,9 @@ mod paged_copy;
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 #[path = "execution/paged_indexed_write.rs"]
 mod paged_indexed_write;
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[path = "execution/paged_prefix.rs"]
+mod paged_prefix;
 #[path = "system/paging.rs"]
 mod paging;
 #[path = "system/processor.rs"]
