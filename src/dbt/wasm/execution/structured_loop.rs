@@ -354,7 +354,7 @@ impl StructuredLoop {
 
     #[cfg(not(feature = "parallel"))]
     pub(super) fn select_paged_registers(instructions: &[Instruction]) -> Option<Self> {
-        Self::select_body(instructions, LoopKind::Registers).map(Self::without_dword_projection)
+        Self::select_registers(instructions).map(Self::without_dword_projection)
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -1104,7 +1104,7 @@ impl StructuredLoop {
 
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     pub(super) fn select_shared_float(instructions: &[Instruction]) -> Option<Self> {
-        Self::select_body(instructions, LoopKind::Float).filter(|body| body.max_lap_len <= 64)
+        Self::select_float(instructions).filter(|body| body.max_lap_len <= 64)
     }
 
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
@@ -1132,8 +1132,7 @@ impl StructuredLoop {
         {
             return None;
         }
-        Self::select_body(&unit.instructions, LoopKind::IntegerReads)
-            .filter(|body| body.max_lap_len <= 64)
+        Self::select_integer_reads(&unit.instructions).filter(|body| body.max_lap_len <= 64)
     }
 
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
@@ -1149,15 +1148,15 @@ impl StructuredLoop {
     pub(super) fn select(unit: &super::Unit) -> Option<Self> {
         let instructions = &unit.instructions;
         if cfg!(feature = "parallel") {
-            let body = Self::select_body(instructions, LoopKind::Registers);
+            let body = Self::select_registers(instructions);
             #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
             let body = body.or_else(|| Self::select_shared_integer_reads(unit));
             return body;
         }
-        let existing = Self::select_body(instructions, LoopKind::Float)
-            .or_else(|| Self::select_body(instructions, LoopKind::IntegerReads))
+        let existing = Self::select_float(instructions)
+            .or_else(|| Self::select_integer_reads(instructions))
             .or_else(|| super::loop_cfg::select(instructions).map(Self::forward))
-            .or_else(|| Self::select_body(instructions, LoopKind::Registers));
+            .or_else(|| Self::select_registers(instructions));
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         let existing = existing
             .or_else(|| Self::select_increment_reads(unit))
@@ -1241,49 +1240,36 @@ impl StructuredLoop {
         }
     }
 
-    fn select_body(instructions: &[Instruction], kind: LoopKind) -> Option<Self> {
-        let inside = match kind {
-            LoopKind::Float => inside_float_body,
-            LoopKind::Registers => inside_register_body,
-            LoopKind::IntegerReads => inside_integer_read_body,
-            #[cfg(not(feature = "parallel"))]
-            LoopKind::PagedReads | LoopKind::PagedScalarF32 => {
-                unreachable!("paged reads use guarded admission")
-            }
-            LoopKind::ForwardEdges => unreachable!("forward edges use graph admission"),
-            #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-            LoopKind::PagedSseWrite
-            | LoopKind::PagedScalarWrites
-            | LoopKind::PagedVectorCopy
-            | LoopKind::PagedVectorCopySpans => {
-                unreachable!("paged writes use guarded admission")
-            }
-        };
-        Self::select_straight_body(instructions, kind, inside, |body| match kind {
-            LoopKind::Registers => true,
-            LoopKind::Float => body.iter().any(|i| scalar_f32(i.operation)),
-            LoopKind::IntegerReads => {
-                // Amortize the extra body and translation cost across several loads.
-                const MIN_READS: usize = 4;
+    fn select_registers(instructions: &[Instruction]) -> Option<Self> {
+        Self::select_straight_body(
+            instructions,
+            LoopKind::Registers,
+            inside_register_body,
+            |_| true,
+        )
+    }
+
+    fn select_float(instructions: &[Instruction]) -> Option<Self> {
+        Self::select_straight_body(instructions, LoopKind::Float, inside_float_body, |body| {
+            body.iter().any(|i| scalar_f32(i.operation))
+        })
+    }
+
+    fn select_integer_reads(instructions: &[Instruction]) -> Option<Self> {
+        // Amortize the extra body and translation cost across several loads.
+        const MIN_READS: usize = 4;
+        Self::select_straight_body(
+            instructions,
+            LoopKind::IntegerReads,
+            inside_integer_read_body,
+            |body| {
                 body.iter()
                     .filter(|i| integer_read(i.operation))
                     .take(MIN_READS)
                     .count()
                     == MIN_READS
-            }
-            #[cfg(not(feature = "parallel"))]
-            LoopKind::PagedReads | LoopKind::PagedScalarF32 => {
-                unreachable!("paged reads use guarded admission")
-            }
-            LoopKind::ForwardEdges => unreachable!("forward edges use graph admission"),
-            #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-            LoopKind::PagedSseWrite
-            | LoopKind::PagedScalarWrites
-            | LoopKind::PagedVectorCopy
-            | LoopKind::PagedVectorCopySpans => {
-                unreachable!("paged writes use guarded admission")
-            }
-        })
+            },
+        )
     }
 
     fn select_straight_body(
