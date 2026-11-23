@@ -9,7 +9,7 @@ import {
 } from '../../../../../../tests/execution/memory/paging/fixture.js';
 import { compiler } from '../fixture.js';
 
-test('an indexed write loop bypasses grouping on a large data leaf', async () => {
+test('indexed writes reuse a subpage of a large data leaf with 4 KiB code pages', async () => {
   // Both transparent and opaque paths return to the counted-loop header.
   const code = 'ffc9741548ffc74883c6040fb60785c074ee8b04838906ebe7';
   const data = 0x601000n;
@@ -24,18 +24,16 @@ test('an indexed write loop bypasses grouping on a large data leaf', async () =>
   const expectedColors = new DataView(expected.buffer);
   for (let index = 0; index < count; index++) {
     ram[index] = index % 2;
-    expectedColors.setUint32(index * 4, ram[index] ? color : 0, true);
+    expectedColors.setUint32(index * 4, ram[index] ? color : 0xa5a5a5a5, true);
   }
 
-  let lookups = 0;
-  let unsuitable = 0;
+  const resolutions: number[] = [];
   const restoreImports = observeArtifactImports((env) => {
     const group = env.paged_loop_indexed_dword_write;
     if (typeof group === 'function') {
       env.paged_loop_indexed_dword_write = (...args: [bigint, bigint, bigint, number]) => {
-        lookups++;
         const result = group(...args);
-        if (result === 1) unsuitable++;
+        resolutions.push(result);
         return result;
       };
     }
@@ -56,9 +54,12 @@ test('an indexed write loop bypasses grouping on a large data leaf', async () =>
           7: data - 1n,
         });
         for (let wave = 0; wave < 3; wave++) {
-          cpu.writePhysicalMemory(data + BigInt(target), new Uint8Array(expected.byteLength));
+          cpu.writePhysicalMemory(
+            data + BigInt(target),
+            new Uint8Array(expected.byteLength).fill(0xa5),
+          );
           cpu.setState(start);
-          const before = lookups;
+          const before = resolutions.length;
           const result = await cpu.run({ budget: 1000n, stop: PC + BigInt(code.length / 2) });
           assert.equal(result.reason, 'stop');
           assert.equal(result.retired, 274n);
@@ -66,9 +67,13 @@ test('an indexed write loop bypasses grouping on a large data leaf', async () =>
             cpu.readPhysicalMemory(data + BigInt(target), expected.byteLength),
             expected,
           );
-          assert.ok(lookups - before < 4, 'a large data leaf must not be regrouped every lap');
+          assert.ok(resolutions.length - before < 4, 'both pixel paths reuse the subpage');
         }
-        assert.ok(unsuitable > 0, 'the optimized clone observed the large data leaf');
+        assert.ok(
+          resolutions.some((record) => record > 1),
+          'the indexed helper admitted the page',
+        );
+        assert.ok(!resolutions.includes(1), 'the large data leaf stayed eligible');
       },
     );
   } finally {
