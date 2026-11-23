@@ -3617,573 +3617,391 @@ fn emit_body(
         // Preserve the ordinary call region when only its miss hints exceed the limit.
         bytes.drain(hints_start..code_start);
     }
+    #[cfg(any(feature = "parallel", not(target_arch = "wasm32")))]
+    let extra_spans = false;
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    if bytes.len() > max_artifact_bytes && emitter.direct_loop_reads {
-        return emit_body(
+    let extra_spans = write_span.is_some() || stack_read_span.is_some();
+    if bytes.len() <= max_artifact_bytes {
+        return (bytes, extra_spans);
+    }
+    let retry_body = |reads, lowering| {
+        emit_body(
             unit,
             observed,
             (paged, mmio),
             loop_body,
+            reads,
+            lowering,
+            max_artifact_bytes,
+        )
+    };
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    if emitter.direct_loop_reads {
+        return retry_body(
             _guard_reads,
             OptionalLowering {
                 direct_loop_reads: false,
                 ..optional
             },
-            max_artifact_bytes,
         );
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    if bytes.len() > max_artifact_bytes && flat_integer_groups.is_some() {
-        return emit_body(
-            unit,
-            observed,
-            (paged, mmio),
-            loop_body,
+    if flat_integer_groups.is_some() {
+        return retry_body(
             _guard_reads,
             OptionalLowering {
                 flat_integer_groups: false,
                 ..optional
             },
-            max_artifact_bytes,
         );
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    if bytes.len() > max_artifact_bytes && indexed_dword_prefixes {
-        return emit_body(
-            unit,
-            observed,
-            (paged, mmio),
-            loop_body,
+    if indexed_dword_prefixes {
+        return retry_body(
             _guard_reads,
             OptionalLowering {
                 indexed_dword_prefixes: false,
                 ..optional
             },
-            max_artifact_bytes,
         );
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    if bytes.len() > max_artifact_bytes && indexed_scalar_stamp.is_some() {
-        return emit_body(
-            unit,
-            observed,
-            (paged, mmio),
-            loop_body,
+    if indexed_scalar_stamp.is_some() {
+        return retry_body(
             _guard_reads,
             OptionalLowering {
                 indexed_scalar_read: false,
                 ..optional
             },
-            max_artifact_bytes,
         );
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    if bytes.len() > max_artifact_bytes
-        && (quiet_fetch_page.is_some() || emitter.used_paged_quiet_completion)
-    {
-        return emit_body(
-            unit,
-            observed,
-            (paged, mmio),
-            loop_body,
+    if (quiet_fetch_page.is_some() || emitter.used_paged_quiet_completion) {
+        return retry_body(
             _guard_reads,
             OptionalLowering {
                 paged_quiet_completion: quiet_fetch_page.is_some(),
                 paged_quiet_fetch: false,
                 ..optional
             },
-            max_artifact_bytes,
         );
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    if bytes.len() > max_artifact_bytes && paged_indexed_write.is_some() {
-        return emit_body(
-            unit,
-            observed,
-            (paged, mmio),
-            loop_body,
+    if paged_indexed_write.is_some() {
+        return retry_body(
             _guard_reads,
             OptionalLowering {
                 paged_indexed_write: false,
                 ..optional
             },
-            max_artifact_bytes,
         );
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    if bytes.len() > max_artifact_bytes
-        && (scalar_copy_prefix.is_some()
-            || linear_scalar_copy_prefix.is_some()
-            || linear_vector_copy_prefixes.is_some())
+    if (scalar_copy_prefix.is_some()
+        || linear_scalar_copy_prefix.is_some()
+        || linear_vector_copy_prefixes.is_some())
     {
-        return emit_body(
-            unit,
-            observed,
-            (paged, mmio),
-            loop_body,
+        return retry_body(
             _guard_reads,
             OptionalLowering {
                 scalar_copy_prefix: false,
                 ..optional
             },
-            max_artifact_bytes,
         );
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    if bytes.len() > max_artifact_bytes
-        && (copy_prefix.is_some() || preloaded_copy_prefix.is_some())
-    {
-        return emit_body(
-            unit,
-            observed,
-            (paged, mmio),
-            loop_body,
+    if (copy_prefix.is_some() || preloaded_copy_prefix.is_some()) {
+        return retry_body(
             _guard_reads,
             OptionalLowering {
                 copy_prefix: false,
                 ..optional
             },
-            max_artifact_bytes,
         );
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    if bytes.len() > max_artifact_bytes && additional_copy.is_some() {
-        return emit_body(
-            unit,
-            observed,
-            (paged, mmio),
-            loop_body,
+    if additional_copy.is_some() {
+        return retry_body(
             _guard_reads,
             OptionalLowering {
                 additional_copy: None,
                 ..optional
             },
-            max_artifact_bytes,
         );
     }
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
-    if bytes.len() > max_artifact_bytes && parallel_native_lock_memo.is_some() {
-        return emit_body(
-            unit,
-            observed,
-            (paged, mmio),
-            loop_body,
+    if parallel_native_lock_memo.is_some() {
+        return retry_body(
             _guard_reads,
             OptionalLowering {
                 parallel_native_lock_memo: false,
                 ..optional
             },
-            max_artifact_bytes,
         );
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    if bytes.len() > max_artifact_bytes && paged_vector_retouch.is_some() {
-        return emit_body(
-            unit,
-            observed,
-            (paged, mmio),
-            loop_body,
+    if paged_vector_retouch.is_some() {
+        return retry_body(
             _guard_reads,
             OptionalLowering {
                 paged_vector_retouch: false,
                 ..optional
             },
-            max_artifact_bytes,
         );
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    if bytes.len() > max_artifact_bytes
-        && paged_vector_window.is_some_and(|window| window.last_early_page.is_some())
-    {
-        return emit_body(
-            unit,
-            observed,
-            (paged, mmio),
-            loop_body,
+    if paged_vector_window.is_some_and(|window| window.last_early_page.is_some()) {
+        return retry_body(
             _guard_reads,
             OptionalLowering {
                 paged_vector_rearm: false,
                 ..optional
             },
-            max_artifact_bytes,
         );
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    if bytes.len() > max_artifact_bytes && paged_vector_window.is_some() {
-        return emit_body(
-            unit,
-            observed,
-            (paged, mmio),
-            loop_body,
+    if paged_vector_window.is_some() {
+        return retry_body(
             _guard_reads,
             OptionalLowering {
                 paged_vector_window: false,
                 ..optional
             },
-            max_artifact_bytes,
         );
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    if bytes.len() > max_artifact_bytes && linear_recurrence.is_some() {
-        return emit_body(
-            unit,
-            observed,
-            (paged, mmio),
-            loop_body,
+    if linear_recurrence.is_some() {
+        return retry_body(
             _guard_reads,
             OptionalLowering {
                 linear_recurrence: false,
                 ..optional
             },
-            max_artifact_bytes,
         );
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    if bytes.len() > max_artifact_bytes && register_prefix_guard.is_some() {
-        return emit_body(
-            unit,
-            observed,
-            (paged, mmio),
-            loop_body,
+    if register_prefix_guard.is_some() {
+        return retry_body(
             _guard_reads,
             OptionalLowering {
                 paged_register_prefixes: false,
                 ..optional
             },
-            max_artifact_bytes,
         );
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    if bytes.len() > max_artifact_bytes && x87_register_pairs {
-        return emit_body(
-            unit,
-            observed,
-            (paged, mmio),
-            loop_body,
+    if x87_register_pairs {
+        return retry_body(
             _guard_reads,
             OptionalLowering {
                 x87_register_pairs: false,
                 ..optional
             },
-            max_artifact_bytes,
         );
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    if bytes.len() > max_artifact_bytes && paged_dword_read_pair.is_some() {
-        return emit_body(
-            unit,
-            observed,
-            (paged, mmio),
-            loop_body,
+    if paged_dword_read_pair.is_some() {
+        return retry_body(
             _guard_reads,
             OptionalLowering {
                 paged_dword_read_pair: false,
                 ..optional
             },
-            max_artifact_bytes,
         );
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    if bytes.len() > max_artifact_bytes && paged_byte_write_pair.is_some() {
-        return emit_body(
-            unit,
-            observed,
-            (paged, mmio),
-            loop_body,
+    if paged_byte_write_pair.is_some() {
+        return retry_body(
             _guard_reads,
             OptionalLowering {
                 paged_byte_write_pair: optional.paged_byte_write_pointer,
                 paged_byte_write_pointer: false,
                 ..optional
             },
-            max_artifact_bytes,
         );
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    if bytes.len() > max_artifact_bytes
-        && paged_read_span.is_some_and(|(proof, _, _)| proof.is_countdown())
-    {
+    if paged_read_span.is_some_and(|(proof, _, _)| proof.is_countdown()) {
         return (bytes, false);
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    if bytes.len() > max_artifact_bytes && paged_float_sticky {
-        return emit_body(
-            unit,
-            observed,
-            (paged, mmio),
-            loop_body,
+    if paged_float_sticky {
+        return retry_body(
             _guard_reads,
             OptionalLowering {
                 paged_float_sticky: false,
                 ..optional
             },
-            max_artifact_bytes,
         );
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    if bytes.len() > max_artifact_bytes
-        && paged_f32_read_pair.is_some_and(|(_, _, split)| split.is_some())
-    {
-        return emit_body(
-            unit,
-            observed,
-            (paged, mmio),
-            loop_body,
+    if paged_f32_read_pair.is_some_and(|(_, _, split)| split.is_some()) {
+        return retry_body(
             _guard_reads,
             OptionalLowering {
                 paged_f32_split_pair: false,
                 ..optional
             },
-            max_artifact_bytes,
         );
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    if bytes.len() > max_artifact_bytes && paged_preamble.is_some() && paged_preamble_latch {
-        return emit_body(
-            unit,
-            observed,
-            (paged, mmio),
-            loop_body,
+    if paged_preamble.is_some() && paged_preamble_latch {
+        return retry_body(
             _guard_reads,
             OptionalLowering {
                 paged_preamble_latch: false,
                 ..optional
             },
-            max_artifact_bytes,
         );
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    if bytes.len() > max_artifact_bytes && paged_preamble.is_some() {
-        return emit_body(
-            unit,
-            observed,
-            (paged, mmio),
-            loop_body,
+    if paged_preamble.is_some() {
+        return retry_body(
             _guard_reads,
             OptionalLowering {
                 paged_preamble: false,
                 ..optional
             },
-            max_artifact_bytes,
         );
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    if bytes.len() > max_artifact_bytes && paged_split_vectors {
-        return emit_body(
-            unit,
-            observed,
-            (paged, mmio),
-            loop_body,
+    if paged_split_vectors {
+        return retry_body(
             _guard_reads,
             OptionalLowering {
                 paged_split_vectors: false,
                 ..optional
             },
-            max_artifact_bytes,
         );
     }
-    if bytes.len() > max_artifact_bytes && paged_sse_write {
+    if paged_sse_write {
         return (bytes, false);
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    if bytes.len() > max_artifact_bytes && cyclic_vector_store {
-        return emit_body(
-            unit,
-            observed,
-            (paged, mmio),
-            loop_body,
+    if cyclic_vector_store {
+        return retry_body(
             _guard_reads,
             OptionalLowering {
                 direct_vector_stores: false,
                 ..optional
             },
-            max_artifact_bytes,
         );
     }
-    if bytes.len() > max_artifact_bytes
-        && optional.inline_cmpnleps
+    if optional.inline_cmpnleps
         && unit.instructions.iter().any(|instruction| {
             matches!(instruction.operation, Operation::Float(float) if super::float::is_cmpnleps(float))
         })
     {
-        return emit_body(
-            unit,
-            observed,
-            (paged, mmio),
-            loop_body,
-            _guard_reads,
-            OptionalLowering {
+        return retry_body(_guard_reads, OptionalLowering {
                 inline_cmpnleps: false,
                 ..optional
-            },
-            max_artifact_bytes,
-        );
+            });
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    if bytes.len() > max_artifact_bytes && paged && read_loop_diamond.is_some() {
-        return emit_body(
-            unit,
-            observed,
-            (paged, mmio),
-            loop_body,
+    if paged && read_loop_diamond.is_some() {
+        return retry_body(
             _guard_reads,
             OptionalLowering {
                 paged_read_diamond: false,
                 ..optional
             },
-            max_artifact_bytes,
         );
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    if bytes.len() > max_artifact_bytes && paged_read_rearm.is_some() {
-        return emit_body(
-            unit,
-            observed,
-            (paged, mmio),
-            loop_body,
+    if paged_read_rearm.is_some() {
+        return retry_body(
             _guard_reads,
             OptionalLowering {
                 paged_read_rearm: false,
                 ..optional
             },
-            max_artifact_bytes,
         );
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    if bytes.len() > max_artifact_bytes && paged_f32_read_pair.is_some() {
-        return emit_body(
-            unit,
-            observed,
-            (paged, mmio),
-            loop_body,
+    if paged_f32_read_pair.is_some() {
+        return retry_body(
             _guard_reads,
             OptionalLowering {
                 paged_f32_read_pair: false,
                 ..optional
             },
-            max_artifact_bytes,
         );
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    if bytes.len() > max_artifact_bytes && paged_dense_read_span.is_some() {
-        return emit_body(
-            unit,
-            observed,
-            (paged, mmio),
-            loop_body,
+    if paged_dense_read_span.is_some() {
+        return retry_body(
             _guard_reads,
             OptionalLowering {
                 paged_dense_read_span: false,
                 ..optional
             },
-            max_artifact_bytes,
         );
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    if bytes.len() > max_artifact_bytes && paged_float_dyadic.is_some() {
-        return emit_body(
-            unit,
-            observed,
-            (paged, mmio),
-            loop_body,
+    if paged_float_dyadic.is_some() {
+        return retry_body(
             _guard_reads,
             OptionalLowering {
                 paged_float_dyadic: false,
                 ..optional
             },
-            max_artifact_bytes,
         );
     }
     #[cfg(not(feature = "parallel"))]
-    if bytes.len() > max_artifact_bytes && loop_body.is_some_and(StructuredLoop::paged_sse) {
+    if loop_body.is_some_and(StructuredLoop::paged_sse) {
         return (bytes, false);
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    if bytes.len() > max_artifact_bytes && emitter.used_direct_vector_load {
-        return emit_body(
-            unit,
-            observed,
-            (paged, mmio),
-            loop_body,
+    if emitter.used_direct_vector_load {
+        return retry_body(
             _guard_reads,
             OptionalLowering {
                 direct_vector_loads: false,
                 ..optional
             },
-            max_artifact_bytes,
         );
     }
-    if bytes.len() > max_artifact_bytes
-        && optional.inline_f32_packed
+    if optional.inline_f32_packed
         && unit.instructions.iter().any(|instruction| {
             matches!(instruction.operation, Operation::Float(float) if super::float::is_packed_f32_arithmetic(float))
         })
     {
-        return emit_body(
-            unit,
-            observed,
-            (paged, mmio),
-            loop_body,
-            _guard_reads,
-            OptionalLowering {
+        return retry_body(_guard_reads, OptionalLowering {
                 inline_f32_packed: false,
                 ..optional
-            },
-            max_artifact_bytes,
-        );
+            });
     }
-    if bytes.len() > max_artifact_bytes
-        && optional.inline_f32_sub
+    if optional.inline_f32_sub
         && unit.instructions.iter().any(|instruction| {
             matches!(instruction.operation, Operation::Float(float) if super::float::is_scalar_f32_sub(float))
         })
     {
         // Drop the new arithmetic path before reducing the compare or loop placement.
-        return emit_body(
-            unit,
-            observed,
-            (paged, mmio),
-            loop_body,
-            _guard_reads,
-            OptionalLowering {
+        return retry_body(_guard_reads, OptionalLowering {
                 inline_f32_sub: false,
                 ..optional
-            },
-            max_artifact_bytes,
-        );
+            });
     }
-    if bytes.len() > max_artifact_bytes
-        && optional.inline_f32_compares
+    if optional.inline_f32_compares
         && unit.instructions.iter().any(|instruction| {
             matches!(instruction.operation, Operation::Float(float) if super::float::is_f32_flag_compare(float))
         })
     {
         // Keep the original placement if the direct compare exceeds its cap.
-        return emit_body(
-            unit,
-            observed,
-            (paged, mmio),
-            loop_body,
-            _guard_reads,
-            OptionalLowering {
+        return retry_body(_guard_reads, OptionalLowering {
                 inline_f32_compares: false,
                 ..optional
-            },
-            max_artifact_bytes,
-        );
+            });
     }
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
-    if bytes.len() > max_artifact_bytes
-        && loop_body.is_some_and(StructuredLoop::shared_memory_prechecked)
-    {
+    if loop_body.is_some_and(StructuredLoop::shared_memory_prechecked) {
         // Retry the original placement before trading a memory window for the clone.
         return (bytes, false);
     }
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
-    if bytes.len() > max_artifact_bytes
-        && let GuardedReads::Shared {
-            indexed, compact, ..
-        } = _guard_reads
+    if let GuardedReads::Shared {
+        indexed, compact, ..
+    } = _guard_reads
     {
         let wide = unit.context.is_long64();
         let has_indexed_bytes = allow_indexed_bytes
@@ -4215,56 +4033,36 @@ fn emit_body(
             None
         };
         if let Some((indexed, compact)) = retry {
-            return emit_body(
-                unit,
-                observed,
-                (paged, mmio),
-                loop_body,
+            return retry_body(
                 GuardedReads::Shared {
                     indexed,
                     compact,
                     byte_stores: false,
                 },
                 optional,
-                max_artifact_bytes,
             );
         }
     }
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
-    if bytes.len() > max_artifact_bytes && parallel_vector_span.is_some() {
-        return emit_body(
-            unit,
-            observed,
-            (paged, mmio),
-            loop_body,
+    if parallel_vector_span.is_some() {
+        return retry_body(
             _guard_reads,
             OptionalLowering {
                 extra_spans: false,
                 ..optional
             },
-            max_artifact_bytes,
         );
     }
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
-    if bytes.len() > max_artifact_bytes
-        && parallel_vector_dword.is_some()
+    if parallel_vector_dword.is_some()
         && dword_writes == 0
         && !loop_body.is_some_and(StructuredLoop::is_optional_shared_loop)
     {
         // Retry ordinary placement before trading shared dword reads for a loop clone.
-        return emit_body(
-            unit,
-            observed,
-            (paged, mmio),
-            loop_body,
-            GuardedReads::Checked,
-            optional,
-            max_artifact_bytes,
-        );
+        return retry_body(GuardedReads::Checked, optional);
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    if bytes.len() > max_artifact_bytes
-        && read_loop_diamond.is_some()
+    if read_loop_diamond.is_some()
         && let GuardedReads::Outlined {
             sticky,
             dyadic,
@@ -4273,11 +4071,7 @@ fn emit_body(
         } = _guard_reads
     {
         // Keep the original loop placement when only the merged latch is too large.
-        return emit_body(
-            unit,
-            observed,
-            (paged, mmio),
-            loop_body,
+        return retry_body(
             GuardedReads::Outlined {
                 sticky,
                 dyadic,
@@ -4285,12 +4079,10 @@ fn emit_body(
                 indexed_read,
             },
             optional,
-            max_artifact_bytes,
         );
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    if bytes.len() > max_artifact_bytes
-        && indexed_read_window.is_some()
+    if indexed_read_window.is_some()
         && let GuardedReads::Outlined {
             sticky,
             dyadic,
@@ -4298,11 +4090,7 @@ fn emit_body(
             ..
         } = _guard_reads
     {
-        return emit_body(
-            unit,
-            observed,
-            (paged, mmio),
-            loop_body,
+        return retry_body(
             GuardedReads::Outlined {
                 sticky,
                 dyadic,
@@ -4310,21 +4098,15 @@ fn emit_body(
                 indexed_read: false,
             },
             optional,
-            max_artifact_bytes,
         );
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    if bytes.len() > max_artifact_bytes
-        && let Some(outline) = &float_outline
+    if let Some(outline) = &float_outline
         && let GuardedReads::Outlined { sticky, .. } = _guard_reads
         && (outline.dyadic.is_some() || sticky)
     {
         // Drop packed reduction before displacing an existing outline or its hints.
-        return emit_body(
-            unit,
-            observed,
-            (paged, mmio),
-            loop_body,
+        return retry_body(
             GuardedReads::Outlined {
                 sticky: sticky && outline.dyadic.is_some(),
                 dyadic: false,
@@ -4332,28 +4114,13 @@ fn emit_body(
                 indexed_read: false,
             },
             optional,
-            max_artifact_bytes,
         );
     }
-    if bytes.len() > max_artifact_bytes {
-        // Optional annotations never displace executable code under the owner's limit.
-        bytes.drain(hints_start..code_start);
-    }
+    // Optional annotations never displace executable code under the owner's limit.
+    bytes.drain(hints_start..code_start);
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if float_outline.is_some() && bytes.len() > max_artifact_bytes {
-        return emit_body(
-            unit,
-            observed,
-            (paged, mmio),
-            loop_body,
-            GuardedReads::Inline,
-            optional,
-            max_artifact_bytes,
-        );
+        return retry_body(GuardedReads::Inline, optional);
     }
-    #[cfg(any(feature = "parallel", not(target_arch = "wasm32")))]
-    let extra_spans = false;
-    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    let extra_spans = write_span.is_some() || stack_read_span.is_some();
     (bytes, extra_spans)
 }
