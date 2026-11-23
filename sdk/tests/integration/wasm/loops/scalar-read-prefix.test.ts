@@ -256,6 +256,58 @@ test('sampled fallthrough branches retire only the executed prefix and its loads
   }
 });
 
+test('a sampled prefix can decline a narrow read after a stack comparison and branch', async () => {
+  // LEA RAX,[RDI+1]; CMP RAX,[RSP]; JA done; MOVZX EDX,[RDI];
+  // ADD RCX,RDX; CMP EDX,7; JE done; HLT; done: NOP; HLT.
+  const offsets = [0, 4, 8, 10, 13, 16, 19, 21, 22, 23];
+  const compile = Core.prototype.compile;
+  Core.prototype.compile = function (pc, limits, seeds, regionPoints) {
+    if (pc === PC && !seeds?.length)
+      return compile.call(this, pc, limits, offsets.map((offset) => PC + BigInt(offset)), true);
+    return compile.call(this, pc, limits, seeds, regionPoints);
+  };
+  try {
+    for (const [opcode, expected] of [['b6', 7n], ['b7', 0x807n]] as const) {
+      const code = '488d4701483b0424770c0f' + opcode + '174801d183fa077401f490f4';
+      const source = PC + 4096n;
+      const data = new Uint8Array(4096);
+      data.set([7, 8]);
+      data.fill(255, 128, 136);
+      await usingPaged(
+        compiler,
+        { code, words: [[0x4008n, 0xa003n]], spans: [{ physical: 0xa000n, bytes: data }] },
+        async (cpu) => {
+          const enter = (address: bigint, limit = source + 128n) =>
+            cpu.setState(initial(PC, { 0: 0n, 1: 5n, 2: 37n, 4: limit, 7: address }));
+          enter(source);
+          const complete = await cpu.run({ budget: 20n, stop: PC + (expected === 7n ? 22n : 21n) });
+          assert.equal(complete.reason, 'stop');
+          assert.equal(complete.retired, 7n);
+          assert.equal(complete.state.registers[1], 5n + expected);
+          enter(source + 4096n);
+          const fault = await cpu.run({ budget: 20n });
+          assert.equal(fault.reason, 'page-fault');
+          assert.equal(fault.retired, 3n);
+          assert.equal(fault.state.rip, PC + 10n);
+          assert.equal(fault.state.registers[0], source + 4097n);
+          assert.equal(fault.state.registers[2], 37n);
+          enter(source + 4096n, source + 64n);
+          const branch = await cpu.run({ budget: 3n });
+          assert.equal(branch.reason, 'budget');
+          assert.equal(branch.state.rip, PC + 22n);
+          enter(source);
+          const stopped = await cpu.run({ budget: 20n, stop: PC + 13n });
+          assert.equal(stopped.retired, 4n);
+          assert.equal(stopped.state.registers[2], expected);
+          assert.equal(stopped.state.registers[1], 5n);
+        },
+      );
+    }
+  } finally {
+    Core.prototype.compile = compile;
+  }
+});
+
 test('sampled direct jumps carry quiet fetch only within a native entry', async () => {
   // JMP second; NOP; NOP; JMP stop; HLT.
   const second = PC + 4n;

@@ -120,6 +120,13 @@ pub(super) fn paged_prefix_read(
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+pub(super) fn paged_prefix_narrow_read(instruction: Instruction) -> bool {
+    use crate::x86::instruction::Width;
+    paged_prefix_read(instruction)
+        .is_some_and(|(_, _, width, _)| matches!(width, Width::W8 | Width::W16))
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 pub(super) fn paged_prefix_dword_read(instruction: Instruction) -> bool {
     use crate::x86::context::Segment;
     use crate::x86::instruction::{Location, MemoryAluOperands, Width};
@@ -690,6 +697,13 @@ impl Emitter {
             && instructions.iter().copied().any(paged_prefix_dword_read);
         let indexed_wide = self.indexed_scalar_stamp.is_some()
             && instructions.iter().copied().any(paged_prefix_wide_read);
+        let indexed_narrow = self.sampled_region
+            && self.indexed_paged_read.is_some()
+            && instructions
+                .iter()
+                .skip(1)
+                .copied()
+                .any(paged_prefix_narrow_read);
         let indexed_store = self.retouch_prefix_fetch
             && self.indexed_paged_read.is_some()
             && write_import.is_some()
@@ -704,8 +718,11 @@ impl Emitter {
         // A handoff can bypass its guard only directly from a read-only
         // prefix in this unit. Wide reads must admit their index at the
         // checked entry because other prefixes can hand off fetch alone.
-        let indexed =
-            indexed_leading || self.indexed_dword_prefixes || indexed_wide || indexed_store;
+        let indexed = indexed_leading
+            || self.indexed_dword_prefixes
+            || indexed_wide
+            || indexed_narrow
+            || indexed_store;
         // A first operand can refuse before any guest effect. After it,
         // register-only work can retire together at each possible branch exit.
         let batch_retirement = self.context.is_long64()
@@ -725,10 +742,11 @@ impl Emitter {
         self.guard_straight_paged_prefix(
             instructions,
             guard,
-            incoming.filter(|_| !indexed_wide && !indexed_store),
+            incoming.filter(|_| !indexed_wide && !indexed_narrow && !indexed_store),
             indexed,
             if self.retouch_prefix_fetch
                 || indexed_wide
+                || indexed_narrow
                 || !indexed
                 || self.sampled_region && indexed_leading
             {
@@ -829,11 +847,20 @@ impl Emitter {
             };
             retired_read = fuse_branch;
             self.paged_prefix_read = read_import
-                .filter(|_| wide || paged_prefix_dword_read(*instruction))
+                .filter(|_| {
+                    wide || paged_prefix_dword_read(*instruction)
+                        || paged_prefix_narrow_read(*instruction)
+                })
                 .map(|read| {
                     (
                         read,
-                        if wide { indexed_wide } else { indexed_dword },
+                        if wide {
+                            indexed_wide
+                        } else if paged_prefix_narrow_read(*instruction) {
+                            indexed_narrow
+                        } else {
+                            indexed_dword
+                        },
                         leading_wide_read && index == 0,
                     )
                 });

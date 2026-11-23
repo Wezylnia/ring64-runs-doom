@@ -191,6 +191,11 @@ fn paged_register_prefixes(
     let instructions = &unit.instructions;
     let long64 = unit.context.is_long64();
     let short_register_prefixes = long64 && unit.sampled;
+    let interior_scalar_read = |instruction: Instruction| {
+        short_register_prefixes
+            && unit.context.cpl() == 0
+            && super::instruction::paged_prefix_narrow_read(instruction)
+    };
     let maximum = if long64 { 12 } else { 8 };
     let mut targets = vec![false; instructions.len()];
     if long64 {
@@ -252,6 +257,7 @@ fn paged_register_prefixes(
                 } else {
                     short_register_prefixes && (end > first || local_backedge(instruction))
                 } && terminal_branch(instruction, has_read, has_wide_read))
+                || interior_scalar_read(*instruction)
                 || (short_register_prefixes
                     && !has_read
                     && super::instruction::paged_prefix_wide_read(*instruction))
@@ -273,6 +279,7 @@ fn paged_register_prefixes(
             // Keep an already useful register-only prefix before a checked store.
             has_wide_read |= super::instruction::paged_prefix_wide_read(*instruction);
             has_read |= has_wide_read
+                || interior_scalar_read(*instruction)
                 || if end == first {
                     super::instruction::paged_prefix_read(*instruction).is_some()
                 } else {
@@ -286,6 +293,7 @@ fn paged_register_prefixes(
                         if target >> 12 == instruction.pc >> 12)
                     && instructions.get(end).is_some_and(|next| {
                         register_prefix_operation(next.operation)
+                            || interior_scalar_read(*next)
                             || super::instruction::paged_prefix_dword_read(*next)
                             || super::instruction::paged_prefix_wide_read(*next)
                     });
@@ -297,7 +305,8 @@ fn paged_register_prefixes(
         // Each successful operand accounts for the next fetch. Leave a following
         // in-prefix instruction so a stop or exhausted budget cannot omit it.
         while end > first + 1
-            && (super::instruction::paged_prefix_dword_read(instructions[end - 1])
+            && (interior_scalar_read(instructions[end - 1])
+                || super::instruction::paged_prefix_dword_read(instructions[end - 1])
                 || super::instruction::paged_prefix_dword_store(instructions[end - 1])
                 || super::instruction::paged_prefix_wide_read(instructions[end - 1]))
         {
@@ -1340,7 +1349,8 @@ fn emit_body(
                 end.is_some_and(|end| {
                     super::instruction::paged_prefix_read(unit.instructions[first]).is_some()
                         || unit.instructions[first..end].iter().copied().any(|i| {
-                            super::instruction::paged_prefix_dword_read(i)
+                            super::instruction::paged_prefix_narrow_read(i)
+                                || super::instruction::paged_prefix_dword_read(i)
                                 || super::instruction::paged_prefix_wide_read(i)
                         })
                 })

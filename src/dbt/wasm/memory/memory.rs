@@ -301,7 +301,7 @@ impl Emitter {
     ) {
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         if let Some((read, indexed, inline_fallback)) = self.paged_prefix_read {
-            debug_assert!(!for_write && matches!(width, Width::W32 | Width::W64));
+            debug_assert!(!for_write);
             debug_assert!(
                 address.segment == Segment::Ds
                     || width == Width::W64
@@ -357,10 +357,11 @@ impl Emitter {
                 align: 0,
                 memory_index: 0,
             };
-            self.op(if width == Width::W32 {
-                Op::I64Load32U(operand)
-            } else {
-                Op::I64Load(operand)
+            self.op(match width {
+                Width::W8 => Op::I64Load8U(operand),
+                Width::W16 => Op::I64Load16U(operand),
+                Width::W32 => Op::I64Load32U(operand),
+                Width::W64 => Op::I64Load(operand),
             })
             .op(Op::LocalSet(VALUE));
             return;
