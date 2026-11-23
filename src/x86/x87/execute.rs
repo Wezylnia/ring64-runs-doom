@@ -114,9 +114,8 @@ pub(super) fn memory_arithmetic_store(
         return None;
     }
     let cw = state.control_word;
-    let rhs = number::widen(source, first.format);
-    let extra = u16::from(number::memory_denormal(source, first.format)) << 1;
-    let arithmetic = number::binary(first.kind, state.raw(top), rhs, cw, extra);
+    let arithmetic =
+        number::paired_memory_binary(first.kind, state.raw(top), source, first.format, cw);
     if arithmetic.suppress || (arithmetic.pre | arithmetic.post) & !cw & 63 != 0 {
         return None;
     }

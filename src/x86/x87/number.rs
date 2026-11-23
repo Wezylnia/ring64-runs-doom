@@ -960,6 +960,24 @@ fn normal_pc64_quotient_matches_general_binary80_division() {
     }
 }
 
+#[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+pub(super) fn paired_memory_binary(
+    kind: Kind,
+    st0: u128,
+    source: u128,
+    format: Format,
+    cw: u16,
+) -> Result {
+    let rhs = widen(source, format);
+    let extra = u16::from(memory_denormal(source, format)) << 1;
+    let normal = match kind {
+        Kind::Div => normal_pc64_quotient(st0, rhs, cw, extra),
+        Kind::DivReverse => normal_pc64_quotient(rhs, st0, cw, extra),
+        _ => None,
+    };
+    normal.unwrap_or_else(|| binary(kind, st0, rhs, cw, extra))
+}
+
 fn binary_general<const DIRECT_DIVISION: bool>(
     kind: Kind,
     mut a: u128,
