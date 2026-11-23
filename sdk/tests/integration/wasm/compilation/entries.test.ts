@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import { registerBank } from '../../../../tests/support/fixture.js';
-import { createCpu } from '../../../src/index.js';
-import type { State } from '../../../src/index.js';
+import { registerBank } from '../../../../../tests/support/fixture.js';
+import { createCpu } from '../../../../src/index.js';
+import type { State } from '../../../../src/index.js';
 
 const compiler = await WebAssembly.compile(
-  new Uint8Array(await readFile(new URL('../../../../build/ring64.wasm', import.meta.url))),
+  new Uint8Array(await readFile(new URL('../../../../../build/ring64.wasm', import.meta.url))),
 );
 const CODE = 0x1000n;
 const RAM = 0x8000n;

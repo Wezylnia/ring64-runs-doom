@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import { registerBank } from '../../../../tests/support/fixture.js';
-import { createCpu, type Options, type PagingState } from '../../../src/index.js';
-import { protectedSnapshot } from '../../../../tests/support/context.js';
+import { registerBank } from '../../../../../tests/support/fixture.js';
+import { createCpu, type Options, type PagingState } from '../../../../src/index.js';
+import { protectedSnapshot } from '../../../../../tests/support/context.js';
 
 const compiler = await WebAssembly.compile(
-  new Uint8Array(await readFile(new URL('../../../../build/ring64.wasm', import.meta.url))),
+  new Uint8Array(await readFile(new URL('../../../../../build/ring64.wasm', import.meta.url))),
 );
 const limits = {
   maxInstructions: 32,

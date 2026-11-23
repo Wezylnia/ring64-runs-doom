@@ -1,11 +1,11 @@
 import { readFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createCpu } from '../../../src/index.js';
-import { Core } from '../../../src/wasm/core.js';
+import { createCpu } from '../../../../src/index.js';
+import { Core } from '../../../../src/wasm/core.js';
 
 const compiler = await WebAssembly.compile(
-  new Uint8Array(await readFile(new URL('../../../../build/ring64.wasm', import.meta.url))),
+  new Uint8Array(await readFile(new URL('../../../../../build/ring64.wasm', import.meta.url))),
 );
 const limits = {
   maxInstructions: 32,

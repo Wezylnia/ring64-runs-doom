@@ -1,14 +1,14 @@
-import { stateLayout } from '../../state-layout.js';
+import { stateLayout } from '../../../state-layout.js';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import { createCpu } from '../../../src/index.js';
-import { Core } from '../../../src/wasm/core.js';
-import type { GeneratedRun } from '../../../src/wasm/abi.js';
-import { LIMITS, initial } from '../../../../tests/support/fixture.js';
+import { createCpu } from '../../../../src/index.js';
+import { Core } from '../../../../src/wasm/core.js';
+import type { GeneratedRun } from '../../../../src/wasm/abi.js';
+import { LIMITS, initial } from '../../../../../tests/support/fixture.js';
 
 const compiler = await WebAssembly.compile(
-  new Uint8Array(await readFile(new URL('../../../../build/ring64.wasm', import.meta.url))),
+  new Uint8Array(await readFile(new URL('../../../../../build/ring64.wasm', import.meta.url))),
 );
 const exports = WebAssembly.Module.exports(compiler)
   .filter(({ kind }) => kind === 'function')

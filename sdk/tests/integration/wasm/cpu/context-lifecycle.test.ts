@@ -1,19 +1,19 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import { Core } from '../../../src/wasm/core.js';
+import { Core } from '../../../../src/wasm/core.js';
 import {
   createCpu,
   type Cpu,
   type ExecutionContext,
   type LoadedSegment,
   type RunResult,
-} from '../../../src/index.js';
-import { LIMITS, changed, hex, initial } from '../../../../tests/support/fixture.js';
-import { longSnapshot } from '../../../../tests/support/context.js';
+} from '../../../../src/index.js';
+import { LIMITS, changed, hex, initial } from '../../../../../tests/support/fixture.js';
+import { longSnapshot } from '../../../../../tests/support/context.js';
 
 const compiler = await WebAssembly.compile(
-  new Uint8Array(await readFile(new URL('../../../../build/ring64.wasm', import.meta.url))),
+  new Uint8Array(await readFile(new URL('../../../../../build/ring64.wasm', import.meta.url))),
 );
 const long = (fsBase = 0n): ExecutionContext => ({ mode: 'long64', fsBase, gsBase: 0n });
 const segment = (type: LoadedSegment['type'] = 'read-write'): LoadedSegment => ({

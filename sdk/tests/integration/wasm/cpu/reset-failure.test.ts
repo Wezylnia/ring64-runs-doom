@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
-import { Core } from '../../../src/wasm/core.js';
-import { physicalCpu } from '../../../../tests/execution/reset/fixture.js';
+import { Core } from '../../../../src/wasm/core.js';
+import { physicalCpu } from '../../../../../tests/execution/reset/fixture.js';
 
 test('a trap while releasing reset owners leaves the existing CPU failed', async () => {
   const compiler = await WebAssembly.compile(
-    await readFile(new URL('../../../../build/ring64.wasm', import.meta.url)),
+    await readFile(new URL('../../../../../build/ring64.wasm', import.meta.url)),
   );
   const rom = new Uint8Array(0x10000);
   rom[0xfff0] = 0x90;

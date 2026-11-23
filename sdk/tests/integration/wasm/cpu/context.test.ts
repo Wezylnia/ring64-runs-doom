@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import { createCpu } from '../../../src/index.js';
-import type { ExecutionContext, LoadedSegment } from '../../../src/state/system/context.js';
-import { LIMITS, initial, hex } from '../../../../tests/support/fixture.js';
-import { longSnapshot, protectedSnapshot } from '../../../../tests/support/context.js';
+import { createCpu } from '../../../../src/index.js';
+import type { ExecutionContext, LoadedSegment } from '../../../../src/state/system/context.js';
+import { LIMITS, initial, hex } from '../../../../../tests/support/fixture.js';
+import { longSnapshot, protectedSnapshot } from '../../../../../tests/support/context.js';
 
 const compiler = await WebAssembly.compile(
-  new Uint8Array(await readFile(new URL('../../../../build/ring64.wasm', import.meta.url))),
+  new Uint8Array(await readFile(new URL('../../../../../build/ring64.wasm', import.meta.url))),
 );
 function segment(type: LoadedSegment['type'] = 'read-write'): LoadedSegment {
   return { base: 0n, limit: 0xffffffff, default32: true, usable: true, type };
