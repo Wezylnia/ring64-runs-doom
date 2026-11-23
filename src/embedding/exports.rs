@@ -80,6 +80,8 @@ mod numeric;
 mod numeric_controls;
 #[path = "exports/numeric/numeric_image/mod.rs"]
 mod numeric_image;
+#[path = "exports/execution/paged_decode.rs"]
+mod paged_decode;
 #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
 #[path = "exports/execution/paged_region.rs"]
 mod paged_region;

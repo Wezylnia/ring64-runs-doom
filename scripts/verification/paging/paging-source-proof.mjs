@@ -33,11 +33,14 @@ for (const [path, names] of Object.entries(families)) {
       const symbol = `core_${name}${observed ? '_observed' : ''}`;
       const anchor = `pub extern "C" fn ${symbol}(`,
         start = source.indexOf(anchor);
-      const dispatch = `core_${name}_impl::<${name === 'clflush' ? 'false' : `${observed}, false`}>`;
-      const call = source.indexOf(dispatch, start);
-      if (start < 0 || call < start || call - start > 800)
+      const parameters = name === 'clflush' ? ['PAGED'] : ['OBSERVED', 'PAGED'];
+      if (name === 'store') parameters.push('STACK_QWORD');
+      const constArguments = parameters.map((parameter) => parameter === 'OBSERVED' && observed);
+      const dispatch = `core_${name}_impl::<${constArguments.join(', ')}>`;
+      const end = source.indexOf('\n}', start);
+      if (start < 0 || end < start || !source.slice(start, end).includes(dispatch))
         throw Error(symbol + ' no longer explicitly specializes PAGED=false');
-      const signature = `fn core_${name}_impl<${name === 'clflush' ? '' : 'const OBSERVED: bool, '}const PAGED: bool>`;
+      const signature = `fn core_${name}_impl<${parameters.map((parameter) => `const ${parameter}: bool`).join(', ')}>`;
       if (!source.includes(signature)) throw Error(name + ' lost const paging specialization');
       wrappers.push({
         export: symbol,
@@ -53,7 +56,7 @@ for (const [path, anchors] of Object.entries({
   'src/dbt/mod.rs': [
     'compile_with_paging(image, context, None, entry, limits, observed)',
     'let emit = if image.has_mmio() {\n        wasm::emit_mmio_profile\n    } else {\n        wasm::emit_profile',
-    'let bytes = emit(\n        &unit,\n        observed,\n        paging.is_some(),',
+    'emit(&unit, observed, paging.is_some(), max_artifact_bytes)',
   ],
   'src/dbt/wasm/artifact.rs': [
     'let observed = observed || paged;',
@@ -72,11 +75,11 @@ for (const [path, anchors] of Object.entries({
     'self.preflight::<true>(address, width, Access::Read',
   ],
   'src/x86/access.rs': ['impl GuestMemory for Image'],
-  'src/embedding/exports/memory/paging.rs': [
+  'src/embedding/exports/execution/paged_decode.rs': [
     'pub(super) fn paged_decode(',
     'fn encoding_current(',
-    'pub extern "C" fn core_paged_debug_begin(',
   ],
+  'src/embedding/exports/memory/paging.rs': ['pub extern "C" fn core_paged_debug_begin('],
   'src/x86/paging/walk.rs': [
     'walk_with::<false, false>',
     'walk_with::<true, FETCH>',
