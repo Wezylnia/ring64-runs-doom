@@ -5,8 +5,17 @@ import {
   type LoadedSegment,
   type Limits,
   type State,
+  type RunResult,
+  type SegmentFault,
 } from '../../../../sdk/src/index.js';
-import { LIMITS, hex, type Scenario, registerBank } from '../../../support/fixture.js';
+import {
+  LIMITS,
+  check,
+  equal,
+  hex,
+  type Scenario,
+  registerBank,
+} from '../../../support/fixture.js';
 export type { Scenario };
 export const LONG: ExecutionContext = { mode: 'long64', fsBase: 0n, gsBase: 0n };
 export function segment(
@@ -116,4 +125,19 @@ export async function using(
   } finally {
     cpu.dispose();
   }
+}
+
+export function segmentFault(result: RunResult, expected: SegmentFault): void {
+  equal(result.fault, undefined, 'exclusive segment diagnostic');
+  check(result.segmentFault, 'missing segment failure metadata');
+  for (const key of [
+    'instructionPc',
+    'segment',
+    'offset',
+    'width',
+    'access',
+    'cause',
+    'failingOffset',
+  ] as const)
+    equal(result.segmentFault[key], expected[key], `segment fault ${key}`);
 }
