@@ -161,6 +161,38 @@ fn flat_pair_pointer(
 }
 
 #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+#[inline(always)]
+fn read_pair_operand(core: &mut Core, offset: u64, width: u32, segment: Segment) -> Option<u64> {
+    #[cfg(target_arch = "wasm32")]
+    if flat_pair_segment(&core.context, segment) {
+        let long64 = core.context.is_long64();
+        let spans = if long64 {
+            &mut core.state.x87_long64_reads
+        } else {
+            &mut core.state.flat_reads
+        };
+        let slot = usize::from(segment == Segment::Ss);
+        if let Some(host) = flat_pair_pointer(&mut spans[slot], offset, width, long64, || {
+            core.image.direct_read_span(offset, width)
+        }) {
+            // The retained span proves every byte in the current image mapping.
+            return Some(unsafe {
+                if width == 8 {
+                    std::ptr::read_unaligned(host as *const u64)
+                } else {
+                    u64::from(std::ptr::read_unaligned(host as *const u32))
+                }
+            });
+        }
+    }
+    let linear = core
+        .context
+        .translate(offset, width, segment, Access::Read, false)
+        .ok()?;
+    core.image.read(linear, width).ok()
+}
+
+#[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
 #[inline(never)]
 fn core_x87_memory_first_pair(
     first: u32,
@@ -187,62 +219,20 @@ fn core_x87_memory_first_pair(
             return -1;
         }
         let core = bridge.core.as_mut().unwrap();
-        let run = unsafe { &mut *core.state.get() };
-        if core.paging.is_some() || run.x87.pending() != 0 {
+        if core.paging.is_some() || unsafe { (*core.state.get()).x87.pending() } != 0 {
             return -1;
         }
         // Both operands must be available before publishing any instruction effects.
         let width = first.memory_bytes();
-        #[cfg(target_arch = "wasm32")]
-        let long64 = core.context.is_long64();
-        #[cfg(target_arch = "wasm32")]
-        let flat_head = flat_pair_segment(&core.context, head_segment);
-        #[cfg(target_arch = "wasm32")]
-        let direct_read = if flat_head {
-            let slot = usize::from(head_segment == Segment::Ss);
-            let spans = if long64 {
-                &mut core.state.x87_long64_reads
-            } else {
-                &mut core.state.flat_reads
-            };
-            flat_pair_pointer(&mut spans[slot], offsets[0], width, long64, || {
-                core.image.direct_read_span(offsets[0], width)
-            })
-        } else {
-            None
+        let Some(source) = read_pair_operand(core, offsets[0], width, head_segment) else {
+            return -1;
         };
-        #[cfg(not(target_arch = "wasm32"))]
-        let direct_read: Option<u32> = None;
-        let source = if let Some(host) = direct_read {
-            // The retained read span was resolved in the current Image mapping.
-            // Execute-only and cross-mapping operands keep the checked path.
-            unsafe {
-                if width == 8 {
-                    std::ptr::read_unaligned(host as *const u64)
-                } else {
-                    u64::from(std::ptr::read_unaligned(host as *const u32))
-                }
-            }
-        } else {
-            let Ok(head) =
-                core.context
-                    .translate(offsets[0], width, head_segment, Access::Read, false)
-            else {
-                return -1;
-            };
-            let Ok(source) = core.image.read(head, width) else {
-                return -1;
-            };
-            source
-        };
+        let run = unsafe { &mut *core.state.get() };
         let (data, diagnostic_segment) = if second.is_store() {
             let width = second.memory_bytes();
             #[cfg(target_arch = "wasm32")]
-            let direct_write = if if tail_segment == head_segment {
-                flat_head
-            } else {
-                flat_pair_segment(&core.context, tail_segment)
-            } {
+            let direct_write = if flat_pair_segment(&core.context, tail_segment) {
+                let long64 = core.context.is_long64();
                 let stack = tail_segment == Segment::Ss;
                 let slot = if long64 {
                     &mut core.state.x87_long64_writes[usize::from(stack)]
@@ -339,14 +329,7 @@ fn core_x87_load_memory_pair(first: u32, second: u64, offset: u64, segment: u32,
         }
         // Capture the second operand without publishing diagnostics or changing x87.
         // On refusal, the ordinary entries execute the load then expose the fault.
-        let width = second.memory_bytes();
-        let Ok(linear) = core
-            .context
-            .translate(offset, width, segment, Access::Read, false)
-        else {
-            return -1;
-        };
-        let Ok(bits) = core.image.read(linear, width) else {
+        let Some(bits) = read_pair_operand(core, offset, second.memory_bytes(), segment) else {
             return -1;
         };
         clear_x87_diagnostics(core);
