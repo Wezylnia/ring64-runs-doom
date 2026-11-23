@@ -236,6 +236,10 @@ impl Emitter {
         self.current_operation = instruction.operation;
         self.stores = false;
         let exit_depth = loop_depth + 1;
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if route && let Some(second) = next {
+            self.emit_paged_immediate_stack_pair(instruction, *second, loop_depth);
+        }
         if !self.loop_gates_prechecked && !self.instruction_retirement.prechecked_flat_entry() {
             self.gates(exit_depth);
         }

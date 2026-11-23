@@ -57,6 +57,82 @@ impl Emitter {
         self.write_register(RegisterView::low(dst), width);
     }
 
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn emit_paged_immediate_stack_pair(
+        &mut self,
+        first: crate::x86::instruction::Instruction,
+        second: crate::x86::instruction::Instruction,
+        loop_depth: u32,
+    ) {
+        use super::{RIP, STORE_STATUS, instruction::IndexedOperand};
+        use crate::x86::instruction::Operation;
+        use wasm_encoder::{BlockType, MemArg};
+
+        let Operation::Push {
+            src: Operand::Immediate(value),
+            width: Width::W64,
+        } = first.operation
+        else {
+            return;
+        };
+        let Operation::Pop {
+            dst,
+            width: Width::W64,
+        } = second.operation
+        else {
+            return;
+        };
+        if !self.sampled_region
+            || !self.paged_quiet_completion
+            || !self.uses_indexed_scalar_write(first.operation)
+            || !self.uses_indexed_scalar_read(second.operation)
+            || self.context.stack_width() != Width::W64
+            || dst == 4
+            || first.next_pc != second.pc
+            || second.next_pc <= second.pc
+            || (second.next_pc - 1) >> 12 != first.pc >> 12
+        {
+            return;
+        }
+
+        self.guard_straight_prefix(&first, &second, 2);
+        self.newest_prefix_fetch(first.pc, true, false);
+        self.op(Op::If(BlockType::Empty))
+            .op(Op::LocalGet(RSP))
+            .op(Op::I64Const(8))
+            .op(Op::I64Sub)
+            .op(Op::LocalSet(ADDRESS));
+        self.indexed_read_host(
+            self.indexed_paged_read.unwrap(),
+            8,
+            true,
+            IndexedOperand::ReadModifyWrite,
+        );
+        self.op(Op::LocalTee(STORE_STATUS))
+            .op(Op::If(BlockType::Empty));
+        // The POP reads the exact RAM bytes written by the PUSH. Both
+        // instructions leave the same stack and fetch leaves newest.
+        self.op(Op::LocalGet(STORE_STATUS))
+            .op(Op::I64Const(value as i64));
+        self.direct_scalar_store(
+            Width::W64,
+            MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            },
+        );
+        self.op(Op::I64Const(value as i64));
+        self.write_register(RegisterView::low(dst), Width::W64);
+        self.op(Op::I64Const(second.next_pc as i64))
+            .op(Op::LocalSet(RIP));
+        self.retire_instructions(2);
+        self.guarded_paged_lap = true;
+        self.route(second.next_pc, loop_depth + 3, loop_depth + 4);
+        self.guarded_paged_lap = false;
+        self.op(Op::End).op(Op::End).op(Op::End);
+    }
+
     pub(super) fn pop_memory(
         &mut self,
         address: Address,
