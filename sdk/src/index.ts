@@ -1,9 +1,15 @@
 export { createCpu } from './cpu/cpu.js';
 
 /** Compile the packaged standalone Core for reuse across CPU instances. */
-export async function loadCpuCompiler(): Promise<WebAssembly.Module> {
+export async function loadCpuCompiler(
+  guestMemory: 'memory32' | 'memory64' = 'memory32',
+): Promise<WebAssembly.Module> {
   const { loadCompiler } = await import('./wasm/load.js');
-  return loadCompiler(new URL('./ring64.wasm', import.meta.url));
+  return loadCompiler(
+    guestMemory === 'memory64'
+      ? new URL('./ring64-memory64.wasm', import.meta.url)
+      : new URL('./ring64.wasm', import.meta.url),
+  );
 }
 
 export type { Cpu, Limits, Options, RunOptions, RunReason, RunResult } from './cpu/cpu.js';

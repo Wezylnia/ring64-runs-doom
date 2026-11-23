@@ -19,7 +19,7 @@ import {
   type ExecutionContextSnapshot,
 } from '../state/system/context.js';
 import { captureX87State, type X87State } from '../state/numeric/x87.js';
-import { Core, type CompilerSource } from '../wasm/core.js';
+import { Core, usesMemory64, type CompilerSource } from '../wasm/core.js';
 import type { GeneratedRun } from '../wasm/abi.js';
 import { captureInitialContext, captureLimits, type Limits } from './options.js';
 import {
@@ -120,7 +120,10 @@ export async function createCpu(options: Options): Promise<Cpu> {
   const limits = captureLimits(options.limits);
   const io = captureIo(options);
   const mmioInput = captureMmio(options);
-  const memory = captureInitialMemory(options, mmioInput?.count);
+  const compiler = options.compiler;
+  // A byte-supplied compiler is identified after compilation in Core.create.
+  const wide = compiler instanceof WebAssembly.Module ? usesMemory64(compiler) : true;
+  const memory = captureInitialMemory(options, mmioInput?.count, wide);
   const mmio = mmioInput && captureMmioRanges(mmioInput, memory.memoryModel ?? 'linear');
   if (memory.memoryModel !== 'linear') {
     memory.paging = capturePagingState(options.paging!);
@@ -130,8 +133,8 @@ export async function createCpu(options: Options): Promise<Cpu> {
   const context = captureInitialContext(options.context, memory.memoryModel);
   const core =
     mmio === undefined
-      ? await Core.create(options.compiler, memory, context, io)
-      : await Core.create(options.compiler, memory, context, io, mmio);
+      ? await Core.create(compiler, memory, context, io)
+      : await Core.create(compiler, memory, context, io, mmio);
   return new Cpu(
     CONSTRUCTION,
     core,
@@ -143,7 +146,7 @@ export async function createCpu(options: Options): Promise<Cpu> {
           maxMappings: memory.memoryLimits.maxMappings - mmio.ranges.length,
         }
       : memory.memoryLimits,
-    new Map(memory.backings.map(({ id, bytes }) => [id, bytes.length])),
+    new Map(memory.backings.map(({ id, bytes, byteLength }) => [id, byteLength ?? bytes.length])),
     memory.memoryModel,
   );
 }
@@ -233,7 +236,12 @@ export class Cpu {
 
   addBacking(input: MemoryBackingInput): void {
     const generation = this.requireIdle();
-    const captured = captureBackings([input], this.#memoryLimits, this.#backings);
+    const captured = captureBackings(
+      [input],
+      this.#memoryLimits,
+      this.#backings,
+      this.#engine.memory64,
+    );
     this.requireIdle(generation, true);
     const lengths = validateBackings(captured, this.#backings, this.#memoryLimits);
     this.engineCall(() => this.#engine.addBacking(captured[0]!));
@@ -250,7 +258,12 @@ export class Cpu {
 
   setMappings(mappings: MemoryMapping[]): void {
     const generation = this.requireIdle();
-    const captured = captureMappings(mappings, this.#memoryLimits, this.#memoryModel);
+    const captured = captureMappings(
+      mappings,
+      this.#memoryLimits,
+      this.#memoryModel,
+      this.#engine.memory64,
+    );
     this.requireIdle(generation, true);
     validateMappings(captured, this.#backings);
     this.engineCall(() => this.#engine.setMappings(captured));

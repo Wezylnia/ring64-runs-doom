@@ -1,3 +1,4 @@
+import { bindGuestMemory64 } from './guest-memory64.js';
 import { bindArtifactImports, requiredPagedArtifactExports } from './artifact-imports.js';
 import type { LinkedRun } from './linked-run.js';
 import { IoBridge, type IoBinding } from '../embedding/io.js';
@@ -309,6 +310,10 @@ export function instantiateArtifact(
   return instance.exports.run as GeneratedRun;
 }
 
+export function usesMemory64(module: WebAssembly.Module): boolean {
+  return WebAssembly.Module.imports(module).some((entry) => entry.module === 'guest64');
+}
+
 export class Core {
   static async compileArtifact(bytes: Uint8Array<ArrayBuffer>): Promise<WebAssembly.Module> {
     if (
@@ -347,6 +352,7 @@ export class Core {
     readonly physicalControls = false,
     private readonly io?: IoBridge,
     private readonly mmio?: MmioBridge,
+    readonly memory64 = false,
   ) {
     this.#exports = exports;
     const takeSourceInvalidation = exports.core_take_source_invalidation;
@@ -477,7 +483,15 @@ export class Core {
     const io = new IoBridge(ioBinding);
     const mmio = mmioBinding && new MmioBridge(mmioBinding, io);
     try {
+      const memory64 = usesMemory64(module);
+      if (
+        !memory64 &&
+        (memory.memoryLimits.maxBackingBytes > 0xffffffff ||
+          memory.backings.some((b) => b.byteLength !== undefined))
+      )
+        throw new TypeError('extended backing size requires the memory64 compiler');
       const instance = await WebAssembly.instantiate(module, {
+        ...(memory64 && bindGuestMemory64()),
         io: io.imports,
         mmio: mmio?.imports ?? unconfiguredMmioImports,
       });
@@ -496,9 +510,10 @@ export class Core {
         {
           ...metadata,
           memoryLimits: memory.memoryLimits,
-          backings: memory.backings.map(({ id, bytes }) => ({
+          backings: memory.backings.map(({ id, bytes, byteLength }) => ({
             id: backingKey(id),
-            length: bytes.length,
+            length: byteLength ?? bytes.length,
+            ...(memory64 && { initialLength: bytes.length }),
           })),
           mappings: mappingInput(memory.mappings),
           ...(mmioBinding ? { mmioRanges: mmioBinding.ranges } : {}),
@@ -511,7 +526,7 @@ export class Core {
         metadataLength,
         io,
         physicalControls ? undefined : context,
-        () => new Core(exports, isPaged, physicalControls, io, mmio),
+        () => new Core(exports, isPaged, physicalControls, io, mmio, memory64),
       );
     } catch (error) {
       io.release();
@@ -1592,7 +1607,14 @@ export class Core {
   }
 
   addBacking(input: MemoryBackingInput): void {
-    const length = writeInput(this.#exports, { id: backingKey(input.id) }, [input.bytes]);
+    const length = writeInput(
+      this.#exports,
+      {
+        id: backingKey(input.id),
+        ...(this.memory64 && { length: input.byteLength ?? input.bytes.length }),
+      },
+      [input.bytes],
+    );
     this.memoryResult(this.#exports.core_add_backing(length));
   }
 

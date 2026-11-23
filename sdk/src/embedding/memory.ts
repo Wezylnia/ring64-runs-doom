@@ -12,6 +12,8 @@ export interface Span {
 
 export interface MemoryBackingInput {
   id: string;
+  /** Total memory64 backing size, including the zero-initialized tail. */
+  byteLength?: number;
   bytes: Uint8Array;
 }
 
@@ -60,14 +62,15 @@ export function backingName(id: unknown): asserts id is string {
     throw new TypeError('backing id must be a nonempty string');
 }
 
-export function captureMemoryLimits(input: MemoryLimits): MemoryLimits {
+export function captureMemoryLimits(input: MemoryLimits, wide = false): MemoryLimits {
   const result = {
     maxBackingBytes: input.maxBackingBytes,
     maxBackings: input.maxBackings,
     maxMappings: input.maxMappings,
   };
-  for (const value of Object.values(result)) {
-    if (!Number.isInteger(value) || value <= 0 || value > 0xffffffff)
+  for (const [key, value] of Object.entries(result)) {
+    const max = wide && key === 'maxBackingBytes' ? Number.MAX_SAFE_INTEGER : 0xffffffff;
+    if (!Number.isSafeInteger(value) || value <= 0 || value > max)
       throw new TypeError('memory capacities must be explicit positive wasm32 integers');
   }
   return result;
@@ -89,8 +92,9 @@ export function validateBackings(
   for (const backing of added) {
     backingName(backing.id);
     if (lengths.has(backing.id)) throw new TypeError('duplicate backing id');
-    lengths.set(backing.id, backing.bytes.length);
-    bytes += backing.bytes.length;
+    const length = backing.byteLength ?? backing.bytes.length;
+    lengths.set(backing.id, length);
+    bytes += length;
   }
   capacity(bytes, lengths.size, limits);
   return lengths;
@@ -100,6 +104,7 @@ export function captureBackings(
   input: MemoryBackingInput[],
   limits: MemoryLimits,
   existing: ReadonlyMap<string, number> = new Map(),
+  wide = false,
 ): MemoryBackingInput[] {
   if (!Array.isArray(input)) throw new TypeError('backings must be an array');
   const count = input.length;
@@ -107,7 +112,7 @@ export function captureBackings(
   let total = 0;
   for (const length of existing.values()) total += length;
   capacity(total, existing.size + count, limits);
-  const captured: { id: string; bytes: Uint8Array; length: number }[] = [];
+  const captured: { id: string; bytes: Uint8Array; length: number; size: number }[] = [];
   for (let index = 0; index < count; index++) {
     const backing = input[index]!;
     const id = backing.id;
@@ -116,19 +121,24 @@ export function captureBackings(
     if (!(bytes instanceof Uint8Array)) throw new TypeError('backing bytes must be Uint8Array');
     const length = actualLength(bytes);
     byteLength(length, 'backing length');
-    if (length === 0) throw new TypeError('backings must be nonempty');
-    total += length;
+    const size = backing.byteLength ?? length;
+    if (!Number.isSafeInteger(size) || size < length || (!wide && size !== length))
+      throw new TypeError(
+        'extended backing length requires memory64 and must cover the initial bytes',
+      );
+    if (size === 0) throw new TypeError('backings must be nonempty');
+    total += size;
     capacity(total, existing.size + count, limits);
-    captured.push({ id, bytes, length });
+    captured.push({ id, bytes, length, size });
   }
   // Allocate only after every declared length passed the capacity preflight.
-  const result = captured.map(({ id, bytes, length }) => {
+  const result = captured.map(({ id, bytes, length, size }) => {
     const copy = new Uint8Array(length);
     if (actualLength(bytes) !== length)
       throw new TypeError('backing byte length changed during input capture');
     // Native typed-array copying rejects a source detached by a later accessor.
     setBytes.call(copy, bytes);
-    return { id, bytes: copy };
+    return size === length ? { id, bytes: copy } : { id, bytes: copy, byteLength: size };
   });
   validateBackings(result, existing, limits);
   return result;
@@ -138,6 +148,7 @@ export function captureMappings(
   input: MemoryMapping[],
   limits: MemoryLimits,
   memoryModel: MemoryModel = 'linear',
+  wide = false,
 ): MemoryMapping[] {
   if (memoryModel !== 'linear' && memoryModel !== 'ia32e-paged' && memoryModel !== 'physical')
     throw new TypeError('unsupported memory model');
@@ -158,7 +169,10 @@ export function captureMappings(
     const execute = permissions.execute;
     unsigned64(base, 'mapping base');
     backingName(backing);
-    byteLength(offset, 'mapping offset');
+    if (wide) {
+      if (!Number.isSafeInteger(offset) || offset < 0)
+        throw new TypeError('invalid memory64 mapping offset');
+    } else byteLength(offset, 'mapping offset');
     byteLength(length, 'mapping length');
     if (length === 0) throw new TypeError('mappings must be nonempty');
     if ([read, write, execute].some((permission) => typeof permission !== 'boolean'))
@@ -192,7 +206,7 @@ export function validateMappings(
   let end = 0n;
   for (const mapping of sorted) {
     const backingLength = lengths.get(mapping.backing);
-    if (backingLength === undefined || mapping.offset + mapping.length > backingLength)
+    if (backingLength === undefined || mapping.offset > backingLength - mapping.length)
       throw new TypeError('mapping must fit an existing backing');
     if (mapping.base < end) throw new TypeError('guest mappings overlap');
     end = mapping.base + BigInt(mapping.length);
@@ -242,7 +256,11 @@ export type MemoryOptions =
       ram?: never;
     };
 
-export function captureInitialMemory(options: MemoryOptions, mmioRangeCount = 0): InitialMemory {
+export function captureInitialMemory(
+  options: MemoryOptions,
+  mmioRangeCount = 0,
+  wide = false,
+): InitialMemory {
   const memoryModel = 'memoryModel' in options ? options.memoryModel : 'linear';
   if (memoryModel !== 'linear' && memoryModel !== 'ia32e-paged' && memoryModel !== 'physical')
     throw new TypeError('memoryModel must be linear, ia32e-paged or physical');
@@ -270,7 +288,7 @@ export function captureInitialMemory(options: MemoryOptions, mmioRangeCount = 0)
     const memory = options.memory;
     entry = options.entry;
     unsigned64(entry, 'entry');
-    memoryLimits = captureMemoryLimits(options.memoryLimits);
+    memoryLimits = captureMemoryLimits(options.memoryLimits, wide);
     const backingInput = memory.backings;
     const mappingInput = memory.mappings;
     // Both record counts are bounded before either table is captured.
@@ -279,8 +297,8 @@ export function captureInitialMemory(options: MemoryOptions, mmioRangeCount = 0)
     byteLength(mappingCount, 'mapping count');
     if (mappingCount + mmioRangeCount > memoryLimits.maxMappings)
       throw new RangeError('mapping capacity exceeded');
-    backings = captureBackings(backingInput, memoryLimits);
-    mappings = captureMappings(mappingInput, memoryLimits, memoryModel);
+    backings = captureBackings(backingInput, memoryLimits, new Map(), wide);
+    mappings = captureMappings(mappingInput, memoryLimits, memoryModel, wide);
   } else {
     const code = options.code;
     const ram = options.ram;
@@ -299,6 +317,7 @@ export function captureInitialMemory(options: MemoryOptions, mmioRangeCount = 0)
         maxBackings: 2,
         maxMappings: 2 + mmioRangeCount,
       },
+      wide,
     );
     if (memoryLimits.maxMappings < 2 + mmioRangeCount)
       throw new RangeError('mapping capacity exceeded');
