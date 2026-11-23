@@ -715,9 +715,9 @@ fn participates`,
     'public-ac-packet-omitted',
     'semantic operand granules suppress all candidate numeric and RMW state',
     edit(
-      'sdk/src/cpu/cpu.ts',
-      "reason === 'alignment-check' ? this.#engine.alignmentCheck(reason) : undefined;",
-      'undefined;',
+      'sdk/src/cpu/run-result.ts',
+      '  const field = diagnosticFields[reason];',
+      "  if (reason === 'alignment-check') return {};\n  const field = diagnosticFields[reason];",
     ),
   ),
   publicCpu(
