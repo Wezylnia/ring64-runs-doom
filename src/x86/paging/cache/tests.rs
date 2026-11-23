@@ -689,15 +689,19 @@ fn indexed_read_collision_and_slot_reuse_preserve_translation_identity() {
     let (first_slot, first_id) = fill(first);
     let first_record = publish(first_slot, first_page, 0x10000);
     assert_eq!(
-        (first_record.page, first_record.slot, first_record.id),
-        (first_page, first_slot as u32, first_id),
+        (first_record.tag, first_record.slot_offset, first_record.id),
+        (first_page | INDEXED_VALID, first_slot as u32 * 8, first_id),
     );
     let (second_slot, second_id) = fill(second);
     assert_ne!(second_slot, first_slot);
     let second_record = publish(second_slot, second_page, 0x20000);
     assert_eq!(
-        (second_record.page, second_record.host, second_record.id),
-        (second_page, 0x20000, second_id),
+        (
+            second_record.tag,
+            (second_page as u32).wrapping_add(second_record.host_bias),
+            second_record.id
+        ),
+        (second_page | INDEXED_VALID, 0x20000, second_id),
     );
     {
         let entries = cache.entries.borrow();
@@ -722,7 +726,7 @@ fn indexed_read_collision_and_slot_reuse_preserve_translation_identity() {
             .recency()
             .entries
             .iter()
-            .all(|record| record.id == 0)
+            .all(|record| record.tag == 0)
     );
     assert_eq!(
         cache.entries.borrow().recency().live_ids[reused_slot],

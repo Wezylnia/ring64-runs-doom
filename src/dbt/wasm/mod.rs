@@ -142,7 +142,7 @@ struct Emitter {
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     indexed_paged_read: Option<[u32; 4]>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    indexed_scalar_scratch: Option<[u32; 2]>,
+    indexed_scalar_stamp: Option<u32>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     indexed_store_fill: Option<u32>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]

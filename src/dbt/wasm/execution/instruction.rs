@@ -186,7 +186,7 @@ pub(super) fn paged_prefix_dword_store(instruction: Instruction) -> bool {
 impl Emitter {
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     pub(super) fn uses_indexed_scalar_read(&self, operation: Operation) -> bool {
-        self.indexed_scalar_scratch.is_some()
+        self.indexed_scalar_stamp.is_some()
             && !self.guarded_paged_lap
             && indexed_scalar_read(operation)
     }
@@ -688,7 +688,7 @@ impl Emitter {
             .map(|operation| (read_import.expect("leading read prefix import"), operation));
         let indexed_dword = self.indexed_dword_prefixes
             && instructions.iter().copied().any(paged_prefix_dword_read);
-        let indexed_wide = self.indexed_scalar_scratch.is_some()
+        let indexed_wide = self.indexed_scalar_stamp.is_some()
             && instructions.iter().copied().any(paged_prefix_wide_read);
         let indexed_store = self.retouch_prefix_fetch
             && self.indexed_paged_read.is_some()
@@ -875,10 +875,11 @@ impl Emitter {
         preserve_fetch: bool,
         operand: IndexedOperand,
     ) {
-        use super::{ADDRESS, LHS, STORE_STATUS, VALUE};
-        use crate::embedding::layout::{StateStorage, paging::INDEXED_WRITE_READABLE};
+        use super::{ADDRESS, VALUE};
+        use crate::embedding::layout::StateStorage;
         use crate::x86::paging::cache::{
-            CAPACITY, INDEXED_READ_ENTRIES, IndexedReadEntry, IndexedReadTable,
+            CAPACITY, INDEXED_READ_ENTRIES, INDEXED_VALID, INDEXED_WRITE_READABLE,
+            IndexedReadEntry, IndexedReadTable,
         };
         use std::mem::{offset_of, size_of};
         use wasm_encoder::{MemArg, ValType};
@@ -896,13 +897,14 @@ impl Emitter {
         } else {
             (table, offset_of!(IndexedReadTable, entries))
         };
-        let [id, stamp] = if preserve_fetch {
-            [LHS, VALUE]
+        let stamp = if preserve_fetch {
+            VALUE
         } else {
-            self.indexed_scalar_scratch.unwrap()
+            self.indexed_scalar_stamp.unwrap()
         };
-        // Keep a zero result beneath the inner checks. An invalid authority
-        // exits the inner block without touching recency or operand memory.
+        let data_address = if preserve_fetch { data } else { fetch };
+        // A record is never indexed by the final byte's page if the access
+        // crosses a boundary. Its tag also distinguishes a default record.
         self.op(Op::Block(BlockType::Result(ValType::I32)))
             .op(Op::I32Const(0))
             .op(Op::Block(BlockType::Empty))
@@ -914,14 +916,6 @@ impl Emitter {
             .op(Op::LocalTee(table))
             .op(Op::I32Eqz)
             .op(Op::BrIf(0))
-            .op(Op::LocalGet(ADDRESS))
-            .op(Op::I32WrapI64)
-            .op(Op::I32Const(4095))
-            .op(Op::I32And)
-            .op(Op::LocalTee(STORE_STATUS))
-            .op(Op::I32Const(4096 - i32::from(width)))
-            .op(Op::I32GtU)
-            .op(Op::BrIf(0))
             .op(Op::LocalGet(record_base))
             .op(Op::LocalGet(ADDRESS))
             .op(Op::I32WrapI64)
@@ -932,62 +926,72 @@ impl Emitter {
             .op(Op::I32Const(size_of::<IndexedReadEntry>() as i32))
             .op(Op::I32Mul)
             .op(Op::I32Add)
-            .op(Op::I32Const(records as i32))
-            .op(Op::I32Add)
             .op(Op::LocalTee(entry))
-            .op(Op::I64Load(mem(offset_of!(IndexedReadEntry, page), 3)))
-            .op(Op::LocalGet(ADDRESS));
+            .op(Op::I64Load(mem(
+                records + offset_of!(IndexedReadEntry, tag),
+                3,
+            )));
         if operand == IndexedOperand::Write {
-            // Ordinary writes accept the tag with or without the read proof.
-            self.op(Op::I64Xor).op(Op::I64Const(4095)).op(Op::I64GtU);
-        } else {
-            self.op(Op::I64Const(!4095)).op(Op::I64And);
-            if operand == IndexedOperand::ReadModifyWrite {
-                self.op(Op::I64Const(INDEXED_WRITE_READABLE as i64))
-                    .op(Op::I64Or);
-            }
-            self.op(Op::I64Ne);
+            self.op(Op::I64Const(!INDEXED_WRITE_READABLE as i64))
+                .op(Op::I64And);
         }
-        self.op(Op::BrIf(0))
-            .op(Op::LocalGet(entry))
-            .op(Op::I64Load(mem(offset_of!(IndexedReadEntry, id), 3)))
-            .op(Op::LocalTee(id))
-            .op(Op::I64Eqz)
+        self.op(Op::LocalGet(ADDRESS));
+        if width > 1 {
+            self.op(Op::I64Const(i64::from(width - 1))).op(Op::I64Add);
+        }
+        let required = INDEXED_VALID
+            | if operand == IndexedOperand::ReadModifyWrite {
+                INDEXED_WRITE_READABLE
+            } else {
+                0
+            };
+        self.op(Op::I64Const(!4095))
+            .op(Op::I64And)
+            .op(Op::I64Const(required as i64))
+            .op(Op::I64Or)
+            .op(Op::I64Ne)
             .op(Op::BrIf(0))
             .op(Op::LocalGet(entry))
-            .op(Op::I32Load(mem(offset_of!(IndexedReadEntry, slot), 2)));
+            .op(Op::I64Load(mem(
+                records + offset_of!(IndexedReadEntry, id),
+                3,
+            )))
+            .op(Op::LocalGet(table))
+            .op(Op::LocalGet(entry))
+            .op(Op::I32Load(mem(
+                records + offset_of!(IndexedReadEntry, slot_offset),
+                2,
+            )));
+        if !preserve_fetch {
+            self.op(Op::LocalTee(data));
+        }
+        self.op(Op::I32Add)
+            .op(Op::LocalTee(data_address))
+            .op(Op::I64Load(live_ids))
+            .op(Op::I64Ne)
+            .op(Op::BrIf(0));
+        let hint = mem(offset_of!(IndexedReadTable, hint), 2);
         if preserve_fetch {
-            self.op(Op::LocalSet(data))
+            self.op(Op::LocalGet(table))
+                .op(Op::I32Load(hint))
+                .op(Op::LocalTee(fetch))
+                .op(Op::I32Const(CAPACITY as i32))
+                .op(Op::I32GeU)
+                .op(Op::BrIf(0))
                 .op(Op::LocalGet(table))
-                .op(Op::I32Load(mem(offset_of!(IndexedReadTable, hint), 2)))
-                .op(Op::LocalSet(fetch));
-            for slot in [data, fetch] {
-                self.op(Op::LocalGet(slot))
-                    .op(Op::I32Const(CAPACITY as i32))
-                    .op(Op::I32GeU)
-                    .op(Op::BrIf(0))
-                    .op(Op::LocalGet(table))
-                    .op(Op::LocalGet(slot))
-                    .op(Op::I32Const(3))
-                    .op(Op::I32Shl)
-                    .op(Op::I32Add)
-                    .op(Op::LocalSet(slot));
-            }
-            self.op(Op::LocalGet(data))
-                .op(Op::I64Load(live_ids))
-                .op(Op::LocalGet(id))
-                .op(Op::I64Ne)
-                .op(Op::BrIf(0))
                 .op(Op::LocalGet(fetch))
-                .op(Op::I64Load(live_ids))
-                .op(Op::I64Eqz)
-                .op(Op::BrIf(0))
+                .op(Op::I32Const(3))
+                .op(Op::I32Shl)
+                .op(Op::I32Add)
+                .op(Op::LocalSet(fetch))
                 .op(Op::LocalGet(table))
                 .op(Op::I64Load(clock))
                 .op(Op::LocalTee(stamp))
                 .op(Op::I64Const(-3))
                 .op(Op::I64GtU)
                 .op(Op::BrIf(0))
+                // Retiring a slot clears its age. A live published operand
+                // implies a positive clock, so age also proves fetch liveness.
                 .op(Op::LocalGet(fetch))
                 .op(Op::I64Load(ages))
                 .op(Op::LocalGet(stamp))
@@ -1022,22 +1026,7 @@ impl Emitter {
                 .op(Op::End);
         } else {
             // A checked scalar operand touches only the data leaf.
-            let hint = mem(offset_of!(IndexedReadTable, hint), 2);
-            self.op(Op::LocalTee(data))
-                .op(Op::I32Const(CAPACITY as i32))
-                .op(Op::I32GeU)
-                .op(Op::BrIf(0))
-                .op(Op::LocalGet(table))
-                .op(Op::LocalGet(data))
-                .op(Op::I32Const(3))
-                .op(Op::I32Shl)
-                .op(Op::I32Add)
-                .op(Op::LocalTee(fetch))
-                .op(Op::I64Load(live_ids))
-                .op(Op::LocalGet(id))
-                .op(Op::I64Ne)
-                .op(Op::BrIf(0))
-                .op(Op::LocalGet(table))
+            self.op(Op::LocalGet(table))
                 .op(Op::I64Load(clock))
                 .op(Op::LocalTee(stamp))
                 .op(Op::I64Const(-1))
@@ -1045,6 +1034,8 @@ impl Emitter {
                 .op(Op::BrIf(0))
                 .op(Op::LocalGet(table))
                 .op(Op::LocalGet(data))
+                .op(Op::I32Const(3))
+                .op(Op::I32ShrU)
                 .op(Op::I32Store(hint))
                 .op(Op::LocalGet(fetch))
                 .op(Op::LocalGet(stamp))
@@ -1057,8 +1048,12 @@ impl Emitter {
                 .op(Op::I64Store(clock));
         }
         self.op(Op::LocalGet(entry))
-            .op(Op::I32Load(mem(offset_of!(IndexedReadEntry, host), 2)))
-            .op(Op::LocalGet(STORE_STATUS))
+            .op(Op::I32Load(mem(
+                records + offset_of!(IndexedReadEntry, host_bias),
+                2,
+            )))
+            .op(Op::LocalGet(ADDRESS))
+            .op(Op::I32WrapI64)
             .op(Op::I32Add)
             .op(Op::Br(1))
             .op(Op::End)

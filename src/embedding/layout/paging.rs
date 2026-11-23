@@ -8,9 +8,6 @@ pub(crate) const PREFIX_DWORD_READ_SEGMENT: u32 = 16;
 pub(crate) const PREFIX_INDEXED_READ_SEGMENT: u32 = 17;
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 pub(crate) const INDEXED_SCALAR_READ: u32 = 1 << 31;
-// The low bit of an indexed write page tag also certifies a readable backing.
-#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-pub(crate) const INDEXED_WRITE_READABLE: u64 = 1;
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 pub(crate) const INDEXED_PAGED_READ_GUARD: u32 = 1 << 31;
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]

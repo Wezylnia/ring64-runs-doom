@@ -2734,7 +2734,7 @@ fn emit_body(
     #[cfg(any(feature = "parallel", not(target_arch = "wasm32")))]
     let quiet_fetch_page = None;
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    let indexed_scalar_scratch = (indexed_paging
+    let indexed_scalar_stamp = (indexed_paging
         && optional.indexed_scalar_read
         && unit.instructions.iter().any(|instruction| {
             super::instruction::indexed_scalar_read(instruction.operation)
@@ -2742,9 +2742,9 @@ fn emit_body(
                     && super::instruction::indexed_scalar_write(instruction.operation, unit.sampled)
         }))
     .then(|| {
-        let first = super::GPR + locals.iter().map(|(count, _)| count).sum::<u32>();
-        locals.push((2, ValType::I64));
-        [first, first + 1]
+        let stamp = super::GPR + locals.iter().map(|(count, _)| count).sum::<u32>();
+        locals.push((1, ValType::I64));
+        stamp
     });
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let indexed_dword_prefixes = indexed_paging
@@ -2761,7 +2761,7 @@ fn emit_body(
             })
         });
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    let indexed_paged_read = (indexed_scalar_scratch.is_some()
+    let indexed_paged_read = (indexed_scalar_stamp.is_some()
         || indexed_dword_prefixes
         || indexed_paging && unit.sampled && register_prefix_read.is_some())
     .then(|| {
@@ -2775,7 +2775,7 @@ fn emit_body(
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         indexed_paged_read,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-        indexed_scalar_scratch,
+        indexed_scalar_stamp,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         indexed_store_fill,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -3399,7 +3399,7 @@ fn emit_body(
         );
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    if bytes.len() > max_artifact_bytes && indexed_scalar_scratch.is_some() {
+    if bytes.len() > max_artifact_bytes && indexed_scalar_stamp.is_some() {
         return emit_body(
             unit,
             observed,

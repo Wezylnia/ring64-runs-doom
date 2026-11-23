@@ -143,3 +143,48 @@ test('sampled RET keeps the result contract when the stack qword comes from a li
     );
   });
 });
+
+test('a warm indexed qword read uses the checked path when its last byte crosses the page', async () => {
+  const stop = PC + 3n;
+  const within = PC + 0x1ff8n;
+  const crossing = within + 4n;
+  const first = new Uint8Array(4096);
+  const second = new Uint8Array(4096);
+  first.set(Uint8Array.of(1, 2, 3, 4, 5, 6, 7, 8), 0xff8);
+  second.set(Uint8Array.of(9, 10, 11, 12));
+  await withSampledLoads([PC, stop], async (loads) => {
+    await usingPaged(
+      compiler,
+      {
+        // CMP qword [RSI], RAX; HLT.
+        code: '483906f4',
+        words: [
+          [0x4008n, 0xa003n],
+          [0x4010n, 0xc003n],
+        ],
+        spans: [
+          { physical: 0xa000n, bytes: first },
+          { physical: 0xc000n, bytes: second },
+        ],
+      },
+      async (cpu) => {
+        for (let wave = 0; wave < 4; wave++) {
+          loads.length = 0;
+          cpu.setState(initial(PC, { 0: 0x0807060504030201n, 6: within }));
+          const warm = await cpu.run({ stop, budget: 10n });
+          assert.equal(warm.reason, 'stop');
+          assert.equal(warm.retired, 1n);
+          assert.equal(warm.state.flags, 0x46n);
+        }
+        assert.deepEqual(loads, [], 'the within-page address uses the indexed hit');
+
+        cpu.setState(initial(PC, { 0: 0x0c0b0a0908070605n, 6: crossing }));
+        const split = await cpu.run({ stop, budget: 10n });
+        assert.equal(split.reason, 'stop');
+        assert.equal(split.retired, 1n);
+        assert.equal(split.state.flags, 0x46n);
+        assert.deepEqual(loads, [{ address: crossing, width: 8 }]);
+      },
+    );
+  });
+});

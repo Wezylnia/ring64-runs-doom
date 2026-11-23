@@ -93,13 +93,38 @@ pub(crate) struct IndexedWriteMemo {
 pub(crate) const INDEXED_READ_ENTRIES: usize = 256;
 
 #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+pub(crate) const INDEXED_VALID: u64 = 1;
+
+#[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+pub(crate) const INDEXED_WRITE_READABLE: u64 = 2;
+
+#[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
 #[derive(Clone, Copy, Default)]
 #[repr(C)]
 pub(crate) struct IndexedReadEntry {
-    pub(crate) page: u64,
+    pub(crate) tag: u64,
     pub(crate) id: u64,
-    pub(crate) slot: u32,
-    pub(crate) host: u32,
+    pub(crate) slot_offset: u32,
+    pub(crate) host_bias: u32,
+}
+
+#[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+impl IndexedReadEntry {
+    pub(crate) fn new(page: u64, id: u64, slot: usize, host: u32, readable_write: bool) -> Self {
+        debug_assert_eq!(page & 4095, 0);
+        debug_assert!(id != 0 && slot < CAPACITY && host != 0);
+        let readable = if readable_write {
+            INDEXED_WRITE_READABLE
+        } else {
+            0
+        };
+        Self {
+            tag: page | INDEXED_VALID | readable,
+            id,
+            slot_offset: slot as u32 * 8,
+            host_bias: host.wrapping_sub(page as u32),
+        }
+    }
 }
 
 // Generated Wasm and Rust use these same ages. The translation slot
@@ -501,12 +526,7 @@ impl Cache {
         };
         let table = entries.recency_mut();
         let index = (linear >> 12) as usize & (INDEXED_READ_ENTRIES - 1);
-        table.entries[index] = IndexedReadEntry {
-            page: linear,
-            id,
-            slot: slot as u32,
-            host,
-        };
+        table.entries[index] = IndexedReadEntry::new(linear, id, slot, host, false);
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
