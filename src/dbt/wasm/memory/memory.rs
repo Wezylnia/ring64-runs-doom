@@ -670,6 +670,9 @@ impl Emitter {
         if first {
             // The helper admits one local translation and one backing for both
             // aligned dwords. Always overwrite the local, including on a miss.
+            if handoff.is_some() {
+                self.op(Op::Block(BlockType::Result(ValType::I64)));
+            }
             self.address(address, next_pc);
             self.op(Op::LocalTee(ADDRESS));
             if let Some(handoff) = handoff {
@@ -677,10 +680,15 @@ impl Emitter {
                     .op(Op::I64Eq)
                     .op(Op::LocalGet(handoff.ready))
                     .op(Op::I32And)
-                    .op(Op::LocalTee(handoff.ready))
-                    .op(Op::If(BlockType::Result(ValType::I32)))
+                    .op(Op::If(BlockType::Empty))
                     .op(Op::LocalGet(pair.host))
-                    .op(Op::Else)
+                    .op(Op::I64Load32U(MemArg {
+                        offset: 0,
+                        align: 0,
+                        memory_index: 0,
+                    }))
+                    .op(Op::Br(1))
+                    .op(Op::End)
                     .op(Op::LocalGet(ADDRESS));
             }
             self.op(Op::I32WrapI64)
@@ -705,8 +713,6 @@ impl Emitter {
                 self.op(Op::LocalTee(STORE_STATUS))
                     .op(Op::I32Eqz)
                     .op(Op::BrIf(0))
-                    .op(Op::I32Const(1))
-                    .op(Op::LocalSet(handoff.ready))
                     .op(Op::LocalGet(STORE_STATUS))
                     .op(Op::Br(1))
                     .op(Op::End);
@@ -718,38 +724,31 @@ impl Emitter {
                 .op(Op::I32Const(
                     crate::embedding::layout::PAGED_PAIR_CONTINUE as i32,
                 ))
-                .op(Op::LocalSet(pair.resolver_mode));
+                .op(Op::LocalSet(pair.resolver_mode))
+                .op(Op::LocalTee(STORE_STATUS))
+                .op(Op::If(BlockType::Result(ValType::I32)))
+                .op(Op::LocalGet(STORE_STATUS))
+                .op(Op::I32Load(MemArg {
+                    offset: std::mem::offset_of!(DirectSpan, host) as u64,
+                    align: 2,
+                    memory_index: 0,
+                }))
+                .op(Op::Else)
+                .op(Op::I32Const(0))
+                .op(Op::End);
             if indexed.is_some() {
                 self.op(Op::End);
             }
             self.op(Op::Else).op(Op::I32Const(0)).op(Op::End);
             if let Some(handoff) = handoff {
-                self.op(Op::End)
-                    .op(Op::LocalGet(ADDRESS))
+                self.op(Op::LocalGet(ADDRESS))
                     .op(Op::LocalSet(handoff.address));
             }
             self.op(Op::LocalSet(pair.host));
         }
         self.op(Op::LocalGet(pair.host))
             .op(Op::If(BlockType::Result(ValType::I64)));
-        if let Some(handoff) = handoff {
-            self.op(Op::LocalGet(handoff.ready))
-                .op(Op::If(BlockType::Result(ValType::I32)))
-                .op(Op::LocalGet(pair.host))
-                .op(Op::Else);
-        }
         self.op(Op::LocalGet(pair.host));
-        if first {
-            self.op(Op::I32Load(MemArg {
-                offset: std::mem::offset_of!(DirectSpan, host) as u64,
-                align: 2,
-                memory_index: 0,
-            }))
-            .op(Op::LocalTee(pair.host));
-        }
-        if handoff.is_some() {
-            self.op(Op::End);
-        }
         // The intervening ADD updates only its destination and flags. The
         // second load still executes at the second instruction's own position.
         self.op(Op::I64Load32U(MemArg {
@@ -767,10 +766,12 @@ impl Emitter {
             .op(Op::LocalTee(VALUE))
             .op(Op::I64Const(-1))
             .op(Op::I64Eq);
-        self.retry_guarded_paged_operand(exit_depth + 1, true);
-        self.op(Op::LocalGet(VALUE))
-            .op(Op::End)
-            .op(Op::LocalSet(VALUE));
+        self.retry_guarded_paged_operand(exit_depth + 1 + u32::from(handoff.is_some()), true);
+        self.op(Op::LocalGet(VALUE)).op(Op::End);
+        if handoff.is_some() {
+            self.op(Op::End);
+        }
+        self.op(Op::LocalSet(VALUE));
         if let Some(handoff) = handoff {
             self.op(Op::I32Const(0)).op(Op::LocalSet(handoff.ready));
         }
