@@ -1486,20 +1486,17 @@ fn emit_body(
     // The admitted helpers leave the high dwords in the backing RunState.
     let narrow_gprs = !observed && !cfg!(feature = "parallel") && state::narrow_gprs(unit);
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    let complete_flat_call = narrow_gprs
-        && linear_call_spans
-        && dense_dispatch.is_some()
-        && !unit.reached_instruction_limit;
+    let dense_flat_call = narrow_gprs && linear_call_spans && dense_dispatch.is_some();
     #[cfg(any(feature = "parallel", not(target_arch = "wasm32")))]
-    let complete_flat_call = false;
-    let gpr_banks = if complete_flat_call {
-        // The complete learned owner keeps the inaccessible banks in RunState.
+    let dense_flat_call = false;
+    let gpr_banks = if dense_flat_call {
+        // Protected mode keeps the inaccessible banks in RunState across owner exits.
         8
     } else {
         16
     };
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    let flat_order = (complete_flat_call && !optional.flat_trace && flat_integer_groups.is_some())
+    let flat_order = (dense_flat_call && !optional.flat_trace && flat_integer_groups.is_some())
         .then(|| flat_call_order(&unit.instructions))
         .flatten();
     #[cfg(any(feature = "parallel", not(target_arch = "wasm32")))]
@@ -1550,8 +1547,7 @@ fn emit_body(
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let read_span = read_span.map(&mut span_cache);
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    let stack_dword_bound =
-        complete_flat_call && unit.context.segment(Segment::Ss).limit == u32::MAX;
+    let stack_dword_bound = dense_flat_call && unit.context.segment(Segment::Ss).limit == u32::MAX;
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let flat_stack_pointer_span = stack_read_span
         .filter(|_| {
@@ -1576,7 +1572,7 @@ fn emit_body(
     let flat_stack_windows = flat_integer_groups
         .as_ref()
         .filter(|_| {
-            complete_flat_call && flat_stack_pointer_span.is_some() && write_caches[1].is_some()
+            dense_flat_call && flat_stack_pointer_span.is_some() && write_caches[1].is_some()
         })
         .map(|groups| {
             groups
@@ -1601,7 +1597,7 @@ fn emit_body(
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let flat_data_windows = flat_integer_groups
         .as_ref()
-        .filter(|_| complete_flat_call && read_span.is_some() && write_caches[0].is_some())
+        .filter(|_| dense_flat_call && read_span.is_some() && write_caches[0].is_some())
         .map(|groups| {
             groups
                 .iter()
@@ -2358,7 +2354,7 @@ fn emit_body(
         instruction_retirement: control::InstructionRetirement::One,
         entry_lookup: target_lookup.then_some(run_index + 1),
         dense_dispatch: dense_dispatch.is_some(),
-        packed_result_status: complete_flat_call,
+        packed_result_status: dense_flat_call,
         multiply_high,
         divide,
         divide_failed,

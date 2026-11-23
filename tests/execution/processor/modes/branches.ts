@@ -253,6 +253,73 @@ export function branchScenarios(compiler: WebAssembly.Module): Scenario[] {
       },
     },
     {
+      name: 'capped flat call regions preserve flags, stack faults, and guest code writes',
+      async run() {
+        const head = 0x1000n;
+        const child = head + 0x40n;
+        const stack = 0x3040n;
+        const data = 0x2000n;
+        // CALL EAX; DEC ECX; JNZ back. The child saves EBX, reads its return PC,
+        // stores ESI at [EDI], restores EBX, then executes NOP and thirty ADDs.
+        const code =
+          'ffd04975fbf4'.padEnd(0x80, 'cc') + '538b5c240489375b90' + '83c301'.repeat(30) + 'c3';
+        await using(
+          compiler,
+          code,
+          context(),
+          async (cpu) => {
+            const run = (count: bigint, destination: bigint, ebx = 0n, budget = 100000n) => {
+              cpu.setState(
+                input(
+                  head,
+                  { 0: child, 1: count, 3: ebx, 4: stack, 6: 0x02c38390n, 7: destination },
+                  2n,
+                ),
+              );
+              return cpu.run({ stop: head + 5n, budget });
+            };
+            for (let i = 0; i < 2; i++) {
+              const result = await run(1024n, data);
+              equal(result.state.registers[3], 30720n, 'each call executes all thirty ADDs');
+              equal(result.retired, 39936n, 'retirement spans the owner boundary');
+            }
+            check(
+              cpu
+                .inspectTranslations()
+                .some(
+                  ({ entries }) =>
+                    entries.length === 32 && entries.includes(head) && entries.includes(child),
+                ),
+              'the sampled owner contains both caller and child at the instruction cap',
+            );
+            const partial = await run(1n, data, 0x11223344ffffffffn, 7n);
+            equal(partial.reason, 'budget', 'execution stops after the first ADD');
+            equal(partial.state.flags, 0x57n, 'the wrapped sum publishes all status flags');
+            equal(partial.state.registers[3], 0x1122334400000000n, 'the high dword survives');
+
+            const faulted = await run(1n, 0x5000n);
+            equal(faulted.reason, 'data-fault', 'the unchecked destination is unmapped');
+            equal(faulted.retired, 3n, 'only CALL, PUSH, and MOV retire');
+            equal(faulted.state.rip, child + 5n, 'the write remains unstarted');
+            equal(faulted.state.registers[4], stack - 8n, 'both stack writes survive the fault');
+
+            // Replace the first ADD immediate with 2 while its owner is active.
+            const modified = await run(1n, child + 8n);
+            equal(modified.state.registers[3], 31n, 'execution observes the modified ADD');
+            equal(modified.retired, 39n, 'invalidation resumes at the next instruction');
+          },
+          {
+            limits: { maxInstructions: 32 },
+            codeWrite: true,
+            data: [
+              { base: data, bytes: '00000000' },
+              { base: stack - 64n, bytes: '00'.repeat(68) },
+            ],
+          },
+        );
+      },
+    },
+    {
       name: 'flat regions admit returning branches after a different preamble owner',
       async run() {
         const head = 0x1000n;
