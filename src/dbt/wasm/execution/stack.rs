@@ -274,11 +274,15 @@ impl Emitter {
             .op(Op::BrIf(0))
             .op(Op::LocalGet(STORE_STATUS))
             .op(Op::I64Const(instruction.next_pc as i64))
-            .op(Op::I64Store(MemArg {
-                offset: 0,
-                align: 0,
-                memory_index: 0,
-            }))
+            .ram_store(
+                Op::I64Store,
+                MemArg {
+                    offset: 0,
+                    align: 0,
+                    memory_index: 0,
+                },
+                ValType::I64,
+            )
             .op(Op::LocalGet(ADDRESS))
             .op(Op::LocalSet(RSP))
             .op(Op::I32Const(CONTINUE_ACTIVE))

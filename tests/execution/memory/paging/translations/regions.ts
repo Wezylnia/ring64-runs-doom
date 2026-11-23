@@ -1,7 +1,31 @@
-import { PC, equal, initial, little, usingPaged, type Scenario } from '../fixture.js';
+import { PC, equal, initial, little, usingPaged, word, type Scenario } from '../fixture.js';
 
 export function pagedRegionScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [
+    {
+      name: 'paged register CALL pushes the return address onto the guest stack',
+      async run() {
+        const stack = PC + 0x2000n;
+        const stop = PC + 10n;
+        // Clear the return slot, read it back, then CALL RAX; HLT; RET.
+        await usingPaged(
+          compiler,
+          {
+            code: '890f31d28b17ffc2ffd0f4c3',
+            words: [[0x4008n, 0xa067n]],
+            spans: [{ physical: 0xa000n, bytes: new Uint8Array(4096) }],
+          },
+          async (cpu) => {
+            cpu.setState(initial(PC, { 0: stop + 1n, 1: 0n, 4: stack, 7: stack - 8n }));
+            const result = await cpu.run({ stop, budget: 8n });
+            equal(word(cpu, 0xaff8n), stop, 'CALL wrote its successor to the mapped stack slot');
+            equal(result.reason, 'stop', 'RET reached the instruction after the call');
+            equal(result.retired, 6n, 'the call and return both retired');
+            equal(result.state.registers[4], stack, 'RET restored the stack pointer');
+          },
+        );
+      },
+    },
     {
       name: 'paged dynamic regions learn returning targets and recheck edited code',
       async run() {
