@@ -1,4 +1,8 @@
-use super::*;
+use crate::embedding::exports::{
+    execution::translation,
+    memory::{mapped, paging},
+    tests::*,
+};
 
 fn fixture(epoch: u64) {
     let mut bytes = vec![0; 0xa000];

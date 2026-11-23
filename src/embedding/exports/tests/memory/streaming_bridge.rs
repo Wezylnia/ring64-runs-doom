@@ -1,4 +1,4 @@
-use super::*;
+use crate::embedding::exports::{memory::streaming, tests::*};
 use crate::embedding::layout::X87_EXCEPTION;
 use crate::memory::{MappingInput, MemoryLimits, Permissions};
 

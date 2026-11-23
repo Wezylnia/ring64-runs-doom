@@ -1,5 +1,8 @@
-use super::super::exception_delivery::{core_configure_delivery, core_stage_exception};
-use super::*;
+use crate::embedding::exports::{
+    events::exception_delivery::{core_configure_delivery, core_stage_exception},
+    system::{far_control, protection},
+    tests::*,
+};
 use crate::embedding::layout::SYSTEM_MEMORY;
 use crate::x86::context::TableRegister;
 use crate::x86::exception::EventState;

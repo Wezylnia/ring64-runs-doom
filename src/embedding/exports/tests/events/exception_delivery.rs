@@ -1,4 +1,4 @@
-use super::*;
+use crate::embedding::exports::tests::*;
 
 fn pending_input() -> Vec<u8> {
     let mut input = vec![0; SCALAR_STATE_SIZE + 40];

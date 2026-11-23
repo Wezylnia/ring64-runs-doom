@@ -1,8 +1,12 @@
-use super::super::exception_delivery::{
-    core_configure_delivery, core_deliver_exception, core_stage_exception,
+use crate::embedding::exports::{
+    events::{
+        exception_delivery::{
+            core_configure_delivery, core_deliver_exception, core_stage_exception,
+        },
+        system_flags::core_debug_step,
+    },
+    tests::*,
 };
-use super::super::system_flags::core_debug_step;
-use super::*;
 use crate::embedding::layout::{DEBUG_EXCEPTION, PROTECTION, SHUTDOWN, SYSTEM_MEMORY};
 use crate::x86::context::TableRegister;
 use crate::x86::exception::{EventState, ExceptionEvent};

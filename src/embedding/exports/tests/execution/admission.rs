@@ -1,4 +1,9 @@
-use super::*;
+use crate::embedding::exports::{
+    execution::translation,
+    memory::{mapped, paging},
+    numeric::{self, x87},
+    tests::*,
+};
 use crate::embedding::layout::{DEVICE_NOT_AVAILABLE, SIMD_EXCEPTION, X87_EXCEPTION};
 use crate::x86::float::{Format as FloatFormat, Kind as FloatKind, Op as FloatOp};
 use crate::x86::numeric_controls::{Family, Fault as NumericFault};

@@ -1,10 +1,14 @@
-use super::super::exception_delivery::{core_configure_delivery, core_deliver_exception};
-use super::super::external_interrupts::{
-    core_external_boundary, core_external_step, core_request_interrupt, core_request_nmi,
-    core_shutdown_can_wake,
+use crate::embedding::exports::{
+    events::{
+        exception_delivery::{core_configure_delivery, core_deliver_exception},
+        external_interrupts::{
+            core_external_boundary, core_external_step, core_request_interrupt, core_request_nmi,
+            core_shutdown_can_wake,
+        },
+        software_events::core_software_event,
+    },
+    tests::*,
 };
-use super::super::software_events::core_software_event;
-use super::*;
 use crate::embedding::layout::{HALTED, PENDING_INTERRUPT, PROTECTION, SHUTDOWN, SYSTEM_MEMORY};
 use crate::x86::context::TableRegister;
 use crate::x86::instruction::{SoftwareEventDescriptor, SoftwareEventKind, Width};
@@ -348,7 +352,7 @@ fn accepted_blocked_nmi_retries_repaired_ivt_and_publishes_one_fixed_word_frame(
 
 #[test]
 fn selected_lock_and_length_faults_keep_private_prefix_and_report_rf_frontiers() {
-    use super::super::exception_delivery::core_stage_exception;
+    use crate::embedding::exports::events::exception_delivery::core_stage_exception;
     for (bytes, reason, selected) in [
         (&[0xf0, 0xf4][..], INVALID, Some(6)),
         (&[0x66, 0xf0, 0xf4][..], INVALID, Some(6)),

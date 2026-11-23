@@ -1,4 +1,4 @@
-use super::*;
+use crate::embedding::exports::*;
 use crate::embedding::layout::ALIGNMENT;
 use crate::x86::context::Mode;
 use crate::x86::mmx::{self, Op};

@@ -1,4 +1,4 @@
-use super::*;
+use crate::embedding::exports::{execution::translation, tests::*};
 use crate::memory::{MappingInput, MemoryLimits, Permissions};
 use crate::x86::compound_stack::{CompoundStack, CompoundStackKind};
 use crate::x86::instruction::Width;
@@ -84,7 +84,7 @@ fn compound_payload_cancels_source_owners_at_saturated_epochs_even_after_a_late_
             assert_eq!(translation::core_publish(installed), 1);
             let pending = compile();
             assert_eq!(translation::core_activate(installed), 1);
-            let status = super::super::compound_stack::core_compound_stack(
+            let status = crate::embedding::exports::system::compound_stack::core_compound_stack(
                 CompoundStack {
                     kind: CompoundStackKind::Enter {
                         allocation: if failed_probe { 0x1000 } else { 0 },

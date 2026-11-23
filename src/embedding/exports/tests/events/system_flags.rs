@@ -1,4 +1,4 @@
-use super::*;
+use crate::embedding::exports::{execution::translation, system::context, tests::*};
 
 fn scalar_input(flags: u64, shadow: u32) {
     BRIDGE.with_borrow_mut(|bridge| {

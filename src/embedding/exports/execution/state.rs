@@ -1,4 +1,4 @@
-use super::BRIDGE;
+use crate::embedding::exports::BRIDGE;
 use crate::embedding::layout::{
     RawEventState, RawInterruptState, RunState, SCALAR_STATE_SIZE, debug, numeric, paging,
 };

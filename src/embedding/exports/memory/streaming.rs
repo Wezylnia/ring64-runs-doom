@@ -1,4 +1,4 @@
-use super::*;
+use crate::embedding::exports::*;
 use crate::x86::masked;
 
 #[unsafe(no_mangle)]

@@ -1,4 +1,4 @@
-use super::*;
+use crate::embedding::exports::*;
 use crate::embedding::layout::PROTECTION;
 use crate::x86::access::GuestMemory;
 use crate::x86::context::Mode;

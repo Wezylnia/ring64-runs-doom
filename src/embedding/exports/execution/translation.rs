@@ -1,4 +1,4 @@
-use super::*;
+use crate::embedding::exports::*;
 
 impl Core {
     fn owner_alive(&self, owner: u64) -> bool {
@@ -54,14 +54,14 @@ impl Core {
     }
 
     #[cfg(not(feature = "parallel"))]
-    pub(super) fn revalidate_active_owner(&mut self) -> bool {
+    pub(in crate::embedding::exports) fn revalidate_active_owner(&mut self) -> bool {
         !self.image.active_changed()
             && self
                 .active_owner
                 .is_some_and(|owner| self.activate_owner(owner))
     }
 
-    pub(super) fn context_changed(&mut self) {
+    pub(in crate::embedding::exports) fn context_changed(&mut self) {
         self.cancel_pending(false);
     }
 
@@ -76,7 +76,7 @@ impl Core {
         self.context_version = self.context_version.saturating_add(1);
     }
 
-    pub(super) fn retire_translations(&mut self) {
+    pub(in crate::embedding::exports) fn retire_translations(&mut self) {
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         {
             self.state.newest_fetch.tag = 0;
@@ -87,20 +87,20 @@ impl Core {
         self.active_owner = None;
     }
 
-    pub(super) fn reconcile_translation_changes(&mut self) {
+    pub(in crate::embedding::exports) fn reconcile_translation_changes(&mut self) {
         if self.translation_cache.take_changed() {
             self.cancel_pending(self.paging.is_some_and(|state| state.cr0 & (1 << 31) != 0));
         }
     }
 
-    pub(super) fn guest_root_changed(&mut self) {
+    pub(in crate::embedding::exports) fn guest_root_changed(&mut self) {
         self.image.fence_active();
         self.active_owner = None;
         self.translation_cache.take_changed();
         self.cancel_pending(true);
     }
 
-    pub(super) fn invalidate_runtime_sources(&mut self) {
+    pub(in crate::embedding::exports) fn invalidate_runtime_sources(&mut self) {
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         {
             self.state.newest_fetch.tag = 0;
@@ -111,7 +111,12 @@ impl Core {
         self.context_version = self.context_version.saturating_add(1);
     }
 
-    pub(super) fn invalidate_pcid(&mut self, kind: u32, pcid: u16, linear: u64) {
+    pub(in crate::embedding::exports) fn invalidate_pcid(
+        &mut self,
+        kind: u32,
+        pcid: u16,
+        linear: u64,
+    ) {
         match kind {
             0 => self.translation_cache.invalidate_page(pcid, linear, false),
             1 => self.translation_cache.invalidate_pcid(pcid),
@@ -122,7 +127,7 @@ impl Core {
         self.invalidate_runtime_sources();
     }
 
-    pub(super) fn revoke_host_translations(&mut self) {
+    pub(in crate::embedding::exports) fn revoke_host_translations(&mut self) {
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         {
             self.state.flat_reads = Default::default();
@@ -138,7 +143,7 @@ impl Core {
         self.translation_cache.take_changed();
     }
 
-    pub(super) fn memory_admin_changed(&mut self) {
+    pub(in crate::embedding::exports) fn memory_admin_changed(&mut self) {
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         {
             self.state.flat_reads = Default::default();
@@ -299,7 +304,7 @@ fn compile_with_entries(
     )
 }
 
-pub(super) fn compile_artifact(
+pub(in crate::embedding::exports) fn compile_artifact(
     pc: u64,
     max_instructions: u32,
     max_source_bytes: u32,

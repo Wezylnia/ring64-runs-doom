@@ -1,5 +1,4 @@
-use super::super::software_events::core_software_event;
-use super::*;
+use crate::embedding::exports::{events::software_events::core_software_event, tests::*};
 use crate::x86::context::Mode;
 
 #[test]

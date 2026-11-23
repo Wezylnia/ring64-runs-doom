@@ -1,11 +1,13 @@
-use super::*;
+use crate::embedding::exports::*;
 use crate::embedding::layout::X87_EXCEPTION;
 use crate::x86::context::Mode;
 use crate::x86::x87::{self, Op};
 
 const DECODED_OPERATION_CAPACITY: usize = 128;
 
-pub(super) struct DecodedOperations([Option<(u32, Op)>; DECODED_OPERATION_CAPACITY]);
+pub(in crate::embedding::exports) struct DecodedOperations(
+    [Option<(u32, Op)>; DECODED_OPERATION_CAPACITY],
+);
 
 impl Default for DecodedOperations {
     fn default() -> Self {
@@ -817,7 +819,7 @@ pub extern "C" fn core_paged_x87_observed(
 }
 
 impl Core {
-    pub(super) fn pending_x87_reason(&self) -> i32 {
+    pub(in crate::embedding::exports) fn pending_x87_reason(&self) -> i32 {
         if self.paging.is_some_and(|bank| bank.cr0 & 0x20 == 0) {
             UNSUPPORTED
         } else {

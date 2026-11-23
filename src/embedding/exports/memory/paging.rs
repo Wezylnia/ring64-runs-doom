@@ -1,11 +1,15 @@
-use super::*;
+use crate::embedding::exports::*;
 use crate::x86::paging::{self, walk::Failure};
 #[cfg(not(feature = "parallel"))]
 use crate::x86::protection_keys::State as Keys;
 
 impl Core {
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) fn remember_indexed_scalar_read(&self, address: u64, width: u32) {
+    pub(in crate::embedding::exports) fn remember_indexed_scalar_read(
+        &self,
+        address: u64,
+        width: u32,
+    ) {
         if self.state.indexed_paged_reads != 0
             && let Some(paging) = self.paging.as_ref()
             && let Some((slot, translation)) =
@@ -18,7 +22,11 @@ impl Core {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) fn remember_indexed_scalar_write(&mut self, address: u64, width: u32) {
+    pub(in crate::embedding::exports) fn remember_indexed_scalar_write(
+        &mut self,
+        address: u64,
+        width: u32,
+    ) {
         if self.state.indexed_paged_reads == 0 || self.image.active_changed() {
             return;
         }
@@ -50,7 +58,7 @@ impl Core {
         }
     }
 
-    pub(super) fn paging_failure_json(&self) -> Option<serde_json::Value> {
+    pub(in crate::embedding::exports) fn paging_failure_json(&self) -> Option<serde_json::Value> {
         if let Some((control, slot, fault)) = self.pdpte_load_fault {
             return Some(serde_json::json!({
                 "phase":"pdpte-load","control":format!("cr{control}"),"slot":slot,
@@ -90,24 +98,24 @@ impl Core {
         }
         Some(json)
     }
-    pub(super) fn memory_failure_reason(&self) -> i32 {
+    pub(in crate::embedding::exports) fn memory_failure_reason(&self) -> i32 {
         match self.paging_failure {
             Some(Failure::Page(_)) => 24,
             Some(Failure::Physical(_)) => 25,
             None if self.segment_fault.is_some() => SEGMENT,
-            None if self.alignment_check.is_some() => super::super::layout::ALIGNMENT_CHECK,
+            None if self.alignment_check.is_some() => crate::embedding::layout::ALIGNMENT_CHECK,
             None => DATA,
         }
     }
 
-    pub(super) fn system_paging_failure(
+    pub(in crate::embedding::exports) fn system_paging_failure(
         &mut self,
         fault: crate::x86::protection::SystemPagingFault,
     ) -> i32 {
         self.paging_system = Some(fault);
         self.paging_failure(fault.failure)
     }
-    pub(super) fn paging_failure(&mut self, failure: Failure) -> i32 {
+    pub(in crate::embedding::exports) fn paging_failure(&mut self, failure: Failure) -> i32 {
         self.paging_failure = Some(failure);
         match failure {
             Failure::Page(fault) => {
@@ -147,7 +155,7 @@ pub extern "C" fn core_paged_access_reason() -> i32 {
     BRIDGE.with_borrow(|bridge| {
         let core = bridge.core.as_ref().unwrap();
         if core.alignment_fault.is_some() {
-            super::super::layout::ALIGNMENT
+            crate::embedding::layout::ALIGNMENT
         } else {
             core.memory_failure_reason()
         }
@@ -205,16 +213,16 @@ pub extern "C" fn core_paged_loop_guard(pc: u64, bytes: u32, flags: u64, shadow:
 
 #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
 #[derive(Default)]
-pub(super) struct GuardedReads {
-    pub(super) active: Option<GuardedWalk>,
+pub(in crate::embedding::exports) struct GuardedReads {
+    pub(in crate::embedding::exports) active: Option<GuardedWalk>,
     authority: Option<(paging::State, paging::walk::AccessClass, Keys)>,
     range: crate::embedding::layout::paging::LoopReadRange,
     group_pages: bool,
-    pub(super) pages: Vec<crate::embedding::layout::paging::LoopReadPage>,
+    pub(in crate::embedding::exports) pages: Vec<crate::embedding::layout::paging::LoopReadPage>,
 }
 
 #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
-pub(super) struct GuardedWalk {
+pub(in crate::embedding::exports) struct GuardedWalk {
     owner: u64,
     cr3: u64,
     pdpte: Option<[u64; 4]>,
@@ -262,7 +270,12 @@ impl GuardedReads {
     }
 
     #[cfg(any(target_arch = "wasm32", test))]
-    pub(super) fn remember(&mut self, state: &StateStorage, page: u64, host: u32) {
+    pub(in crate::embedding::exports) fn remember(
+        &mut self,
+        state: &StateStorage,
+        page: u64,
+        host: u32,
+    ) {
         use crate::embedding::layout::paging::{LOOP_READ_PAGES, LoopReadPage, LoopReadRange};
         if self.pages.is_empty() {
             self.pages.resize(LOOP_READ_PAGES, Default::default());
@@ -1405,7 +1418,7 @@ fn paged_loop_read_span<
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 #[derive(Clone, Copy)]
-pub(super) struct GuardedDwordPair {
+pub(in crate::embedding::exports) struct GuardedDwordPair {
     address: u64,
     binding: (usize, u64),
     host: u32,
@@ -1949,11 +1962,11 @@ pub extern "C" fn core_paged_debug_finish(
     BRIDGE.with_borrow_mut(|bridge| {
         let core = bridge.core.as_mut().unwrap();
         let reason = core.finish_debug(pc, resume, completed != 0, flags, decision);
-        if reason == 0 || reason == super::super::layout::debug::CONTINUE_ACTIVE {
+        if reason == 0 || reason == crate::embedding::layout::debug::CONTINUE_ACTIVE {
             if core.image.active_changed() {
                 0
             } else {
-                super::super::layout::debug::CONTINUE_ACTIVE
+                crate::embedding::layout::debug::CONTINUE_ACTIVE
             }
         } else {
             reason
@@ -1969,7 +1982,9 @@ fn access_name(access: Access) -> &'static str {
     }
 }
 
-pub(super) fn parse_bank(value: &serde_json::Value) -> Result<paging::State, &'static str> {
+pub(in crate::embedding::exports) fn parse_bank(
+    value: &serde_json::Value,
+) -> Result<paging::State, &'static str> {
     let word = |name| {
         value[name]
             .as_str()
@@ -2117,7 +2132,7 @@ pub extern "C" fn core_paging_control(
                 phase: ProtectionPhase::Privilege,
                 selector: None,
             });
-            return super::super::layout::PROTECTION;
+            return crate::embedding::layout::PROTECTION;
         }
         if matches!(kind, 2 | 3) && register == crate::x86::protection_keys::PKRS_MSR {
             if kind == 3 && value > u64::from(u32::MAX) {
@@ -2127,7 +2142,7 @@ pub extern "C" fn core_paging_control(
                     phase: ProtectionPhase::Target,
                     selector: None,
                 });
-                return super::super::layout::PROTECTION;
+                return crate::embedding::layout::PROTECTION;
             }
             let raw = unsafe { &mut *core.state.get() };
             if kind == 2 {
@@ -2254,7 +2269,7 @@ pub extern "C" fn core_paging_control(
                                 phase: ProtectionPhase::Target,
                                 selector: None,
                             });
-                            return super::super::layout::PROTECTION;
+                            return crate::embedding::layout::PROTECTION;
                         }
                     }
                 } else {
@@ -2277,7 +2292,7 @@ pub extern "C" fn core_paging_control(
                                 phase: ProtectionPhase::Target,
                                 selector: None,
                             });
-                            return super::super::layout::PROTECTION;
+                            return crate::embedding::layout::PROTECTION;
                         }
                     }
                 }
@@ -2334,7 +2349,7 @@ pub extern "C" fn core_paging_control(
                     phase: ProtectionPhase::Target,
                     selector: None,
                 });
-                super::super::layout::PROTECTION
+                crate::embedding::layout::PROTECTION
             }
             Err(ControlFailure::Unsupported) => UNSUPPORTED,
             Err(ControlFailure::Undefined) => {

@@ -1,4 +1,4 @@
-use super::super::protection::system_fault_json;
+use crate::embedding::exports::system::protection::system_fault_json;
 use crate::memory::{Access, Cause};
 use crate::x86::protection::{SystemMemoryFault, SystemPhase, SystemReference, Table};
 use serde_json::json;

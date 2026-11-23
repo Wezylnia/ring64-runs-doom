@@ -1,7 +1,7 @@
-use super::*;
+use crate::embedding::exports::*;
 
 impl Core {
-    pub(super) fn access_failure(&mut self, failure: AccessFailure) {
+    pub(in crate::embedding::exports) fn access_failure(&mut self, failure: AccessFailure) {
         match failure {
             AccessFailure::AlignmentCheck(fault) => {
                 self.alignment_fault = None;
@@ -16,7 +16,7 @@ impl Core {
     }
 
     #[inline(always)]
-    pub(super) fn segment_address(
+    pub(in crate::embedding::exports) fn segment_address(
         &mut self,
         offset: u64,
         width: u32,
@@ -40,7 +40,7 @@ impl Core {
     }
 }
 
-pub(super) fn segment_fault_json(fault: &SegmentFault) -> serde_json::Value {
+pub(in crate::embedding::exports) fn segment_fault_json(fault: &SegmentFault) -> serde_json::Value {
     serde_json::json!({
         "segment":fault.segment.name(),
         "offset":format!("0x{:x}",fault.offset),
@@ -95,7 +95,7 @@ pub extern "C" fn core_set_context() -> i32 {
             (*core.state.get()).interruptibility = 0;
             (*core.state.get()).set_event(crate::x86::exception::EventState::Ready);
             (*core.state.get()).debug.continuation =
-                super::super::layout::debug::Continuation::default();
+                crate::embedding::layout::debug::Continuation::default();
             (*core.state.get()).interrupts.nmi_blocked = 0;
         };
         core.task_work = None;

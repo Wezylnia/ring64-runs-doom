@@ -1,4 +1,4 @@
-use super::*;
+use crate::embedding::exports::*;
 use crate::x86::debug::State;
 
 #[unsafe(no_mangle)]
@@ -28,7 +28,7 @@ pub extern "C" fn core_import_debug() -> i32 {
 }
 
 impl Core {
-    pub(super) fn select_debug(
+    pub(in crate::embedding::exports) fn select_debug(
         &mut self,
         pc: u64,
         resume: u64,
@@ -68,7 +68,12 @@ impl Core {
         }
         crate::embedding::layout::DEBUG_EXCEPTION
     }
-    pub(super) fn debug_execute(&mut self, pc: u64, flags: u64, shadow: u32) -> i32 {
+    pub(in crate::embedding::exports) fn debug_execute(
+        &mut self,
+        pc: u64,
+        flags: u64,
+        shadow: u32,
+    ) -> i32 {
         if flags & crate::x86::flags::RF != 0 || shadow == 2 {
             return 0;
         }
@@ -170,7 +175,12 @@ pub extern "C" fn core_debug_begin(pc: u64, flags: u64, shadow: u32) -> i32 {
 }
 
 impl Core {
-    pub(super) fn debug_operand(&mut self, address: u64, width: u32, access: Access) {
+    pub(in crate::embedding::exports) fn debug_operand(
+        &mut self,
+        address: u64,
+        width: u32,
+        access: Access,
+    ) {
         self.debug_candidate |= unsafe {
             (*self.state.get())
                 .debug
@@ -178,13 +188,13 @@ impl Core {
                 .matches(address, width, access)
         };
     }
-    pub(super) fn debug_completion_quiet(&self) -> bool {
+    pub(in crate::embedding::exports) fn debug_completion_quiet(&self) -> bool {
         let state = unsafe { &*self.state.get() };
         !state.debug.registers.has_enabled_slots()
             && self.debug_candidate == 0
             && state.debug.continuation == Default::default()
     }
-    pub(super) fn finish_debug(
+    pub(in crate::embedding::exports) fn finish_debug(
         &mut self,
         pc: u64,
         resume: u64,
@@ -216,7 +226,7 @@ impl Core {
             },
         );
         state.debug.continuation = deferred.map_or_else(Default::default, |d| {
-            super::super::layout::debug::Continuation {
+            crate::embedding::layout::debug::Continuation {
                 slots: u32::from(d.slots),
                 origin: d.origin,
                 reserved: 0,
@@ -225,7 +235,7 @@ impl Core {
         if let Some(selection) = selected {
             self.publish_debug(selection)
         } else if state.debug.registers.active() {
-            super::super::layout::debug::CONTINUE_ACTIVE
+            crate::embedding::layout::debug::CONTINUE_ACTIVE
         } else {
             0
         }
@@ -250,7 +260,7 @@ pub extern "C" fn core_debug_finish(
 }
 
 impl Core {
-    pub(super) fn debug_register_admission(&mut self, register: u8) -> i32 {
+    pub(in crate::embedding::exports) fn debug_register_admission(&mut self, register: u8) -> i32 {
         if matches!(register, 4 | 5)
             && (!self.physical_controls || self.paging.is_none_or(|bank| bank.cr4 & 8 != 0))
         {

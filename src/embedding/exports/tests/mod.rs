@@ -1,9 +1,3 @@
-use super::admission::core_probe;
-use super::mapped::{core_read_memory, core_write_memory};
-use super::scalar::*;
-use super::state::core_import_state;
-use super::translation::core_compile;
-use super::*;
 #[path = "memory/access_faults.rs"]
 mod access_faults;
 #[path = "execution/admission.rs"]
@@ -56,6 +50,33 @@ mod system_flags_review;
 mod system_provenance;
 #[path = "numeric/x87_bridge.rs"]
 mod x87_bridge;
+#[path = "system/contexts.rs"]
+mod contexts;
+#[path = "numeric/mxcsr.rs"]
+mod mxcsr;
+#[path = "numeric/numeric_bridge.rs"]
+mod numeric_bridge;
+#[path = "numeric/vectors.rs"]
+mod vectors;
+#[path = "numeric/x87_state.rs"]
+mod x87_state;
+#[path = "memory/invpcid.rs"]
+mod invpcid;
+#[path = "memory/legacy_paging.rs"]
+mod legacy_paging;
+
+use super::*;
+use crate::embedding::exports::{
+    execution::{
+        admission::core_probe,
+        state::core_import_state,
+        translation::{self, core_compile},
+    },
+    memory::{
+        mapped::{self, core_read_memory, core_write_memory},
+        scalar::*,
+    },
+};
 use crate::embedding::layout::{
     BUDGET, DATA, DISPATCH, DIVIDE_ERROR, REPEAT_BUDGET, RawEventState, SCALAR_STATE_SIZE, STOP,
 };
@@ -308,20 +329,3 @@ fn rejected_mapped_exports_preserve_storage_and_owner_validity() {
     assert_eq!(core_load(0x4000, 8), 0xa5a5_a500_0000_01b8);
     assert_eq!(core_probe(0x1000), DISPATCH);
 }
-
-#[path = "system/contexts.rs"]
-mod contexts;
-
-#[path = "numeric/mxcsr.rs"]
-mod mxcsr;
-#[path = "numeric/numeric_bridge.rs"]
-mod numeric_bridge;
-#[path = "numeric/vectors.rs"]
-mod vectors;
-#[path = "numeric/x87_state.rs"]
-mod x87_state;
-
-#[path = "memory/invpcid.rs"]
-mod invpcid;
-#[path = "memory/legacy_paging.rs"]
-mod legacy_paging;

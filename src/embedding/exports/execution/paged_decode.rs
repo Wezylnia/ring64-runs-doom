@@ -1,4 +1,4 @@
-use super::*;
+use crate::embedding::exports::*;
 use crate::x86::paging;
 use crate::x86::protection_keys::State as Keys;
 
@@ -6,7 +6,7 @@ impl Core {
     #[cfg(not(feature = "parallel"))]
     #[cold]
     #[inline(never)]
-    pub(super) fn recover_paged_fetch(
+    pub(in crate::embedding::exports) fn recover_paged_fetch(
         &mut self,
         pc: u64,
     ) -> Option<crate::x86::instruction::Instruction> {
@@ -38,7 +38,11 @@ impl Core {
 
     #[cfg(not(feature = "parallel"))]
     #[inline(always)]
-    pub(super) fn warm_guarded_code_page(&self, pc: u64, integer_only: bool) -> bool {
+    pub(in crate::embedding::exports) fn warm_guarded_code_page(
+        &self,
+        pc: u64,
+        integer_only: bool,
+    ) -> bool {
         if self.image.active_changed() || !self.context.is_long64() {
             return false;
         }
@@ -67,7 +71,7 @@ impl Core {
     }
 
     #[cfg(not(feature = "parallel"))]
-    pub(super) fn warm_paged_instruction(
+    pub(in crate::embedding::exports) fn warm_paged_instruction(
         &self,
         pc: u64,
     ) -> Option<crate::x86::instruction::Instruction> {
@@ -104,7 +108,7 @@ impl Core {
             .then_some(instruction)
     }
 
-    pub(super) fn paged_decode(
+    pub(in crate::embedding::exports) fn paged_decode(
         &mut self,
         pc: u64,
     ) -> Result<crate::x86::instruction::Instruction, DecodeError> {

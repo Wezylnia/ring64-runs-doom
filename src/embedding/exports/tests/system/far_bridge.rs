@@ -1,4 +1,4 @@
-use super::*;
+use crate::embedding::exports::{system::far_control, tests::*};
 use crate::x86::instruction::{FarDescriptor, FarKind, Width};
 
 #[test]

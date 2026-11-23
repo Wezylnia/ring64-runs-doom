@@ -1,4 +1,8 @@
-use super::*;
+use crate::embedding::exports::{
+    execution::translation,
+    memory::{mapped, paging},
+    tests::*,
+};
 use crate::x86::access::GuestMemory;
 use crate::x86::paging::walk::{AccessClass, Request};
 

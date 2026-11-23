@@ -1,12 +1,12 @@
-use super::{BRIDGE, Core, paging};
 use crate::dbt::EntrySelection;
+use crate::embedding::exports::{BRIDGE, Core, memory::paging};
 use crate::embedding::layout::{RESOURCE, debug::CONTINUE_ACTIVE};
 use crate::x86::{exception::EventState, flags, paging::State};
 
 const PAGE_MASK: u64 = !4095;
 const MAX_OBSERVATIONS: u16 = 2048;
 
-pub(super) struct Trace {
+pub(in crate::embedding::exports) struct Trace {
     page: u64,
     paging: Option<State>,
     context_version: u64,

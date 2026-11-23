@@ -1,6 +1,6 @@
+use crate::embedding::exports::*;
 use serde_json::Value;
 
-use super::*;
 use crate::memory::{MappingInput, MemoryError, MemoryLimits, Permissions};
 
 fn memory_error(bridge: &mut Bridge, error: MemoryError) -> i32 {
@@ -154,7 +154,7 @@ fn initial_image(input: &[u8], metadata_len: u32) -> Result<InitialImage, Memory
             state.validate().map_err(MemoryError::Invalid)?;
             let fast_system = config
                 .get("fastSystem")
-                .map(super::fast_system::parse_bank)
+                .map(crate::embedding::exports::system::fast_system::parse_bank)
                 .transpose()
                 .map_err(MemoryError::Invalid)?
                 .unwrap_or_default();
@@ -169,7 +169,7 @@ fn initial_image(input: &[u8], metadata_len: u32) -> Result<InitialImage, Memory
         Some(Value::String(model)) if model == "physical" => {
             let fast_system = config
                 .get("fastSystem")
-                .map(super::fast_system::parse_bank)
+                .map(crate::embedding::exports::system::fast_system::parse_bank)
                 .transpose()
                 .map_err(MemoryError::Invalid)?
                 .unwrap_or_default();

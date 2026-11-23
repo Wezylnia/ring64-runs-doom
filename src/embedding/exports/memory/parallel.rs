@@ -1,4 +1,4 @@
-use super::*;
+use crate::embedding::exports::*;
 use crate::memory::{MemoryError, SharedDword};
 
 #[unsafe(no_mangle)]

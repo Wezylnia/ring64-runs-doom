@@ -47,77 +47,14 @@ macro_rules! guest_semantics {
     }};
 }
 
-#[path = "execution/admission.rs"]
-mod admission;
-#[path = "system/compound_stack.rs"]
-mod compound_stack;
-#[path = "system/context.rs"]
-mod context;
-#[path = "events/debug.rs"]
-mod debug;
-#[path = "events/exception_delivery/mod.rs"]
-mod exception_delivery;
-#[path = "events/external_interrupts.rs"]
-mod external_interrupts;
-#[path = "system/far_control.rs"]
-mod far_control;
-#[path = "system/fast_system.rs"]
-mod fast_system;
-#[path = "execution/invalidation.rs"]
-mod invalidation;
-#[path = "system/io.rs"]
-mod io;
-#[path = "memory/mapped.rs"]
-mod mapped;
-#[cfg(not(feature = "parallel"))]
-#[path = "memory/mmio.rs"]
-mod mmio;
-#[path = "numeric/mmx.rs"]
-mod mmx;
-#[path = "numeric/numeric.rs"]
+mod events;
+mod execution;
+mod memory;
 mod numeric;
-#[path = "numeric/numeric_controls.rs"]
-mod numeric_controls;
-#[path = "numeric/numeric_image/mod.rs"]
-mod numeric_image;
-#[path = "execution/paged_decode.rs"]
-mod paged_decode;
-#[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
-#[path = "execution/paged_region.rs"]
-mod paged_region;
-#[path = "memory/paging.rs"]
-mod paging;
-#[path = "system/processor.rs"]
-mod processor;
-#[path = "system/protection.rs"]
-mod protection;
-#[path = "memory/protection_keys.rs"]
-mod protection_keys;
-#[path = "execution/reset.rs"]
-mod reset;
-#[path = "memory/scalar.rs"]
-mod scalar;
-#[path = "events/software_events.rs"]
-mod software_events;
-#[path = "execution/state.rs"]
-mod state;
-#[path = "memory/streaming.rs"]
-mod streaming;
-#[path = "events/system_flags.rs"]
-mod system_flags;
-#[path = "system/task_switch.rs"]
-mod task_switch;
-#[path = "execution/translation.rs"]
-mod translation;
-#[path = "numeric/vector.rs"]
-mod vector;
-#[path = "numeric/x87.rs"]
-mod x87;
-#[path = "numeric/x87_state.rs"]
-mod x87_state;
+mod system;
 
 struct Core {
-    task_work: Option<task_switch::Work>,
+    task_work: Option<system::task_switch::Work>,
     io_present: bool,
     io_configured: bool,
     io_effect: bool,
@@ -129,7 +66,7 @@ struct Core {
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     return_read: crate::embedding::layout::ReturnRead,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    guarded_dword_pair: Option<paging::GuardedDwordPair>,
+    guarded_dword_pair: Option<memory::paging::GuardedDwordPair>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     indexed_dword_write: crate::x86::paging::cache::IndexedDwordWrite,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -143,9 +80,9 @@ struct Core {
     indexed_paged_read_root: Option<u64>,
     active_owner: Option<u64>,
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
-    paged_region_trace: Option<Box<paged_region::Trace>>,
+    paged_region_trace: Option<Box<execution::paged_region::Trace>>,
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
-    guarded_walk: RefCell<paging::GuardedReads>,
+    guarded_walk: RefCell<memory::paging::GuardedReads>,
     paging_failure: Option<crate::x86::paging::walk::Failure>,
     pdpte_load_fault: Option<(u8, u8, Fault)>,
     paging_system: Option<crate::x86::protection::SystemPagingFault>,
@@ -156,7 +93,7 @@ struct Core {
     context: ExecutionContext,
     context_version: u64,
     segment_fault: Option<SegmentFault>,
-    alignment_fault: Option<vector::AlignmentFault>,
+    alignment_fault: Option<numeric::vector::AlignmentFault>,
     alignment_check: Option<crate::x86::alignment::Fault>,
     simd_exception: Option<numeric::SimdException>,
     numeric_fault: Option<crate::x86::numeric_controls::Fault>,
@@ -164,7 +101,7 @@ struct Core {
     general_protection: Option<numeric::GeneralProtectionFault>,
     protection_fault: Option<crate::x86::protection::ProtectionFault>,
     system_memory_fault: Option<crate::x86::protection::SystemMemoryFault>,
-    debug_exception: Option<system_flags::DebugException>,
+    debug_exception: Option<events::system_flags::DebugException>,
     translation_owners: dbt::Owners,
     debug_candidate: u8,
 }
@@ -192,7 +129,7 @@ impl InitialImage {
 #[derive(Default)]
 struct Bridge {
     core: Option<Core>,
-    x87_operations: x87::DecodedOperations,
+    x87_operations: numeric::x87::DecodedOperations,
     input: Vec<u8>,
     output: Vec<u8>,
     info: Vec<u8>,
@@ -380,9 +317,9 @@ pub extern "C" fn core_fault_info(reason: i32) {
             super::layout::DEBUG_EXCEPTION => core
                 .debug_exception
                 .as_ref()
-                .map(system_flags::DebugException::json),
+                .map(events::system_flags::DebugException::json),
             super::layout::X87_EXCEPTION => unsafe {
-                x87_state::exception_json(&(*core.state.get()).x87)
+                numeric::x87_state::exception_json(&(*core.state.get()).x87)
             },
             super::layout::SIMD_EXCEPTION => core
                 .simd_exception
@@ -395,7 +332,7 @@ pub extern "C" fn core_fault_info(reason: i32) {
             super::layout::ALIGNMENT => core
                 .alignment_fault
                 .as_ref()
-                .map(vector::AlignmentFault::json),
+                .map(numeric::vector::AlignmentFault::json),
             super::layout::ALIGNMENT_CHECK => core.alignment_check.map(|fault| {
                 let state=unsafe { &*core.state.get() };
                 let segment=Segment::from_id(state.fault_segment);
@@ -405,12 +342,12 @@ pub extern "C" fn core_fault_info(reason: i32) {
                 serde_json::json!({ "segment":segment.name(), "offset":format!("0x{offset:x}"), "address":format!("0x{:x}",fault.address), "width":fault.width,
                     "access":if fault.access==Access::Write { "write" } else { "read" }, "alignment":fault.alignment, "vector":17,"errorCode":code })
             }),
-            super::layout::PROTECTION => core.protection_fault.as_ref().map(protection::fault_json),
+            super::layout::PROTECTION => core.protection_fault.as_ref().map(system::protection::fault_json),
             super::layout::SYSTEM_MEMORY => core
                 .system_memory_fault
                 .as_ref()
-                .map(protection::system_fault_json),
-            SEGMENT => core.segment_fault.as_ref().map(context::segment_fault_json),
+                .map(system::protection::system_fault_json),
+            SEGMENT => core.segment_fault.as_ref().map(system::context::segment_fault_json),
             DATA | FETCH => core.fault.as_ref().map(fault_json),
             TARGET => {
                 let target = unsafe { (*core.state.get()).target };
@@ -462,7 +399,3 @@ pub extern "C" fn core_dispose() {
 
 #[cfg(test)]
 mod tests;
-
-#[cfg(all(feature = "parallel", target_arch = "wasm32"))]
-#[path = "memory/parallel.rs"]
-mod parallel;

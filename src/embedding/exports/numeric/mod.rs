@@ -1,4 +1,11 @@
-use super::*;
+pub(super) mod mmx;
+pub(super) mod numeric_controls;
+pub(super) mod numeric_image;
+pub(super) mod vector;
+pub(super) mod x87;
+pub(super) mod x87_state;
+
+use crate::embedding::exports::*;
 use crate::embedding::layout::GENERAL_PROTECTION;
 use crate::x86::float::{self, Op, Stage};
 

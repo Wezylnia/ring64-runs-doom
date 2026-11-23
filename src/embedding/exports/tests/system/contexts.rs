@@ -1,5 +1,4 @@
-use super::super::context::*;
-use super::*;
+use crate::embedding::exports::{execution::translation, system::context::*, tests::*};
 
 fn protected() -> serde_json::Value {
     let segment = serde_json::json!({"base":"0x0","limit":u32::MAX,"default32":true,"usable":true,"type":"read-write"});

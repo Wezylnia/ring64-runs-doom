@@ -1,4 +1,4 @@
-use super::*;
+use crate::embedding::exports::{execution::translation, system::far_control, tests::*};
 use crate::x86::context::{
     LoadedSegment, Mode, SegmentAttributes, SegmentType, TableRegister, TaskRegister,
 };

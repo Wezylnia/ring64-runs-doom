@@ -1,9 +1,9 @@
-use super::*;
+use crate::embedding::exports::*;
 use crate::embedding::layout::{PROTECTION, SYSTEM_MEMORY};
 use crate::x86::instruction::ProtectionDescriptor;
 use crate::x86::protection::{self as semantics, Failure, ProtectionFault, SystemMemoryFault};
 
-pub(super) fn fault_json(fault: &ProtectionFault) -> serde_json::Value {
+pub(in crate::embedding::exports) fn fault_json(fault: &ProtectionFault) -> serde_json::Value {
     let mut value = serde_json::json!({
         "vector":fault.vector, "errorCode":fault.error_code, "phase":fault.phase.as_str(),
     });
@@ -13,7 +13,9 @@ pub(super) fn fault_json(fault: &ProtectionFault) -> serde_json::Value {
     value
 }
 
-pub(super) fn system_fault_json(fault: &SystemMemoryFault) -> serde_json::Value {
+pub(in crate::embedding::exports) fn system_fault_json(
+    fault: &SystemMemoryFault,
+) -> serde_json::Value {
     let mut value = serde_json::json!({
         "address":format!("0x{:x}",fault.address), "width":fault.width,
         "access":match fault.access { Access::Read=>"read", Access::Write=>"write", Access::Execute=>"execute" },

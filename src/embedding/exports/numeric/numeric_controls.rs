@@ -1,9 +1,9 @@
-use super::*;
+use crate::embedding::exports::*;
 use crate::embedding::layout::{DEVICE_NOT_AVAILABLE, SIMD_EXCEPTION};
 use crate::x86::numeric_controls::{self, Family, Fault};
 
 impl Core {
-    pub(super) fn numeric_admission(
+    pub(in crate::embedding::exports) fn numeric_admission(
         &mut self,
         operation: crate::x86::instruction::Operation,
         pc: u64,
@@ -25,7 +25,7 @@ impl Core {
         }
     }
 
-    pub(super) fn simd_failure(
+    pub(in crate::embedding::exports) fn simd_failure(
         &mut self,
         exception: numeric::SimdException,
         family: Family,

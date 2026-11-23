@@ -1,5 +1,4 @@
-use super::super::invalidation::core_invpcid;
-use super::*;
+use crate::embedding::exports::{execution::invalidation::core_invpcid, memory::paging, tests::*};
 use crate::embedding::layout::{PAGE_FAULT, PHYSICAL_MEMORY, PROTECTION};
 use crate::x86::context::Mode;
 use crate::x86::protection::ProtectionPhase;

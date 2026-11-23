@@ -1,13 +1,13 @@
-use super::*;
+use crate::embedding::exports::*;
 use crate::embedding::layout::PROTECTION;
 use crate::x86::exception::EventState;
 use crate::x86::flags;
 use crate::x86::instruction::{SystemFlagsDescriptor, SystemFlagsKind};
 
-pub(super) use crate::x86::debug::Selection as DebugException;
+pub(in crate::embedding::exports) use crate::x86::debug::Selection as DebugException;
 
 impl DebugException {
-    pub(super) fn json(&self) -> serde_json::Value {
+    pub(in crate::embedding::exports) fn json(&self) -> serde_json::Value {
         let mut value = serde_json::json!({
             "vector": 1,
             "class": "trap",
@@ -41,7 +41,7 @@ fn valid_flags(flags: u64) -> bool {
 }
 
 impl Core {
-    pub(super) fn boundary_observed(&self) -> bool {
+    pub(in crate::embedding::exports) fn boundary_observed(&self) -> bool {
         if self.paging.is_some() {
             return true;
         }

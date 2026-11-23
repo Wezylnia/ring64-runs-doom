@@ -1,4 +1,4 @@
-use super::*;
+use crate::embedding::exports::*;
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 fn indexed_vector_width<const OBSERVED: bool, const PAGED: bool>(width: u32) -> (u32, bool) {
@@ -14,17 +14,17 @@ fn indexed_vector_width<const OBSERVED: bool, const PAGED: bool>(width: u32) -> 
     )
 }
 
-pub(super) struct AlignmentFault {
-    pub(super) segment: Segment,
-    pub(super) offset: u64,
-    pub(super) address: u64,
-    pub(super) width: u32,
-    pub(super) access: Access,
-    pub(super) alignment: u32,
+pub(in crate::embedding::exports) struct AlignmentFault {
+    pub(in crate::embedding::exports) segment: Segment,
+    pub(in crate::embedding::exports) offset: u64,
+    pub(in crate::embedding::exports) address: u64,
+    pub(in crate::embedding::exports) width: u32,
+    pub(in crate::embedding::exports) access: Access,
+    pub(in crate::embedding::exports) alignment: u32,
 }
 
 impl AlignmentFault {
-    pub(super) fn json(&self) -> serde_json::Value {
+    pub(in crate::embedding::exports) fn json(&self) -> serde_json::Value {
         serde_json::json!({
             "segment":self.segment.name(),
             "offset":format!("0x{:x}",self.offset),
@@ -37,7 +37,7 @@ impl AlignmentFault {
 }
 
 impl Core {
-    pub(super) fn vector_address(
+    pub(in crate::embedding::exports) fn vector_address(
         &mut self,
         offset: u64,
         width: u32,

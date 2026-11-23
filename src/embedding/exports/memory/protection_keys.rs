@@ -1,4 +1,4 @@
-use super::*;
+use crate::embedding::exports::*;
 use crate::x86::paging::CR4_PKE;
 use crate::x86::protection::{ProtectionFault, ProtectionPhase};
 
@@ -20,7 +20,7 @@ pub extern "C" fn core_protection_key(kind: u32, eax: u32, ecx: u32, edx: u32) -
                 phase: ProtectionPhase::Target,
                 selector: None,
             });
-            return super::super::layout::PROTECTION;
+            return crate::embedding::layout::PROTECTION;
         }
         let raw = unsafe { &mut *core.state.get() };
         if kind == 0 {

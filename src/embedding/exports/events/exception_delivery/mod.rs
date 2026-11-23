@@ -1,4 +1,4 @@
-use super::*;
+use crate::embedding::exports::{system::task_switch, *};
 use crate::embedding::layout::{
     ALIGNMENT, ALIGNMENT_CHECK, DEBUG_EXCEPTION, DEVICE_NOT_AVAILABLE, DISPATCH, DIVIDE_ERROR,
     GENERAL_PROTECTION, INVALID, PAGE_FAULT, PROTECTION, SHUTDOWN, SIMD_EXCEPTION, SYSTEM_MEMORY,
@@ -181,7 +181,7 @@ pub extern "C" fn core_stage_exception(reason: i32) -> i32 {
             _ => return 0,
         };
         if reason != DEBUG_EXCEPTION || event.debug.is_some_and(crate::x86::debug::Source::fault) {
-            state.debug.continuation = super::super::layout::debug::Continuation::default();
+            state.debug.continuation = crate::embedding::layout::debug::Continuation::default();
             core.debug_candidate = 0;
         }
         if !enabled {

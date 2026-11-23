@@ -1,4 +1,4 @@
-use super::*;
+use crate::embedding::exports::*;
 use crate::x86::protection::ProtectionFault;
 use crate::x86::{processor, xstate};
 
@@ -32,7 +32,7 @@ pub extern "C" fn core_processor(kind: u32, eax: u32, ecx: u32, delta_or_edx: u6
                         phase,
                         selector: None,
                     });
-                    super::super::layout::PROTECTION
+                    crate::embedding::layout::PROTECTION
                 }
             };
         }
@@ -40,7 +40,7 @@ pub extern "C" fn core_processor(kind: u32, eax: u32, ecx: u32, delta_or_edx: u6
             && let Err(fault) = processor::admit_timestamp(&core.context, core.paging)
         {
             core.protection_fault = Some(fault);
-            return super::super::layout::PROTECTION;
+            return crate::embedding::layout::PROTECTION;
         }
         let raw = unsafe { &mut *core.state.get() };
         if kind == 0 {

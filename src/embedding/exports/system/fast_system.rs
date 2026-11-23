@@ -1,8 +1,10 @@
-use super::*;
+use crate::embedding::exports::*;
 use crate::x86::fast_system::{self, Failure, Instruction, State};
 use crate::x86::protection::{ProtectionFault, ProtectionPhase};
 
-pub(super) fn parse_bank(value: &serde_json::Value) -> Result<State, &'static str> {
+pub(in crate::embedding::exports) fn parse_bank(
+    value: &serde_json::Value,
+) -> Result<State, &'static str> {
     let word = |name| {
         value[name]
             .as_str()
@@ -74,7 +76,7 @@ fn failure(core: &mut Core, failure: Failure) -> i32 {
                 },
                 selector: None,
             });
-            super::super::layout::PROTECTION
+            crate::embedding::layout::PROTECTION
         }
         Failure::Unsupported => UNSUPPORTED,
     }

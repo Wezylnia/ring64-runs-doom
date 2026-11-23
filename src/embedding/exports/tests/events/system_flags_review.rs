@@ -1,5 +1,7 @@
-use super::super::system_flags::{core_debug_step, core_flags};
-use super::*;
+use crate::embedding::exports::{
+    events::system_flags::{core_debug_step, core_flags},
+    tests::*,
+};
 use crate::embedding::layout::{DEBUG_EXCEPTION, PROTECTION};
 use crate::x86::instruction::{SystemFlagsDescriptor, SystemFlagsKind, Width};
 use crate::x86::x87::State as X87State;
@@ -103,7 +105,9 @@ fn malformed_flags_and_debug_helpers_preserve_complete_state_and_diagnostics() {
 
 #[test]
 fn ac_helper_only_publishes_a_candidate_and_runtime_denial_has_no_error_code() {
-    use super::super::exception_delivery::{core_configure_delivery, core_stage_exception};
+    use crate::embedding::exports::events::exception_delivery::{
+        core_configure_delivery, core_stage_exception,
+    };
     use crate::x86::context::Mode;
     use crate::x86::exception::EventState;
     for kind in [SystemFlagsKind::Clac, SystemFlagsKind::Stac] {

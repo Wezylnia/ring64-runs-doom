@@ -1,5 +1,7 @@
-use super::*;
-use crate::embedding::exports::x87_state::core_import_x87;
+use crate::embedding::exports::{
+    numeric::{self, vector, x87_state::core_import_x87},
+    tests::*,
+};
 use crate::embedding::layout::X87_EXCEPTION;
 
 fn input() -> Vec<u8> {

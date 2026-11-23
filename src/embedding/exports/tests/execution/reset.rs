@@ -1,4 +1,4 @@
-use super::*;
+use crate::embedding::exports::{execution::translation, tests::*};
 
 #[test]
 fn reset_projection_is_not_finit_and_keeps_image_owner_ids_at_epoch_saturation() {
@@ -28,7 +28,7 @@ fn reset_projection_is_not_finit_and_keeps_image_owner_ids_at_epoch_saturation()
                 (*c.state.get()).interrupts.nmi_blocked = 1;
             }
         });
-        assert_eq!(super::super::reset::core_reset(), 0);
+        assert_eq!(crate::embedding::exports::execution::reset::core_reset(), 0);
         assert_eq!(translation::core_validity(owner), 0);
         assert_eq!(translation::core_publish(pending), 0);
         BRIDGE.with_borrow_mut(|b| {
@@ -68,7 +68,7 @@ fn reset_projection_is_not_finit_and_keeps_image_owner_ids_at_epoch_saturation()
 #[test]
 fn old_private_models_reject_reset_without_mutating_any_bank() {
     initialize(0x1000, &[0x90]);
-    assert_eq!(super::super::reset::core_reset(), 1);
+    assert_eq!(crate::embedding::exports::execution::reset::core_reset(), 1);
     BRIDGE.with_borrow(|b| {
         let c = b.core.as_ref().unwrap();
         assert_eq!(unsafe { (*c.state.get()).rip }, 0x1000);
@@ -93,7 +93,7 @@ fn cold_probe_does_not_evaluate_ne_pending_but_reached_begin_does() {
     });
     assert_eq!(core_probe(0x1000), 0);
     assert_eq!(
-        super::super::paging::core_paged_debug_begin(0x1000, 0x10002, 0),
+        crate::embedding::exports::memory::paging::core_paged_debug_begin(0x1000, 0x10002, 0),
         UNSUPPORTED
     );
 }
@@ -118,7 +118,9 @@ fn loaded_cs_activation_invalidity_precedes_a_combined_paging_and_alignment_writ
             .set_segment(Segment::Cs, 8, c.context.segment(Segment::Cs), attrs);
     });
     assert_eq!(
-        super::super::paging::core_paging_control(1, 0, 0x80040033, 0x1000, 2, 0),
+        crate::embedding::exports::memory::paging::core_paging_control(
+            1, 0, 0x80040033, 0x1000, 2, 0
+        ),
         crate::embedding::layout::PROTECTION
     );
     BRIDGE.with_borrow(|b| assert_eq!(b.core.as_ref().unwrap().paging.unwrap().cr0, 0x33));

@@ -1,4 +1,4 @@
-use super::BRIDGE;
+use crate::embedding::exports::BRIDGE;
 use crate::embedding::layout::{ALIGNMENT, ALIGNMENT_CHECK, DATA, SEGMENT};
 use crate::memory::Access;
 use crate::x86::context::Segment;
@@ -23,7 +23,7 @@ pub extern "C" fn core_write_span(address: u64, width: u32, segment: i32) -> u32
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 fn core_direct_span(address: u64, width: u32, segment: i32, access: Access) -> u32 {
     let stack_pointer =
-        access == Access::Read && segment == super::super::layout::FLAT_STACK_POINTER_READ;
+        access == Access::Read && segment == crate::embedding::layout::FLAT_STACK_POINTER_READ;
     let segment = if stack_pointer {
         Segment::Ss as i32
     } else {

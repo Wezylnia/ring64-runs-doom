@@ -1,4 +1,7 @@
-use super::*;
+use crate::embedding::exports::{
+    numeric::{self, vector},
+    tests::*,
+};
 use crate::embedding::layout::{GENERAL_PROTECTION, SIMD_EXCEPTION};
 
 fn mxcsr() -> u32 {

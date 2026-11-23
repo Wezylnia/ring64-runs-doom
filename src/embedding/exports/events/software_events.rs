@@ -1,4 +1,4 @@
-use super::*;
+use crate::embedding::exports::*;
 use crate::embedding::layout::{PROTECTION, SYSTEM_MEMORY};
 use crate::x86::flags;
 use crate::x86::instruction::{SoftwareEventDescriptor, SoftwareEventKind};
@@ -112,7 +112,7 @@ fn core_software_event_impl<const OBSERVED: bool, const PAGED: bool>(
             state.flags = outcome.flags;
             if operation.kind == SoftwareEventKind::Int1 {
                 state.debug.registers.enter();
-                state.debug.continuation = super::super::layout::debug::Continuation::default();
+                state.debug.continuation = crate::embedding::layout::debug::Continuation::default();
             }
         }
         if outcome.context_changed {

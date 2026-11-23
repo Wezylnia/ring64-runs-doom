@@ -1,4 +1,6 @@
-use super::*;
+use crate::embedding::exports::{
+    execution::translation, memory::scalar, numeric::vector, system::context, tests::*,
+};
 use crate::embedding::layout::ALIGNMENT;
 
 fn scratch(bytes: [u8; 16]) -> u32 {

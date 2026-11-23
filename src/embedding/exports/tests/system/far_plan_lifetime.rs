@@ -1,4 +1,4 @@
-use super::*;
+use crate::embedding::exports::{system::far_control, tests::*};
 use crate::embedding::layout::PAGE_FAULT;
 use crate::memory::{MappingInput, MemoryLimits, Permissions};
 use crate::x86::access::GuestMemory;

@@ -1,4 +1,4 @@
-use super::{BRIDGE, Core};
+use crate::embedding::exports::{BRIDGE, Core};
 use crate::memory::{Access, MmioOperand};
 use crate::x86::context::{AccessFailure, Segment};
 

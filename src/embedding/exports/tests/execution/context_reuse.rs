@@ -1,4 +1,9 @@
-use super::*;
+use crate::embedding::exports::{
+    execution::translation,
+    memory::{mapped, paging},
+    system::{context, far_control, fast_system, protection},
+    tests::*,
+};
 
 fn compile_and_publish() -> u64 {
     assert_eq!(core_compile(0x1000, 8, 128, 65536), 0);
@@ -224,7 +229,7 @@ fn paged_owner() -> u64 {
 
 #[test]
 fn fsgsbase_only_changed_writes_cancel_pending_and_suspend_the_published_context() {
-    use super::super::fast_system::core_write_segment_base;
+    use crate::embedding::exports::system::fast_system::core_write_segment_base;
     use crate::embedding::layout::PROTECTION;
     for epoch in [0, u64::MAX] {
         paged_fixture();
@@ -258,7 +263,7 @@ fn fsgsbase_only_changed_writes_cancel_pending_and_suspend_the_published_context
 
 #[test]
 fn changed_guest_root_fences_active_work_but_preserves_valid_root_bound_owners() {
-    use super::super::paging::core_paging_control;
+    use crate::embedding::exports::memory::paging::core_paging_control;
     for epoch in [0, u64::MAX] {
         paged_fixture();
         assert_eq!(core_paging_control(1, 4, 0x6a8, 0x400000, 2, 0), 0); // PGE
@@ -309,7 +314,7 @@ fn changed_guest_root_fences_active_work_but_preserves_valid_root_bound_owners()
 
 #[test]
 fn context_reuse_keeps_exact_paging_fences_and_dynamic_nonfences() {
-    use super::super::paging::{core_import_paging, core_paging_control};
+    use crate::embedding::exports::memory::paging::{core_import_paging, core_paging_control};
     for (kind, register, value, destructive) in [
         (1, 3, 0x1000, true),
         (1, 0, 0x80010033, true),
@@ -451,7 +456,7 @@ fn context_proof_all_seven_publishers_clear_a_primed_proof_even_at_saturation() 
                     0
                 ),
                 3 => assert_eq!(
-                    crate::embedding::exports::software_events::core_software_event(
+                    crate::embedding::exports::events::software_events::core_software_event(
                         SoftwareEventDescriptor {
                             kind: SoftwareEventKind::Int3,
                             width: Width::W16,
@@ -480,7 +485,7 @@ fn context_proof_all_seven_publishers_clear_a_primed_proof_even_at_saturation() 
                         }
                     });
                     assert_eq!(
-                        crate::embedding::exports::exception_delivery::core_deliver_exception(),
+                        crate::embedding::exports::events::exception_delivery::core_deliver_exception(),
                         0
                     );
                 }
@@ -544,7 +549,7 @@ fn context_proof_does_not_override_image_alias_death_release_or_paging_fences() 
 
 #[test]
 fn numeric_publication_retains_live_guards_but_cancels_pending_aba_at_epoch_max() {
-    use super::super::paging::core_paging_control;
+    use crate::embedding::exports::memory::paging::core_paging_control;
     for epoch in [0, u64::MAX - 1, u64::MAX] {
         paged_fixture();
         BRIDGE.with_borrow_mut(|b| b.core.as_mut().unwrap().context_version = epoch);

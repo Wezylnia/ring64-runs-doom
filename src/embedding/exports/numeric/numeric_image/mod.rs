@@ -1,4 +1,5 @@
-use super::*;
+use super::vector;
+use crate::embedding::exports::*;
 
 mod extended;
 use crate::embedding::layout::{ALIGNMENT, GENERAL_PROTECTION};

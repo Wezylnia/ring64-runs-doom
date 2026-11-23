@@ -1,4 +1,4 @@
-use super::*;
+use crate::embedding::exports::*;
 
 impl Core {
     fn reset(&mut self) {

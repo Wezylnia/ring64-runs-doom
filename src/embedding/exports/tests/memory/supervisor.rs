@@ -1,4 +1,9 @@
-use super::*;
+use crate::embedding::exports::{
+    execution::translation,
+    memory::{mapped, paging},
+    system::protection,
+    tests::*,
+};
 use crate::embedding::layout::PAGE_FAULT;
 use crate::x86::context::Mode;
 use crate::x86::instruction::{ProtectionDescriptor, ProtectionKind, Width};

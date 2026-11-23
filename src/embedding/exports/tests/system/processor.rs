@@ -1,5 +1,9 @@
-use super::super::processor::core_processor;
-use super::*;
+use crate::embedding::exports::{
+    execution::translation,
+    memory::paging,
+    system::{context, processor::core_processor},
+    tests::*,
+};
 use crate::embedding::layout::PROTECTION;
 use crate::x86::{
     context::Mode,

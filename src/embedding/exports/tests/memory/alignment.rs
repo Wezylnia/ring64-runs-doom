@@ -1,4 +1,8 @@
-use super::*;
+use crate::embedding::exports::{
+    memory::{paging, scalar},
+    numeric::vector,
+    tests::*,
+};
 use crate::memory::{MappingInput, MemoryLimits, Permissions};
 
 fn fixture() {
@@ -101,7 +105,7 @@ fn each_operand_admission_clears_a_previous_alignment_refusal() {
         assert_eq!(core_paged_load(0x4001, 4), 0);
         assert_eq!(
             paging::core_paged_access_reason(),
-            super::super::super::layout::ALIGNMENT_CHECK
+            crate::embedding::layout::ALIGNMENT_CHECK
         );
         assert_eq!(paging::core_paged_access_failed(), 1);
         match operation {
@@ -144,7 +148,7 @@ fn each_operand_admission_clears_a_previous_alignment_refusal() {
 
 #[test]
 fn alignment_report_bank_switches_classes_without_resurrecting_an_older_fault() {
-    use super::super::super::layout::{ALIGNMENT, ALIGNMENT_CHECK, DATA};
+    use crate::embedding::layout::{ALIGNMENT, ALIGNMENT_CHECK, DATA};
 
     fixture();
     let bank = BRIDGE.with_borrow(|bridge| bridge.core.as_ref().unwrap().paging);

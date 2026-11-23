@@ -1,4 +1,4 @@
-use super::*;
+use crate::embedding::exports::{numeric::x87, tests::*};
 use crate::embedding::layout::X87_EXCEPTION;
 use crate::memory::{MappingInput, MemoryLimits, Permissions};
 use crate::x86::x87::{Format, Kind, Op, State as X87State};

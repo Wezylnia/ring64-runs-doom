@@ -1,9 +1,9 @@
-use super::*;
+use crate::embedding::exports::*;
 use crate::x86::instruction::Operation;
 use crate::x86::processor::Instruction as Processor;
 
 impl Core {
-    pub(super) fn numeric_admission_unrestricted(&self) -> bool {
+    pub(in crate::embedding::exports) fn numeric_admission_unrestricted(&self) -> bool {
         self.paging
             .as_ref()
             .is_none_or(|bank| bank.cr0 & 0x2c == 0x20 && bank.cr4 & 0x600 == 0x600)
@@ -11,7 +11,7 @@ impl Core {
 
     // These checks precede the generated instruction-begin/RF effect. Numeric
     // enable faults win over the old pending x87 condition, including NE=0.
-    pub(super) fn instruction_admission(
+    pub(in crate::embedding::exports) fn instruction_admission(
         &mut self,
         operation: Operation,
         pc: u64,

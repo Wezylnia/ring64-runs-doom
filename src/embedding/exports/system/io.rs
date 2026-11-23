@@ -1,4 +1,4 @@
-use super::*;
+use crate::embedding::exports::*;
 use crate::embedding::layout::{PROTECTION, SYSTEM_MEMORY};
 use crate::x86::instruction::Width;
 use crate::x86::protection::{self, Failure};

@@ -1,4 +1,9 @@
-use super::*;
+#[cfg(not(feature = "parallel"))]
+use crate::embedding::exports::execution::translation;
+use crate::embedding::exports::{
+    memory::{mapped, paging},
+    tests::*,
+};
 use crate::x86::instruction::{DataOperand, Operation, RegisterView, Width};
 use crate::x86::paging::walk::{Failure, PhysicalPhase, physical_counts};
 
@@ -63,7 +68,11 @@ fn fixture(family: &str, warm: bool, executable: bool) -> Vec<u8> {
     if let Some(input) = compatibility {
         // The IA32e initializer starts in Long64; the SDK then imports context.
         BRIDGE.with_borrow_mut(|bridge| bridge.input = input);
-        assert_eq!(super::super::context::core_set_context(), 0, "{family}");
+        assert_eq!(
+            crate::embedding::exports::system::context::core_set_context(),
+            0,
+            "{family}"
+        );
     }
     BRIDGE.with_borrow_mut(|bridge| unsafe {
         let state = &mut *bridge.core.as_mut().unwrap().state.get();
@@ -328,7 +337,7 @@ fn guarded_upper_walk_replays_a_cold_leaf_and_reloads_words_on_new_entry() {
         assert_eq!(core.image.physical_read(0x5008, 8).unwrap(), 0x8007);
     });
     assert_eq!(
-        super::super::scalar::core_paged_load(0x201000, 4),
+        crate::embedding::exports::memory::scalar::core_paged_load(0x201000, 4),
         0xaabbccdd
     );
     BRIDGE.with_borrow_mut(|bridge| {

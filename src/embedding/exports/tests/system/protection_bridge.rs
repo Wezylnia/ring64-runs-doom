@@ -1,4 +1,8 @@
-use super::*;
+use crate::embedding::exports::{
+    numeric::{self, vector},
+    system::{context, protection},
+    tests::*,
+};
 use crate::x86::instruction::{ProtectionDescriptor, ProtectionKind, Width};
 
 #[test]
@@ -141,7 +145,10 @@ fn valid_repairs_clear_all_descriptor_diagnostics_even_for_equal_context() {
             }
             "x87" => {
                 BRIDGE.with_borrow_mut(|bridge| bridge.input = vec![0; 104]);
-                assert_eq!(crate::embedding::exports::x87_state::core_import_x87(), 0);
+                assert_eq!(
+                    crate::embedding::exports::numeric::x87_state::core_import_x87(),
+                    0
+                );
             }
             "xmm" => {
                 BRIDGE.with_borrow_mut(|bridge| bridge.input = vec![0; 256]);

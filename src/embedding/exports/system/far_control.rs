@@ -1,4 +1,4 @@
-use super::*;
+use crate::embedding::exports::*;
 use crate::embedding::layout::{PROTECTION, SYSTEM_MEMORY};
 use crate::x86::instruction::{FarDescriptor, FarKind};
 use crate::x86::protection::far::{self, FarFailure, FarOperands};

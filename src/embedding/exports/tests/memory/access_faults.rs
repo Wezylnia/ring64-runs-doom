@@ -1,5 +1,7 @@
-use super::super::exception_delivery::{core_configure_delivery, core_stage_exception};
-use super::*;
+use crate::embedding::exports::{
+    events::exception_delivery::{core_configure_delivery, core_stage_exception},
+    tests::*,
+};
 use crate::x86::exception::EventState;
 
 #[test]

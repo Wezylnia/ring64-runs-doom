@@ -1,4 +1,4 @@
-use super::*;
+use crate::embedding::exports::{events::external_interrupts, *};
 use crate::embedding::layout::{
     ALIGNMENT_CHECK, DEBUG_EXCEPTION, DISPATCH, PAGE_FAULT, PHYSICAL_MEMORY, PROTECTION, SHUTDOWN,
     SYSTEM_MEMORY, TASK_CAPTURED, TASK_EVENT_BASE,
@@ -17,13 +17,13 @@ use crate::x86::{
 const TASK_RETRY_BASE: i32 = -128;
 
 #[derive(Clone, Copy)]
-pub(super) enum Work {
+pub(in crate::embedding::exports) enum Work {
     Captured { start: Start, slots: u8, int1: bool },
     Qualifying(Incoming, Origin),
 }
 
 #[derive(Clone, Copy)]
-pub(super) enum Origin {
+pub(in crate::embedding::exports) enum Origin {
     Instruction {
         pc: u64,
         slots: u8,
@@ -34,7 +34,12 @@ pub(super) enum Origin {
 }
 
 impl Core {
-    pub(super) fn capture_task(&mut self, start: Start, slots: u8, int1: bool) -> i32 {
+    pub(in crate::embedding::exports) fn capture_task(
+        &mut self,
+        start: Start,
+        slots: u8,
+        int1: bool,
+    ) -> i32 {
         if !self.physical_controls {
             return UNSUPPORTED;
         }
@@ -162,7 +167,11 @@ impl Core {
         }
     }
 
-    pub(super) fn switch_task(&mut self, start: Start, origin: Origin) -> i32 {
+    pub(in crate::embedding::exports) fn switch_task(
+        &mut self,
+        start: Start,
+        origin: Origin,
+    ) -> i32 {
         if !self.physical_controls {
             return UNSUPPORTED;
         }

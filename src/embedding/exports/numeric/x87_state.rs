@@ -1,4 +1,4 @@
-use super::*;
+use crate::embedding::exports::*;
 use crate::x86::x87::State as X87State;
 use std::mem::{offset_of, size_of};
 
@@ -42,7 +42,7 @@ pub extern "C" fn core_import_x87() -> i32 {
 
 const _: () = assert!(size_of::<X87State>() == 104);
 
-pub(super) fn exception_json(state: &X87State) -> Option<serde_json::Value> {
+pub(in crate::embedding::exports) fn exception_json(state: &X87State) -> Option<serde_json::Value> {
     (state.pending() != 0).then(|| {
         serde_json::json!({
             "vector": 16,

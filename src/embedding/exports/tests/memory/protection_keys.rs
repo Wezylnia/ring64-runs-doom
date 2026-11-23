@@ -1,5 +1,7 @@
-use super::*;
-use crate::embedding::exports::protection_keys::core_protection_key;
+use crate::embedding::exports::{
+    memory::{paging, protection_keys::core_protection_key},
+    tests::*,
+};
 use crate::x86::paging::{CR4_PKE, State as Paging};
 use crate::x86::protection_keys::{PKRS_MSR, State as Keys};
 
