@@ -1,9 +1,4 @@
-import { DEBUG_LAYOUT } from '../../../../tests/support/debug-layout.js';
-import { TIME_LAYOUT } from '../../../../tests/support/time-layout.js';
-import {
-  PROTECTION_KEYS_LAYOUT,
-  PROTECTION_KEYS_STATE_SIZE,
-} from '../../../../tests/support/protection-keys-layout.js';
+import { stateLayout } from '../../state-layout.js';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
@@ -64,48 +59,7 @@ async function fixture(
       initializationError
         ? { error: 'fixture initialization rejected' }
         : {
-            size: PROTECTION_KEYS_STATE_SIZE,
-            time: TIME_LAYOUT,
-            protectionKeys: PROTECTION_KEYS_LAYOUT,
-            debug: DEBUG_LAYOUT,
-            scalarSize: 176,
-            xmm: 176,
-            xmmBytes: 256,
-            vectorScratch: 432,
-            mxcsr: 448,
-            mxcsrBytes: 4,
-            x87: {
-              offset: 456,
-              bytes: 104,
-              registers: 0,
-              registerBytes: 10,
-              controlWord: 80,
-              statusWord: 82,
-              tagWord: 84,
-              opcode: 86,
-              instructionPointer: 88,
-              dataPointer: 96,
-            },
-            deliveryEnabled: 600,
-            interrupts: { offset: 604, bytes: 12, irq: 0, nmiPending: 4, nmiBlocked: 8 },
-            event: {
-              offset: 560,
-              bytes: 40,
-              kind: 0,
-              vector: 4,
-              instructionPc: 8,
-              returnPc: 16,
-              savedFlags: 24,
-              errorCode: 32,
-              hasErrorCode: 36,
-            },
-            registers: 0,
-            flags: 128,
-            rip: 136,
-            remaining: 144,
-            repeatRemaining: 168,
-            interruptibility: 164,
-            interruptibilityBytes: 4,
+            ...stateLayout,
             reasons: ['dispatch', 'budget', 'stop'],
           },
     ),
