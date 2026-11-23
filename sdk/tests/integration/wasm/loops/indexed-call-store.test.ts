@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Core } from '../../../../src/wasm/core.js';
+import { observeArtifactImports } from '../../../../../tests/support/artifact-imports.js';
 import {
   BANK,
   PC,
@@ -20,10 +21,6 @@ test('an indexed near call preserves checked fetch and writes in a guarded handl
   const page = PC + 0x1000n;
   const rsp = page + 8n;
   const data = page + 0x40n;
-  const prototype = Core.prototype as unknown as {
-    artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
-  };
-  const imports = prototype.artifactImports;
   const compile = Core.prototype.compile;
   let handlerGuards = 0;
   let callBegins = 0;
@@ -33,8 +30,7 @@ test('an indexed near call preserves checked fetch and writes in a guarded handl
     if (pc === PC && !seeds?.length) return compile.call(this, pc, limits, [target, stop], false);
     return compile.call(this, pc, limits, seeds, regionPoints);
   };
-  prototype.artifactImports = function (observed) {
-    const env = imports.call(this, observed);
+  const restoreImports = observeArtifactImports((env) => {
     const guard = env.paged_loop_guard;
     if (typeof guard === 'function') {
       env.paged_loop_guard = (pc: bigint, width: number, flags: bigint, shadow: number) => {
@@ -57,8 +53,7 @@ test('an indexed near call preserves checked fetch and writes in a guarded handl
         return write(address, value);
       };
     }
-    return env;
-  };
+  });
   try {
     await usingPaged(
       compiler,
@@ -153,7 +148,7 @@ test('an indexed near call preserves checked fetch and writes in a guarded handl
       },
     );
   } finally {
-    prototype.artifactImports = imports;
+    restoreImports();
     Core.prototype.compile = compile;
   }
 });
@@ -164,10 +159,6 @@ test('near calls reuse the indexed stack write and replay observed faults', asyn
   const resume = PC + 2n;
   const stack = PC + 0x1000n;
   const rsp = stack + 8n;
-  const prototype = Core.prototype as unknown as {
-    artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
-  };
-  const imports = prototype.artifactImports;
   const compile = Core.prototype.compile;
   let checked = 0;
   let callFinishes = 0;
@@ -175,8 +166,7 @@ test('near calls reuse the indexed stack write and replay observed faults', asyn
     if (pc === PC && !seeds?.length) return compile.call(this, pc, limits, [target, resume], false);
     return compile.call(this, pc, limits, seeds, regionPoints);
   };
-  prototype.artifactImports = function (observed) {
-    const env = imports.call(this, observed);
+  const restoreImports = observeArtifactImports((env) => {
     const store = env.store;
     if (typeof store === 'function') {
       env.store = (address: bigint, width: number, value: bigint) => {
@@ -191,8 +181,7 @@ test('near calls reuse the indexed stack write and replay observed faults', asyn
         return finish(pc, ...args);
       };
     }
-    return env;
-  };
+  });
   try {
     await usingPaged(
       compiler,
@@ -292,7 +281,7 @@ test('near calls reuse the indexed stack write and replay observed faults', asyn
       },
     );
   } finally {
-    prototype.artifactImports = imports;
+    restoreImports();
     Core.prototype.compile = compile;
   }
 });

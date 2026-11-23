@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Core } from '../../../../src/wasm/core.js';
+import { observeArtifactImports } from '../../../../../tests/support/artifact-imports.js';
 import {
   BANK,
   PC,
@@ -18,10 +19,6 @@ test('sampled immediate push and pop preserve the stack store and precise interv
   const stop = pop + 1n;
   const afterSuccessor = stop + 3n;
   const compile = Core.prototype.compile;
-  const prototype = Core.prototype as unknown as {
-    artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
-  };
-  const imports = prototype.artifactImports;
   let begins = 0;
   let successorBegins = 0;
   Core.prototype.compile = function (pc, limits, seeds, regionPoints) {
@@ -36,8 +33,7 @@ test('sampled immediate push and pop preserve the stack store and precise interv
     }
     return compile.call(this, pc, limits, seeds, regionPoints);
   };
-  prototype.artifactImports = function (observed) {
-    const env = imports.call(this, observed);
+  const restoreImports = observeArtifactImports((env) => {
     const begin = env.debug_begin;
     if (typeof begin === 'function') {
       env.debug_begin = (pc: bigint, ...args: unknown[]) => {
@@ -46,8 +42,7 @@ test('sampled immediate push and pop preserve the stack store and precise interv
         return begin(pc, ...args);
       };
     }
-    return env;
-  };
+  });
   try {
     await usingPaged(
       compiler,
@@ -124,6 +119,6 @@ test('sampled immediate push and pop preserve the stack store and precise interv
     );
   } finally {
     Core.prototype.compile = compile;
-    prototype.artifactImports = imports;
+    restoreImports();
   }
 });

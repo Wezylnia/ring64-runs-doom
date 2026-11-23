@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Core } from '../../../../src/wasm/core.js';
+import { observeArtifactImports } from '../../../../../tests/support/artifact-imports.js';
 import {
   BANK,
   PC,
@@ -11,13 +11,8 @@ import {
 import { compiler } from './fixture.js';
 
 function observePairs(discriminator: number) {
-  const proto = Core.prototype as unknown as {
-    artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
-  };
-  const imports = proto.artifactImports;
   let accepted = 0;
-  proto.artifactImports = function (observed) {
-    const env = imports.call(this, observed);
+  const restoreImports = observeArtifactImports((env) => {
     const helper = env.x87;
     if (typeof helper === 'function') {
       env.x87 = (...args: [number, bigint, number, bigint, bigint, bigint]) => {
@@ -26,12 +21,11 @@ function observePairs(discriminator: number) {
         return result;
       };
     }
-    return env;
-  };
+  });
   return {
     count: () => accepted,
     restore: () => {
-      proto.artifactImports = imports;
+      restoreImports();
     },
   };
 }

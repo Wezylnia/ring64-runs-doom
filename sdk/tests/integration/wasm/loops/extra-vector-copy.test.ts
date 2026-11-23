@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Core } from '../../../../src/wasm/core.js';
+import { observeArtifactImports } from '../../../../../tests/support/artifact-imports.js';
 import { PC, initial, little, usingPaged } from '../../../../../tests/execution/paging/fixture.js';
 import { compiler } from './fixture.js';
 
@@ -42,17 +43,12 @@ test('one artifact keeps its original vector loop and an independently replayabl
       9: target,
     });
 
-  const proto = Core.prototype as unknown as {
-    artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
-  };
-  const imports = proto.artifactImports;
   let primary = 0;
   let secondary = 0;
   let secondaryBegins = 0;
   let refusePrimary = false;
   let artifactBytes = 0;
-  proto.artifactImports = function (observed) {
-    const env = imports.call(this, observed);
+  const restoreImports = observeArtifactImports((env) => {
     const guard = env.paged_sse_loop_guard;
     if (typeof guard === 'function') {
       env.paged_sse_loop_guard = (pc: bigint, width: number, flags: bigint, shadow: number) => {
@@ -77,8 +73,7 @@ test('one artifact keeps its original vector loop and an independently replayabl
         return begin(pc, ...args);
       };
     }
-    return env;
-  };
+  });
 
   try {
     await usingPaged(compiler, setup, async (cpu) => {
@@ -149,7 +144,7 @@ test('one artifact keeps its original vector loop and an independently replayabl
       if (secondary === secondaryBeforeCap) break;
     }
   } finally {
-    proto.artifactImports = imports;
+    restoreImports();
   }
 });
 
@@ -167,10 +162,6 @@ test('a sampled copy loop reuses quiet SSE fetch admission and keeps checked exi
   bytes.set(seed, 16);
   const expected = Uint8Array.from({ length: 64 }, (_, index) => seed[index % seed.length]!);
   const compile = Core.prototype.compile;
-  const prototype = Core.prototype as unknown as {
-    artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
-  };
-  const imports = prototype.artifactImports;
   let guards = 0;
   let windows = 0;
   let successorBegins = 0;
@@ -185,8 +176,7 @@ test('a sampled copy loop reuses quiet SSE fetch admission and keeps checked exi
     }
     return compile.call(this, pc, limits, seeds, regionPoints);
   };
-  prototype.artifactImports = function (observed) {
-    const env = imports.call(this, observed);
+  const restoreImports = observeArtifactImports((env) => {
     const guard = env.paged_sse_loop_guard;
     if (typeof guard === 'function') {
       env.paged_sse_loop_guard = (pc: bigint, ...args: unknown[]) => {
@@ -211,8 +201,7 @@ test('a sampled copy loop reuses quiet SSE fetch admission and keeps checked exi
         return begin(pc, ...args);
       };
     }
-    return env;
-  };
+  });
 
   try {
     await usingPaged(
@@ -297,6 +286,6 @@ test('a sampled copy loop reuses quiet SSE fetch admission and keeps checked exi
     );
   } finally {
     Core.prototype.compile = compile;
-    prototype.artifactImports = imports;
+    restoreImports();
   }
 });

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createCpu } from '../../../../src/index.js';
 import { Core } from '../../../../src/wasm/core.js';
+import { observeArtifactImports } from '../../../../../tests/support/artifact-imports.js';
 import { protectedSnapshot } from '../../../../../tests/support/context.js';
 import {
   LIMITS,
@@ -180,13 +181,8 @@ test('a retained flat vector write span follows remaps and executable aliases', 
     },
     memoryLimits: { maxBackings: 3, maxMappings: 2, maxBackingBytes: code.length + 32 },
   });
-  const prototype = Core.prototype as unknown as {
-    artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
-  };
-  const imports = prototype.artifactImports;
   let probes = 0;
-  prototype.artifactImports = function (observed) {
-    const env = imports.call(this, observed);
+  const restoreImports = observeArtifactImports((env) => {
     const write = env.write_span;
     if (typeof write === 'function') {
       env.write_span = (address: bigint, width: number, segment: number) => {
@@ -194,8 +190,7 @@ test('a retained flat vector write span follows remaps and executable aliases', 
         return write(address, width, segment);
       };
     }
-    return env;
-  };
+  });
   try {
     const start = initial(head, { 3: data });
     cpu.setState(start);
@@ -233,7 +228,7 @@ test('a retained flat vector write span follows remaps and executable aliases', 
     assert.deepEqual(cpu.readMemory(head, 4), hex('88776655'));
     assert.ok(cpu.inspectTranslations().every((row) => row.owner !== owner));
   } finally {
-    prototype.artifactImports = imports;
+    restoreImports();
     cpu.dispose();
   }
 });
@@ -517,21 +512,15 @@ test('flat memory rotates reuse checked spans and fault before changing flags', 
     },
     memoryLimits: { maxBackings: 3, maxMappings: 2, maxBackingBytes: code.length + 8 },
   });
-  const prototype = Core.prototype as unknown as {
-    artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
-  };
-  const imports = prototype.artifactImports;
   let checkedReads = 0;
-  prototype.artifactImports = function (observed) {
-    const env = imports.call(this, observed);
+  const restoreImports = observeArtifactImports((env) => {
     const read = env.segmented_load_for_write;
     assert.ok(typeof read === 'function');
     env.segmented_load_for_write = (address: bigint, width: number, segment: number) => {
       checkedReads++;
       return read(address, width, segment);
     };
-    return env;
-  };
+  });
   try {
     const flags = 0x42n;
     for (const [count, retired, offset, value, expectedFlags] of [
@@ -569,7 +558,7 @@ test('flat memory rotates reuse checked spans and fault before changing flags', 
       failingAddress: data,
     });
   } finally {
-    prototype.artifactImports = imports;
+    restoreImports();
     cpu.dispose();
   }
 });

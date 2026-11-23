@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Core } from '../../../../src/wasm/core.js';
+import { observeArtifactImports } from '../../../../../tests/support/artifact-imports.js';
 import { BANK, PC, initial, usingPaged } from '../../../../../tests/execution/paging/fixture.js';
 import { compiler } from './fixture.js';
 
@@ -15,15 +15,10 @@ test('paired vector windows preserve overlapping load/store order and exact chec
   ram.set(seed, 3);
   ram[0x100] = 0xf4;
 
-  const proto = Core.prototype as unknown as {
-    artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
-  };
-  const imports = proto.artifactImports;
   let accepted = 0;
   let refused = 0;
   let checkedBegins = 0;
-  proto.artifactImports = function (observed) {
-    const env = imports.call(this, observed);
+  const restoreImports = observeArtifactImports((env) => {
     const begin = env.debug_begin;
     if (typeof begin === 'function') {
       env.debug_begin = (pc: bigint, ...args: unknown[]) => {
@@ -40,8 +35,7 @@ test('paired vector windows preserve overlapping load/store order and exact chec
         return result;
       };
     }
-    return env;
-  };
+  });
 
   try {
     await usingPaged(
@@ -99,7 +93,7 @@ test('paired vector windows preserve overlapping load/store order and exact chec
       },
     );
   } finally {
-    proto.artifactImports = imports;
+    restoreImports();
   }
 });
 

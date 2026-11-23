@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Core } from '../../../../src/wasm/core.js';
+import { observeArtifactImports } from '../../../../../tests/support/artifact-imports.js';
 import { BANK, PC, initial, usingPaged } from '../../../../../tests/execution/paging/fixture.js';
 import { compiler } from './fixture.js';
 
@@ -22,14 +22,9 @@ test('an indexed write loop bypasses grouping on a large data leaf', async () =>
     expectedColors.setUint32(index * 4, ram[index] ? color : 0, true);
   }
 
-  const prototype = Core.prototype as unknown as {
-    artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
-  };
-  const imports = prototype.artifactImports;
   let lookups = 0;
   let unsuitable = 0;
-  prototype.artifactImports = function (observed) {
-    const env = imports.call(this, observed);
+  const restoreImports = observeArtifactImports((env) => {
     const group = env.paged_loop_indexed_dword_write;
     if (typeof group === 'function') {
       env.paged_loop_indexed_dword_write = (...args: [bigint, bigint, bigint, number]) => {
@@ -39,8 +34,7 @@ test('an indexed write loop bypasses grouping on a large data leaf', async () =>
         return result;
       };
     }
-    return env;
-  };
+  });
   try {
     await usingPaged(
       compiler,
@@ -73,7 +67,7 @@ test('an indexed write loop bypasses grouping on a large data leaf', async () =>
       },
     );
   } finally {
-    prototype.artifactImports = imports;
+    restoreImports();
   }
 });
 
@@ -89,13 +83,8 @@ test('indexed stores reuse full pages and reload the palette through a writable 
   const colors = new Uint8Array(4096);
   new DataView(colors.buffer).setUint32(8, 0x13572468, true);
 
-  const prototype = Core.prototype as unknown as {
-    artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
-  };
-  const imports = prototype.artifactImports;
   let resolutions = 0;
-  prototype.artifactImports = function (observed) {
-    const env = imports.call(this, observed);
+  const restoreImports = observeArtifactImports((env) => {
     const resolve = env.paged_loop_indexed_dword_write;
     if (typeof resolve === 'function') {
       env.paged_loop_indexed_dword_write = (...args: [bigint, bigint, bigint, number]) => {
@@ -103,8 +92,7 @@ test('indexed stores reuse full pages and reload the palette through a writable 
         return resolve(...args);
       };
     }
-    return env;
-  };
+  });
   try {
     await usingPaged(
       compiler,
@@ -158,7 +146,7 @@ test('indexed stores reuse full pages and reload the palette through a writable 
       },
     );
   } finally {
-    prototype.artifactImports = imports;
+    restoreImports();
   }
 });
 
@@ -262,13 +250,8 @@ test('paired dword reads keep live aliases and retire before a split-page fault'
   words.setUint32(0, 1, true);
   words.setUint32(4, 7, true);
   words.setUint32(4092, 9, true);
-  const prototype = Core.prototype as unknown as {
-    artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
-  };
-  const imports = prototype.artifactImports;
   let reused = 0;
-  prototype.artifactImports = function (observed) {
-    const env = imports.call(this, observed);
+  const restoreImports = observeArtifactImports((env) => {
     const readSpan = env.paged_loop_read_span;
     if (typeof readSpan === 'function') {
       env.paged_loop_read_span = (address: bigint, bytes: number, segment: number) => {
@@ -277,8 +260,7 @@ test('paired dword reads keep live aliases and retire before a split-page fault'
         return result;
       };
     }
-    return env;
-  };
+  });
   try {
     await usingPaged(
       compiler,
@@ -307,7 +289,7 @@ test('paired dword reads keep live aliases and retire before a split-page fault'
       },
     );
   } finally {
-    prototype.artifactImports = imports;
+    restoreImports();
   }
 });
 
@@ -320,14 +302,9 @@ test('the paired read window sees intervening writes and respects a clipped back
   words.setUint32(4, 1, true);
   words.setUint32(8, 7, true);
 
-  const prototype = Core.prototype as unknown as {
-    artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
-  };
-  const imports = prototype.artifactImports;
   let hits = 0;
   let clipped = 0;
-  prototype.artifactImports = function (observed) {
-    const env = imports.call(this, observed);
+  const restoreImports = observeArtifactImports((env) => {
     const readSpan = env.paged_loop_read_span;
     if (typeof readSpan === 'function') {
       env.paged_loop_read_span = (address: bigint, bytes: number, segment: number) => {
@@ -339,8 +316,7 @@ test('the paired read window sees intervening writes and respects a clipped back
         return result;
       };
     }
-    return env;
-  };
+  });
   try {
     await usingPaged(
       compiler,
@@ -370,7 +346,7 @@ test('the paired read window sees intervening writes and respects a clipped back
       },
     );
   } finally {
-    prototype.artifactImports = imports;
+    restoreImports();
   }
 });
 
@@ -384,14 +360,9 @@ test('a tail read carries live paired operands only across its own loop edge', a
   words.setUint32(4, 23, true);
   words.setUint32(8, 1, true);
   words.setUint32(12, 7, true);
-  const prototype = Core.prototype as unknown as {
-    artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
-  };
-  const imports = prototype.artifactImports;
   let pairs = 0;
   let resolvedTails = 0;
-  prototype.artifactImports = function (observed) {
-    const env = imports.call(this, observed);
+  const restoreImports = observeArtifactImports((env) => {
     const span = env.paged_loop_read_span;
     if (typeof span === 'function') {
       env.paged_loop_read_span = (address: bigint, bytes: number, segment: number) => {
@@ -400,8 +371,7 @@ test('a tail read carries live paired operands only across its own loop edge', a
         return span(address, bytes, segment);
       };
     }
-    return env;
-  };
+  });
   try {
     await usingPaged(
       compiler,
@@ -438,6 +408,6 @@ test('a tail read carries live paired operands only across its own loop edge', a
       },
     );
   } finally {
-    prototype.artifactImports = imports;
+    restoreImports();
   }
 });

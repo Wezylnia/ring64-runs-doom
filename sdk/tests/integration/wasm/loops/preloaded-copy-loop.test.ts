@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Core } from '../../../../src/wasm/core.js';
+import { observeArtifactImports } from '../../../../../tests/support/artifact-imports.js';
 import { snapshot } from '../../../../../tests/execution/far-control/fixture.js';
 import {
   BANK,
@@ -21,14 +21,9 @@ test('a stack-bounded paged vector loop reuses its proved window and keeps preci
   const bytes = new Uint8Array(4096);
   for (let i = 0; i < 96; i++) bytes[i] = i * 5;
   bytes.set(little([64n]), 32);
-  const prototype = Core.prototype as unknown as {
-    artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
-  };
-  const imports = prototype.artifactImports;
   let stackReads = 0;
   let checkedCompares = 0;
-  prototype.artifactImports = function (observed) {
-    const env = imports.call(this, observed);
+  const restoreImports = observeArtifactImports((env) => {
     const read = env.paged_loop_read_span;
     if (typeof read === 'function') {
       env.paged_loop_read_span = (address: bigint, width: number, segment: number) => {
@@ -43,8 +38,7 @@ test('a stack-bounded paged vector loop reuses its proved window and keeps preci
         return begin(pc, ...args);
       };
     }
-    return env;
-  };
+  });
   try {
     await usingPaged(
       compiler,
@@ -137,6 +131,6 @@ test('a stack-bounded paged vector loop reuses its proved window and keeps preci
       },
     );
   } finally {
-    prototype.artifactImports = imports;
+    restoreImports();
   }
 });

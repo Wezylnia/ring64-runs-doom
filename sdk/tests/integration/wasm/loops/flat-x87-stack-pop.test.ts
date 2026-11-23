@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Core } from '../../../../src/wasm/core.js';
+import { observeArtifactImports } from '../../../../../tests/support/artifact-imports.js';
 import { context, input, using } from '../../../../../tests/execution/modes/fixture.js';
 import { compiler } from './fixture.js';
 
@@ -16,13 +16,8 @@ test('inline x87 operations preserve raw bank bits and checked retirement bounda
     instructionPointer: 0x5500n,
     dataPointer: 0x7700n,
   };
-  const prototype = Core.prototype as unknown as {
-    artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
-  };
-  const imports = prototype.artifactImports;
   let helperCalls = 0;
-  prototype.artifactImports = function (observed) {
-    const env = imports.call(this, observed);
+  const restoreImports = observeArtifactImports((env) => {
     const helper = env.x87;
     if (typeof helper === 'function') {
       env.x87 = (...args: [number, bigint, number, bigint, bigint, bigint]) => {
@@ -30,8 +25,7 @@ test('inline x87 operations preserve raw bank bits and checked retirement bounda
         return helper(...args);
       };
     }
-    return env;
-  };
+  });
   try {
     // FXCH ST(1); FUCOMIP ST(1) swaps slots 7 and 0 before comparing.
     await using(compiler, 'd9c9dfe9', context('protected'), async (cpu) => {
@@ -233,6 +227,6 @@ test('inline x87 operations preserve raw bank bits and checked retirement bounda
       assert.deepEqual(cpu.readX87State(), pending);
     });
   } finally {
-    prototype.artifactImports = imports;
+    restoreImports();
   }
 });

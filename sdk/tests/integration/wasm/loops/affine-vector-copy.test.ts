@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Core } from '../../../../src/wasm/core.js';
+import { observeArtifactImports } from '../../../../../tests/support/artifact-imports.js';
 import { BANK, PC, initial, usingPaged } from '../../../../../tests/execution/paging/fixture.js';
 import { COPY_FILL_INDEX, compiler } from './fixture.js';
 
@@ -14,15 +14,10 @@ test('copy windows preserve interleaved destination arithmetic and alias order',
   const ram = new Uint8Array(0x3000);
   for (let wave = 0; wave < 6; wave++) ram.set(seed, 3 + 64 * wave);
 
-  const proto = Core.prototype as unknown as {
-    artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
-  };
-  const imports = proto.artifactImports;
   let accepted = 0;
   let declined = 0;
   let checkedBegins = 0;
-  proto.artifactImports = function (observed) {
-    const env = imports.call(this, observed);
+  const restoreImports = observeArtifactImports((env) => {
     const begin = env.debug_begin;
     if (typeof begin === 'function') {
       env.debug_begin = (pc: bigint, ...args: unknown[]) => {
@@ -40,8 +35,7 @@ test('copy windows preserve interleaved destination arithmetic and alias order',
         return result;
       };
     }
-    return env;
-  };
+  });
 
   try {
     await usingPaged(
@@ -96,6 +90,6 @@ test('copy windows preserve interleaved destination arithmetic and alias order',
       },
     );
   } finally {
-    proto.artifactImports = imports;
+    restoreImports();
   }
 });

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Core } from '../../../../src/wasm/core.js';
+import { observeArtifactImports } from '../../../../../tests/support/artifact-imports.js';
 import {
   BANK,
   PC,
@@ -12,17 +13,12 @@ import {
 import { compiler } from './fixture.js';
 
 test('paged ADD and ROL reuse a writable and readable leaf and replay invalid accesses', async () => {
-  const prototype = Core.prototype as unknown as {
-    artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
-  };
-  const imports = prototype.artifactImports;
   const add = PC + 2n;
   const stop = PC + 6n;
   const address = PC + 0x1040n;
   let reads = 0;
   let stores = 0;
-  prototype.artifactImports = function (observed) {
-    const env = imports.call(this, observed);
+  const restoreImports = observeArtifactImports((env) => {
     const load = env.load_for_write;
     if (typeof load === 'function') {
       env.load_for_write = (target: bigint, width: number) => {
@@ -37,8 +33,7 @@ test('paged ADD and ROL reuse a writable and readable leaf and replay invalid ac
         return store(target, width, value);
       };
     }
-    return env;
-  };
+  });
   try {
     await usingPaged(
       compiler,
@@ -126,7 +121,7 @@ test('paged ADD and ROL reuse a writable and readable leaf and replay invalid ac
       },
     );
   } finally {
-    prototype.artifactImports = imports;
+    restoreImports();
   }
 });
 
@@ -140,18 +135,13 @@ test('guarded handler ADD and ROL keep precise RMW boundaries', async () => {
   const stop = PC + 9n;
   const stack = PC + 0x1000n;
   const data = stack + 0x40n;
-  const prototype = Core.prototype as unknown as {
-    artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
-  };
-  const imports = prototype.artifactImports;
   const compile = Core.prototype.compile;
   Core.prototype.compile = function (pc, limits, seeds, regionPoints) {
     if (pc === PC && !seeds?.length) return compile.call(this, pc, limits, [handler, stop], false);
     return compile.call(this, pc, limits, seeds, regionPoints);
   };
   let begins = 0;
-  prototype.artifactImports = function (observed) {
-    const env = imports.call(this, observed);
+  const restoreImports = observeArtifactImports((env) => {
     const begin = env.debug_begin;
     if (typeof begin === 'function') {
       env.debug_begin = (pc: bigint, flags: bigint, shadow: number) => {
@@ -159,8 +149,7 @@ test('guarded handler ADD and ROL keep precise RMW boundaries', async () => {
         return begin(pc, flags, shadow);
       };
     }
-    return env;
-  };
+  });
   try {
     await usingPaged(
       compiler,
@@ -208,7 +197,7 @@ test('guarded handler ADD and ROL keep precise RMW boundaries', async () => {
       },
     );
   } finally {
-    prototype.artifactImports = imports;
+    restoreImports();
     Core.prototype.compile = compile;
   }
 });

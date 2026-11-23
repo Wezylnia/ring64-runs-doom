@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Core } from '../../../../src/wasm/core.js';
+import { observeArtifactImports } from '../../../../../tests/support/artifact-imports.js';
 import { BANK, PC, initial, usingPaged } from '../../../../../tests/execution/paging/fixture.js';
 import { COPY_FILL_INDEX, compiler } from './fixture.js';
 
@@ -12,14 +12,9 @@ test('a single vector pair reserves its successor and replays lost admissions', 
   const seed = Uint8Array.from({ length: 16 }, (_, index) => 7 * index + 1);
   const ram = new Uint8Array(4096);
   ram.set(seed, 3);
-  const proto = Core.prototype as unknown as {
-    artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
-  };
-  const imports = proto.artifactImports;
   let accepted = 0;
   let calls = 0;
-  proto.artifactImports = function (observed) {
-    const env = imports.call(this, observed);
+  const restoreImports = observeArtifactImports((env) => {
     const copy = env.paged_loop_copy_window;
     if (typeof copy === 'function') {
       env.paged_loop_copy_window = (src: bigint, dst: bigint, width: number) => {
@@ -30,8 +25,7 @@ test('a single vector pair reserves its successor and replays lost admissions', 
         return result;
       };
     }
-    return env;
-  };
+  });
   try {
     await usingPaged(
       compiler,
@@ -80,7 +74,7 @@ test('a single vector pair reserves its successor and replays lost admissions', 
       },
     );
   } finally {
-    proto.artifactImports = imports;
+    restoreImports();
   }
 });
 
@@ -94,15 +88,10 @@ test('straight paged vector copies keep alias ordering and replay precise bounda
   const ram = new Uint8Array(0x3000);
   for (let wave = 0; wave < 8; wave++) ram.set(seed, 3 + wave * 64);
 
-  const proto = Core.prototype as unknown as {
-    artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
-  };
-  const imports = proto.artifactImports;
   let accepted = 0;
   let refused = 0;
   let checkedBegins = 0;
-  proto.artifactImports = function (observed) {
-    const env = imports.call(this, observed);
+  const restoreImports = observeArtifactImports((env) => {
     const begin = env.debug_begin;
     if (typeof begin === 'function') {
       env.debug_begin = (pc: bigint, ...args: unknown[]) => {
@@ -120,8 +109,7 @@ test('straight paged vector copies keep alias ordering and replay precise bounda
         return result;
       };
     }
-    return env;
-  };
+  });
   try {
     await usingPaged(
       compiler,
@@ -196,6 +184,6 @@ test('straight paged vector copies keep alias ordering and replay precise bounda
       },
     );
   } finally {
-    proto.artifactImports = imports;
+    restoreImports();
   }
 });

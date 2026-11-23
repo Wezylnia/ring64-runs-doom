@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Core } from '../../../../src/wasm/core.js';
+import { observeArtifactImports } from '../../../../../tests/support/artifact-imports.js';
 import { BANK, PC, initial, usingPaged } from '../../../../../tests/execution/paging/fixture.js';
 import { compiler } from './fixture.js';
 
@@ -15,14 +15,9 @@ test('guarded vector copies preserve exact stop, page fault, debug and code writ
   ram.set(pattern, 3);
   ram[0x100] = 0xf4; // HLT for the code-alias continuation.
 
-  const prototype = Core.prototype as unknown as {
-    artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
-  };
-  const imports = prototype.artifactImports;
   let successes = 0;
   let refusals = 0;
-  prototype.artifactImports = function (observed) {
-    const env = imports.call(this, observed);
+  const restoreImports = observeArtifactImports((env) => {
     const store = env.paged_loop_write_block;
     if (typeof store === 'function') {
       env.paged_loop_write_block = (address: bigint, pointer: number) => {
@@ -32,8 +27,7 @@ test('guarded vector copies preserve exact stop, page fault, debug and code writ
         return result;
       };
     }
-    return env;
-  };
+  });
 
   try {
     await usingPaged(
@@ -87,6 +81,6 @@ test('guarded vector copies preserve exact stop, page fault, debug and code writ
       },
     );
   } finally {
-    prototype.artifactImports = imports;
+    restoreImports();
   }
 });

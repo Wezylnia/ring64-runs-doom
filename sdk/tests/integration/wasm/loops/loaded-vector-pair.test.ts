@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Core } from '../../../../src/wasm/core.js';
+import { observeArtifactImports } from '../../../../../tests/support/artifact-imports.js';
 import { BANK, PC, initial, usingPaged } from '../../../../../tests/execution/paging/fixture.js';
 import { compiler } from './fixture.js';
 
@@ -16,15 +16,10 @@ test('paged vector pairs retain both loads before either aliased store', async (
   const values = [toXmm(sample.subarray(0, 16)), toXmm(sample.subarray(16))];
   const data = new Uint8Array(0x3000);
   for (let wave = 0; wave < 8; wave++) data.set(sample, 3 + wave * 64);
-  const prototype = Core.prototype as unknown as {
-    artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
-  };
-  const imports = prototype.artifactImports;
   let accepted = 0;
   let refused = 0;
   let checkedBegins = 0;
-  prototype.artifactImports = function (observed) {
-    const env = imports.call(this, observed);
+  const restoreImports = observeArtifactImports((env) => {
     const begin = env.debug_begin;
     if (typeof begin === 'function') {
       env.debug_begin = (pc: bigint, ...args: unknown[]) => {
@@ -42,8 +37,7 @@ test('paged vector pairs retain both loads before either aliased store', async (
         return result;
       };
     }
-    return env;
-  };
+  });
   try {
     await usingPaged(
       compiler,
@@ -92,6 +86,6 @@ test('paged vector pairs retain both loads before either aliased store', async (
       },
     );
   } finally {
-    prototype.artifactImports = imports;
+    restoreImports();
   }
 });

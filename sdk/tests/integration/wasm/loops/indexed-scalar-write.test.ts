@@ -1,19 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Core } from '../../../../src/wasm/core.js';
+import { observeArtifactImports } from '../../../../../tests/support/artifact-imports.js';
 import { PC, initial, little, usingPaged } from '../../../../../tests/execution/paging/fixture.js';
 import { compiler } from './fixture.js';
 
 test('an ordinary paged MOV reuses a writable leaf and replays for a data breakpoint', async () => {
-  const prototype = Core.prototype as unknown as {
-    artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
-  };
-  const imports = prototype.artifactImports;
   const address = PC + 0x1040n;
   const stop = PC + 2n;
   let calls = 0;
-  prototype.artifactImports = function (observed) {
-    const env = imports.call(this, observed);
+  const restoreImports = observeArtifactImports((env) => {
     const store = env.store;
     if (typeof store === 'function') {
       env.store = (target: bigint, width: number, value: bigint) => {
@@ -21,8 +17,7 @@ test('an ordinary paged MOV reuses a writable leaf and replays for a data breakp
         return store(target, width, value);
       };
     }
-    return env;
-  };
+  });
   try {
     await usingPaged(
       compiler,
@@ -55,15 +50,11 @@ test('an ordinary paged MOV reuses a writable leaf and replays for a data breakp
       },
     );
   } finally {
-    prototype.artifactImports = imports;
+    restoreImports();
   }
 });
 
 test('sampled PUSH reuses a checked writable stack leaf and honors a data breakpoint', async () => {
-  const prototype = Core.prototype as unknown as {
-    artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
-  };
-  const imports = prototype.artifactImports;
   const compile = Core.prototype.compile;
   const pop = PC + 2n;
   const stop = PC + 3n;
@@ -75,8 +66,7 @@ test('sampled PUSH reuses a checked writable stack leaf and honors a data breakp
     }
     return compile.call(this, pc, limits, seeds, regionPoints);
   };
-  prototype.artifactImports = function (observed) {
-    const env = imports.call(this, observed);
+  const restoreImports = observeArtifactImports((env) => {
     const store = env.store;
     if (typeof store === 'function') {
       env.store = (address: bigint, width: number, value: bigint) => {
@@ -84,8 +74,7 @@ test('sampled PUSH reuses a checked writable stack leaf and honors a data breakp
         return store(address, width, value);
       };
     }
-    return env;
-  };
+  });
   try {
     await usingPaged(
       compiler,
@@ -120,7 +109,7 @@ test('sampled PUSH reuses a checked writable stack leaf and honors a data breakp
       },
     );
   } finally {
-    prototype.artifactImports = imports;
+    restoreImports();
     Core.prototype.compile = compile;
   }
 });

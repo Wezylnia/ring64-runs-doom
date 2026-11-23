@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createCpu } from '../../../../src/index.js';
 import { Core } from '../../../../src/wasm/core.js';
+import { observeArtifactImports } from '../../../../../tests/support/artifact-imports.js';
 import { protectedSnapshot } from '../../../../../tests/support/context.js';
 import { LIMITS, hex, initial } from '../../../../../tests/support/fixture.js';
 import { compiler } from './fixture.js';
@@ -354,13 +355,8 @@ test('flat write chains preserve prior effects and exit on a code alias write', 
     if (pc === head && !entries?.length) return compile.call(this, pc, limits, seeds, true);
     return compile.call(this, pc, limits, entries, regionPoints);
   };
-  const prototype = Core.prototype as unknown as {
-    artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
-  };
-  const imports = prototype.artifactImports;
   let probes = 0;
-  prototype.artifactImports = function (observed) {
-    const env = imports.call(this, observed);
+  const restoreImports = observeArtifactImports((env) => {
     const write = env.write_span;
     if (typeof write === 'function') {
       env.write_span = (address: bigint, width: number, segment: number) => {
@@ -368,8 +364,7 @@ test('flat write chains preserve prior effects and exit on a code alias write', 
         return write(address, width, segment);
       };
     }
-    return env;
-  };
+  });
   try {
     const cpu = await createCpu({
       compiler,
@@ -547,7 +542,7 @@ test('flat write chains preserve prior effects and exit on a code alias write', 
       cpu.dispose();
     }
   } finally {
-    prototype.artifactImports = imports;
+    restoreImports();
     Core.prototype.compile = compile;
   }
 });

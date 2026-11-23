@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Core } from '../../../../src/wasm/core.js';
+import { observeArtifactImports } from '../../../../../tests/support/artifact-imports.js';
 import { snapshot } from '../../../../../tests/execution/far-control/fixture.js';
 import {
   BANK,
@@ -17,10 +18,6 @@ test('sampled quiet completion keeps branch, single-step, and execute breakpoint
   const firstIncrement = PC + 8n;
   const secondIncrement = PC + 11n;
   const stop = PC + 14n;
-  const prototype = Core.prototype as unknown as {
-    artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
-  };
-  const imports = prototype.artifactImports;
   const compile = Core.prototype.compile;
   let sampled = false;
   Core.prototype.compile = function (pc, limits, seeds, regionPoints) {
@@ -36,8 +33,7 @@ test('sampled quiet completion keeps branch, single-step, and execute breakpoint
   };
   let finishes = 0;
   let shortPrefixes = 0;
-  prototype.artifactImports = function (observed) {
-    const env = imports.call(this, observed);
+  const restoreImports = observeArtifactImports((env) => {
     const guard = env.paged_loop_guard;
     if (typeof guard === 'function') {
       env.paged_loop_guard = (pc: bigint, bytes: number, flags: bigint, shadow: number) => {
@@ -53,8 +49,7 @@ test('sampled quiet completion keeps branch, single-step, and execute breakpoint
         return finish(...args);
       };
     }
-    return env;
-  };
+  });
   try {
     for (sampled of [false, true]) {
       await usingPaged(compiler, { code }, async (cpu) => {
@@ -95,7 +90,7 @@ test('sampled quiet completion keeps branch, single-step, and execute breakpoint
       });
     }
   } finally {
-    prototype.artifactImports = imports;
+    restoreImports();
     Core.prototype.compile = compile;
   }
 });
@@ -107,10 +102,6 @@ test('a sampled register prefix preserves stop and budget at an external branch 
   const fallthrough = PC + 10n;
   const stop = PC + 13n;
   const target = PC + 4096n;
-  const prototype = Core.prototype as unknown as {
-    artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
-  };
-  const imports = prototype.artifactImports;
   const compile = Core.prototype.compile;
   let admissions = 0;
   Core.prototype.compile = function (pc, limits, seeds, regionPoints) {
@@ -118,8 +109,7 @@ test('a sampled register prefix preserves stop and budget at an external branch 
       return compile.call(this, pc, limits, [PC, branch, fallthrough, stop], true);
     return compile.call(this, pc, limits, seeds, regionPoints);
   };
-  prototype.artifactImports = function (observed) {
-    const env = imports.call(this, observed);
+  const restoreImports = observeArtifactImports((env) => {
     const guard = env.paged_loop_guard;
     if (typeof guard === 'function') {
       env.paged_loop_guard = (pc: bigint, bytes: number, flags: bigint, shadow: number) => {
@@ -128,8 +118,7 @@ test('a sampled register prefix preserves stop and budget at an external branch 
         return result;
       };
     }
-    return env;
-  };
+  });
   try {
     await usingPaged(compiler, { code }, async (cpu) => {
       const enter = (rax: bigint) => cpu.setState(initial(PC, { 0: rax, 1: 5n }));
@@ -167,7 +156,7 @@ test('a sampled register prefix preserves stop and budget at an external branch 
       assert.equal(beforeBranch.state.rip, branch);
     });
   } finally {
-    prototype.artifactImports = imports;
+    restoreImports();
     Core.prototype.compile = compile;
   }
 });
@@ -177,18 +166,13 @@ test('sampled fallthrough branches retire only the executed prefix and its loads
   // CMP ECX,7; JE second; HLT; first: INC EBX twice; HLT; second: INC ESI twice; HLT.
   const offsets = [0, 2, 5, 7, 10, 12, 15, 17, 18, 20, 22, 23, 25, 27];
   const compile = Core.prototype.compile;
-  const prototype = Core.prototype as unknown as {
-    artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
-  };
-  const imports = prototype.artifactImports;
   const addr = (offset: number) => PC + BigInt(offset);
   Core.prototype.compile = function (pc, limits, seeds, regionPoints) {
     if (pc === PC && !seeds?.length) return compile.call(this, pc, limits, offsets.map(addr), true);
     return compile.call(this, pc, limits, seeds, regionPoints);
   };
   let combined = 0;
-  prototype.artifactImports = function (observed) {
-    const env = imports.call(this, observed);
+  const restoreImports = observeArtifactImports((env) => {
     const guard = env.paged_loop_guard;
     if (typeof guard === 'function') {
       env.paged_loop_guard = (pc: bigint, bytes: number, ...args: unknown[]) => {
@@ -197,8 +181,7 @@ test('sampled fallthrough branches retire only the executed prefix and its loads
         return result;
       };
     }
-    return env;
-  };
+  });
   try {
     for (const operand of ['89e9', '8b0f']) {
       const code = '31d283f801740b83c202' + operand + '83f9077406f4ffc3ffc3f4ffc6ffc6f4';
@@ -252,7 +235,7 @@ test('sampled fallthrough branches retire only the executed prefix and its loads
     }
   } finally {
     Core.prototype.compile = compile;
-    prototype.artifactImports = imports;
+    restoreImports();
   }
 });
 
@@ -321,10 +304,6 @@ test('sampled direct jumps carry quiet fetch only within a native entry', async 
   // JMP second; NOP; NOP; JMP stop; HLT.
   const second = PC + 4n;
   const stop = PC + 6n;
-  const prototype = Core.prototype as unknown as {
-    artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
-  };
-  const imports = prototype.artifactImports;
   const compile = Core.prototype.compile;
   const begins: bigint[] = [];
   Core.prototype.compile = function (pc, limits, seeds, regionPoints) {
@@ -332,8 +311,7 @@ test('sampled direct jumps carry quiet fetch only within a native entry', async 
       return compile.call(this, pc, limits, [PC, second, stop], true);
     return compile.call(this, pc, limits, seeds, regionPoints);
   };
-  prototype.artifactImports = function (observed) {
-    const env = imports.call(this, observed);
+  const restoreImports = observeArtifactImports((env) => {
     const begin = env.debug_begin;
     if (typeof begin === 'function') {
       env.debug_begin = (pc: bigint, flags: bigint, shadow: number) => {
@@ -341,8 +319,7 @@ test('sampled direct jumps carry quiet fetch only within a native entry', async 
         return begin(pc, flags, shadow);
       };
     }
-    return env;
-  };
+  });
   try {
     await usingPaged(compiler, { code: 'eb029090eb00f4' }, async (cpu) => {
       for (let wave = 0; wave < 3; wave++) {
@@ -365,7 +342,7 @@ test('sampled direct jumps carry quiet fetch only within a native entry', async 
       assert.equal(watched.state.rip, second);
     });
   } finally {
-    prototype.artifactImports = imports;
+    restoreImports();
     Core.prototype.compile = compile;
   }
 });
@@ -378,14 +355,9 @@ test('a taken same-page prefix branch carries only the immediately preceding fet
   const source = PC + 0x1000n;
   const data = new Uint8Array(4096);
   data.set([13, 0, 0, 0, 64]);
-  const prototype = Core.prototype as unknown as {
-    artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
-  };
-  const imports = prototype.artifactImports;
   let headGuards = 0;
   let tailGuards = 0;
-  prototype.artifactImports = function (observed) {
-    const env = imports.call(this, observed);
+  const restoreImports = observeArtifactImports((env) => {
     const guard = env.paged_loop_guard;
     if (typeof guard === 'function') {
       env.paged_loop_guard = (pc: bigint, bytes: number, flags: bigint, shadow: number) => {
@@ -394,8 +366,7 @@ test('a taken same-page prefix branch carries only the immediately preceding fet
         return guard(pc, bytes, flags, shadow);
       };
     }
-    return env;
-  };
+  });
   try {
     await usingPaged(
       compiler,
@@ -458,7 +429,7 @@ test('a taken same-page prefix branch carries only the immediately preceding fet
       },
     );
   } finally {
-    prototype.artifactImports = imports;
+    restoreImports();
   }
 });
 
@@ -468,14 +439,9 @@ test('guarded scalar read prefixes preserve stop, single-step, and split-page fa
   const source = PC + 0x1001n;
   const data = new Uint8Array(4096);
   data.set([0x65, 0x87], 1);
-  const prototype = Core.prototype as unknown as {
-    artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
-  };
-  const imports = prototype.artifactImports;
   let accepted = 0;
   let refused = 0;
-  prototype.artifactImports = function (observed) {
-    const env = imports.call(this, observed);
+  const restoreImports = observeArtifactImports((env) => {
     const read = env.paged_loop_read_span;
     if (typeof read === 'function') {
       env.paged_loop_read_span = (address: bigint, width: number, segment: number) => {
@@ -485,8 +451,7 @@ test('guarded scalar read prefixes preserve stop, single-step, and split-page fa
         return result;
       };
     }
-    return env;
-  };
+  });
   try {
     await usingPaged(
       compiler,
@@ -549,17 +514,13 @@ test('guarded scalar read prefixes preserve stop, single-step, and split-page fa
       },
     );
   } finally {
-    prototype.artifactImports = imports;
+    restoreImports();
   }
 });
 
 test('guarded MOVZX prefixes reuse live read translations across entries and revoke on host remap', async () => {
   const source = PC + 0x1001n;
   const stop = PC + 11n;
-  const prototype = Core.prototype as unknown as {
-    artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
-  };
-  const imports = prototype.artifactImports;
   const compile = Core.prototype.compile;
   let readCalls = 0;
   let acceptedGuards = 0;
@@ -568,8 +529,7 @@ test('guarded MOVZX prefixes reuse live read translations across entries and rev
       return compile.call(this, pc, limits, [PC, PC + 3n, PC + 6n, PC + 8n, stop], true);
     return compile.call(this, pc, limits, seeds, regionPoints);
   };
-  prototype.artifactImports = function (observed) {
-    const env = imports.call(this, observed);
+  const restoreImports = observeArtifactImports((env) => {
     const read = env.paged_loop_read_span;
     if (typeof read === 'function') {
       env.paged_loop_read_span = (address: bigint, width: number, segment: number) => {
@@ -585,8 +545,7 @@ test('guarded MOVZX prefixes reuse live read translations across entries and rev
         return proof;
       };
     }
-    return env;
-  };
+  });
 
   const original = new Uint8Array(4096);
   original.set([0x65, 0x87], 1);
@@ -732,16 +691,12 @@ test('guarded MOVZX prefixes reuse live read translations across entries and rev
       },
     );
   } finally {
-    prototype.artifactImports = imports;
+    restoreImports();
     Core.prototype.compile = compile;
   }
 });
 
 test('sampled stack comparisons retire with their branch and replay an unavailable operand precisely', async () => {
-  const prototype = Core.prototype as unknown as {
-    artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
-  };
-  const imports = prototype.artifactImports;
   const compile = Core.prototype.compile;
   const source = PC + 0x1000n;
   const data = new Uint8Array(4096);
@@ -754,8 +709,7 @@ test('sampled stack comparisons retire with their branch and replay an unavailab
     if (pc === PC && !seeds?.length) return compile.call(this, pc, limits, corridor, true);
     return compile.call(this, pc, limits, seeds, regionPoints);
   };
-  prototype.artifactImports = function (observed) {
-    const env = imports.call(this, observed);
+  const restoreImports = observeArtifactImports((env) => {
     const guard = env.paged_loop_guard;
     if (typeof guard === 'function') {
       env.paged_loop_guard = (pc: bigint, count: number, flags: bigint, shadow: number) => {
@@ -775,8 +729,7 @@ test('sampled stack comparisons retire with their branch and replay an unavailab
         return result;
       };
     }
-    return env;
-  };
+  });
   try {
     for (const add of ['', '4883c201']) {
       // Optional ADD RDX,1; CMP RAX,[RSP]; JB stop; INC RCX; HLT.
@@ -865,7 +818,7 @@ test('sampled stack comparisons retire with their branch and replay an unavailab
       },
     );
   } finally {
-    prototype.artifactImports = imports;
+    restoreImports();
     Core.prototype.compile = compile;
   }
 });
@@ -882,10 +835,6 @@ test('a short indexed handler prefix preserves interior stops and operand faults
   const ram = new Uint8Array(4096);
   ram[0x40] = 2;
 
-  const prototype = Core.prototype as unknown as {
-    artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
-  };
-  const imports = prototype.artifactImports;
   const compile = Core.prototype.compile;
   let prefixBegins = 0;
   let storeBegins = 0;
@@ -893,8 +842,7 @@ test('a short indexed handler prefix preserves interior stops and operand faults
     if (pc === PC && !seeds?.length) return compile.call(this, pc, limits, [target, stop], false);
     return compile.call(this, pc, limits, seeds, regionPoints);
   };
-  prototype.artifactImports = function (observed) {
-    const env = imports.call(this, observed);
+  const restoreImports = observeArtifactImports((env) => {
     const begin = env.debug_begin;
     if (typeof begin === 'function') {
       env.debug_begin = (pc: bigint, flags: bigint, shadow: number) => {
@@ -903,8 +851,7 @@ test('a short indexed handler prefix preserves interior stops and operand faults
         return begin(pc, flags, shadow);
       };
     }
-    return env;
-  };
+  });
   try {
     await usingPaged(
       compiler,
@@ -965,7 +912,7 @@ test('a short indexed handler prefix preserves interior stops and operand faults
       },
     );
   } finally {
-    prototype.artifactImports = imports;
+    restoreImports();
     Core.prototype.compile = compile;
   }
 });

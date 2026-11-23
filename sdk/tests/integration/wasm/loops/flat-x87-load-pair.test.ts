@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createCpu } from '../../../../src/index.js';
-import { Core } from '../../../../src/wasm/core.js';
+import { observeArtifactImports } from '../../../../../tests/support/artifact-imports.js';
 import { protectedSnapshot } from '../../../../../tests/support/context.js';
 import { LIMITS, hex, initial } from '../../../../../tests/support/fixture.js';
 import { compiler, head, mapping, readOnly } from './fixture.js';
@@ -29,13 +29,8 @@ test('flat x87 register-load pairs recheck retained reads after remapping', asyn
     },
     memoryLimits: { maxBackings: 4, maxMappings: 2, maxBackingBytes: code.length + 11 },
   });
-  const prototype = Core.prototype as unknown as {
-    artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
-  };
-  const imports = prototype.artifactImports;
   let pairResults: number[] = [];
-  prototype.artifactImports = function (observed) {
-    const env = imports.call(this, observed);
+  const restoreImports = observeArtifactImports((env) => {
     const helper = env.x87;
     if (typeof helper === 'function') {
       env.x87 = (...args: [number, bigint, number, bigint, bigint, bigint]) => {
@@ -44,8 +39,7 @@ test('flat x87 register-load pairs recheck retained reads after remapping', asyn
         return result;
       };
     }
-    return env;
-  };
+  });
   const one = 0x3fff8000000000000000n;
   const original = {
     registers: [one, ...Array<bigint>(7).fill(0n)],
@@ -94,7 +88,7 @@ test('flat x87 register-load pairs recheck retained reads after remapping', asyn
       assert.equal(x87.dataPointer, original.dataPointer);
     }
   } finally {
-    prototype.artifactImports = imports;
+    restoreImports();
     cpu.dispose();
   }
 });

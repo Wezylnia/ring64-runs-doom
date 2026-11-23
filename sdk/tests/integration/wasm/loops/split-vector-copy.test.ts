@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Core } from '../../../../src/wasm/core.js';
+import { observeArtifactImports } from '../../../../../tests/support/artifact-imports.js';
 import { BANK, PC, initial, usingPaged } from '../../../../../tests/execution/paging/fixture.js';
 import { COPY_FILL_INDEX, compiler } from './fixture.js';
 
@@ -14,14 +14,9 @@ test('retained split vector copies preserve physical aliases and denied later wr
     Uint8Array.from({ length: 48 }, (_, index) => 3 + 17 * index),
     0xff0,
   );
-  const prototype = Core.prototype as unknown as {
-    artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
-  };
-  const imports = prototype.artifactImports;
   let accepted = 0;
   let refused = 0;
-  prototype.artifactImports = function (observed) {
-    const env = imports.call(this, observed);
+  const restoreImports = observeArtifactImports((env) => {
     const copy = env.paged_loop_copy_window;
     if (typeof copy === 'function') {
       env.paged_loop_copy_window = (src: bigint, dst: bigint, width: number) => {
@@ -33,8 +28,7 @@ test('retained split vector copies preserve physical aliases and denied later wr
         return result;
       };
     }
-    return env;
-  };
+  });
   try {
     await usingPaged(
       compiler,
@@ -82,6 +76,6 @@ test('retained split vector copies preserve physical aliases and denied later wr
       },
     );
   } finally {
-    prototype.artifactImports = imports;
+    restoreImports();
   }
 });

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createCpu } from '../../../../src/index.js';
-import { Core } from '../../../../src/wasm/core.js';
+import { observeArtifactImports } from '../../../../../tests/support/artifact-imports.js';
 import { snapshot } from '../../../../../tests/execution/far-control/fixture.js';
 import {
   BANK,
@@ -19,21 +19,15 @@ const source = PC + 0x1003n;
 const target = PC + 0x200bn;
 const value = new DataView(seed.buffer).getBigUint64(0, true);
 
-const proto = Core.prototype as unknown as {
-  artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
-};
-
 test('paged scalar copies preserve overlapping memory and a later write fault', async () => {
   const code = '488b07488906488b4708488946080fb7471066894610';
   const stop = PC + BigInt(code.length / 2);
   const ram = new Uint8Array(0x3000);
   for (let wave = 0; wave < 5; wave++) ram.set(seed, 3 + wave * 64);
-  const imports = proto.artifactImports;
   let scalarWindows = 0;
   let acceptedScalarWindows = 0;
   let checkedBegins = 0;
-  proto.artifactImports = function (observed) {
-    const env = imports.call(this, observed);
+  const restoreImports = observeArtifactImports((env) => {
     const begin = env.debug_begin;
     if (typeof begin === 'function') {
       env.debug_begin = (pc: bigint, ...args: unknown[]) => {
@@ -52,8 +46,7 @@ test('paged scalar copies preserve overlapping memory and a later write fault', 
         return result;
       };
     }
-    return env;
-  };
+  });
   try {
     await usingPaged(
       compiler,
@@ -122,7 +115,7 @@ test('paged scalar copies preserve overlapping memory and a later write fault', 
     );
     assert.equal(acceptedScalarWindows, beforeAlignment);
   } finally {
-    proto.artifactImports = imports;
+    restoreImports();
   }
 });
 
@@ -134,10 +127,8 @@ test('a paged scalar copy retires a local jump only when the whole block is fund
   const ram = new Uint8Array(4096);
   const input = Uint8Array.from({ length: 18 }, (_, index) => index + 1);
   ram.set(input, 3);
-  const imports = proto.artifactImports;
   let extendedGuards = 0;
-  proto.artifactImports = function (observed) {
-    const env = imports.call(this, observed);
+  const restoreImports = observeArtifactImports((env) => {
     const guard = env.paged_sse_loop_guard;
     if (typeof guard === 'function') {
       env.paged_sse_loop_guard = (pc: bigint, width: number, ...args: unknown[]) => {
@@ -146,8 +137,7 @@ test('a paged scalar copy retires a local jump only when the whole block is fund
         return result;
       };
     }
-    return env;
-  };
+  });
   try {
     await usingPaged(
       compiler,
@@ -206,7 +196,7 @@ test('a paged scalar copy retires a local jump only when the whole block is fund
       },
     );
   } finally {
-    proto.artifactImports = imports;
+    restoreImports();
   }
 });
 
@@ -241,10 +231,8 @@ test('flat scalar copy groups preserve MOVSD/MOVQ upper lanes and partial retire
       mappings: [codeMap, sourceMap, targetMap],
     },
   });
-  const imports = proto.artifactImports;
   const probes = { read_span: 0, write_span: 0 };
-  proto.artifactImports = function (observed) {
-    const env = imports.call(this, observed);
+  const restoreImports = observeArtifactImports((env) => {
     for (const helper of ['read_span', 'write_span'] as const) {
       const span = env[helper];
       if (typeof span === 'function') {
@@ -255,8 +243,7 @@ test('flat scalar copy groups preserve MOVSD/MOVQ upper lanes and partial retire
         };
       }
     }
-    return env;
-  };
+  });
   try {
     cpu.setXmmState(Array(16).fill((1n << 128n) - 1n));
     cpu.setState(initial(PC, { 0: 0xffffffffn, 6: target, 7: source }));
@@ -291,7 +278,7 @@ test('flat scalar copy groups preserve MOVSD/MOVQ upper lanes and partial retire
     assert.equal(denied.state.rip, PC + 4n);
     assert.deepEqual(cpu.readMemory(target, 18), expected);
   } finally {
-    proto.artifactImports = imports;
+    restoreImports();
     cpu.dispose();
   }
 });
@@ -329,10 +316,8 @@ test('flat vector pairs preserve affine setup, overlapping loads and a late stor
       ],
     },
   });
-  const imports = proto.artifactImports;
   let pairedWrite = 0;
-  proto.artifactImports = function (observed) {
-    const env = imports.call(this, observed);
+  const restoreImports = observeArtifactImports((env) => {
     const write = env.write_span;
     if (typeof write === 'function') {
       env.write_span = (address: bigint, width: number, segment: number) => {
@@ -341,8 +326,7 @@ test('flat vector pairs preserve affine setup, overlapping loads and a late stor
         return pointer;
       };
     }
-    return env;
-  };
+  });
   try {
     const enter = (destination: bigint, limit = data + 32n, source = data) =>
       cpu.setState(initial(PC, { 1: limit, 2: 0n, 6: destination, 7: source }));
@@ -391,7 +375,7 @@ test('flat vector pairs preserve affine setup, overlapping loads and a late stor
     assert.equal(nextLap.state.rip, PC);
     assert.equal(nextLap.state.flags & 0x41n, 1n);
   } finally {
-    proto.artifactImports = imports;
+    restoreImports();
     cpu.dispose();
   }
 });

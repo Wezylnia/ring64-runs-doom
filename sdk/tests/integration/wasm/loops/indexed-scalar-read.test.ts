@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Core } from '../../../../src/wasm/core.js';
+import { observeArtifactImports } from '../../../../../tests/support/artifact-imports.js';
 import { PC, initial, little, usingPaged } from '../../../../../tests/execution/paging/fixture.js';
 import { compiler } from './fixture.js';
 
@@ -8,18 +9,13 @@ async function withSampledLoads(
   entries: bigint[],
   run: (loads: { address: bigint; width: number }[]) => Promise<void>,
 ) {
-  const prototype = Core.prototype as unknown as {
-    artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
-  };
-  const imports = prototype.artifactImports;
   const compile = Core.prototype.compile;
   const loads: { address: bigint; width: number }[] = [];
   Core.prototype.compile = function (pc, limits, seeds, regionPoints) {
     if (pc === PC && !seeds?.length) return compile.call(this, pc, limits, entries, true);
     return compile.call(this, pc, limits, seeds, regionPoints);
   };
-  prototype.artifactImports = function (observed) {
-    const env = imports.call(this, observed);
+  const restoreImports = observeArtifactImports((env) => {
     const load = env.load;
     if (typeof load === 'function') {
       env.load = (address: bigint, packedWidth: number) => {
@@ -27,12 +23,11 @@ async function withSampledLoads(
         return load(address, packedWidth);
       };
     }
-    return env;
-  };
+  });
   try {
     await run(loads);
   } finally {
-    prototype.artifactImports = imports;
+    restoreImports();
     Core.prototype.compile = compile;
   }
 }

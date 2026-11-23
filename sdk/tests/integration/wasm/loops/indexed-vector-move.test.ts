@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Core } from '../../../../src/wasm/core.js';
+import { observeArtifactImports } from '../../../../../tests/support/artifact-imports.js';
 import { PC, initial, little, usingPaged } from '../../../../../tests/execution/paging/fixture.js';
 import { compiler } from './fixture.js';
 
@@ -11,14 +11,9 @@ test('ordinary paged vector moves retain live read and write mappings and replay
   const value = Uint8Array.from({ length: 16 }, (_, index) => index + 1);
   const sourcePage = new Uint8Array(4096);
   sourcePage.set(value, 0x11);
-  const prototype = Core.prototype as unknown as {
-    artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
-  };
-  const imports = prototype.artifactImports;
   const calls = { vector_load: 0, vector_store: 0 };
   let finishes = 0;
-  prototype.artifactImports = function (observed) {
-    const env = imports.call(this, observed);
+  const restoreImports = observeArtifactImports((env) => {
     const finish = env.debug_finish;
     if (typeof finish === 'function') {
       env.debug_finish = (pc: bigint, ...args: unknown[]) => {
@@ -35,8 +30,7 @@ test('ordinary paged vector moves retain live read and write mappings and replay
         };
       }
     }
-    return env;
-  };
+  });
   try {
     await usingPaged(
       compiler,
@@ -174,6 +168,6 @@ test('ordinary paged vector moves retain live read and write mappings and replay
       );
     }
   } finally {
-    prototype.artifactImports = imports;
+    restoreImports();
   }
 });

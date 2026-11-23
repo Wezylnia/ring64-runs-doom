@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test, { type TestContext } from 'node:test';
 import { createCpu } from '../../../../src/index.js';
 import { Core } from '../../../../src/wasm/core.js';
+import { observeArtifactImports } from '../../../../../tests/support/artifact-imports.js';
 import { BANK, PC, little, usingPaged } from '../../../../../tests/execution/paging/fixture.js';
 import { protectedSnapshot } from '../../../../../tests/support/context.js';
 import {
@@ -241,13 +242,8 @@ test('Long64 dependent dword reads preserve full indices and resume a denied loa
 const pagedDwordLoop = '8b0487'.repeat(4) + 'ffc975f0';
 
 function countGuardedDwordReads(t: TestContext) {
-  const prototype = Core.prototype as unknown as {
-    artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
-  };
-  const imports = prototype.artifactImports;
   let slowReads = 0;
-  t.mock.method(prototype, 'artifactImports', function (this: Core, observed: boolean) {
-    const env = imports.call(this, observed);
+  const restoreImports = observeArtifactImports((env) => {
     const read = env.paged_loop_walk_dword;
     if (typeof read === 'function') {
       env.paged_loop_walk_dword = (address: bigint) => {
@@ -255,8 +251,8 @@ function countGuardedDwordReads(t: TestContext) {
         return read(address);
       };
     }
-    return env;
   });
+  t.after(restoreImports);
   return () => slowReads;
 }
 
@@ -553,17 +549,12 @@ test('sampled flat SS reads keep separate ESP and EBP mappings through remaps', 
   };
   const dataMap = mapping(data, 'data', 1);
   const compile = Core.prototype.compile;
-  const prototype = Core.prototype as unknown as {
-    artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
-  };
-  const imports = prototype.artifactImports;
   const calls: number[] = [];
   Core.prototype.compile = function (pc, limits, points, route) {
     if (pc !== head || route) return compile.call(this, pc, limits, points, route);
     return compile.call(this, pc, limits, [head, head + 4n, head + 8n, head + 9n], true);
   };
-  prototype.artifactImports = function (observed) {
-    const env = imports.call(this, observed);
+  const restoreImports = observeArtifactImports((env) => {
     const read = env.read_span;
     if (typeof read === 'function') {
       env.read_span = (address: bigint, width: number, segment: number) => {
@@ -571,8 +562,7 @@ test('sampled flat SS reads keep separate ESP and EBP mappings through remaps', 
         return read(address, width, segment);
       };
     }
-    return env;
-  };
+  });
   const context = protectedSnapshot();
   const cpu = await createCpu({
     compiler,
@@ -626,6 +616,6 @@ test('sampled flat SS reads keep separate ESP and EBP mappings through remaps', 
   } finally {
     cpu.dispose();
     Core.prototype.compile = compile;
-    prototype.artifactImports = imports;
+    restoreImports();
   }
 });
