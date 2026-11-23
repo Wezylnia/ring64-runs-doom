@@ -5,6 +5,13 @@ impl Emitter {
     #[cfg(guest_memory64)]
     fn ram_window_address(&mut self, argument: &mut MemArg) {
         use crate::memory::guest_windows::{WINDOW_SHIFT, biases_pointer};
+        argument.memory_index = 1;
+        if crate::memory::guest_windows::use_direct_offsets() {
+            self.op(Op::I64ExtendI32U)
+                .op(Op::I64Const(1))
+                .op(Op::I64Sub);
+            return;
+        }
         let token = self.ram_operand_locals;
         self.op(Op::LocalTee(token))
             .op(Op::I32Const(WINDOW_SHIFT as i32))
@@ -19,7 +26,6 @@ impl Emitter {
             .op(Op::LocalGet(token))
             .op(Op::I64ExtendI32U)
             .op(Op::I64Add);
-        argument.memory_index = 1;
     }
 
     pub(in crate::dbt::wasm) fn ram_load(

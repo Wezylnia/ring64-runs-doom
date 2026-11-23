@@ -146,6 +146,8 @@ impl Bridge {
             context,
             physical_controls,
         } = initial;
+        #[cfg(guest_memory64)]
+        image.configure_guest_windows();
         self.core = Some(Core {
             task_work: None,
             io_present: false,

@@ -1,5 +1,5 @@
-// Direct spans carry 32-bit offsets. Each offset names bytes in a window of
-// the guest arena. Its bias stays fixed while generated code can use the proof.
+// Direct spans carry nonzero 32-bit tokens. Small arenas use offset + 1.
+// Larger arenas use windows with a stable bias for the lifetime of a proof.
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 
@@ -11,10 +11,27 @@ const GUARD: u64 = 4096;
 const PAYLOAD: u64 = (1 << WINDOW_SHIFT) - GUARD;
 
 thread_local! {
+    static DIRECT_OFFSETS: Cell<bool> = const { Cell::new(false) };
     static BIASES: [Cell<u64>; SLOTS] = const { [const { Cell::new(0) }; SLOTS] };
     static SLOTS_BY_BASE: RefCell<BTreeMap<u64, u32>> = const { RefCell::new(BTreeMap::new()) };
     static LAST: Cell<Option<(u64, u32)>> = const { Cell::new(None) };
     static EXHAUSTED: Cell<bool> = const { Cell::new(false) };
+}
+
+pub(crate) fn use_direct_offsets() -> bool {
+    DIRECT_OFFSETS.get()
+}
+
+impl super::Image {
+    pub(crate) fn configure_guest_windows(&self) {
+        // First-fit skips at most one gap per live backing, each smaller than
+        // the requested extent. This bounds the arena end even after churn.
+        let bound = self
+            .limits
+            .max_backing_bytes
+            .saturating_mul(u64::from(self.limits.max_backings));
+        DIRECT_OFFSETS.set(bound <= u64::from(u32::MAX));
+    }
 }
 
 pub(crate) fn biases_pointer() -> u32 {
@@ -57,6 +74,9 @@ fn window_token(base: u64) -> Option<u32> {
 }
 
 pub(super) fn byte_token(ram: u64) -> Option<u32> {
+    if use_direct_offsets() {
+        return u32::try_from(ram.checked_add(1)?).ok();
+    }
     let inside = ram % PAYLOAD;
     Some(window_token(ram - inside)? + inside as u32)
 }
@@ -67,6 +87,15 @@ pub(super) fn span(
     address: u64,
     width: u32,
 ) -> Option<DirectSpan> {
+    if use_direct_offsets() {
+        let host = byte_token(ram_base)?;
+        host.checked_add(mapping.length - 1)?;
+        return Some(DirectSpan {
+            base: mapping.base,
+            length: mapping.length,
+            host,
+        });
+    }
     let relative = address - mapping.base;
     let ram = ram_base + relative;
     let inside = ram % PAYLOAD;

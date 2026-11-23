@@ -122,7 +122,38 @@ export async function checkMemory64(compiler: WebAssembly.Module) {
   } finally {
     cpu.dispose();
   }
+  await checkFirstBackingByte(compiler);
   await checkPagedMemory64(compiler);
+}
+
+async function checkFirstBackingByte(compiler: WebAssembly.Module) {
+  const entry = 0x1000n;
+  const data = 0x8000n;
+  // INC byte [EDI]. Place the data extent first, at arena offset zero.
+  const code = hex('fe0790');
+  const cpu = await createCpu({
+    compiler,
+    entry,
+    context: context(),
+    limits: LIMITS,
+    memoryLimits: { maxBackings: 2, maxMappings: 2, maxBackingBytes: 5 },
+    memory: {
+      backings: [
+        { id: 'ram', bytes: hex('1020') },
+        { id: 'code', bytes: code },
+      ],
+      mappings: [mapping(data, 'ram', 2, RW), mapping(entry, 'code', code.length, RX)],
+    },
+  });
+  try {
+    for (const address of [data + 1n, data, data + 1n, data]) {
+      cpu.setState(initial(entry, { 7: address }));
+      equal((await cpu.run({ stop: entry + 2n, budget: 2n })).reason, 'stop', 'byte increment');
+    }
+    memory(cpu, data, '1222');
+  } finally {
+    cpu.dispose();
+  }
 }
 
 async function checkPagedMemory64(compiler: WebAssembly.Module) {
