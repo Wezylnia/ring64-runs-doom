@@ -1,6 +1,8 @@
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 use super::indexed::IndexedOperand;
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+use crate::dbt::wasm::PRIVATE_MEMORY;
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 use crate::dbt::wasm::{ADDRESS, STORE_STATUS};
 use crate::dbt::wasm::{ENTRY, Emitter, VALUE};
 use crate::x86::context::Segment;
@@ -174,7 +176,7 @@ impl Emitter {
         let field = |offset: usize, align| MemArg {
             offset: (offset_of!(StateStorage, loop_read_range) + offset) as u64,
             align,
-            memory_index: 0,
+            memory_index: PRIVATE_MEMORY,
         };
         let length = field(offset_of!(LoopReadRange, dwords), 2);
         self.address(
@@ -224,7 +226,7 @@ impl Emitter {
         let field = |offset: usize, align| MemArg {
             offset: offset as u64,
             align,
-            memory_index: 0,
+            memory_index: PRIVATE_MEMORY,
         };
         let range = self.direct_read_range.filter(|_| {
             self.structured_loop
@@ -392,7 +394,7 @@ impl Emitter {
                 MemArg {
                     offset: 0,
                     align: 0,
-                    memory_index: 0,
+                    memory_index: PRIVATE_MEMORY,
                 },
             )
             .op(Op::Else)
@@ -441,7 +443,7 @@ impl Emitter {
                         MemArg {
                             offset: 0,
                             align: 0,
-                            memory_index: 0,
+                            memory_index: PRIVATE_MEMORY,
                         },
                     )
                     .op(Op::Br(1))
@@ -488,7 +490,7 @@ impl Emitter {
                 .op(Op::I32Load(MemArg {
                     offset: std::mem::offset_of!(DirectSpan, host) as u64,
                     align: 2,
-                    memory_index: 0,
+                    memory_index: PRIVATE_MEMORY,
                 }))
                 .op(Op::Else)
                 .op(Op::I32Const(0))
@@ -513,7 +515,7 @@ impl Emitter {
             MemArg {
                 offset: if first { 0 } else { 4 },
                 align: 0,
-                memory_index: 0,
+                memory_index: PRIVATE_MEMORY,
             },
         )
         .op(Op::Else);
@@ -544,7 +546,7 @@ impl Emitter {
         let field = |offset: usize, align| MemArg {
             offset: offset as u64,
             align,
-            memory_index: 0,
+            memory_index: PRIVATE_MEMORY,
         };
         self.op(Op::LocalTee(ADDRESS))
             .op(Op::LocalGet(window.base))
@@ -623,7 +625,7 @@ impl Emitter {
                 MemArg {
                     offset: 0,
                     align: 0,
-                    memory_index: 0,
+                    memory_index: PRIVATE_MEMORY,
                 },
             );
     }

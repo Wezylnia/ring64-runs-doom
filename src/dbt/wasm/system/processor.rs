@@ -1,3 +1,4 @@
+use crate::dbt::wasm::PRIVATE_MEMORY;
 use crate::dbt::wasm::{Emitter, GPR, REASON};
 use crate::embedding::layout::RunState;
 use crate::x86::processor::Instruction;
@@ -34,7 +35,7 @@ impl Emitter {
                 .op(Op::I64Load32U(MemArg {
                     offset: (offset_of!(RunState, vector_scratch) + offset) as u64,
                     align: 2,
-                    memory_index: 0,
+                    memory_index: PRIVATE_MEMORY,
                 }))
                 .op(Op::LocalSet(GPR + register));
         }

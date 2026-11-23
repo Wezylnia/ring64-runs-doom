@@ -1,3 +1,4 @@
+use crate::dbt::wasm::PRIVATE_MEMORY;
 use crate::dbt::wasm::{DIRECTION, Emitter, FLAGS, GPR, REASON, REMAINING, RESULT, RIP, SYSTEM};
 use crate::embedding::layout::{DISPATCH, RunState};
 use crate::x86::fast_system::Instruction;
@@ -39,7 +40,7 @@ impl Emitter {
                 .op(Op::I64Load(MemArg {
                     offset: offset as u64,
                     align: 3,
-                    memory_index: 0,
+                    memory_index: PRIVATE_MEMORY,
                 }))
                 .op(Op::LocalSet(local));
         }

@@ -1,3 +1,4 @@
+use crate::dbt::wasm::PRIVATE_MEMORY;
 use crate::dbt::wasm::{Emitter, GPR, REASON, STORE_STATUS};
 use crate::embedding::layout::RunState;
 use crate::x86::compound_stack::CompoundStack;
@@ -8,7 +9,7 @@ fn memory(offset: usize) -> MemArg {
     MemArg {
         offset: offset as u64,
         align: 3,
-        memory_index: 0,
+        memory_index: PRIVATE_MEMORY,
     }
 }
 

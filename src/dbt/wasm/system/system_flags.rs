@@ -1,3 +1,4 @@
+use crate::dbt::wasm::PRIVATE_MEMORY;
 use crate::dbt::wasm::{
     ADDRESS, DIRECTION, Emitter, FLAGS, GPR, LHS, REASON, RESULT, SHADOW, STORE_STATUS, SYSTEM,
     VALUE,
@@ -38,7 +39,7 @@ impl Emitter {
             .op(Op::I64Load(MemArg {
                 offset: offset_of!(RunState, vector_scratch) as u64,
                 align: 0,
-                memory_index: 0,
+                memory_index: PRIVATE_MEMORY,
             }))
             .op(Op::LocalSet(RESULT));
     }
@@ -56,7 +57,7 @@ impl Emitter {
         let memory = MemArg {
             offset: offset_of!(RunState, flags) as u64,
             align: 3,
-            memory_index: 0,
+            memory_index: PRIVATE_MEMORY,
         };
         // Only successful in-unit AC producers synchronize this live permission bit.
         self.op(Op::LocalGet(0))

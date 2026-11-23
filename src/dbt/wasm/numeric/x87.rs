@@ -1,3 +1,4 @@
+use crate::dbt::wasm::PRIVATE_MEMORY;
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 use crate::dbt::wasm::{ADDRESS, LHS, REMAINING, RESULT, RHS, RIP, SHADOW, VALUE};
 use crate::dbt::wasm::{Emitter, FLAGS, GPR, REASON, STORE_STATUS};
@@ -67,7 +68,7 @@ fn x87_mem(offset: usize, align: u32) -> MemArg {
     MemArg {
         offset: offset as u64,
         align,
-        memory_index: 0,
+        memory_index: PRIVATE_MEMORY,
     }
 }
 
@@ -828,7 +829,7 @@ impl Emitter {
                 .op(Wasm::I64Load(MemArg {
                     offset: offset_of!(RunState, registers) as u64,
                     align: 3,
-                    memory_index: 0,
+                    memory_index: PRIVATE_MEMORY,
                 }))
                 .op(Wasm::LocalSet(GPR));
         }
@@ -848,7 +849,7 @@ impl Emitter {
             .op(Wasm::I64Load(MemArg {
                 offset: offset_of!(RunState, flags) as u64,
                 align: 3,
-                memory_index: 0,
+                memory_index: PRIVATE_MEMORY,
             }))
             .op(Wasm::I64Const(0x8d7))
             .op(Wasm::I64And)

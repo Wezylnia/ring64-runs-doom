@@ -1,5 +1,7 @@
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 use crate::dbt::wasm::Emitter;
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+use crate::dbt::wasm::PRIVATE_MEMORY;
 use crate::x86::{
     context::{ExecutionContext, Segment},
     instruction::{
@@ -169,7 +171,7 @@ impl Emitter {
         let field = |offset, align| MemArg {
             offset,
             align,
-            memory_index: 0,
+            memory_index: PRIVATE_MEMORY,
         };
         // Both successful resolvers refer to this same uniquely mapped range.
         self.op(Op::Drop)

@@ -1,4 +1,6 @@
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+use crate::dbt::wasm::PRIVATE_MEMORY;
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 use crate::dbt::wasm::{ADDRESS, Emitter, LHS, REMAINING, RESULT, RHS, STORE_STATUS, VALUE};
 use crate::x86::{
     context::ExecutionContext,
@@ -855,7 +857,7 @@ impl Emitter {
                 .op(Op::I32Load(MemArg {
                     offset: std::mem::offset_of!(DirectSpan, host) as u64,
                     align: 2,
-                    memory_index: 0,
+                    memory_index: PRIVATE_MEMORY,
                 }))
                 .op(Op::LocalGet(RESULT))
                 .op(Op::I32WrapI64)
@@ -1029,7 +1031,7 @@ impl Emitter {
             let field = |offset: usize, align| MemArg {
                 offset: offset as u64,
                 align,
-                memory_index: 0,
+                memory_index: PRIVATE_MEMORY,
             };
             self.op(Op::LocalGet(STORE_STATUS))
                 .op(Op::I32Load(field(

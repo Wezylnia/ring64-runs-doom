@@ -821,6 +821,18 @@ fn emit_body(
         )
     });
     let mut imports = ImportSection::new();
+    #[cfg(guest_memory64)]
+    imports.import(
+        "env",
+        "guest_ram",
+        EntityType::Memory(MemoryType {
+            minimum: 0,
+            maximum: None,
+            memory64: true,
+            shared: false,
+            page_size_log2: None,
+        }),
+    );
     imports.import(
         "env",
         "memory",
@@ -2821,20 +2833,6 @@ fn emit_body(
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if let Some((_, resolver)) = copy_access_cache {
         code.function(&paged_copy::emit_copy_access_cache(resolver));
-    }
-    #[cfg(guest_memory64)]
-    {
-        imports.import(
-            "env",
-            "guest_ram",
-            EntityType::Memory(MemoryType {
-                minimum: 0,
-                maximum: None,
-                memory64: true,
-                shared: false,
-                page_size_log2: None,
-            }),
-        );
     }
     let mut module = Module::new();
     module

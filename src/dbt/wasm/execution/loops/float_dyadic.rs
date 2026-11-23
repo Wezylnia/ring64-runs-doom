@@ -1,3 +1,4 @@
+use crate::dbt::wasm::PRIVATE_MEMORY;
 use crate::dbt::wasm::{
     ADDRESS, Emitter, RIP, STORE_STATUS, StructuredLoop, memory::read_loop::ReadLoop,
 };
@@ -217,7 +218,7 @@ impl Emitter {
                     MemArg {
                         offset: 0,
                         align: 0,
-                        memory_index: 0,
+                        memory_index: PRIVATE_MEMORY,
                     },
                 )
                 .op(Op::LocalSet(input));

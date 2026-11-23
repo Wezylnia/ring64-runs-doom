@@ -1,4 +1,5 @@
 use crate::dbt::unit::Unit;
+use crate::dbt::wasm::PRIVATE_MEMORY;
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 use crate::dbt::wasm::memory::{
     DirectOperand, indexed::IndexedOperand, paged_read::PagedReadWindow,
@@ -140,7 +141,7 @@ pub(in crate::dbt::wasm) fn memory(offset: usize) -> MemArg {
     MemArg {
         offset: offset as u64,
         align: 0,
-        memory_index: 0,
+        memory_index: PRIVATE_MEMORY,
     }
 }
 
@@ -249,7 +250,7 @@ impl Emitter {
                     MemArg {
                         offset,
                         align: 0,
-                        memory_index: 0,
+                        memory_index: PRIVATE_MEMORY,
                     },
                 );
             return;

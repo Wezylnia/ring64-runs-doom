@@ -1,3 +1,4 @@
+use crate::dbt::wasm::PRIVATE_MEMORY;
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 use crate::dbt::wasm::STORE_STATUS;
 use crate::dbt::wasm::{DIRECTION, Emitter, REASON, REPEAT_REMAINING, RIP, SHADOW, SYSTEM};
@@ -157,7 +158,7 @@ impl Emitter {
             .op(Op::I64Load(MemArg {
                 offset: offset_of!(RunState, interrupts) as u64,
                 align: 2,
-                memory_index: 0,
+                memory_index: PRIVATE_MEMORY,
             }))
             .op(Op::I64Eqz)
             .op(Op::I32Eqz)
@@ -201,7 +202,7 @@ impl Emitter {
                 .op(Op::I64Load(MemArg {
                     offset: offset_of!(RunState, flags) as u64,
                     align: 3,
-                    memory_index: 0,
+                    memory_index: PRIVATE_MEMORY,
                 }))
                 .op(Op::I64Const(!0xcd7))
                 .op(Op::I64And);
@@ -230,7 +231,7 @@ impl Emitter {
                         + offset_of!(crate::x86::debug::State, dr7))
                         as u64,
                     align: 3,
-                    memory_index: 0,
+                    memory_index: PRIVATE_MEMORY,
                 }))
                 .op(Op::I64Const(255))
                 .op(Op::I64And)
@@ -463,7 +464,7 @@ impl Emitter {
             .op(Op::I32Load(MemArg {
                 offset: offset_of!(RunState, delivery_enabled) as u64,
                 align: 2,
-                memory_index: 0,
+                memory_index: PRIVATE_MEMORY,
             }))
             .op(Op::I32Eqz)
             .op(Op::If(BlockType::Empty))

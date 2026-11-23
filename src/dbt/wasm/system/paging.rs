@@ -1,3 +1,4 @@
+use crate::dbt::wasm::PRIVATE_MEMORY;
 use crate::dbt::wasm::{Emitter, GPR, REASON, VALUE};
 use crate::embedding::layout::{DISPATCH, RunState};
 use crate::x86::instruction::{Location, PagingInstruction, RegisterView, Width};
@@ -88,7 +89,7 @@ impl Emitter {
             self.op(Op::LocalGet(0)).op(Op::I64Load(MemArg {
                 offset: std::mem::offset_of!(RunState, vector_scratch) as u64,
                 align: 0,
-                memory_index: 0,
+                memory_index: PRIVATE_MEMORY,
             }));
             match operation {
                 PagingInstruction::ControlRegister { gpr, width, .. } => {

@@ -1,3 +1,4 @@
+use crate::dbt::wasm::PRIVATE_MEMORY;
 use crate::dbt::wasm::{
     ENTRY, Emitter, FLAGS, LHS, REASON, REMAINING, RESULT, RHS, RIP, STORE_STATUS, VALUE,
 };
@@ -39,7 +40,7 @@ impl Emitter {
             .op(Op::I64Store(MemArg {
                 offset: std::mem::offset_of!(RunState, target) as u64,
                 align: 3,
-                memory_index: 0,
+                memory_index: PRIVATE_MEMORY,
             }));
         self.exit(TARGET, exit_depth);
     }

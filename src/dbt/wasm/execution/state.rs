@@ -1,3 +1,4 @@
+use crate::dbt::wasm::PRIVATE_MEMORY;
 use crate::dbt::wasm::{
     DIRECTION, Emitter, FLAGS, GPR, REMAINING, REPEAT_REMAINING, RESULT, RIP, SHADOW, SYSTEM, Unit,
     numeric::vector,
@@ -15,7 +16,7 @@ fn memory(offset: usize) -> MemArg {
     MemArg {
         offset: offset as u64,
         align: 3,
-        memory_index: 0,
+        memory_index: PRIVATE_MEMORY,
     }
 }
 
@@ -111,7 +112,7 @@ impl Emitter {
                 .op(Op::I64Load(MemArg {
                     offset,
                     align: 0,
-                    memory_index: 0,
+                    memory_index: PRIVATE_MEMORY,
                 }))
                 .op(Op::LocalSet(local));
         }
@@ -231,7 +232,7 @@ impl Emitter {
             .op(Op::I32Load(MemArg {
                 offset: offset_of!(RunState, interruptibility) as u64,
                 align: 2,
-                memory_index: 0,
+                memory_index: PRIVATE_MEMORY,
             }))
             .op(Op::LocalSet(SHADOW));
         self.op(Op::LocalGet(1)).op(Op::LocalSet(REMAINING));
@@ -289,7 +290,7 @@ impl Emitter {
                 .op(Op::I32Store(MemArg {
                     offset: offset_of!(RunState, interruptibility) as u64,
                     align: 2,
-                    memory_index: 0,
+                    memory_index: PRIVATE_MEMORY,
                 }));
         }
         if self.has_repeat {

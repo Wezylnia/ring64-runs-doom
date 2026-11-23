@@ -1,4 +1,5 @@
 use crate::dbt::wasm::Emitter;
+use crate::dbt::wasm::PRIVATE_MEMORY;
 use crate::x86::instruction::Operation;
 use wasm_encoder::{BlockType, Instruction as Op};
 
@@ -120,7 +121,7 @@ impl Emitter {
             .op(Op::I32Load(MemArg {
                 offset: std::mem::offset_of!(crate::memory::DirectSpan, host) as u64,
                 align: 0,
-                memory_index: 0,
+                memory_index: PRIVATE_MEMORY,
             }))
             .op(Op::Else)
             .op(Op::I32Const(0))
@@ -147,7 +148,7 @@ impl Emitter {
         let mem = |offset, align| MemArg {
             offset: offset as u64,
             align,
-            memory_index: 0,
+            memory_index: PRIVATE_MEMORY,
         };
         let clock = mem(offset_of!(IndexedReadTable, clock), 3);
         let ages = mem(offset_of!(IndexedReadTable, ages), 3);

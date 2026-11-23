@@ -21,6 +21,12 @@ use crate::x86::context::{ExecutionContext, Segment};
 use crate::x86::instruction::Operation;
 use execution::loops::structured_loop::StructuredLoop;
 
+// V8 can load memory zero's base directly. Give that slot to guest RAM in
+// memory64 artifacts, where guest RAM and the core's private heap are separate.
+#[cfg(guest_memory64)]
+const GUEST_MEMORY: u32 = 0;
+const PRIVATE_MEMORY: u32 = cfg!(guest_memory64) as u32;
+
 const ENTRY_INDEX: u32 = 4;
 const GPR: u32 = 5;
 const FLAGS: u32 = 21;

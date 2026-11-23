@@ -1,3 +1,4 @@
+use crate::dbt::wasm::PRIVATE_MEMORY;
 use crate::dbt::wasm::{
     ADDRESS, Emitter, FLAGS, RESULT, RIP, STORE_STATUS, StructuredLoop, Unit, VALUE,
     execution::control::InstructionRetirement,
@@ -382,6 +383,6 @@ fn field(offset: usize, align: u32) -> MemArg {
     MemArg {
         offset: offset as u64,
         align,
-        memory_index: 0,
+        memory_index: PRIVATE_MEMORY,
     }
 }

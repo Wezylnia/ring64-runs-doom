@@ -1,3 +1,4 @@
+use crate::dbt::wasm::PRIVATE_MEMORY;
 use crate::dbt::wasm::{DIRECTION, Emitter, FLAGS, GPR, REASON, REMAINING, RESULT, SHADOW, SYSTEM};
 use crate::embedding::layout::{DISPATCH, RunState};
 use crate::x86::instruction::{SoftwareEventDescriptor, SoftwareEventKind};
@@ -45,7 +46,7 @@ impl Emitter {
             .op(Op::I64Load(MemArg {
                 offset: offset_of!(RunState, flags) as u64,
                 align: 3,
-                memory_index: 0,
+                memory_index: PRIVATE_MEMORY,
             }))
             .op(Op::LocalSet(RESULT));
         for (local, mask) in [(FLAGS, 0x8d7), (DIRECTION, 0x400), (SYSTEM, !0xcd7)] {

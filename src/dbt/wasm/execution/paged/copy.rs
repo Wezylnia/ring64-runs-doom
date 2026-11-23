@@ -1,4 +1,5 @@
 use super::prefix::PagedPrefixFetch;
+use crate::dbt::wasm::PRIVATE_MEMORY;
 use crate::dbt::wasm::{
     ADDRESS, Emitter, LHS, REMAINING, RHS, RIP, STORE_STATUS, StructuredLoop, Unit, VALUE,
     execution::loops::loop_cfg, memory::SpanCache,
@@ -1814,6 +1815,6 @@ fn memory(offset: u64) -> MemArg {
     MemArg {
         offset,
         align: 0,
-        memory_index: 0,
+        memory_index: PRIVATE_MEMORY,
     }
 }

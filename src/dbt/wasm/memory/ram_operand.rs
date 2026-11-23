@@ -1,11 +1,13 @@
 use super::Emitter;
+#[cfg(guest_memory64)]
+use crate::dbt::wasm::{GUEST_MEMORY, PRIVATE_MEMORY};
 use wasm_encoder::{Instruction as Op, MemArg, ValType};
 
 impl Emitter {
     #[cfg(guest_memory64)]
     fn ram_window_address(&mut self, argument: &mut MemArg) {
         use crate::memory::guest_windows::{WINDOW_SHIFT, biases_pointer};
-        argument.memory_index = 1;
+        argument.memory_index = GUEST_MEMORY;
         if crate::memory::guest_windows::use_direct_offsets() {
             self.op(Op::I64ExtendI32U);
             return;
@@ -19,7 +21,7 @@ impl Emitter {
             .op(Op::I64Load(MemArg {
                 offset: u64::from(biases_pointer()),
                 align: 3,
-                memory_index: 0,
+                memory_index: PRIVATE_MEMORY,
             }))
             .op(Op::LocalGet(token))
             .op(Op::I64ExtendI32U)
@@ -34,7 +36,7 @@ impl Emitter {
         #[cfg(guest_memory64)]
         let mut argument = argument;
         #[cfg(guest_memory64)]
-        if argument.memory_index == 0 {
+        if argument.memory_index == PRIVATE_MEMORY {
             self.ram_window_address(&mut argument);
         }
         self.op(instruction(argument))
@@ -49,7 +51,7 @@ impl Emitter {
         #[cfg(guest_memory64)]
         let mut argument = argument;
         #[cfg(guest_memory64)]
-        if argument.memory_index == 0 {
+        if argument.memory_index == PRIVATE_MEMORY {
             let value = self.ram_operand_locals
                 + match _value {
                     ValType::I32 => 1,

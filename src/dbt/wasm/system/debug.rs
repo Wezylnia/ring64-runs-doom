@@ -1,3 +1,4 @@
+use crate::dbt::wasm::PRIVATE_MEMORY;
 use crate::dbt::wasm::{Emitter, REASON};
 use crate::embedding::layout::{DISPATCH, RunState};
 use crate::x86::instruction::{RegisterView, Width};
@@ -33,7 +34,7 @@ impl Emitter {
             self.op(Op::LocalGet(0)).op(Op::I64Load(MemArg {
                 offset: std::mem::offset_of!(RunState, vector_scratch) as u64,
                 align: 0,
-                memory_index: 0,
+                memory_index: PRIVATE_MEMORY,
             }));
             self.write_register(RegisterView::low(gpr), width);
         }

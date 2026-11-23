@@ -1,3 +1,4 @@
+use crate::dbt::wasm::PRIVATE_MEMORY;
 use crate::dbt::wasm::{Emitter, SHADOW, StructuredLoop, Unit, execution::loops::structured_loop};
 use crate::x86::instruction::{Alu, Instruction, Location, Operation};
 use wasm_encoder::{BlockType, Instruction as Op};
@@ -397,7 +398,7 @@ impl Emitter {
             let mem = |offset| MemArg {
                 offset,
                 align: 0,
-                memory_index: 0,
+                memory_index: PRIVATE_MEMORY,
             };
 
             self.address(address, first.next_pc);
@@ -547,7 +548,7 @@ impl Emitter {
         let mem = |offset, align| MemArg {
             offset: offset as u64,
             align,
-            memory_index: 0,
+            memory_index: PRIVATE_MEMORY,
         };
         let field = |offset, align| mem(offset_of!(StateStorage, newest_fetch) + offset, align);
         let table = field(offset_of!(NewestFetch, table), 2);

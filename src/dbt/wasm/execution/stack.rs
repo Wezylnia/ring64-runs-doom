@@ -1,3 +1,5 @@
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+use crate::dbt::wasm::PRIVATE_MEMORY;
 use crate::dbt::wasm::{ADDRESS, Emitter, GPR, LHS, RESULT, RHS, VALUE};
 use crate::x86::context::Segment;
 use crate::x86::instruction::{Address, AddressBase, Operand, RegisterView, Width};
@@ -125,7 +127,7 @@ impl Emitter {
             MemArg {
                 offset: 0,
                 align: 0,
-                memory_index: 0,
+                memory_index: PRIVATE_MEMORY,
             },
         );
         self.op(Op::I64Const(value as i64));
@@ -279,7 +281,7 @@ impl Emitter {
                 MemArg {
                     offset: 0,
                     align: 0,
-                    memory_index: 0,
+                    memory_index: PRIVATE_MEMORY,
                 },
                 ValType::I64,
             )
@@ -343,7 +345,7 @@ impl Emitter {
             MemArg {
                 offset: 0,
                 align: 0,
-                memory_index: 0,
+                memory_index: PRIVATE_MEMORY,
             },
         );
         let sampled_tf = self.sampled_tf.unwrap();

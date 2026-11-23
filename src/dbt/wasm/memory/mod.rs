@@ -1,3 +1,4 @@
+use crate::dbt::wasm::PRIVATE_MEMORY;
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 pub(super) mod flat;
 #[cfg(guest_memory64)]
@@ -195,7 +196,7 @@ impl Emitter {
             .op(Op::I32Store(MemArg {
                 offset: std::mem::offset_of!(RunState, fault_segment) as u64,
                 align: 2,
-                memory_index: 0,
+                memory_index: PRIVATE_MEMORY,
             }));
     }
 
@@ -280,7 +281,7 @@ impl Emitter {
                     MemArg {
                         offset: 0,
                         align: 2,
-                        memory_index: 0,
+                        memory_index: PRIVATE_MEMORY,
                     },
                 );
             self.write_register(dst, width);
@@ -358,13 +359,13 @@ impl Emitter {
                 self.op(Op::I32Load(MemArg {
                     offset: std::mem::offset_of!(crate::memory::DirectSpan, host) as u64,
                     align: 0,
-                    memory_index: 0,
+                    memory_index: PRIVATE_MEMORY,
                 }));
             }
             let operand = MemArg {
                 offset: 0,
                 align: 0,
-                memory_index: 0,
+                memory_index: PRIVATE_MEMORY,
             };
             self.ram_load(
                 match width {
@@ -397,7 +398,7 @@ impl Emitter {
                 MemArg {
                     offset,
                     align: 0,
-                    memory_index: 0,
+                    memory_index: PRIVATE_MEMORY,
                 },
             );
             return;
@@ -419,7 +420,7 @@ impl Emitter {
         let field = |offset, align| MemArg {
             offset,
             align,
-            memory_index: 0,
+            memory_index: PRIVATE_MEMORY,
         };
         self.op(Op::I64Const(0)).op(Op::LocalSet(window.limit));
         self.op(Op::Block(BlockType::Empty))
@@ -519,7 +520,7 @@ impl Emitter {
         let memory = MemArg {
             offset: 0,
             align: 0,
-            memory_index: 0,
+            memory_index: PRIVATE_MEMORY,
         };
         let long64 = self.context.is_long64();
         if long64 {
@@ -560,7 +561,7 @@ impl Emitter {
             MemArg {
                 offset,
                 align: 0,
-                memory_index: 0,
+                memory_index: PRIVATE_MEMORY,
             },
         );
         true
@@ -614,7 +615,7 @@ impl Emitter {
             let field = |offset, align| MemArg {
                 offset: (slot + offset) as u64,
                 align,
-                memory_index: 0,
+                memory_index: PRIVATE_MEMORY,
             };
             self.op(Op::LocalGet(0))
                 .op(Op::I64Load(field(offset_of!(DirectSpan, base), 3)))
@@ -664,7 +665,7 @@ impl Emitter {
             let arg = MemArg {
                 offset: offset as u64,
                 align: 0,
-                memory_index: 0,
+                memory_index: PRIVATE_MEMORY,
             };
             self.op(Op::LocalGet(host));
             if store {
@@ -685,7 +686,7 @@ impl Emitter {
             let arg = MemArg {
                 offset: 0,
                 align: 0,
-                memory_index: 0,
+                memory_index: PRIVATE_MEMORY,
             };
             self.flat_data_pointer(bias);
             if store {
@@ -803,7 +804,7 @@ impl Emitter {
         let memory = MemArg {
             offset: 0,
             align: 0,
-            memory_index: 0,
+            memory_index: PRIVATE_MEMORY,
         };
         self.direct_operand(operand, memory);
         self.op(Op::End);
@@ -929,7 +930,7 @@ impl Emitter {
         let field = |offset, align| MemArg {
             offset,
             align,
-            memory_index: 0,
+            memory_index: PRIVATE_MEMORY,
         };
         self.op(Op::LocalGet(span.descriptor))
             .op(Op::I64Load(field(
@@ -1020,7 +1021,7 @@ impl Emitter {
             let memory = MemArg {
                 offset: 0,
                 align: 0,
-                memory_index: 0,
+                memory_index: PRIVATE_MEMORY,
             };
             self.direct_scalar_load(width, memory);
             return Some(RmwAccess::Proved(STORE_STATUS, memory));
@@ -1067,7 +1068,7 @@ impl Emitter {
                 MemArg {
                     offset: 0,
                     align: 0,
-                    memory_index: 0,
+                    memory_index: PRIVATE_MEMORY,
                 },
             );
             self.op(Op::Else);
@@ -1083,7 +1084,7 @@ impl Emitter {
             let memory = MemArg {
                 offset,
                 align: 0,
-                memory_index: 0,
+                memory_index: PRIVATE_MEMORY,
             };
             self.op(Op::LocalGet(host));
             self.direct_scalar_load(width, memory);
@@ -1148,7 +1149,7 @@ impl Emitter {
             MemArg {
                 offset: 0,
                 align: 0,
-                memory_index: 0,
+                memory_index: PRIVATE_MEMORY,
             },
         );
         self.op(Op::Else)
@@ -1178,7 +1179,7 @@ impl Emitter {
             MemArg {
                 offset: 0,
                 align: 0,
-                memory_index: 0,
+                memory_index: PRIVATE_MEMORY,
             },
         );
         self.op(Op::I32Const(1))
@@ -1211,7 +1212,7 @@ impl Emitter {
                 MemArg {
                     offset: 0,
                     align: 0,
-                    memory_index: 0,
+                    memory_index: PRIVATE_MEMORY,
                 },
             );
             if self.paged_return_uses_read_result() {
@@ -1243,7 +1244,7 @@ impl Emitter {
                 .op(Op::I32Load(MemArg {
                     offset: std::mem::offset_of!(ReturnRead, status) as u64,
                     align: 2,
-                    memory_index: 0,
+                    memory_index: PRIVATE_MEMORY,
                 }))
                 .op(Op::LocalTee(STORE_STATUS))
                 .op(Op::I32Eqz)
@@ -1255,7 +1256,7 @@ impl Emitter {
                 .op(Op::I64Load(MemArg {
                     offset: std::mem::offset_of!(ReturnRead, value) as u64,
                     align: 3,
-                    memory_index: 0,
+                    memory_index: PRIVATE_MEMORY,
                 }))
                 .op(Op::LocalSet(VALUE));
             if indexed {
@@ -1348,7 +1349,7 @@ impl Emitter {
                 MemArg {
                     offset: 0,
                     align: 0,
-                    memory_index: 0,
+                    memory_index: PRIVATE_MEMORY,
                 },
             );
             self.op(Op::I32Const(1))
@@ -1460,7 +1461,7 @@ impl Emitter {
             MemArg {
                 offset: 0,
                 align: 0,
-                memory_index: 0,
+                memory_index: PRIVATE_MEMORY,
             },
         );
         let result = self.boundary_result.unwrap();
@@ -1504,7 +1505,7 @@ impl Emitter {
                     MemArg {
                         offset: 0,
                         align: 0,
-                        memory_index: 0,
+                        memory_index: PRIVATE_MEMORY,
                     },
                 );
                 self.op(Op::Else).op(Op::LocalGet(ADDRESS));
@@ -1566,7 +1567,7 @@ impl Emitter {
                     MemArg {
                         offset: 0,
                         align: 0,
-                        memory_index: 0,
+                        memory_index: PRIVATE_MEMORY,
                     },
                 );
                 self.op(Op::I32Const(1)).op(Op::Else);
@@ -1605,7 +1606,7 @@ impl Emitter {
                 MemArg {
                     offset,
                     align: 0,
-                    memory_index: 0,
+                    memory_index: PRIVATE_MEMORY,
                 },
             );
             return;

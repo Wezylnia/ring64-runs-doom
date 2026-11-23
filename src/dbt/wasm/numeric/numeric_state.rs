@@ -1,3 +1,4 @@
+use crate::dbt::wasm::PRIVATE_MEMORY;
 use crate::dbt::wasm::{Emitter, GPR, REASON, STORE_STATUS};
 use crate::embedding::layout::RunState;
 use crate::x86::context::Segment;
@@ -76,7 +77,7 @@ impl Emitter {
                 .op(Wasm::I64Load(MemArg {
                     offset: (offset_of!(RunState, registers) + usize::from(bank) * 8) as u64,
                     align: 3,
-                    memory_index: 0,
+                    memory_index: PRIVATE_MEMORY,
                 }))
                 .op(Wasm::LocalSet(GPR + u32::from(bank)));
         }
@@ -105,7 +106,7 @@ impl Emitter {
                     .op(Wasm::I64Store(MemArg {
                         offset: (offset_of!(RunState, registers) + bank as usize * 8) as u64,
                         align: 3,
-                        memory_index: 0,
+                        memory_index: PRIVATE_MEMORY,
                     }));
             }
         }

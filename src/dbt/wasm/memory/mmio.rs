@@ -1,3 +1,4 @@
+use crate::dbt::wasm::PRIVATE_MEMORY;
 use crate::dbt::wasm::{ADDRESS, Emitter, REASON, RESULT, STORE_STATUS, VALUE};
 use crate::embedding::layout::RunState;
 use crate::x86::instruction::{Address, DataOperand, RegisterView, Width};
@@ -82,7 +83,7 @@ impl Emitter {
                 .op(Op::I64Load(MemArg {
                     offset: std::mem::offset_of!(RunState, vector_scratch) as u64,
                     align: 0,
-                    memory_index: 0,
+                    memory_index: PRIVATE_MEMORY,
                 }))
                 .op(Op::LocalSet(VALUE));
         }

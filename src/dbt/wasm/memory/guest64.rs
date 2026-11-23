@@ -1,4 +1,5 @@
 use super::{ADDRESS, DirectOperand, Emitter, VALUE};
+use crate::dbt::wasm::{GUEST_MEMORY, PRIVATE_MEMORY};
 use crate::memory::GuestSpan;
 use wasm_encoder::{BlockType, Instruction as Op, MemArg};
 
@@ -70,7 +71,7 @@ impl Emitter {
                 .op(Op::I64Load(MemArg {
                     offset: offset as u64,
                     align: 3,
-                    memory_index: 0,
+                    memory_index: PRIVATE_MEMORY,
                 }))
                 .op(Op::LocalSet(local));
         }
@@ -87,7 +88,7 @@ impl Emitter {
             MemArg {
                 offset: 0,
                 align: 0,
-                memory_index: 1,
+                memory_index: GUEST_MEMORY,
             },
         );
         self.op(Op::End);
