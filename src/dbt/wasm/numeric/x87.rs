@@ -13,8 +13,9 @@ use crate::x86::{
     instruction::{Instruction, Operation},
     x87::{
         MEMORY_FIRST_PAIR_SEGMENT, MEMORY_PAIR_SEGMENT, PAGED_LOAD_PAIR_SEGMENT,
-        REGISTER_PAIR_SEGMENT, memory_first_pair, register_exchange_compare,
-        register_load_arithmetic, register_load_memory_arithmetic, register_store_pop,
+        PAGED_STORE_PAIR_SEGMENT, REGISTER_PAIR_SEGMENT, memory_first_pair,
+        register_exchange_compare, register_load_arithmetic, register_load_memory_arithmetic,
+        register_store_pop,
     },
 };
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -42,13 +43,13 @@ pub(super) fn x87_pair(
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-pub(super) fn paged_x87_load_pair(first: Instruction, second: Instruction) -> bool {
+pub(super) fn paged_x87_memory_pair(first: Instruction, second: Instruction) -> bool {
     x87_pair(first, second).is_some_and(|(head, tail)| {
-        head.op.kind == Kind::Load
-            && tail.address.is_none()
-            && head
+        head.address
+            .is_some_and(|address| matches!(address.segment, Segment::Ds | Segment::Ss))
+            && tail
                 .address
-                .is_some_and(|address| matches!(address.segment, Segment::Ds | Segment::Ss))
+                .is_none_or(|address| matches!(address.segment, Segment::Ds | Segment::Ss))
             && second.next_pc > second.pc
             && (second.next_pc - 1) >> 12 == first.pc >> 12
     })
@@ -67,7 +68,7 @@ impl Emitter {
             return;
         }
         let paged = self.paged;
-        if paged && (self.guarded_paged_lap || !paged_x87_load_pair(first, second)) {
+        if paged && (self.guarded_paged_lap || !paged_x87_memory_pair(first, second)) {
             return;
         }
         let Some((a, b)) = x87_pair(first, second) else {
@@ -98,23 +99,30 @@ impl Emitter {
         if let Some(address) = a.address {
             self.address(address, first.next_pc);
             let tail_segment = b.address.map_or(Segment::Cs, |tail| tail.segment);
-            let pair_kind = if paged {
-                PAGED_LOAD_PAIR_SEGMENT
-            } else {
-                MEMORY_FIRST_PAIR_SEGMENT
+            let pair_kind = match (paged, b.address.is_some()) {
+                (true, true) => PAGED_STORE_PAIR_SEGMENT,
+                (true, false) => PAGED_LOAD_PAIR_SEGMENT,
+                (false, _) => MEMORY_FIRST_PAIR_SEGMENT,
             };
             self.op(Wasm::I32Const(
                 (pair_kind | address.segment as u32 | ((tail_segment as u32) << 3)) as i32,
             ))
             .op(Wasm::I64Const(second.pc as i64));
-            if paged {
-                self.system_bits();
-            } else if let Some(tail) = b.address {
+            if let Some(tail) = b.address {
                 self.address(tail, second.next_pc);
+            } else if paged {
+                self.system_bits();
             } else {
                 self.op(Wasm::I64Const(0));
             }
+            if paged && b.op.is_store() {
+                self.system_bits();
+                self.op(Wasm::I64Const(32)).op(Wasm::I64Shl);
+            }
             self.op(Wasm::I64Const(i64::from(b.op.encode())));
+            if paged && b.op.is_store() {
+                self.op(Wasm::I64Or);
+            }
         } else if let Some(address) = b.address {
             self.address(address, second.next_pc);
             self.op(Wasm::I32Const(

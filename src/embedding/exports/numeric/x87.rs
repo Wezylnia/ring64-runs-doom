@@ -590,6 +590,30 @@ pub extern "C" fn core_paged_x87(
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[inline(always)]
+fn quiet_paged_x87_pair(core: &Core, state: &RunState, pc: u64, flags: u64) -> bool {
+    use crate::x86::flags::{RF, TF};
+    core.context.is_long64()
+        && core.numeric_admission_unrestricted()
+        && state.x87.pending() == 0
+        && state.event.kind == 0
+        && state.interrupts == Default::default()
+        && flags & (RF | TF) == 0
+        && core.debug_completion_quiet()
+        && core.paged_region_trace.is_none()
+        && core.warm_guarded_code_page(pc, false)
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+fn paged_x87_operand(image: &Image, physical: u64, width: u32) -> Option<u64> {
+    if width == 8 {
+        image.physical_read_mapped_qword(physical)
+    } else {
+        image.physical_read_mapped_dword(physical).map(u64::from)
+    }
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 #[inline(never)]
 fn core_paged_x87_load_pair(
     operation: u32,
@@ -599,7 +623,7 @@ fn core_paged_x87_load_pair(
     flags: u64,
     next: u64,
 ) -> i32 {
-    use crate::x86::flags::{AC, RF, TF};
+    use crate::x86::flags::AC;
     use crate::x86::paging::walk::{AccessClass, Request};
     let (Ok(next), Some(segment @ (Segment::Ds | Segment::Ss))) = (
         u32::try_from(next),
@@ -625,15 +649,7 @@ fn core_paged_x87_load_pair(
         let width = first.memory_bytes();
         if address & u64::from(width - 1) != 0
             || !crate::memory::canonical48(address)
-            || !core.context.is_long64()
-            || !core.numeric_admission_unrestricted()
-            || state.x87.pending() != 0
-            || state.event.kind != 0
-            || state.interrupts != Default::default()
-            || flags & (RF | TF) != 0
-            || !core.debug_completion_quiet()
-            || core.paged_region_trace.is_some()
-            || !core.warm_guarded_code_page(pc, false)
+            || !quiet_paged_x87_pair(core, state, pc, flags)
         {
             return -1;
         }
@@ -651,13 +667,7 @@ fn core_paged_x87_load_pair(
             width,
             false,
             |physical| {
-                let bits = if width == 8 {
-                    core.image.physical_read_mapped_qword(physical)
-                } else {
-                    core.image
-                        .physical_read_mapped_dword(physical)
-                        .map(u64::from)
-                }?;
+                let bits = paged_x87_operand(&core.image, physical, width)?;
                 state
                     .x87
                     .load_memory_register(first.format, bits, second.index)
@@ -679,6 +689,110 @@ fn core_paged_x87_load_pair(
     })
 }
 
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[inline(never)]
+fn core_paged_x87_store_pair(
+    operation: u32,
+    source: u64,
+    segments: u32,
+    pc: u64,
+    destination: u64,
+    next: u64,
+) -> i32 {
+    use crate::x86::flags::AC;
+    use crate::x86::paging::walk::{AccessClass, Request};
+    let (Some(Segment::Ds | Segment::Ss), Some(&segment @ (Segment::Ds | Segment::Ss))) = (
+        Segment::ALL.get((segments & 7) as usize).copied(),
+        Segment::ALL.get((segments >> 3) as usize),
+    ) else {
+        return -1;
+    };
+    let flags = next >> 32;
+    BRIDGE.with_borrow_mut(|bridge| {
+        let (Some(first), Some(second)) = (
+            bridge.x87_operations.get(operation),
+            bridge.x87_operations.get(next as u32),
+        ) else {
+            return -1;
+        };
+        if !second.is_store() || !x87::memory_first_pair(first, second) {
+            return -1;
+        }
+        let core = bridge.core.as_mut().unwrap();
+        let state = unsafe { &mut *core.state.get() };
+        let read_width = first.memory_bytes();
+        let write_width = second.memory_bytes();
+        if source & u64::from(read_width - 1) != 0
+            || destination & u64::from(write_width - 1) != 0
+            || !crate::memory::canonical48(source)
+            || !crate::memory::canonical48(destination)
+            || !quiet_paged_x87_pair(core, state, pc, flags)
+        {
+            return -1;
+        }
+        let paging = core.paging.as_ref().expect("paged x87 pair");
+        let class = AccessClass::operand(core.context.cpl(), flags & AC != 0);
+        let read = Request {
+            linear: source,
+            class,
+            access: Access::Read,
+        };
+        let write = Request {
+            linear: destination,
+            class,
+            access: Access::Write,
+        };
+        let Some(bits) = core.translation_cache.data_then_fetch::<false, _>(
+            paging,
+            read,
+            &state.protection_keys,
+            read_width,
+            false,
+            |physical| paged_x87_operand(&core.image, physical, read_width),
+        ) else {
+            return -1;
+        };
+
+        // Admission is deliberately retained-only and cannot update page
+        // tables. Stage the numeric bank until the destination also qualifies.
+        let mut x87 = state.x87;
+        let Some(value) = x87.memory_arithmetic_store(first, bits, second) else {
+            return -1;
+        };
+        if !core.translation_cache.write_retained_span(
+            paging,
+            write,
+            &state.protection_keys,
+            write_width,
+            |physical| match value {
+                Some(value) if write_width == 8 => core
+                    .image
+                    .physical_direct_write(physical, value.to_le_bytes()),
+                Some(value) => core
+                    .image
+                    .physical_direct_write(physical, (value as u32).to_le_bytes()),
+                None => core
+                    .image
+                    .physical_direct_write_ready(physical, write_width)
+                    .then_some(()),
+            },
+        ) {
+            return -1;
+        }
+        x87_environment(
+            &core.context,
+            &mut x87,
+            second,
+            pc,
+            Some((destination, segment)),
+        );
+        state.x87 = x87;
+        clear_x87_diagnostics(core);
+        unsafe { (*core.state.get()).fault_segment = segment as u32 };
+        0
+    })
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn core_paged_x87_observed(
     operation: u32,
@@ -694,6 +808,17 @@ pub extern "C" fn core_paged_x87_observed(
             operation,
             offset,
             segment ^ x87::PAGED_LOAD_PAIR_SEGMENT,
+            instruction_pc,
+            flags,
+            rax,
+        );
+    }
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    if segment & x87::PAGED_STORE_PAIR_SEGMENT != 0 {
+        return core_paged_x87_store_pair(
+            operation,
+            offset,
+            segment ^ x87::PAGED_STORE_PAIR_SEGMENT,
             instruction_pc,
             flags,
             rax,

@@ -1036,7 +1036,7 @@ fn emit_body(
                 && unit
                     .instructions
                     .windows(2)
-                    .any(|pair| super::x87::paged_x87_load_pair(pair[0], pair[1]))
+                    .any(|pair| super::x87::paged_x87_memory_pair(pair[0], pair[1]))
         } else {
             !observed
                 && unit

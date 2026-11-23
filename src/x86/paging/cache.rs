@@ -685,7 +685,7 @@ impl Cache {
     }
 
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
-    pub(super) fn write_retained_span(
+    pub(crate) fn write_retained_span(
         &self,
         state: &State,
         request: Request,
