@@ -1,69 +1,8 @@
-#[path = "memory/access_faults.rs"]
-mod access_faults;
-#[path = "execution/admission.rs"]
-mod admission;
-#[path = "memory/alignment.rs"]
-mod alignment;
-#[path = "execution/cache_admin.rs"]
-mod cache_admin;
-#[path = "system/call_gate_owners.rs"]
-mod call_gate_owners;
-#[path = "system/call_gate_sources.rs"]
-mod call_gate_sources;
-#[path = "system/compound_stack.rs"]
-mod compound_stack;
-#[path = "execution/context_reuse.rs"]
-mod context_reuse;
-#[path = "events/exception_delivery.rs"]
-mod exception_delivery;
-#[path = "events/exception_review.rs"]
-mod exception_review;
-#[path = "events/external_interrupts.rs"]
-mod external_interrupts;
-#[path = "system/far_bridge.rs"]
-mod far_bridge;
-#[path = "system/far_plan_lifetime.rs"]
-mod far_plan_lifetime;
-#[path = "memory/paging_decode.rs"]
-mod paging_decode;
-#[path = "system/processor.rs"]
-mod processor;
-#[path = "system/protection_bridge.rs"]
-mod protection_bridge;
-#[path = "memory/protection_keys.rs"]
-mod protection_keys;
-#[path = "execution/reset.rs"]
-mod reset;
-#[path = "execution/retained_source.rs"]
-mod retained_source;
-#[path = "events/software_events.rs"]
-mod software_events;
-#[path = "memory/streaming_bridge.rs"]
-mod streaming_bridge;
-#[path = "memory/supervisor.rs"]
-mod supervisor;
-#[path = "events/system_flags.rs"]
-mod system_flags;
-#[path = "events/system_flags_review.rs"]
-mod system_flags_review;
-#[path = "system/system_provenance.rs"]
-mod system_provenance;
-#[path = "numeric/x87_bridge.rs"]
-mod x87_bridge;
-#[path = "system/contexts.rs"]
-mod contexts;
-#[path = "numeric/mxcsr.rs"]
-mod mxcsr;
-#[path = "numeric/numeric_bridge.rs"]
-mod numeric_bridge;
-#[path = "numeric/vectors.rs"]
-mod vectors;
-#[path = "numeric/x87_state.rs"]
-mod x87_state;
-#[path = "memory/invpcid.rs"]
-mod invpcid;
-#[path = "memory/legacy_paging.rs"]
-mod legacy_paging;
+mod events;
+mod execution;
+mod memory;
+mod numeric;
+mod system;
 
 use super::*;
 use crate::embedding::exports::{
