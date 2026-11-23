@@ -364,7 +364,7 @@ const all=[...contextReuseScenarios(compiler),...fastSystemScenarios(compiler),.
 const selected=process.argv[2]?all.filter(s=>s.name.includes(process.argv[2])):all;
 if(!selected.length)throw Error('empty scenario selection');
 const passed=[];
-for(const s of selected){try{await s.run();passed.push(s.name);}catch(e){const message=String(e.message);const stack=String(e.stack);const semantic=!message.includes('cpu engine failed')&&(stack.includes('/tests/support/fixture.ts')||stack.includes('/tests/execution/translations/context-reuse/fixture.ts'));console.log(JSON.stringify({selected:selected.length,failed:s.name,error:message,stack,semantic}));process.exitCode=1;break;}}
+for(const s of selected){try{await s.run();passed.push(s.name);}catch(e){const message=String(e.message);const stack=String(e.stack);const semantic=!message.includes('cpu engine failed')&&((stack.includes('/tests/support/fixture.ts')||stack.includes('/tests/support/literals.ts'))||stack.includes('/tests/execution/translations/context-reuse/fixture.ts'));console.log(JSON.stringify({selected:selected.length,failed:s.name,error:message,stack,semantic}));process.exitCode=1;break;}}
 if(!process.exitCode)console.log(JSON.stringify({selected:selected.length,passed:passed.length,names:passed}));
 `;
 await writeFile(join(work, 'mutation-cases.mjs'), cases);

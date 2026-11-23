@@ -1,10 +1,11 @@
 import { createServer } from 'node:http';
-import { cp, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { dirname, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import os from 'node:os';
 import { root, freeze, manifest, hash, encode } from '../artifacts.mjs';
 import { evaluateInChromium } from '../browser.mjs';
+import { stageOracle } from '../oracles/stage.mjs';
 
 const args = process.argv.slice(2);
 const values = {};
@@ -27,26 +28,31 @@ const tag = `${Date.now()}-${process.pid}`;
 const current = values.snapshot
   ? await manifest(resolve(values.snapshot))
   : await freeze(resolve(values.current ?? root), `supervisor-access-build-${tag}`);
-const oracleFiles = (await readdir(resolve(root, 'tests/execution/supervisor-access')))
-  .filter((name) => name.endsWith('.ts'))
-  .sort();
+const suite = 'tests/execution/memory/supervisor-access';
+async function oracleSources() {
+  const files = await readdir(resolve(root, suite), { recursive: true });
+  return files
+    .filter((name) => name.endsWith('.ts'))
+    .map((name) => name.split(sep).join('/'))
+    .sort();
+}
+const oracleFiles = await oracleSources();
 const sources = [
   'scripts/verification/supervisor-access/supervisor-access-audit.mjs',
   'scripts/verification/artifacts.mjs',
   'scripts/verification/browser.mjs',
+  'scripts/verification/oracles/stage.mjs',
   ...oracleFiles.flatMap((name) => [
-    `tests/execution/supervisor-access/${name}`,
-    `build/tests/execution/supervisor-access/${name.replace(/\.ts$/, '.js')}`,
+    `${suite}/${name}`,
+    `build/${suite}/${name.replace(/\.ts$/, '.js')}`,
   ]),
-  ...['context', 'fixture'].flatMap((name) => [
+  ...['context', 'literals'].flatMap((name) => [
     `tests/support/${name}.ts`,
     `build/tests/support/${name}.js`,
   ]),
 ];
 const sourceHashes = async () => {
-  const inventory = (await readdir(resolve(root, 'tests/execution/supervisor-access')))
-    .filter((name) => name.endsWith('.ts'))
-    .sort();
+  const inventory = await oracleSources();
   if (JSON.stringify(inventory) !== JSON.stringify(oracleFiles))
     throw Error('supervisor source inventory changed during audit; discard run');
   return Object.fromEntries(
@@ -56,32 +62,12 @@ const sourceHashes = async () => {
   );
 };
 const before = await sourceHashes();
-// Keep authored fixtures and literals beside their frozen host, preserving relative imports.
-await cp(
-  resolve(root, 'build/tests/execution/supervisor-access'),
-  resolve(current.path, 'build/tests/execution/supervisor-access'),
-  { recursive: true },
-);
-await mkdir(resolve(current.path, 'build/tests/support'), { recursive: true });
-for (const name of ['context', 'fixture'])
-  await cp(
-    resolve(root, `build/tests/support/${name}.js`),
-    resolve(current.path, `build/tests/support/${name}.js`),
-  );
-const frozenHashes = async () =>
-  Object.fromEntries(
-    await Promise.all(
-      sources
-        .filter((name) => name.startsWith('build/tests/'))
-        .map(async (name) => [name, hash(await readFile(resolve(current.path, name)))]),
-    ),
-  );
-const frozenBefore = await frozenHashes();
+const verifyStagedOracle = await stageOracle(current.path, before);
 let result;
 if (!browserMode) {
   const { createCpu } = await import(pathToFileURL(resolve(current.path, 'build/host/index.js')));
   const { checkSupervisorAccess, groups } = await import(
-    pathToFileURL(resolve(current.path, 'build/tests/execution/supervisor-access/oracle.js'))
+    pathToFileURL(resolve(current.path, 'build/tests/execution/memory/supervisor-access/oracle.js'))
   );
   if (selected?.some((name) => !groups.includes(name)))
     throw Error('unknown supervisor access group');
@@ -121,7 +107,7 @@ if (!browserMode) {
     async (selected) => {
       const { createCpu } = await import('/build/host/index.js');
       const { checkSupervisorAccess, groups } =
-        await import('/build/tests/execution/supervisor-access/oracle.js');
+        await import('/build/tests/execution/memory/supervisor-access/oracle.js');
       if (selected?.some((name) => !groups.includes(name)))
         throw Error('unknown supervisor access group');
       const compiler = await WebAssembly.compile(
@@ -140,8 +126,7 @@ if (after.coreSha256 !== current.coreSha256 || after.hostSha256 !== current.host
   throw Error('frozen Core/host changed during audit; discard run');
 if (JSON.stringify(before) !== JSON.stringify(await sourceHashes()))
   throw Error('oracle source changed during audit; discard run');
-if (JSON.stringify(frozenBefore) !== JSON.stringify(await frozenHashes()))
-  throw Error('frozen oracle changed during audit; discard run');
+await verifyStagedOracle();
 const output = resolve(
   values.output ??
     `build/verification/supervisor-access-oracle-${browserMode ? 'chrome' : 'node'}-${tag}.json`,

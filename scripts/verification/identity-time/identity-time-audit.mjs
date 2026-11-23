@@ -5,6 +5,7 @@ import { pathToFileURL } from 'node:url';
 import os from 'node:os';
 import { root, freeze, manifest, hash, encode } from '../artifacts.mjs';
 import { evaluateInChromium } from '../browser.mjs';
+import { stageOracle } from '../oracles/stage.mjs';
 
 const args = process.argv.slice(2);
 const values = {};
@@ -31,8 +32,11 @@ const sources = [
   'scripts/verification/identity-time/identity-time-audit.mjs',
   'scripts/verification/artifacts.mjs',
   'scripts/verification/browser.mjs',
-  'tests/execution/identity-time/oracle.ts',
-  'build/tests/execution/identity-time/oracle.js',
+  'scripts/verification/oracles/stage.mjs',
+  'tests/support/literals.ts',
+  'build/tests/support/literals.js',
+  'tests/execution/processor/identity-time/oracle.ts',
+  'build/tests/execution/processor/identity-time/oracle.js',
 ];
 const sourceHashes = async () =>
   Object.fromEntries(
@@ -41,14 +45,12 @@ const sourceHashes = async () =>
     ),
   );
 const before = await sourceHashes();
-const oracle = await readFile(resolve(root, 'build/tests/execution/identity-time/oracle.js'));
-// This module contains only authored literals/BigInt steps; its production imports are type-only.
-await writeFile(resolve(current.path, 'identity-oracle.js'), oracle);
+const verifyStagedOracle = await stageOracle(current.path, before);
 let result;
 if (!browserMode) {
   const { createCpu } = await import(pathToFileURL(resolve(current.path, 'build/host/index.js')));
   const { checkIdentityTime, groups } = await import(
-    pathToFileURL(resolve(current.path, 'identity-oracle.js'))
+    pathToFileURL(resolve(current.path, 'build/tests/execution/processor/identity-time/oracle.js'))
   );
   if (selected?.some((name) => !groups.includes(name))) throw Error('unknown identity/time group');
   const compiler = await WebAssembly.compile(
@@ -67,7 +69,8 @@ if (!browserMode) {
       if (!(
         file.startsWith(resolve(current.path, 'build/host') + sep) ||
         file === resolve(current.path, 'build/ring64.wasm') ||
-        file === resolve(current.path, 'identity-oracle.js')
+        file === resolve(current.path, 'build/tests/support/literals.js') ||
+        file === resolve(current.path, 'build/tests/execution/processor/identity-time/oracle.js')
       ))
         throw Error('outside allowed route');
       const bytes = await readFile(file);
@@ -86,7 +89,8 @@ if (!browserMode) {
     server,
     async (selected) => {
       const { createCpu } = await import('/build/host/index.js');
-      const { checkIdentityTime, groups } = await import('/identity-oracle.js');
+      const { checkIdentityTime, groups } =
+        await import('/build/tests/execution/processor/identity-time/oracle.js');
       if (selected?.some((name) => !groups.includes(name)))
         throw Error('unknown identity/time group');
       const compiler = await WebAssembly.compile(
@@ -105,8 +109,7 @@ if (after.coreSha256 !== current.coreSha256 || after.hostSha256 !== current.host
   throw Error('frozen Core/host changed during audit; discard run');
 if (JSON.stringify(before) !== JSON.stringify(await sourceHashes()))
   throw Error('oracle source changed during audit; discard run');
-if (hash(await readFile(resolve(current.path, 'identity-oracle.js'))) !== hash(oracle))
-  throw Error('frozen oracle changed during audit; discard run');
+await verifyStagedOracle();
 const output = resolve(
   values.output ??
     `build/verification/identity-time-oracle-${browserMode ? 'chrome' : 'node'}-${tag}.json`,

@@ -274,7 +274,7 @@ const compiler=await WebAssembly.compile(new Uint8Array(await readFile('build/ri
 const all = pagingScenarios(compiler);
 const selected=process.argv[2]?all.filter(s=>s.name.includes(process.argv[2])):all;
 if(!selected.length) throw Error('empty scenario selection');
-const passed=[];for(const s of selected){try{await s.run();passed.push(s.name);}catch(e){console.log(JSON.stringify({failed:s.name,error:e.message,stack:e.stack,semantic:!e.message.includes('cpu engine failed')&&e.stack.includes('/tests/support/fixture.ts')}));process.exitCode=1;break;}}
+const passed=[];for(const s of selected){try{await s.run();passed.push(s.name);}catch(e){console.log(JSON.stringify({failed:s.name,error:e.message,stack:e.stack,semantic:!e.message.includes('cpu engine failed')&&(e.stack.includes('/tests/support/fixture.ts')||e.stack.includes('/tests/support/literals.ts'))}));process.exitCode=1;break;}}
 if(!process.exitCode)console.log(JSON.stringify({passed:passed.length,names:passed}));
 `;
 await writeFile(join(work, 'mutation-cases.mjs'), cases);

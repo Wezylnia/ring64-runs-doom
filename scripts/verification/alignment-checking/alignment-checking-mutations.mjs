@@ -161,7 +161,7 @@ for(const scenario of selected){
  try{await scenario.run();passed.push(scenario.name);}
  catch(error){
   const message=String(error.message),stack=String(error.stack);
-  const assertions=['/tests/support/fixture.ts:','/tests/execution/memory/alignment-checking/fixture.ts:','/tests/execution/memory/supervisor-access/fixture.ts:'];
+  const assertions=['/tests/support/fixture.ts:','/tests/support/literals.ts:','/tests/execution/memory/alignment-checking/fixture.ts:','/tests/execution/memory/supervisor-access/fixture.ts:'];
   const assertion=assertions.some(file=>stack.includes(file)) && !/cpu engine failed|WebAssembly|unreachable|out of bounds|compil|empty scenario|timed? ?out/i.test(message);
   console.log(JSON.stringify({selected:selected.length,passed:passed.length,failed:scenario.name,error:message,stack,assertion}));process.exitCode=1;break;
  }
