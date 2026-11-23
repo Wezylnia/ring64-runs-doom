@@ -706,6 +706,18 @@ impl Emitter {
         // checked entry because other prefixes can hand off fetch alone.
         let indexed =
             indexed_leading || self.indexed_dword_prefixes || indexed_wide || indexed_store;
+        // A first operand can refuse before any guest effect. After it,
+        // register-only work and a canonical branch can retire together.
+        let count_once = self.context.is_long64()
+            && instructions.len() > 1
+            && instructions.iter().enumerate().all(|(index, instruction)| {
+                super::artifact::register_prefix_operation(instruction.operation)
+                    || index == 0 && (read.is_some() || leading_wide_read)
+                    || index + 1 == instructions.len()
+                        && matches!(instruction.operation,
+                            Operation::Jump { target } | Operation::Jcc { target, .. }
+                                if crate::memory::canonical48(target))
+            });
         let keep_quiet = self.sampled_region
             && self.quiet_fetch_page.is_some()
             && !instructions.iter().copied().any(paged_prefix_dword_store);
@@ -777,7 +789,9 @@ impl Emitter {
                 Width::W64 => unreachable!("unsupported prefix read width"),
             });
             self.write_register(register, width);
-            self.commit(first.next_pc);
+            if !count_once {
+                self.commit(first.next_pc);
+            }
         }
         if leading_wide_read {
             // A first-operand refusal drops directly to the checked entry.
@@ -795,7 +809,13 @@ impl Emitter {
             let fuse_branch = wide && guarded.get(index + 1).is_some_and(|next| {
                 matches!(next.operation, Operation::Jcc { target, .. } if crate::memory::canonical48(target))
             });
-            self.instruction_retirement = if fuse_branch {
+            self.instruction_retirement = if count_once {
+                if index + 1 == guarded.len() {
+                    InstructionRetirement::AfterPrefix(instructions.len() as u32 - 1)
+                } else {
+                    InstructionRetirement::DeferredCommit
+                }
+            } else if fuse_branch {
                 InstructionRetirement::DeferredCommit
             } else if retired_read {
                 InstructionRetirement::AfterPrefix(1)
@@ -1269,6 +1289,17 @@ impl Emitter {
         let first = &instructions[0];
         let last = instructions.last().unwrap();
         self.guard_straight_prefix(first, last, instructions.len() as u32);
+        let retained = self
+            .quiet_fetch_page
+            .filter(|_| keep_quiet && !indexed_read && fetch == PagedPrefixFetch::Retained);
+        if let Some(page) = retained {
+            self.op(Op::LocalGet(page))
+                .op(Op::I64Const(((first.pc & !4095) | 1) as i64))
+                .op(Op::I64Eq)
+                .op(Op::If(BlockType::Result(wasm_encoder::ValType::I32)))
+                .op(Op::I32Const(1))
+                .op(Op::Else);
+        }
         self.clear_quiet_fetch();
         if let Some(local) = handoff {
             let expected = self.current_index as i32 + 1;
@@ -1320,6 +1351,9 @@ impl Emitter {
             self.op(Op::End);
         }
         if handoff.is_some() {
+            self.op(Op::End);
+        }
+        if retained.is_some() {
             self.op(Op::End);
         }
         self.op(Op::I32Const(1))

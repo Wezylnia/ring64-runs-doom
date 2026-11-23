@@ -21,7 +21,7 @@ use wasm_encoder::{
 };
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-fn register_prefix_operation(operation: Operation) -> bool {
+pub(super) fn register_prefix_operation(operation: Operation) -> bool {
     super::structured_loop::inside_register_body(operation)
         || matches!(
             operation,
@@ -206,12 +206,19 @@ fn paged_register_prefixes(
             }
         }
     }
+    let local_backedge = |instruction: &Instruction| {
+        matches!(instruction.operation, Operation::Jump { target }
+            if target < instruction.pc
+                && target >> 12 == instruction.pc >> 12
+                && instructions.binary_search_by_key(&target, |i| i.pc).is_ok())
+    };
     let terminal_branch = |instruction: &Instruction, has_read: bool, wide_read: bool| {
         long64
             && match instruction.operation {
                 Operation::Jcc { target, .. } => {
                     crate::memory::canonical48(target)
-                        && ((short_register_prefixes && !has_read)
+                        && ((short_register_prefixes
+                            && (!has_read || target >> 12 == instruction.pc >> 12))
                             || wide_read
                             || instructions.binary_search_by_key(&target, |i| i.pc).is_ok())
                 }
@@ -243,7 +250,7 @@ fn paged_register_prefixes(
                 || (if has_read {
                     has_wide_read || end - first >= 2
                 } else {
-                    short_register_prefixes && end > first
+                    short_register_prefixes && (end > first || local_backedge(instruction))
                 } && terminal_branch(instruction, has_read, has_wide_read))
                 || (short_register_prefixes
                     && !has_read
@@ -286,7 +293,9 @@ fn paged_register_prefixes(
         {
             end -= 1;
         }
-        let minimum = if short_register_prefixes && (!has_read || has_wide_read && has_branch) {
+        let minimum = if has_branch && local_backedge(&instructions[first]) {
+            1
+        } else if short_register_prefixes && (!has_read || has_wide_read && has_branch) {
             2
         } else if has_branch
             || short_indexed_reads
