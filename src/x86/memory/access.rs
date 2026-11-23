@@ -1,6 +1,6 @@
 use super::alignment::Intent;
-use super::context::AccessFailure;
 use crate::memory::Image;
+use crate::x86::context::AccessFailure;
 
 /// A refusal belongs to one captured write in the current preparation batch.
 #[derive(Clone, Copy, Debug)]

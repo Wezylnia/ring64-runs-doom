@@ -28,7 +28,12 @@ impl Intent {
         }
     }
 
-    pub(super) fn check(self, address: u64, width: u32, access: Access) -> Result<(), Fault> {
+    pub(in crate::x86) fn check(
+        self,
+        address: u64,
+        width: u32,
+        access: Access,
+    ) -> Result<(), Fault> {
         let check = |address, width, alignment| {
             assert!(
                 matches!(alignment, 1 | 2 | 4 | 8),

@@ -1,5 +1,3 @@
-pub mod access;
-pub mod alignment;
 pub mod compound_stack;
 pub mod context;
 pub mod debug;
@@ -11,14 +9,14 @@ pub mod float;
 pub mod instruction;
 #[cfg(any(target_arch = "wasm32", test))]
 pub(crate) mod integer;
-pub mod masked;
 pub mod mmx;
 pub mod numeric_controls;
 pub mod numeric_images;
-pub mod paging;
 pub mod processor;
 pub mod protection;
-pub mod protection_keys;
 pub mod state;
 pub mod x87;
 pub mod xstate;
+
+mod memory;
+pub use memory::{access, alignment, masked, paging, protection_keys};
