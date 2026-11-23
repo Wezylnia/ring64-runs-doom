@@ -1,21 +1,8 @@
 import { execFileSync } from 'node:child_process';
-import {
-  access,
-  copyFile,
-  cp,
-  mkdir,
-  mkdtemp,
-  readFile,
-  readdir,
-  rename,
-  rm,
-  writeFile,
-} from 'node:fs/promises';
-import { dirname, join, posix, resolve } from 'node:path';
+import { access, copyFile, cp, mkdir, mkdtemp, readdir, rename, rm } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
 import { build } from 'esbuild';
-import hljs from 'highlight.js/lib/core';
-import c from 'highlight.js/lib/languages/c';
-import typescript from 'highlight.js/lib/languages/typescript';
+import { writeSitePages } from './site-pages.mjs';
 
 const root = resolve(import.meta.dirname, '../..');
 const source = join(root, 'website');
@@ -28,9 +15,6 @@ await access(join(sdk, 'ring64.wasm')).catch((error) => {
   console.error('Ring64 SDK build is missing. Run npm run build first.');
   process.exit(1);
 });
-
-hljs.registerLanguage('c', c);
-hljs.registerLanguage('typescript', typescript);
 
 execFileSync(
   process.execPath,
@@ -48,55 +32,7 @@ try {
   await mkdir(demo, { recursive: true });
 
   const entries = await readdir(source, { withFileTypes: true });
-  const [masthead, canvas, controls, reference] = await Promise.all([
-    readFile(join(source, 'masthead.html'), 'utf8'),
-    readFile(join(wetInk, 'canvas.html'), 'utf8'),
-    readFile(join(wetInk, 'controls.html'), 'utf8'),
-    readFile(join(source, 'docs/reference.html'), 'utf8'),
-  ]);
-  const exampleNames = [
-    'add.ts',
-    'add.c',
-    'parallel.ts',
-    'api/run-cpu.ts',
-    'api/run-to.ts',
-    'api/copy-guest-bytes.ts',
-    'api/set-first-argument.ts',
-    'api/run-together.ts',
-    'api/port-output.ts',
-    'api/byte-register.ts',
-  ];
-  const examples = await Promise.all(
-    exampleNames.map(async (name) => {
-      const code = await readFile(join(source, 'docs/examples', name), 'utf8');
-      return hljs.highlight(code.trimEnd(), { language: name.endsWith('.c') ? 'c' : 'typescript' })
-        .value;
-    }),
-  );
-  for (const page of ['index.html', 'under-the-ink/index.html', 'docs/index.html']) {
-    let html = await readFile(join(source, page), 'utf8');
-    if (page === 'docs/index.html') {
-      html = html.replace('<!-- docs-reference -->', () => reference.trimEnd());
-      for (const [index, name] of exampleNames.entries()) {
-        html = html.replace(`<!-- example:${name} -->`, () => examples[index]);
-      }
-    }
-    const destination = join(staged, page);
-    const siteRoot = posix.relative(posix.dirname(page), '.') || '.';
-    await mkdir(dirname(destination), { recursive: true });
-    await writeFile(
-      destination,
-      html
-        .replace('<!-- site-masthead -->', () =>
-          masthead
-            .replaceAll('{{root}}', siteRoot)
-            .replaceAll('{{docsCurrent}}', String(page.startsWith('docs/')))
-            .trim(),
-        )
-        .replace('<!-- wet-ink-canvas -->', () => canvas.trim())
-        .replace('<!-- wet-ink-controls -->', () => controls.trim()),
-    );
-  }
+  await writeSitePages(source, staged);
   for (const entry of entries) {
     if (entry.isFile() && entry.name.endsWith('.css'))
       await copyFile(join(source, entry.name), join(staged, entry.name));
