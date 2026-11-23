@@ -370,3 +370,67 @@ test('flat advancing vector copy windows preserve ordered aliases and replay at 
     cpu.dispose();
   }
 });
+
+test('counted flat copies stop at the unsigned limit and replay a wrapping advance', async () => {
+  // Copy two ordered vectors from [ESI+EDI] to [ESI], advance ESI, and loop below ECX.
+  const code = hex('0f10043e0f1106f30f6f443e10f30f7f461083c62039ce72e7f4');
+  const stop = PC + 25n;
+  const data = PC + 0x1000n;
+  const top = 0xffffffe0n;
+  const ram = Uint8Array.from({ length: 128 }, (_, index) => index);
+  const permissions = { read: true, write: true, execute: false };
+  const cpu = await createCpu({
+    compiler,
+    context: snapshot('protected'),
+    entry: PC,
+    limits: LIMITS,
+    memoryLimits: { maxBackings: 3, maxMappings: 3, maxBackingBytes: 8192 },
+    memory: {
+      backings: [
+        { id: 'code', bytes: code },
+        { id: 'data', bytes: ram },
+        { id: 'top', bytes: ram.slice(0, 32) },
+      ],
+      mappings: [
+        {
+          base: PC,
+          length: code.length,
+          backing: 'code',
+          offset: 0,
+          permissions: { ...permissions, write: false, execute: true },
+        },
+        { base: data, length: ram.length, backing: 'data', offset: 0, permissions },
+        { base: top, length: 32, backing: 'top', offset: 0, permissions },
+      ],
+    },
+  });
+  try {
+    const enter = (destination: bigint, limit: bigint) =>
+      cpu.setState(initial(PC, { 1: limit, 6: destination, 7: 0n }));
+    enter(data, data + 33n);
+    const copied = await cpu.run({ budget: 20n, stop });
+    assert.equal(copied.reason, 'stop');
+    assert.equal(copied.retired, 14n);
+    assert.equal(copied.state.registers[6], data + 64n);
+    assert.equal(copied.state.flags & 0x41n, 0n);
+    assert.deepEqual(cpu.readMemory(data, ram.length), ram);
+
+    enter(data, data + 33n);
+    const partial = await cpu.run({ budget: 9n, stop });
+    assert.equal(partial.reason, 'budget');
+    assert.equal(partial.retired, 9n);
+    assert.equal(partial.state.rip, PC + 7n);
+    assert.equal(partial.state.registers[6], data + 32n);
+    assert.equal(partial.state.flags & 0x41n, 1n);
+
+    enter(top, 0n);
+    const wrapped = await cpu.run({ budget: 20n, stop });
+    assert.equal(wrapped.reason, 'stop');
+    assert.equal(wrapped.retired, 7n);
+    assert.equal(wrapped.state.registers[6], 0n);
+    assert.equal(wrapped.state.flags & 0x41n, 0x40n);
+    assert.deepEqual(cpu.readMemory(top, 32), ram.slice(0, 32));
+  } finally {
+    cpu.dispose();
+  }
+});
