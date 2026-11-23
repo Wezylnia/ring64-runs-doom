@@ -1323,8 +1323,11 @@ fn emit_body(
         .then(|| flat_integer_groups(unit, loop_body))
         .filter(|groups| groups.iter().any(Option::is_some));
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let sampled_flat_dispatch =
+        unit.sampled && !paged && (linear_call_spans || unit.context.is_long64());
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let dense_dispatch = if uses.dynamic_targets
-        && (unit.sampled && linear_call_spans || indexed_paging)
+        && (sampled_flat_dispatch || indexed_paging)
         // Structured clones can hand off an entry ordinal independently of RIP.
         && loop_body.is_none()
         && optional.additional_copy.is_none()
