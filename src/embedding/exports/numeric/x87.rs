@@ -117,8 +117,14 @@ pub extern "C" fn core_x87(
 #[inline(always)]
 fn flat_pair_segment(context: &ExecutionContext, segment: Segment) -> bool {
     use crate::x86::context::SegmentType;
-    if !matches!(segment, Segment::Ds | Segment::Ss) || context.mode() != Mode::Protected {
+    if !matches!(segment, Segment::Ds | Segment::Ss) {
         return false;
+    }
+    match context.mode() {
+        // Long64 ignores both segment bases and limits for these two segments.
+        Mode::Long64 => return true,
+        Mode::Protected => {}
+        _ => return false,
     }
     let loaded = context.segment(segment);
     loaded.base == 0
@@ -133,18 +139,23 @@ fn flat_pair_pointer(
     span: &mut crate::memory::DirectSpan,
     offset: u64,
     width: u32,
+    long64: bool,
     refill: impl FnOnce() -> Option<crate::memory::DirectSpan>,
 ) -> Option<u32> {
-    const END: u64 = 1 << 32;
-    if offset > END - u64::from(width) {
+    const END32: u64 = 1 << 32;
+    if !long64 && offset > END32 - u64::from(width) {
         return None;
     }
+    // The installed mapping is canonical over its entire range. Containment
+    // proves all operand bytes lie in it, including at the top of Long64.
     let relative = offset.wrapping_sub(span.base);
     if width <= span.length && relative <= u64::from(span.length - width) {
         return Some(span.host + relative as u32);
     }
     let mut next = refill()?;
-    next.length = u64::from(next.length).min(END - next.base) as u32;
+    if !long64 {
+        next.length = u64::from(next.length).min(END32 - next.base) as u32;
+    }
     *span = next;
     Some(next.host + (offset - next.base) as u32)
 }
@@ -183,15 +194,20 @@ fn core_x87_memory_first_pair(
         // Both operands must be available before publishing any instruction effects.
         let width = first.memory_bytes();
         #[cfg(target_arch = "wasm32")]
+        let long64 = core.context.is_long64();
+        #[cfg(target_arch = "wasm32")]
         let flat_head = flat_pair_segment(&core.context, head_segment);
         #[cfg(target_arch = "wasm32")]
         let direct_read = if flat_head {
-            flat_pair_pointer(
-                &mut core.state.flat_reads[usize::from(head_segment == Segment::Ss)],
-                offsets[0],
-                width,
-                || core.image.direct_read_span(offsets[0], width),
-            )
+            let slot = usize::from(head_segment == Segment::Ss);
+            let spans = if long64 {
+                &mut core.state.x87_long64_reads
+            } else {
+                &mut core.state.flat_reads
+            };
+            flat_pair_pointer(&mut spans[slot], offsets[0], width, long64, || {
+                core.image.direct_read_span(offsets[0], width)
+            })
         } else {
             None
         };
@@ -227,12 +243,15 @@ fn core_x87_memory_first_pair(
             } else {
                 flat_pair_segment(&core.context, tail_segment)
             } {
-                let slot = if tail_segment == Segment::Ss {
+                let stack = tail_segment == Segment::Ss;
+                let slot = if long64 {
+                    &mut core.state.x87_long64_writes[usize::from(stack)]
+                } else if stack {
                     &mut core.state.flat_stack_write
                 } else {
                     &mut core.state.flat_data_write
                 };
-                flat_pair_pointer(slot, offsets[1], width, || {
+                flat_pair_pointer(slot, offsets[1], width, long64, || {
                     core.image.direct_write_span(offsets[1], width)
                 })
             } else {

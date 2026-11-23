@@ -129,6 +129,8 @@ impl Core {
             self.state.flat_stack_pointer_read = Default::default();
             self.state.flat_data_write = Default::default();
             self.state.flat_stack_write = Default::default();
+            self.state.x87_long64_reads = Default::default();
+            self.state.x87_long64_writes = Default::default();
         }
         self.translation_cache.clear();
         self.paging_work.clear();
@@ -143,6 +145,8 @@ impl Core {
             self.state.flat_stack_pointer_read = Default::default();
             self.state.flat_data_write = Default::default();
             self.state.flat_stack_write = Default::default();
+            self.state.x87_long64_reads = Default::default();
+            self.state.x87_long64_writes = Default::default();
         }
         self.paging_work.clear();
         if self.paging.is_some() {
@@ -348,6 +352,7 @@ pub(super) fn compile_artifact(
                     // Execute aliases are already excluded when admitting a write span.
                     core.state.flat_data_write = Default::default();
                     core.state.flat_stack_write = Default::default();
+                    core.state.x87_long64_writes = Default::default();
                     core.state.indexed_paged_writes.fill(Default::default());
                 }
                 if !core.translation_owners.register(owner, &core.context, observed, core.context_version) {

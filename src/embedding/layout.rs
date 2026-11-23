@@ -313,6 +313,11 @@ pub(crate) struct StateStorage {
         crate::x86::paging::cache::INDEXED_READ_ENTRIES],
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     pub(crate) flat_stack_write: crate::memory::DirectSpan,
+    // Flat32 generated code truncates its cached base to 32 bits.
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(crate) x87_long64_reads: [crate::memory::DirectSpan; 2],
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(crate) x87_long64_writes: [crate::memory::DirectSpan; 2],
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -338,6 +343,10 @@ impl StateStorage {
                 crate::x86::paging::cache::INDEXED_READ_ENTRIES],
             #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
             flat_stack_write: Default::default(),
+            #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+            x87_long64_reads: Default::default(),
+            #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+            x87_long64_writes: Default::default(),
         }
     }
 
