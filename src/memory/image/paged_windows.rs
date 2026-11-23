@@ -1,5 +1,5 @@
-// Paging proofs carry 32-bit offsets. Each offset names bytes in an immutable
-// window of the guest arena. Generated Wasm adds the window bias in i64.
+// Paging proofs carry 32-bit offsets. Each offset names bytes in a window of
+// the guest arena. Its bias stays fixed while generated code can use the proof.
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 
@@ -14,10 +14,22 @@ thread_local! {
     static BIASES: [Cell<u64>; SLOTS] = const { [const { Cell::new(0) }; SLOTS] };
     static SLOTS_BY_BASE: RefCell<BTreeMap<u64, u32>> = const { RefCell::new(BTreeMap::new()) };
     static LAST: Cell<Option<(u64, u32)>> = const { Cell::new(None) };
+    static EXHAUSTED: Cell<bool> = const { Cell::new(false) };
 }
 
 pub(crate) fn biases_pointer() -> u32 {
     BIASES.with(|table| table.as_ptr() as u32)
+}
+
+// Called between generated entries. The caller retires cached spans before
+// any slot can be assigned a different bias. Guest TLB entries stay live.
+pub(crate) fn recycle_if_exhausted() -> bool {
+    if !EXHAUSTED.replace(false) {
+        return false;
+    }
+    SLOTS_BY_BASE.with_borrow_mut(BTreeMap::clear);
+    LAST.set(None);
+    true
 }
 
 fn window_token(base: u64) -> Option<u32> {
@@ -32,6 +44,7 @@ fn window_token(base: u64) -> Option<u32> {
         }
         let slot = windows.len();
         if slot == SLOTS {
+            EXHAUSTED.set(true);
             return None;
         }
         let token = ((slot as u32) << WINDOW_SHIFT) + GUARD as u32;

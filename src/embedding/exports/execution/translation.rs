@@ -416,6 +416,12 @@ pub extern "C" fn core_publish(owner: u64) -> i32 {
 pub extern "C" fn core_activate(owner: u64) -> i32 {
     BRIDGE.with_borrow_mut(|bridge| {
         let core = bridge.core.as_mut().unwrap();
+        // Only the external entry boundary guarantees that no generated
+        // locals retain a paging span. In-entry owner revalidation does not.
+        #[cfg(guest_memory64)]
+        if crate::memory::paged_windows::recycle_if_exhausted() {
+            core.retire_paged_ram_windows();
+        }
         i32::from(core.activate_owner(owner))
     })
 }

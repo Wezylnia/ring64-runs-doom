@@ -8,6 +8,14 @@ use crate::x86::paging::walk::Failure;
 use crate::x86::protection_keys::State as Keys;
 
 impl Core {
+    #[cfg(guest_memory64)]
+    pub(in crate::embedding::exports) fn retire_paged_ram_windows(&mut self) {
+        self.guarded_walk.get_mut().end(&self.state);
+        self.guarded_dword_pair = None;
+        self.indexed_write_memo = Default::default();
+        self.translation_cache.retire_backing_spans();
+    }
+
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     pub(in crate::embedding::exports) fn remember_indexed_scalar_read(
         &self,

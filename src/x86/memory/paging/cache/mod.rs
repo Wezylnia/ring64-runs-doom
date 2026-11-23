@@ -607,6 +607,13 @@ impl Cache {
         table.writes.fill(IndexedReadEntry::default());
     }
 
+    #[cfg(guest_memory64)]
+    pub(crate) fn retire_backing_spans(&self) {
+        self.entries.borrow_mut().recency_mut().retire_pages();
+        self.last_dword_read.set(None);
+        self.loop_reads_invalidated.set(true);
+    }
+
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     pub(crate) fn clear_indexed_writes(&self) {
         self.entries
