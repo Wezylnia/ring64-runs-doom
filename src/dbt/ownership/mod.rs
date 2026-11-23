@@ -66,6 +66,7 @@ impl GuardedCodePage {
                         | Operation::Lea { .. }
                         | Operation::Alu { .. }
                         | Operation::MemoryAlu { .. }
+                        | Operation::Imul { .. }
                         | Operation::Unary { .. }
                         | Operation::Shift { .. }
                         | Operation::Extend { .. }

@@ -188,3 +188,47 @@ test('a warm indexed qword read uses the checked path when its last byte crosses
     );
   });
 });
+
+test('sampled memory IMUL reuses its read and faults before updating the product or flags', async () => {
+  const stop = PC + 3n;
+  const address = PC + 0x1020n;
+  const bytes = new Uint8Array(4096);
+  bytes.set(little([3n], 4), 0x20);
+  await withSampledLoads([PC, stop], async (loads) => {
+    await usingPaged(
+      compiler,
+      {
+        ...stackOptions,
+        // IMUL EAX, dword [RDI]; HLT.
+        code: '0faf07f4',
+        spans: [{ physical: 0xa000n, bytes }],
+      },
+      async (cpu) => {
+        const run = (lhs: bigint, target = address) => {
+          cpu.setState(initial(PC, { 0: lhs, 7: target }, 2n));
+          return cpu.run({ stop, budget: 4n });
+        };
+        await run(2n);
+        await run(2n);
+        assert.ok(loads.some((load) => load.address === address && load.width === 4));
+        loads.length = 0;
+        const product = await run(0x40000000n);
+        assert.equal(product.reason, 'stop');
+        assert.equal(product.retired, 1n);
+        assert.equal(product.state.registers[0], 0xc0000000n);
+        assert.equal(product.state.flags & 0x801n, 0x801n, 'signed overflow sets CF and OF');
+        assert.deepEqual(loads, []);
+
+        const missing = PC + 0x2000n;
+        const fault = await run(7n, missing);
+        assert.equal(fault.reason, 'page-fault');
+        assert.equal(fault.pageFault?.address, missing);
+        assert.equal(fault.retired, 0n);
+        assert.equal(fault.state.rip, PC);
+        assert.equal(fault.state.registers[0], 7n);
+        assert.equal(fault.state.flags, 2n);
+        assert.deepEqual(loads, [{ address: missing, width: 4 }]);
+      },
+    );
+  });
+});

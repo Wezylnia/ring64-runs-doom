@@ -19,6 +19,10 @@ pub(in crate::dbt::wasm) fn indexed_scalar_read(operation: Operation) -> bool {
         | Operation::Extend {
             src: Location::Memory(address),
             ..
+        }
+        | Operation::Imul {
+            src: Location::Memory(address),
+            ..
         } => address,
         Operation::MemoryAlu {
             address,
