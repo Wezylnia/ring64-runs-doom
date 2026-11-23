@@ -689,8 +689,8 @@ fn indexed_read_collision_and_slot_reuse_preserve_translation_identity() {
     let (first_slot, first_id) = fill(first);
     let first_record = publish(first_slot, first_page, 0x10000);
     assert_eq!(
-        (first_record.tag, first_record.slot_offset, first_record.id),
-        (first_page | INDEXED_VALID, first_slot as u32 * 8, first_id),
+        (first_record.tag, first_record.slot_offset),
+        (first_page | INDEXED_VALID, first_slot as u32 * 8),
     );
     let (second_slot, second_id) = fill(second);
     assert_ne!(second_slot, first_slot);
@@ -699,9 +699,8 @@ fn indexed_read_collision_and_slot_reuse_preserve_translation_identity() {
         (
             second_record.tag,
             (second_page as u32).wrapping_add(second_record.host_bias),
-            second_record.id
         ),
-        (second_page | INDEXED_VALID, 0x20000, second_id),
+        (second_page | INDEXED_VALID, 0x20000),
     );
     {
         let entries = cache.entries.borrow();
@@ -710,15 +709,24 @@ fn indexed_read_collision_and_slot_reuse_preserve_translation_identity() {
         assert_eq!(entries.hint(), Some(second_slot));
     }
     cache.invalidate_page(state.pcid(), second_page, false);
-    assert_eq!(cache.entries.borrow().recency().live_ids[second_slot], 0);
+    {
+        let entries = cache.entries.borrow();
+        let table = entries.recency();
+        assert_eq!(table.live_ids[second_slot], 0);
+        assert_ne!(
+            second_record.tag,
+            second_page | INDEXED_VALID | table.epoch,
+            "retirement must reject the stale operand with a single tag comparison"
+        );
+    }
     let (reused_slot, new_id) = fill(second);
     assert_eq!(reused_slot, second_slot);
-    assert_ne!(new_id, second_record.id);
+    assert_ne!(new_id, second_id);
     assert_eq!(
         cache.entries.borrow().recency().live_ids[reused_slot],
         new_id
     );
-    cache.clear_indexed_reads();
+    cache.clear_indexed_pages();
     assert!(
         cache
             .entries

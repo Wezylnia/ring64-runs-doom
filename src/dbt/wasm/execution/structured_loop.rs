@@ -1689,7 +1689,14 @@ impl Emitter {
         self.op(Op::I64Const(instructions[body.head as usize].pc as i64))
             .op(Op::I32Const(body.paged_fetch_bytes.unwrap() as i32));
         self.system_bits();
-        self.op(Op::LocalGet(super::SHADOW)).op(Op::Call(guard));
+        self.op(Op::LocalGet(super::SHADOW));
+        if self.paged_copy_access_cache.is_some() {
+            self.op(Op::I32Const(
+                crate::embedding::layout::paging::INDEXED_PAGED_READ_GUARD as i32,
+            ))
+            .op(Op::I32Or);
+        }
+        self.op(Op::Call(guard));
         if self.paged_preamble_latch {
             self.op(Op::End);
         }
@@ -1856,7 +1863,7 @@ impl Emitter {
         if retained_copy_fetch {
             // The copy body already proved a single fetch page. A live quiet
             // SSE admission can fund its entry just as it funds a finite copy.
-            self.newest_prefix_fetch(pc, false, true);
+            self.newest_prefix_fetch(pc, self.paged_copy_access_cache.is_some(), true);
             self.op(Op::If(BlockType::Result(wasm_encoder::ValType::I32)));
             if self.quiet_fetch_page.is_some()
                 && let Some(window) = self.paged_copy_window
@@ -1881,6 +1888,13 @@ impl Emitter {
             .op(Op::I32Const(body.paged_fetch_bytes.unwrap() as i32));
         self.system_bits();
         self.op(Op::LocalGet(super::SHADOW));
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if body.paged_vector_copy() && self.paged_copy_access_cache.is_some() {
+            self.op(Op::I32Const(
+                crate::embedding::layout::paging::INDEXED_PAGED_READ_GUARD as i32,
+            ))
+            .op(Op::I32Or);
+        }
         self.op(Op::Call(guard));
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         if retained_copy_fetch {

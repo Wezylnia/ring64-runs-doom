@@ -899,7 +899,7 @@ fn retained_copy_destination_checks_the_current_write_permission() {
             [read, write],
             keys,
             16,
-            |[(source, _), (destination, _)]| Some((source, destination)),
+            |[(source, _), (destination, _)], _| Some((source, destination)),
         )
     };
     assert_eq!(resolve(write), Some((0xa234, 0xb234)));
@@ -950,7 +950,8 @@ fn copy_sources_resolve_current_leaves_after_a_collision() {
     for request in [first, second, write, code] {
         insert(&cache, &mut image, &state, request);
     }
-    let copy = |read| cache.copy_pair_then_fetch(&state, [read, write], keys, 16, Some);
+    let copy =
+        |read| cache.copy_pair_then_fetch(&state, [read, write], keys, 16, |spans, _| Some(spans));
     assert_eq!(copy(first), Some([(0xa234, 0xdcc), (0xb234, 0xdcc)]));
     assert_eq!(copy(second), Some([(0xd234, 0xdcc), (0xb234, 0xdcc)]));
     assert_eq!(copy(first), Some([(0xa234, 0xdcc), (0xb234, 0xdcc)]));
@@ -988,7 +989,7 @@ fn same_large_copy_leaf_checks_both_ranges_and_current_mapping() {
             [read, write],
             keys,
             16,
-            |[(source, _), (destination, _)]| Some((source, destination)),
+            |[(source, _), (destination, _)], _| Some((source, destination)),
         )
     };
     assert_eq!(resolve(read), Some((0x201234, 0x205234)));

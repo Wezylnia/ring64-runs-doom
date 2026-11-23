@@ -22,8 +22,16 @@ test('paged vector pairs retain both loads before either aliased store', async (
   const imports = prototype.artifactImports;
   let accepted = 0;
   let refused = 0;
+  let checkedBegins = 0;
   prototype.artifactImports = function (observed) {
     const env = imports.call(this, observed);
+    const begin = env.debug_begin;
+    if (typeof begin === 'function') {
+      env.debug_begin = (pc: bigint, ...args: unknown[]) => {
+        if (pc === PC) checkedBegins++;
+        return begin(pc, ...args);
+      };
+    }
     const window = env.paged_loop_copy_window;
     if (typeof window === 'function') {
       env.paged_loop_copy_window = (src: bigint, dst: bigint, width: number) => {
@@ -54,13 +62,15 @@ test('paged vector pairs retain both loads before either aliased store', async (
           cpu.setState(initial(PC, { 6: destination, 7: source + BigInt(wave * 64) }));
         for (let wave = 0; wave < 4; wave++) {
           enter(wave);
+          const begins = checkedBegins;
           const copied = await cpu.run({ stop, budget: 8n });
           assert.equal(copied.reason, 'stop');
           assert.equal(copied.retired, 4n);
           assert.deepEqual(cpu.readXmmState().slice(0, 2), values);
           assert.deepEqual(cpu.readPhysicalMemory(0xa013n + BigInt(wave * 64), 32), sample);
+          if (wave > 0) assert.equal(checkedBegins, begins, 'warm copy stays in the native pair');
         }
-        assert.ok(accepted > 0, 'the paired copy entered its checked window');
+        assert.ok(accepted + refused > 0, 'the cold pair requests checked admission');
         const calls = accepted + refused;
 
         enter(4);

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Core } from '../../../../src/wasm/core.js';
 import { BANK, PC, initial, usingPaged } from '../../../../../tests/execution/paging/fixture.js';
-import { compiler } from './fixture.js';
+import { COPY_FILL_INDEX, compiler } from './fixture.js';
 
 test('retained split vector copies preserve physical aliases and denied later writes', async () => {
   const code = '0f10070f11060f1047100f114610';
@@ -26,7 +26,7 @@ test('retained split vector copies preserve physical aliases and denied later wr
     if (typeof copy === 'function') {
       env.paged_loop_copy_window = (src: bigint, dst: bigint, width: number) => {
         assert.equal(src, source);
-        assert.equal(width, 32);
+        assert.equal(width & ~COPY_FILL_INDEX, 32);
         const result = copy(src, dst, width);
         if (result) accepted++;
         else refused++;

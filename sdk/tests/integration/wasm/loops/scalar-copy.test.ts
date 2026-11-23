@@ -29,14 +29,26 @@ test('paged scalar copies preserve overlapping memory and a later write fault', 
   const ram = new Uint8Array(0x3000);
   for (let wave = 0; wave < 5; wave++) ram.set(seed, 3 + wave * 64);
   const imports = proto.artifactImports;
-  let accepted = 0;
+  let scalarWindows = 0;
+  let acceptedScalarWindows = 0;
+  let checkedBegins = 0;
   proto.artifactImports = function (observed) {
     const env = imports.call(this, observed);
+    const begin = env.debug_begin;
+    if (typeof begin === 'function') {
+      env.debug_begin = (pc: bigint, ...args: unknown[]) => {
+        if (pc === PC) checkedBegins++;
+        return begin(pc, ...args);
+      };
+    }
     const copy = env.paged_loop_copy_window;
     if (typeof copy === 'function') {
       env.paged_loop_copy_window = (src: bigint, dst: bigint, width: number) => {
         const result = copy(src, dst, width);
-        if (width < 0 && result) accepted++;
+        if (width < 0) {
+          scalarWindows++;
+          if (result) acceptedScalarWindows++;
+        }
         return result;
       };
     }
@@ -62,13 +74,15 @@ test('paged scalar copies preserve overlapping memory and a later write fault', 
           );
         for (let wave = 0; wave < 3; wave++) {
           enter(wave);
+          const begins = checkedBegins;
           const result = await cpu.run({ budget: 20n, stop });
           assert.equal(result.reason, 'stop');
           assert.equal(result.retired, 6n);
           assert.equal(result.state.registers[0], value & 0xffffn);
           assert.deepEqual(cpu.readPhysicalMemory(0xa00bn + BigInt(wave * 64), 18), expected);
+          if (wave > 0) assert.equal(checkedBegins, begins, 'warm copy stays in its native group');
         }
-        assert.ok(accepted > 0);
+        assert.ok(scalarWindows > 0, 'the cold scalar copy requests its own access proof');
         enter(3);
         const budget = await cpu.run({ budget: 3n, stop });
         assert.equal(budget.retired, 3n);
@@ -85,7 +99,7 @@ test('paged scalar copies preserve overlapping memory and a later write fault', 
         assert.deepEqual(cpu.readPhysicalMemory(0xc000n, 2), new Uint8Array(2));
       },
     );
-    const beforeAlignment = accepted;
+    const beforeAlignment = acceptedScalarWindows;
     await usingPaged(
       compiler,
       {
@@ -106,7 +120,7 @@ test('paged scalar copies preserve overlapping memory and a later write fault', 
         assert.equal(alignment.state.rip, PC);
       },
     );
-    assert.equal(accepted, beforeAlignment);
+    assert.equal(acceptedScalarWindows, beforeAlignment);
   } finally {
     proto.artifactImports = imports;
   }

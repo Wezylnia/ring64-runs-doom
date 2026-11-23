@@ -72,6 +72,8 @@ pub(crate) const COPY_SCALAR: u32 = 1 << 31;
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 pub(crate) const COPY_NO_SPLIT: u32 = 1 << 30;
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+pub(crate) const COPY_FILL_INDEX: u32 = 1 << 29;
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 pub(crate) const INDEXED_WRITE_UNSUPPORTED_LEAF: u32 = 1;
 
 pub const REASONS: [&str; 29] = [
@@ -309,10 +311,6 @@ pub(crate) struct StateStorage {
     pub(crate) indexed_paged_reads: u32,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     pub(crate) newest_fetch: paging::NewestFetch,
-    // Write apertures use the same live slot IDs as reads, but have their own backing.
-    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(crate) indexed_paged_writes: [crate::x86::paging::cache::IndexedReadEntry;
-        crate::x86::paging::cache::INDEXED_READ_ENTRIES],
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     pub(crate) flat_stack_write: crate::memory::DirectSpan,
     // Flat32 generated code truncates its cached base to 32 bits.
@@ -340,9 +338,6 @@ impl StateStorage {
             indexed_paged_reads: 0,
             #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
             newest_fetch: Default::default(),
-            #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-            indexed_paged_writes: [Default::default();
-                crate::x86::paging::cache::INDEXED_READ_ENTRIES],
             #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
             flat_stack_write: Default::default(),
             #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]

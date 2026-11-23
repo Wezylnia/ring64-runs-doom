@@ -21,8 +21,16 @@ test('paired vector windows preserve overlapping load/store order and exact chec
   const imports = proto.artifactImports;
   let accepted = 0;
   let refused = 0;
+  let checkedBegins = 0;
   proto.artifactImports = function (observed) {
     const env = imports.call(this, observed);
+    const begin = env.debug_begin;
+    if (typeof begin === 'function') {
+      env.debug_begin = (pc: bigint, ...args: unknown[]) => {
+        if (pc === PC) checkedBegins++;
+        return begin(pc, ...args);
+      };
+    }
     const resolve = env.paged_loop_copy_window;
     if (typeof resolve === 'function') {
       env.paged_loop_copy_window = (src: bigint, dst: bigint, width: number) => {
@@ -54,12 +62,14 @@ test('paired vector windows preserve overlapping load/store order and exact chec
         const expected = Uint8Array.from({ length: 96 }, (_, index) => seed[index % 16]!);
         for (let wave = 0; wave < 4; wave++) {
           enter();
+          const begins = checkedBegins;
           const run = await cpu.run({ budget: 100n, stop });
           assert.equal(run.reason, 'stop');
           assert.equal(run.retired, 21n);
           assert.deepEqual(cpu.readPhysicalMemory(0xa013n, 96), expected);
+          if (wave > 0) assert.equal(checkedBegins, begins, 'warm loop stays in the native pair');
         }
-        assert.ok(accepted > 0);
+        assert.ok(accepted + refused > 0, 'the cold loop requests checked admission');
         const beforeStop = accepted;
         enter();
         const interior = await cpu.run({ budget: 100n, stop: PC + 8n });

@@ -276,6 +276,8 @@ struct Emitter {
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_copy_window: Option<paged_copy::CopyWindow>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    paged_copy_access_cache: Option<u32>,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     linear_recurrence: Option<linear_recurrence::Recurrence>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_write_ready: Option<u32>,

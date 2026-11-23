@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Core } from '../../../../src/wasm/core.js';
 import { BANK, PC, initial, usingPaged } from '../../../../../tests/execution/paging/fixture.js';
-import { compiler } from './fixture.js';
+import { COPY_FILL_INDEX, compiler } from './fixture.js';
 
 test('a single vector pair reserves its successor and replays lost admissions', async () => {
   const code = '0f10070f11069090'; // MOVUPS XMM0,[RDI]; MOVUPS [RSI],XMM0; NOP; NOP
@@ -23,7 +23,7 @@ test('a single vector pair reserves its successor and replays lost admissions', 
     const copy = env.paged_loop_copy_window;
     if (typeof copy === 'function') {
       env.paged_loop_copy_window = (src: bigint, dst: bigint, width: number) => {
-        assert.equal(width, 16);
+        assert.equal(width & ~COPY_FILL_INDEX, 16);
         const result = copy(src, dst, width);
         calls++;
         if (result) accepted++;
@@ -100,12 +100,20 @@ test('straight paged vector copies keep alias ordering and replay precise bounda
   const imports = proto.artifactImports;
   let accepted = 0;
   let refused = 0;
+  let checkedBegins = 0;
   proto.artifactImports = function (observed) {
     const env = imports.call(this, observed);
+    const begin = env.debug_begin;
+    if (typeof begin === 'function') {
+      env.debug_begin = (pc: bigint, ...args: unknown[]) => {
+        if (pc === PC) checkedBegins++;
+        return begin(pc, ...args);
+      };
+    }
     const copy = env.paged_loop_copy_window;
     if (typeof copy === 'function') {
       env.paged_loop_copy_window = (src: bigint, dst: bigint, width: number) => {
-        assert.equal(width, 32);
+        assert.equal(width & ~COPY_FILL_INDEX, 32);
         const result = copy(src, dst, width);
         if (result) accepted++;
         else refused++;
@@ -132,15 +140,17 @@ test('straight paged vector copies keep alias ordering and replay precise bounda
           cpu.setState(initial(PC, { 6: destination, 7: source + BigInt(wave * 64) }, flags));
         for (let wave = 0; wave < 4; wave++) {
           enter(wave);
+          const begins = checkedBegins;
           const run = await cpu.run({ budget: 10n, stop });
           assert.equal(run.reason, 'stop');
           assert.equal(run.retired, 4n);
           assert.deepEqual(cpu.readPhysicalMemory(0xa013n + BigInt(wave * 64), 16), seed);
           assert.deepEqual(cpu.readPhysicalMemory(0xa023n + BigInt(wave * 64), 16), seed);
+          if (wave > 0) assert.equal(checkedBegins, begins, 'warm copy stays in the native pair');
         }
         assert.ok(
-          accepted > 0,
-          `the straight artifact uses a retained copy window (refused ${refused})`,
+          accepted + refused > 0,
+          'the cold copy requests checked admission for the paired placement',
         );
         const calls = accepted + refused;
 

@@ -18,7 +18,6 @@ impl Core {
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     pub(super) fn remember_indexed_scalar_write(&mut self, address: u64, width: u32) {
-        use crate::x86::paging::cache::{INDEXED_READ_ENTRIES, IndexedReadEntry};
         if self.state.indexed_paged_reads == 0 || self.image.active_changed() {
             return;
         }
@@ -39,16 +38,13 @@ impl Core {
             return;
         }
         let physical = translation.physical - offset;
-        if let Some(span) = self.image.physical_direct_write_span(physical, 4096)
-            && let Some(id) = translation.cache_id
-        {
+        if let Some(span) = self.image.physical_direct_write_span(physical, 4096) {
             let host = span.host + (physical - span.base) as u32;
             if host != 0 {
-                let index = (page >> 12) as usize & (INDEXED_READ_ENTRIES - 1);
                 let readable =
                     self.image.physical_direct_read_pointer(physical, 4096) == Some(host);
-                self.state.indexed_paged_writes[index] =
-                    IndexedReadEntry::new(page, id, slot, host, readable);
+                self.translation_cache
+                    .remember_indexed_write(slot, page, host, readable);
             }
         }
     }
@@ -399,8 +395,7 @@ impl Core {
         }
         // No-flush CR3 changes can keep live slots for another PCID.
         if self.indexed_paged_read_root != Some(paging.cr3) {
-            self.translation_cache.clear_indexed_reads();
-            self.state.indexed_paged_writes.fill(Default::default());
+            self.translation_cache.clear_indexed_pages();
             self.indexed_paged_read_root = Some(paging.cr3);
         }
         if self.state.indexed_paged_reads == 0 {
@@ -1116,12 +1111,13 @@ pub extern "C" fn core_paged_loop_write_block(address: u64, value_ptr: u32) -> i
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 #[unsafe(no_mangle)]
 pub extern "C" fn core_paged_loop_copy_window(source: u64, destination: u64, width: u32) -> u32 {
-    use crate::embedding::layout::{COPY_NO_SPLIT, COPY_SCALAR};
+    use crate::embedding::layout::{COPY_FILL_INDEX, COPY_NO_SPLIT, COPY_SCALAR};
     use crate::memory::check_span;
 
     let scalar = width & COPY_SCALAR != 0;
     let no_split = width & COPY_NO_SPLIT != 0;
-    let width = width & !(COPY_NO_SPLIT | COPY_SCALAR);
+    let populate = width & COPY_FILL_INDEX != 0;
+    let width = width & !(COPY_FILL_INDEX | COPY_NO_SPLIT | COPY_SCALAR);
     let valid = if scalar {
         (2..=32).contains(&width)
     } else {
@@ -1171,6 +1167,7 @@ pub extern "C" fn core_paged_loop_copy_window(source: u64, destination: u64, wid
                 access: Access::Write,
                 class,
             };
+            let mut indexed = [None; 2];
             let (source_host, destination_host, length) = if split {
                 core.translation_cache.copy_split_pair_then_fetch(
                     paging,
@@ -1195,11 +1192,23 @@ pub extern "C" fn core_paged_loop_copy_window(source: u64, destination: u64, wid
                     [read, write],
                     &state.protection_keys,
                     width,
-                    |[(read, read_remaining), (write, write_remaining)]| {
+                    |[(read, read_remaining), (write, write_remaining)],
+                     [read_slot, write_slot]| {
                         let (read_span, write_span) =
                             core.image.physical_direct_copy_spans(read, write, width)?;
                         let read_offset = (read - read_span.base) as u32;
                         let write_offset = (write - write_span.base) as u32;
+                        if populate && core.state.indexed_paged_reads != 0 {
+                            indexed = [
+                                indexed_copy_page(source, read_offset, read_span, read_slot),
+                                indexed_copy_page(
+                                    destination,
+                                    write_offset,
+                                    write_span,
+                                    write_slot,
+                                ),
+                            ];
+                        }
                         // A 4 KiB window also bounds potential shadowing by overlapping local leaves.
                         let length = page_remaining(source)
                             .min(page_remaining(destination))
@@ -1217,6 +1226,14 @@ pub extern "C" fn core_paged_loop_copy_window(source: u64, destination: u64, wid
                     },
                 )?
             };
+            if let Some((slot, page, host)) = indexed[0] {
+                core.translation_cache
+                    .remember_indexed_read(slot, page, host);
+            }
+            if let Some((slot, page, host)) = indexed[1] {
+                core.translation_cache
+                    .remember_indexed_write(slot, page, host, false);
+            }
             let scratch = &mut state.vector_scratch;
             scratch[..4].copy_from_slice(&source_host.to_le_bytes());
             scratch[4..8].copy_from_slice(&destination_host.to_le_bytes());
@@ -1224,6 +1241,21 @@ pub extern "C" fn core_paged_loop_copy_window(source: u64, destination: u64, wid
             Some(scratch.as_ptr() as u32)
         })
         .unwrap_or(0)
+}
+
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[inline]
+fn indexed_copy_page(
+    address: u64,
+    offset: u32,
+    span: crate::memory::DirectSpan,
+    slot: usize,
+) -> Option<(usize, u64, u32)> {
+    let page_offset = offset.checked_sub((address & 4095) as u32)?;
+    if span.length.checked_sub(page_offset)? < 4096 {
+        return None;
+    }
+    Some((slot, address & !4095, span.host + page_offset))
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]

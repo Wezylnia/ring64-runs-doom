@@ -899,11 +899,11 @@ impl Emitter {
         };
         let clock = mem(offset_of!(IndexedReadTable, clock), 3);
         let ages = mem(offset_of!(IndexedReadTable, ages), 3);
-        let live_ids = mem(offset_of!(IndexedReadTable, live_ids), 3);
-        let (record_base, records) = if operand != IndexedOperand::Read {
-            (0, offset_of!(StateStorage, indexed_paged_writes))
+        let epoch = mem(offset_of!(IndexedReadTable, epoch), 3);
+        let records = if operand != IndexedOperand::Read {
+            offset_of!(IndexedReadTable, writes)
         } else {
-            (table, offset_of!(IndexedReadTable, entries))
+            offset_of!(IndexedReadTable, entries)
         };
         let stamp = if preserve_fetch {
             VALUE
@@ -924,7 +924,7 @@ impl Emitter {
             .op(Op::LocalTee(table))
             .op(Op::I32Eqz)
             .op(Op::BrIf(0))
-            .op(Op::LocalGet(record_base))
+            .op(Op::LocalGet(table))
             .op(Op::LocalGet(ADDRESS))
             .op(Op::I32WrapI64)
             .op(Op::I32Const(12))
@@ -957,13 +957,11 @@ impl Emitter {
             .op(Op::I64And)
             .op(Op::I64Const(required as i64))
             .op(Op::I64Or)
+            .op(Op::LocalGet(table))
+            .op(Op::I64Load(epoch))
+            .op(Op::I64Or)
             .op(Op::I64Ne)
             .op(Op::BrIf(0))
-            .op(Op::LocalGet(entry))
-            .op(Op::I64Load(mem(
-                records + offset_of!(IndexedReadEntry, id),
-                3,
-            )))
             .op(Op::LocalGet(table))
             .op(Op::LocalGet(entry))
             .op(Op::I32Load(mem(
@@ -973,11 +971,7 @@ impl Emitter {
         if !preserve_fetch {
             self.op(Op::LocalTee(data));
         }
-        self.op(Op::I32Add)
-            .op(Op::LocalTee(data_address))
-            .op(Op::I64Load(live_ids))
-            .op(Op::I64Ne)
-            .op(Op::BrIf(0));
+        self.op(Op::I32Add).op(Op::LocalSet(data_address));
         let hint = mem(offset_of!(IndexedReadTable, hint), 2);
         if preserve_fetch {
             self.op(Op::LocalGet(table))

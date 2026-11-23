@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Core } from '../../../../src/wasm/core.js';
 import { BANK, PC, initial, usingPaged } from '../../../../../tests/execution/paging/fixture.js';
-import { compiler } from './fixture.js';
+import { COPY_FILL_INDEX, compiler } from './fixture.js';
 
 test('copy windows preserve interleaved destination arithmetic and alias order', async () => {
   // Two 16-byte copies, with LEA/ADD computing both destination addresses after the first load.
@@ -20,12 +20,20 @@ test('copy windows preserve interleaved destination arithmetic and alias order',
   const imports = proto.artifactImports;
   let accepted = 0;
   let declined = 0;
+  let checkedBegins = 0;
   proto.artifactImports = function (observed) {
     const env = imports.call(this, observed);
+    const begin = env.debug_begin;
+    if (typeof begin === 'function') {
+      env.debug_begin = (pc: bigint, ...args: unknown[]) => {
+        if (pc === PC) checkedBegins++;
+        return begin(pc, ...args);
+      };
+    }
     const window = env.paged_loop_copy_window;
     if (typeof window === 'function') {
       env.paged_loop_copy_window = (src: bigint, dst: bigint, width: number) => {
-        assert.equal(width, 32);
+        assert.equal(width & ~COPY_FILL_INDEX, 32);
         const result = window(src, dst, width);
         if (result) accepted++;
         else declined++;
@@ -55,6 +63,7 @@ test('copy windows preserve interleaved destination arithmetic and alias order',
           );
         for (let wave = 0; wave < 4; wave++) {
           enter(wave);
+          const begins = checkedBegins;
           const completed = await cpu.run({ budget: 30n, stop });
           const adjusted = target + BigInt(32 + 64 * wave);
           assert.equal(completed.reason, 'stop');
@@ -63,8 +72,9 @@ test('copy windows preserve interleaved destination arithmetic and alias order',
           assert.equal(completed.state.flags & 0x8d5n, wave === 0 || wave === 3 ? 4n : 0n);
           assert.deepEqual(cpu.readPhysicalMemory(0xa013n + BigInt(64 * wave), 16), seed);
           assert.deepEqual(cpu.readPhysicalMemory(0xa023n + BigInt(64 * wave), 16), seed);
+          if (wave > 0) assert.equal(checkedBegins, begins, 'warm copy stays in the native pair');
         }
-        assert.ok(accepted > 0);
+        assert.ok(accepted + declined > 0, 'the cold affine copy requests checked admission');
         const calls = accepted + declined;
 
         enter(4);

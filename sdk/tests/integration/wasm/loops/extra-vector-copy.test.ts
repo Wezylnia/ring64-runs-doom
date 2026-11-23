@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Core } from '../../../../src/wasm/core.js';
-import { PC, initial, usingPaged } from '../../../../../tests/execution/paging/fixture.js';
+import { PC, initial, little, usingPaged } from '../../../../../tests/execution/paging/fixture.js';
 import { compiler } from './fixture.js';
 
 test('one artifact keeps its original vector loop and an independently replayable paired copy', async () => {
@@ -48,14 +48,18 @@ test('one artifact keeps its original vector loop and an independently replayabl
   const imports = proto.artifactImports;
   let primary = 0;
   let secondary = 0;
+  let secondaryBegins = 0;
   let refusePrimary = false;
   let artifactBytes = 0;
   proto.artifactImports = function (observed) {
     const env = imports.call(this, observed);
     const guard = env.paged_sse_loop_guard;
     if (typeof guard === 'function') {
-      env.paged_sse_loop_guard = (pc: bigint, width: number, flags: bigint, shadow: number) =>
-        refusePrimary && pc === PC ? 2 : guard(pc, width, flags, shadow);
+      env.paged_sse_loop_guard = (pc: bigint, width: number, flags: bigint, shadow: number) => {
+        const result = refusePrimary && pc === PC ? 2 : guard(pc, width, flags, shadow);
+        if (pc === next && result === 1) secondary++;
+        return result;
+      };
     }
     const store = env.paged_loop_write_block;
     if (typeof store === 'function') {
@@ -66,12 +70,11 @@ test('one artifact keeps its original vector loop and an independently replayabl
         return result;
       };
     }
-    const window = env.paged_loop_copy_window;
-    if (typeof window === 'function') {
-      env.paged_loop_copy_window = (source: bigint, target: bigint, width: number) => {
-        const result = window(source, target, width);
-        if (result) secondary++;
-        return result;
+    const begin = env.debug_begin;
+    if (typeof begin === 'function') {
+      env.debug_begin = (pc: bigint, ...args: unknown[]) => {
+        if (pc === next) secondaryBegins++;
+        return begin(pc, ...args);
       };
     }
     return env;
@@ -82,6 +85,7 @@ test('one artifact keeps its original vector loop and an independently replayabl
       const enter = (target = pairedDestination) => cpu.setState(state(target));
       for (let wave = 0; wave < 4; wave++) {
         enter();
+        const before = secondaryBegins;
         const done = await cpu.run({ budget: 80n, stop });
         assert.equal(done.reason, 'stop');
         assert.equal(done.retired, 49n);
@@ -89,6 +93,8 @@ test('one artifact keeps its original vector loop and an independently replayabl
         artifactBytes = done.resources.cachedBytes;
         assert.deepEqual(cpu.readPhysicalMemory(0xc015n, 64), plain);
         assert.deepEqual(cpu.readPhysicalMemory(0xb020n, 64), repeated);
+        if (wave > 0)
+          assert.equal(secondaryBegins, before, 'the warm paired placement stays native');
       }
       assert.ok(primary > 0, 'the ordinary loop retains its guarded placement');
       assert.ok(secondary > 0, 'the same owner admits the additional paired placement');
@@ -117,24 +123,31 @@ test('one artifact keeps its original vector loop and an independently replayabl
       assert.equal(split.state.rip, next + 13n);
       assert.deepEqual(cpu.readPhysicalMemory(0xcff0n, 16), seed);
     });
-    const beforeCap = secondary;
     assert.ok(artifactBytes > 0);
-    await usingPaged(
-      compiler,
-      {
-        ...setup,
-        limits: { ...setup.limits, maxArtifactBytes: artifactBytes - 1 },
-      },
-      async (cpu) => {
-        cpu.setState(state());
-        const capped = await cpu.run({ budget: 80n, stop });
-        assert.equal(capped.reason, 'stop');
-        assert.equal(capped.retired, 49n);
-        assert.ok(capped.resources.cachedBytes < artifactBytes);
-        assert.equal(secondary, beforeCap);
-        assert.deepEqual(cpu.readPhysicalMemory(0xb020n, 64), repeated);
-      },
-    );
+    for (;;) {
+      const primaryBeforeCap = primary;
+      const secondaryBeforeCap = secondary;
+      // Exclude the previous body so each run selects the next smaller variant.
+      const maxArtifactBytes = artifactBytes - 1;
+      await usingPaged(
+        compiler,
+        { ...setup, limits: { ...setup.limits, maxArtifactBytes } },
+        async (cpu) => {
+          for (let wave = 0; wave < 4; wave++) {
+            cpu.setState(state());
+            const capped = await cpu.run({ budget: 80n, stop });
+            assert.equal(capped.reason, 'stop');
+            assert.equal(capped.retired, 49n);
+            artifactBytes = capped.resources.cachedBytes;
+            assert.ok(artifactBytes > 0 && artifactBytes <= maxArtifactBytes);
+          }
+          assert.deepEqual(cpu.readPhysicalMemory(0xc015n, 64), plain);
+          assert.deepEqual(cpu.readPhysicalMemory(0xb020n, 64), repeated);
+        },
+      );
+      assert.ok(primary > primaryBeforeCap, 'the smaller body retains the primary placement');
+      if (secondary === secondaryBeforeCap) break;
+    }
   } finally {
     proto.artifactImports = imports;
   }
@@ -207,7 +220,10 @@ test('a sampled copy loop reuses quiet SSE fetch admission and keeps checked exi
       {
         code: prefix + copy + '49ffc1f4', // INC R9; HLT.
         words: [[0x4008n, 0xa063n]],
-        spans: [{ physical: 0xa000n, bytes }],
+        spans: [
+          { physical: 0xa000n, bytes },
+          { physical: 0xb000n, bytes: bytes.slice() },
+        ],
       },
       async (cpu) => {
         const enter = () =>
@@ -216,13 +232,19 @@ test('a sampled copy loop reuses quiet SSE fetch admission and keeps checked exi
           enter();
           guards = 0;
           windows = 0;
+          copyBegins = 0;
           const run = await cpu.run({ stop, budget: 32n });
           assert.equal(run.reason, 'stop');
           assert.equal(run.retired, 18n);
           assert.deepEqual(cpu.readPhysicalMemory(0xa020n, 64), expected);
+          if (wave === 0) {
+            assert.ok(windows > 0, 'the first copy resolves a checked data window');
+          } else {
+            assert.equal(windows, 0, 'the warm copy uses the cached data window');
+            assert.equal(copyBegins, 0, 'the warm copy stays in the paired placement');
+          }
         }
         assert.equal(guards, 0, 'the admitted copy avoids the checked SSE wrapper');
-        assert.ok(windows > 0, 'the structured two-transfer copy still uses the paired data proof');
 
         enter();
         successorBegins = 0;
@@ -232,6 +254,7 @@ test('a sampled copy loop reuses quiet SSE fetch admission and keeps checked exi
         assert.equal(afterCopy.state.registers[9], 1n);
         assert.equal(successorBegins, 0, 'the same-page successor receives the live fetch proof');
 
+        cpu.writePhysicalMemory(0x4008n, little([0xb063n]));
         enter();
         copyBegins = 0;
         refuseWindow = true;
@@ -241,6 +264,7 @@ test('a sampled copy loop reuses quiet SSE fetch admission and keeps checked exi
         assert.equal(replayed.retired, 19n);
         assert.equal(replayed.state.registers[9], 1n);
         assert.ok(copyBegins > 0, 'a refused operand re-enters at its checked instruction');
+        assert.deepEqual(cpu.readPhysicalMemory(0xb020n, 64), expected);
 
         enter();
         cpu.setMxcsr(0x1f00);

@@ -10,6 +10,207 @@ use crate::x86::instruction::{
 };
 use wasm_encoder::{BlockType, Instruction as Op, MemArg};
 
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+pub(super) fn emit_copy_access_cache(resolve: u32) -> wasm_encoder::Function {
+    use crate::embedding::layout::{COPY_FILL_INDEX, RunState, StateStorage};
+    use crate::x86::paging::cache::{
+        CAPACITY, INDEXED_READ_ENTRIES, INDEXED_VALID, INDEXED_WRITE_READABLE, IndexedReadEntry,
+        IndexedReadTable,
+    };
+    use std::mem::{offset_of, size_of};
+    use wasm_encoder::{Function, ValType};
+
+    let mut body = Function::new([(10, ValType::I32), (3, ValType::I64)]);
+    let mut op = |op| {
+        body.instruction(&op);
+    };
+    let (table, width, offset, record, source, destination) = (4, 5, 6, 7, 8, 9);
+    let (read_slot, write_slot, fetch, scratch) = (10, 11, 12, 13);
+    let (epoch, clock, initial_clock) = (14, 15, 16);
+    let field = |offset: usize| memory(offset as u64);
+    let ages = field(offset_of!(IndexedReadTable, ages));
+    let clock_field = field(offset_of!(IndexedReadTable, clock));
+    op(Op::Block(BlockType::Empty));
+    op(Op::LocalGet(0));
+    op(Op::I32Load(field(offset_of!(
+        StateStorage,
+        indexed_paged_reads
+    ))));
+    op(Op::LocalTee(table));
+    op(Op::I32Eqz);
+    op(Op::BrIf(0));
+    op(Op::LocalGet(table));
+    op(Op::I64Load(field(offset_of!(IndexedReadTable, epoch))));
+    op(Op::LocalSet(epoch));
+    op(Op::LocalGet(3));
+    op(Op::I32Const(255));
+    op(Op::I32And);
+    op(Op::LocalSet(width));
+    for (address, records, host, slot, write) in [
+        (
+            1,
+            offset_of!(IndexedReadTable, entries),
+            source,
+            read_slot,
+            false,
+        ),
+        (
+            2,
+            offset_of!(IndexedReadTable, writes),
+            destination,
+            write_slot,
+            true,
+        ),
+    ] {
+        op(Op::LocalGet(table));
+        op(Op::LocalGet(address));
+        op(Op::I32WrapI64);
+        op(Op::I32Const(12));
+        op(Op::I32ShrU);
+        op(Op::I32Const(INDEXED_READ_ENTRIES as i32 - 1));
+        op(Op::I32And);
+        op(Op::I32Const(size_of::<IndexedReadEntry>() as i32));
+        op(Op::I32Mul);
+        op(Op::I32Add);
+        op(Op::LocalTee(record));
+        op(Op::I64Load(field(
+            records + offset_of!(IndexedReadEntry, tag),
+        )));
+        if write {
+            op(Op::I64Const(!(INDEXED_WRITE_READABLE as i64)));
+            op(Op::I64And);
+        }
+        // Tagging the last byte checks width and page identity together.
+        op(Op::LocalGet(address));
+        op(Op::LocalGet(width));
+        op(Op::I64ExtendI32U);
+        op(Op::I64Add);
+        op(Op::I64Const(1));
+        op(Op::I64Sub);
+        op(Op::I64Const(!4095));
+        op(Op::I64And);
+        op(Op::I64Const(INDEXED_VALID as i64));
+        op(Op::I64Or);
+        op(Op::LocalGet(epoch));
+        op(Op::I64Or);
+        op(Op::I64Ne);
+        op(Op::BrIf(0));
+        op(Op::LocalGet(record));
+        op(Op::I32Load(field(
+            records + offset_of!(IndexedReadEntry, host_bias),
+        )));
+        op(Op::LocalGet(address));
+        op(Op::I32WrapI64);
+        op(Op::I32Add);
+        op(Op::LocalSet(host));
+        op(Op::LocalGet(table));
+        op(Op::LocalGet(record));
+        op(Op::I32Load(field(
+            records + offset_of!(IndexedReadEntry, slot_offset),
+        )));
+        op(Op::I32Add);
+        op(Op::LocalSet(slot));
+    }
+    op(Op::LocalGet(table));
+    op(Op::I32Load(field(offset_of!(IndexedReadTable, hint))));
+    op(Op::LocalTee(fetch));
+    op(Op::I32Const(CAPACITY as i32));
+    op(Op::I32GeU);
+    op(Op::BrIf(0));
+    op(Op::LocalGet(table));
+    op(Op::LocalGet(fetch));
+    op(Op::I32Const(3));
+    op(Op::I32Shl);
+    op(Op::I32Add);
+    op(Op::LocalSet(fetch));
+    op(Op::LocalGet(table));
+    op(Op::I64Load(clock_field));
+    op(Op::LocalTee(clock));
+    op(Op::LocalTee(initial_clock));
+    op(Op::I64Const(-5));
+    op(Op::I64GtU);
+    op(Op::BrIf(0));
+    op(Op::LocalGet(fetch));
+    op(Op::I64Load(ages));
+    op(Op::LocalGet(clock));
+    op(Op::I64Ne);
+    op(Op::BrIf(0));
+    // Preserve the checked resolver's read, write, fetch order.
+    for slot in [read_slot, write_slot] {
+        op(Op::LocalGet(slot));
+        op(Op::LocalGet(fetch));
+        op(Op::I32Ne);
+        op(Op::LocalGet(slot));
+        op(Op::I64Load(ages));
+        op(Op::LocalGet(clock));
+        op(Op::I64Const(1));
+        op(Op::I64Sub);
+        op(Op::I64Ne);
+        op(Op::I32And);
+        op(Op::If(BlockType::Empty));
+        op(Op::LocalGet(slot));
+        op(Op::LocalGet(clock));
+        op(Op::I64Const(1));
+        op(Op::I64Add);
+        op(Op::I64Store(ages));
+        op(Op::LocalGet(fetch));
+        op(Op::LocalGet(clock));
+        op(Op::I64Const(2));
+        op(Op::I64Add);
+        op(Op::LocalTee(clock));
+        op(Op::I64Store(ages));
+        op(Op::End);
+    }
+    op(Op::LocalGet(clock));
+    op(Op::LocalGet(initial_clock));
+    op(Op::I64Ne);
+    op(Op::If(BlockType::Empty));
+    op(Op::LocalGet(table));
+    op(Op::LocalGet(clock));
+    op(Op::I64Store(clock_field));
+    op(Op::End);
+    op(Op::LocalGet(0));
+    op(Op::I32Const(offset_of!(RunState, vector_scratch) as i32));
+    op(Op::I32Add);
+    op(Op::LocalSet(scratch));
+    for (at, host) in [(0, source), (4, destination)] {
+        op(Op::LocalGet(scratch));
+        op(Op::LocalGet(host));
+        op(Op::I32Store(memory(at)));
+    }
+    op(Op::LocalGet(scratch));
+    op(Op::I32Const(4097));
+    op(Op::LocalGet(width));
+    op(Op::I32Sub);
+    op(Op::LocalGet(1));
+    op(Op::I32WrapI64);
+    op(Op::I32Const(4095));
+    op(Op::I32And);
+    op(Op::LocalTee(offset));
+    op(Op::LocalGet(2));
+    op(Op::I32WrapI64);
+    op(Op::I32Const(4095));
+    op(Op::I32And);
+    op(Op::LocalTee(record));
+    op(Op::LocalGet(offset));
+    op(Op::LocalGet(record));
+    op(Op::I32GtU);
+    op(Op::Select);
+    op(Op::I32Sub);
+    op(Op::I32Store(memory(8)));
+    op(Op::LocalGet(scratch));
+    op(Op::Return);
+    op(Op::End);
+    op(Op::LocalGet(1));
+    op(Op::LocalGet(2));
+    op(Op::LocalGet(3));
+    op(Op::I32Const(COPY_FILL_INDEX as i32));
+    op(Op::I32Or);
+    op(Op::Call(resolve));
+    op(Op::End);
+    body
+}
+
 #[derive(Clone, Copy)]
 pub(super) struct CopyGroup {
     source: Address,
@@ -1029,7 +1230,7 @@ impl Emitter {
             &instructions[..group.instructions],
             guard,
             None,
-            false,
+            self.paged_copy_access_cache.is_some(),
             PagedPrefixFetch::RetainedSse,
             false,
         );
@@ -1060,7 +1261,7 @@ impl Emitter {
             instructions,
             guard,
             None,
-            false,
+            self.paged_copy_access_cache.is_some(),
             PagedPrefixFetch::RetainedSse,
             false,
         );
@@ -1265,6 +1466,13 @@ impl Emitter {
     }
 
     fn resolve_copy_window(&mut self, width: u32, resolve: u32) {
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        let resolve = if let Some(cached) = self.paged_copy_access_cache {
+            self.op(Op::LocalGet(0));
+            cached
+        } else {
+            resolve
+        };
         self.op(Op::LocalGet(LHS))
             .op(Op::LocalGet(RHS))
             .op(Op::I32Const(width as i32))

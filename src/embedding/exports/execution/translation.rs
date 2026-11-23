@@ -353,7 +353,7 @@ pub(super) fn compile_artifact(
                     core.state.flat_data_write = Default::default();
                     core.state.flat_stack_write = Default::default();
                     core.state.x87_long64_writes = Default::default();
-                    core.state.indexed_paged_writes.fill(Default::default());
+                    core.translation_cache.clear_indexed_writes();
                 }
                 if !core.translation_owners.register(owner, &core.context, observed, core.context_version) {
                     core.image.release(owner);

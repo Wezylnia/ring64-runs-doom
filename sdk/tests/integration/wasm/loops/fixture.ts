@@ -1,6 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import type { MemoryMapping } from '../../../../src/index.js';
 
+export const COPY_FILL_INDEX = 1 << 29;
+
 export const compiler = await WebAssembly.compile(
   new Uint8Array(await readFile(new URL('../../../../../build/ring64.wasm', import.meta.url))),
 );

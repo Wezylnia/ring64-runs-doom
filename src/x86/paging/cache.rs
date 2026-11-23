@@ -106,24 +106,22 @@ pub(crate) const INDEXED_WRITE_READABLE: u64 = 2;
 #[repr(C)]
 pub(crate) struct IndexedReadEntry {
     pub(crate) tag: u64,
-    pub(crate) id: u64,
     pub(crate) slot_offset: u32,
     pub(crate) host_bias: u32,
 }
 
 #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
 impl IndexedReadEntry {
-    pub(crate) fn new(page: u64, id: u64, slot: usize, host: u32, readable_write: bool) -> Self {
+    fn new(page: u64, epoch: u64, slot: usize, host: u32, readable_write: bool) -> Self {
         debug_assert_eq!(page & 4095, 0);
-        debug_assert!(id != 0 && slot < CAPACITY && host != 0);
+        debug_assert!(epoch & !0xffc == 0 && slot < CAPACITY && host != 0);
         let readable = if readable_write {
             INDEXED_WRITE_READABLE
         } else {
             0
         };
         Self {
-            tag: page | INDEXED_VALID | readable,
-            id,
+            tag: page | epoch | INDEXED_VALID | readable,
             slot_offset: slot as u32 * 8,
             host_bias: host.wrapping_sub(page as u32),
         }
@@ -140,7 +138,23 @@ pub(crate) struct IndexedReadTable {
     pub(crate) live_ids: [u64; CAPACITY],
     pub(crate) hint: u32,
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    pub(crate) epoch: u64,
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
     pub(crate) entries: [IndexedReadEntry; INDEXED_READ_ENTRIES],
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    pub(crate) writes: [IndexedReadEntry; INDEXED_READ_ENTRIES],
+}
+
+#[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+impl IndexedReadTable {
+    fn retire_pages(&mut self) {
+        // The low tag bits carry the epoch without truncating canonicality.
+        self.epoch = (self.epoch + 4) & 0xffc;
+        if self.epoch == 0 {
+            self.entries.fill(IndexedReadEntry::default());
+            self.writes.fill(IndexedReadEntry::default());
+        }
+    }
 }
 
 impl Default for IndexedReadTable {
@@ -152,7 +166,11 @@ impl Default for IndexedReadTable {
             live_ids: [0; CAPACITY],
             hint: u32::MAX,
             #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+            epoch: 0,
+            #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
             entries: [IndexedReadEntry::default(); INDEXED_READ_ENTRIES],
+            #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+            writes: [IndexedReadEntry::default(); INDEXED_READ_ENTRIES],
         }
     }
 }
@@ -249,6 +267,9 @@ impl Entries {
         self.recency_mut().ages[index] = 0;
         #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
         {
+            if self.slots[index].is_some() {
+                self.recency_mut().retire_pages();
+            }
             self.recency_mut().live_ids[index] = entry.translation.cache_id.unwrap_or(0);
         }
         self.slots[index] = Some(entry);
@@ -259,6 +280,7 @@ impl Entries {
         self.recency_mut().ages[index] = 0;
         #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
         {
+            self.recency_mut().retire_pages();
             self.recency_mut().live_ids[index] = 0;
         }
         self.slots[index] = None;
@@ -521,16 +543,40 @@ impl Cache {
     }
 
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
-    pub(crate) fn clear_indexed_reads(&self) {
+    pub(crate) fn clear_indexed_pages(&self) {
+        let mut entries = self.entries.borrow_mut();
+        let table = entries.recency_mut();
+        table.entries.fill(IndexedReadEntry::default());
+        table.writes.fill(IndexedReadEntry::default());
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(crate) fn clear_indexed_writes(&self) {
         self.entries
             .borrow_mut()
             .recency_mut()
-            .entries
+            .writes
             .fill(IndexedReadEntry::default());
     }
 
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
     pub(crate) fn remember_indexed_read(&self, slot: usize, linear: u64, host: u32) {
+        self.remember_indexed_page(slot, linear, host, None);
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(crate) fn remember_indexed_write(
+        &self,
+        slot: usize,
+        linear: u64,
+        host: u32,
+        readable: bool,
+    ) {
+        self.remember_indexed_page(slot, linear, host, Some(readable));
+    }
+
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    fn remember_indexed_page(&self, slot: usize, linear: u64, host: u32, write: Option<bool>) {
         let mut entries = self.entries.borrow_mut();
         let Some(entry) = entries.slots.get(slot).copied().flatten() else {
             return;
@@ -543,12 +589,14 @@ impl Cache {
         {
             return;
         }
-        let Some(id) = entry.translation.cache_id else {
-            return;
-        };
         let table = entries.recency_mut();
         let index = (linear >> 12) as usize & (INDEXED_READ_ENTRIES - 1);
-        table.entries[index] = IndexedReadEntry::new(linear, id, slot, host, false);
+        let record = IndexedReadEntry::new(linear, table.epoch, slot, host, write.unwrap_or(false));
+        if write.is_some() {
+            table.writes[index] = record;
+        } else {
+            table.entries[index] = record;
+        }
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -927,7 +975,7 @@ impl Cache {
         [read, write]: [Request; 2],
         keys: &ProtectionKeys,
         width: u32,
-        admit: impl FnOnce([(u64, u64); 2]) -> Option<T>,
+        admit: impl FnOnce([(u64, u64); 2], [usize; 2]) -> Option<T>,
     ) -> Option<T> {
         let mut entries = self.entries.borrow_mut();
         let fetch = entries
@@ -986,7 +1034,7 @@ impl Cache {
             keys,
             width,
         )?;
-        let value = admit([read, write])?;
+        let value = admit([read, write], [source, destination])?;
         // An alternating read/write group has this recency whenever it completes.
         // Further accesses in the same pair of leaves preserve that order.
         for data in [source, destination] {
@@ -1675,6 +1723,10 @@ impl Cache {
                 entries
                     .recency_mut()
                     .entries
+                    .fill(IndexedReadEntry::default());
+                entries
+                    .recency_mut()
+                    .writes
                     .fill(IndexedReadEntry::default());
             }
             entries.lookup_index = lookup_index::LookupIndex::default();

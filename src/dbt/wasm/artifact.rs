@@ -2755,6 +2755,18 @@ fn emit_body(
         }
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let copy_access_cache = paged_copy_resolver
+        .filter(|_| indexed_paging)
+        .map(|resolver| {
+            let index = run_index + functions.len();
+            functions.function(add_function_type(
+                &mut types,
+                [ValType::I32, ValType::I64, ValType::I64, ValType::I32],
+                [ValType::I32],
+            ));
+            (index, resolver)
+        });
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let outline_locals = float_outline.as_ref().map(|_| locals.clone());
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let outline_rejected = float_outline.as_ref().map(|_| {
@@ -2835,6 +2847,8 @@ fn emit_body(
     });
     let mut emitter = Emitter {
         paged,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        paged_copy_access_cache: copy_access_cache.map(|(index, _)| index),
         quiet_fetch_page,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         indexed_paged_read,
@@ -3423,6 +3437,10 @@ fn emit_body(
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     for (_, body, _) in &outlined_functions {
         code.function(body);
+    }
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    if let Some((_, resolver)) = copy_access_cache {
+        code.function(&super::paged_copy::emit_copy_access_cache(resolver));
     }
     let mut module = Module::new();
     module
