@@ -1,3 +1,4 @@
+import type { LinkedRun } from './linked-run.js';
 import { IoBridge, type IoBinding } from '../embedding/io.js';
 import { byteLength, U64_MAX, unsigned64 } from '../embedding/input.js';
 import { MmioBridge, type MmioBinding, unconfiguredMmioImports } from '../embedding/mmio.js';
@@ -1261,6 +1262,29 @@ export class Core {
       typeof this.#exports.core_compile_with_linear_entries === 'function' &&
       this.#exports.core_supports_linear_entries?.() === 1
     );
+  }
+
+  get supportsOwnerLinks(): boolean {
+    return !this.io?.present && typeof this.#exports.core_take_source_invalidation === 'function';
+  }
+
+  instantiateLinkedRun(module: WebAssembly.Module, runs: readonly GeneratedRun[]): LinkedRun {
+    const env: Record<string, WebAssembly.ImportValue> = {
+      memory: this.#exports.memory,
+      prepare: this.#exports.core_clear_fault,
+      activate: this.#exports.core_activate,
+      takeInvalidation: this.#exports.core_take_source_invalidation!,
+    };
+    runs.forEach((run, index) => {
+      env[`raw${index}`] = run;
+    });
+    const { exports } = new WebAssembly.Instance(module, { env });
+    return {
+      runs: runs.map((_, index) => exports[`run${index}`] as GeneratedRun),
+      count: exports.count as WebAssembly.Global,
+      lastUse: exports.lastUse as WebAssembly.Global,
+      invalidated: exports.invalidated as WebAssembly.Global,
+    };
   }
 
   compile(

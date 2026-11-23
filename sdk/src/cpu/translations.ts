@@ -1,5 +1,6 @@
 import type { GeneratedRun } from '../wasm/abi.js';
 import type { CompiledUnitMetadata, Core, UnitMetadata } from '../wasm/core.js';
+import type { OwnerLinks } from './owner-links.js';
 
 export interface Artifact {
   run: GeneratedRun;
@@ -29,6 +30,7 @@ export class Translations {
   #oldest: Recency | undefined;
   #newest: Recency | undefined;
   #bytes = 0;
+  #linked: { links: OwnerLinks; bytes: number } | undefined;
 
   constructor(
     readonly maxArtifacts: number,
@@ -147,6 +149,7 @@ export class Translations {
   install(artifact: Artifact, preferred?: ReadonlySet<bigint>): boolean {
     if (!this.canFit(artifact.metadata.byteLength)) return false;
     if (this.#artifacts.has(artifact)) return true;
+    this.#linked = undefined;
     while (
       this.#artifacts.size >= this.maxArtifacts ||
       this.#bytes + artifact.metadata.byteLength > this.maxBytes
@@ -180,7 +183,18 @@ export class Translations {
   }
 
   resources(): { cachedArtifacts: number; cachedBytes: number } {
-    return { cachedArtifacts: this.#artifacts.size, cachedBytes: this.#bytes };
+    return {
+      cachedArtifacts: this.#artifacts.size + Number(this.#linked !== undefined),
+      cachedBytes: this.#bytes + (this.#linked?.bytes ?? 0),
+    };
+  }
+
+  get links(): OwnerLinks | undefined {
+    return this.#linked?.links;
+  }
+
+  installLinks(links: OwnerLinks, bytes: number): void {
+    this.#linked = { links, bytes };
   }
 
   inspect(): UnitMetadata[] {
@@ -198,6 +212,7 @@ export class Translations {
   remove(artifact: Artifact): void {
     const entry = this.#artifacts.get(artifact);
     if (!entry) return;
+    this.#linked = undefined;
     this.#artifacts.delete(artifact);
     this.#traceModules.delete(artifact);
     this.#detach(entry);

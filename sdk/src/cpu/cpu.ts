@@ -37,6 +37,7 @@ import {
   type PhysicalMemoryFault,
 } from '../wasm/core.js';
 import type { GeneratedRun } from '../wasm/abi.js';
+import { OwnerLinkProfile } from './owner-links.js';
 import { LinearRegionTrace, PagedCorridor, RegionTrace } from './regions.js';
 import { Translations, type Artifact, type InstalledEntry } from './translations.js';
 import {
@@ -379,10 +380,10 @@ export class Cpu {
     return this.#core;
   }
 
-  protected pruneTranslations(): void {
+  protected pruneTranslations(force = false): void {
     try {
       const engine = this.#engine;
-      if (engine.takeSourceInvalidation?.() !== false)
+      if (engine.takeSourceInvalidation?.() !== false || force)
         this.#cache.prune((artifact) => engine.valid(artifact.metadata.owner));
     } catch (cause) {
       this.#lifecycle = 'failed';
@@ -888,7 +889,28 @@ export class Cpu {
       return true;
     };
     let rememberFlatPressure = false;
+    let linkProfile: OwnerLinkProfile | undefined;
     const finish = (reason: string) => {
+      if (
+        linkProfile &&
+        !this.#cache.links &&
+        resources.compilations === 0 &&
+        (reason === 'stop' || reason === 'budget')
+      ) {
+        const { cachedArtifacts, cachedBytes } = this.#cache.resources();
+        if (cachedArtifacts < this.#limits.maxCachedArtifacts) {
+          const bytes = linkProfile.install(
+            this.#engine,
+            this.#cache,
+            Math.min(this.#limits.maxArtifactBytes, this.#limits.maxCachedBytes - cachedBytes),
+            timings,
+          );
+          if (bytes !== 0) {
+            resources.compilations++;
+            resources.generatedBytes += bytes;
+          }
+        }
+      }
       const result = this[FINISH_RUN](
         run,
         reason,
@@ -968,6 +990,13 @@ export class Cpu {
           : undefined;
       let linearRegion: LinearRegionTrace | undefined;
       let saturatedDispatches = 0;
+      const linkEligible =
+        linearRegionsSupported &&
+        this.#hasLinearCallOwner &&
+        !flatTracing &&
+        engine.supportsOwnerLinks;
+      if (linkEligible && !this.#cache.links && this.#cache.resources().cachedArtifacts > 0)
+        linkProfile = new OwnerLinkProfile();
       const corridorDispatchLimit = 512;
       execution: for (;;) {
         if (eventKind === 'shutdown' && (deliveryBudget === undefined || !engine.shutdownCanWake()))
@@ -1186,8 +1215,13 @@ export class Cpu {
             }
           }
         }
+        const eligible =
+          linkEligible && eventKind === 'ready' && !capture && useCoveredEntrance && cached;
+        if (eligible) linkProfile?.record(pc, entry);
+        const links = eligible ? this.#cache.links : undefined;
+        const linkedRun = links?.run(entry.artifact);
         const nativeReason = engine.execute(
-          native,
+          linkedRun ?? native,
           entry.index,
           nativeBudget,
           stop,
@@ -1197,6 +1231,14 @@ export class Cpu {
         this.#cache.touch(entry.artifact);
         if (cached) resources.cacheHits++;
         resources.nativeEntries++;
+        const receipt = linkedRun && links!.receipt(this.#cache);
+        if (receipt) {
+          resources.nativeEntries += receipt.continuations;
+          resources.cacheHits += receipt.continuations;
+          resources.dispatches += receipt.continuations;
+          // The original owner and final RIP do not describe the individual edges.
+          if (receipt.continuations > 0) sampling = undefined;
+        }
         const current = engine.current();
         remaining = withheld === 0n ? current.remaining : current.remaining + withheld;
         remainingRepeatBudget = current.repeatRemaining;
@@ -1258,7 +1300,7 @@ export class Cpu {
           }
           return finish(reason);
         }
-        this.pruneTranslations();
+        this.pruneTranslations(receipt ? receipt.invalidated : false);
         resources.dispatches++;
         dispatchedPc = current.rip;
         if (resources.dispatches >= corridorDispatchLimit) corridor = undefined;
