@@ -147,13 +147,13 @@ impl Source {
             Self::Execute(slots) => {
                 valid_slots(slots)
                     && event.instruction_pc == event.return_pc
-                    && live & super::flags::RF == 0
-                    && event.saved_flags & super::flags::RF == 0
+                    && live & crate::x86::flags::RF == 0
+                    && event.saved_flags & crate::x86::flags::RF == 0
             }
             Self::GeneralDetect => {
                 event.instruction_pc == event.return_pc
-                    && live & super::flags::RF == 0
-                    && event.saved_flags & super::flags::RF != 0
+                    && live & crate::x86::flags::RF == 0
+                    && event.saved_flags & crate::x86::flags::RF != 0
             }
             Self::TaskSwitch(slots) => {
                 slots <= 15 && event.instruction_pc == event.return_pc && event.saved_flags == live
@@ -166,8 +166,8 @@ impl Source {
                         event.saved_flags == live
                     } else {
                         event.instruction_pc == event.return_pc
-                            && live & super::flags::RF == 0
-                            && event.saved_flags & super::flags::RF != 0
+                            && live & crate::x86::flags::RF == 0
+                            && event.saved_flags & crate::x86::flags::RF != 0
                     }
             }
         };

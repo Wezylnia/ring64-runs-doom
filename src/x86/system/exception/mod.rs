@@ -1,10 +1,10 @@
-use super::context::{ExecutionContext, Mode};
-use super::flags;
 use super::protection::{ProtectionFault, ProtectionPhase};
+use crate::x86::context::{ExecutionContext, Mode};
+use crate::x86::flags;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ExceptionEvent {
-    pub numeric: Option<super::numeric_controls::Fault>,
+    pub numeric: Option<crate::x86::numeric_controls::Fault>,
     pub debug: Option<super::debug::Source>,
     pub vector: u8,
     pub instruction_pc: u64,

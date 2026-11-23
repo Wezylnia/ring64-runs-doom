@@ -1,6 +1,6 @@
-use super::context::{ExecutionContext, Mode};
-use super::paging::{self, ControlFailure};
 use super::protection::{ProtectionFault, ProtectionPhase};
+use crate::x86::context::{ExecutionContext, Mode};
+use crate::x86::paging::{self, ControlFailure};
 
 pub const TSC_MSR: u32 = 0x10;
 pub const TSC_AUX_MSR: u32 = 0xc0000103;
@@ -39,16 +39,16 @@ pub fn cpuid(eax: u32, ecx: u32, cr4: u64, xcr0: u64) -> [u32; 4] {
         ],
         0xd => match ecx {
             0 => [
-                super::xstate::SUPPORTED as u32,
+                crate::x86::xstate::SUPPORTED as u32,
                 if xcr0 & (1 << 9) != 0 {
-                    super::xstate::MAX_BYTES
+                    crate::x86::xstate::MAX_BYTES
                 } else {
-                    super::xstate::PKRU_OFFSET
+                    crate::x86::xstate::PKRU_OFFSET
                 } as u32,
-                super::xstate::MAX_BYTES as u32,
+                crate::x86::xstate::MAX_BYTES as u32,
                 0,
             ],
-            9 => [8, super::xstate::PKRU_OFFSET as u32, 0, 0],
+            9 => [8, crate::x86::xstate::PKRU_OFFSET as u32, 0, 0],
             _ => [0; 4],
         },
         0x80000000 => [0x80000001, 0, 0, 0],

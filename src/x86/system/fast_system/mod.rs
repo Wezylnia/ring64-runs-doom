@@ -1,9 +1,9 @@
-use super::context::{
+use crate::memory::canonical48;
+use crate::x86::context::{
     ExecutionContext, LoadedSegment, Mode, Segment, SegmentAttributes, SegmentType,
 };
-pub use super::paging::ControlFailure;
-use super::{flags, paging, state};
-use crate::memory::canonical48;
+pub use crate::x86::paging::ControlFailure;
+use crate::x86::{flags, paging, state};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct State {

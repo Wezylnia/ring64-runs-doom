@@ -1,10 +1,10 @@
-use super::context::{AccessFailure, ExecutionContext, Mode, Segment, TableRegister};
-use super::instruction::{ProtectionDescriptor, ProtectionKind, Width};
 #[cfg(test)]
 use crate::memory::Image;
 use crate::memory::{Access, Cause};
 use crate::x86::access::GuestMemory;
 use crate::x86::alignment::Intent;
+use crate::x86::context::{AccessFailure, ExecutionContext, Mode, Segment, TableRegister};
+use crate::x86::instruction::{ProtectionDescriptor, ProtectionKind, Width};
 
 mod access;
 mod descriptor;
