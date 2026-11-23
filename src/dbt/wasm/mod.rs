@@ -80,6 +80,8 @@ mod paged_indexed_write;
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 #[path = "execution/paged_prefix.rs"]
 mod paged_prefix;
+#[path = "memory/paged_read.rs"]
+mod paged_read;
 #[path = "system/paging.rs"]
 mod paging;
 #[path = "system/processor.rs"]
@@ -266,15 +268,15 @@ struct Emitter {
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_dense_read_span: Option<u32>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    paged_dword_window: Option<memory::PagedReadWindow>,
+    paged_dword_window: Option<paged_read::PagedReadWindow>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_dword_window_touch: Option<u32>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    paged_dword_read_pair: Option<memory::PagedDwordReadPair>,
+    paged_dword_read_pair: Option<paged_read::PagedDwordReadPair>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_indexed_write: Option<paged_indexed_write::GuardedIndexedWrite>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    paged_vector_window: Option<memory::PagedReadWindow>,
+    paged_vector_window: Option<paged_read::PagedReadWindow>,
     paged_loop_read_byte: Option<u32>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_byte_write_pair: Option<memory::PagedByteWritePair>,

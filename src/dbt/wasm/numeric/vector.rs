@@ -1,8 +1,8 @@
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 use super::indexed::IndexedOperand;
-#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-use super::memory::{DirectOperand, PagedReadWindow};
 use super::{ADDRESS, Emitter, REASON, RHS, STORE_STATUS};
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+use super::{memory::DirectOperand, paged_read::PagedReadWindow};
 use crate::dbt::unit::Unit;
 use crate::embedding::layout::RunState;
 use crate::x86::instruction::{

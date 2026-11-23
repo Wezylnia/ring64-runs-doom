@@ -2043,13 +2043,13 @@ impl Emitter {
                 .op(Op::I64And)
                 .op(Op::I64Eqz)
                 .op(Op::If(BlockType::Empty));
-            self.paged_vector_window = Some(super::memory::PagedReadWindow {
+            self.paged_vector_window = Some(super::paged_read::PagedReadWindow {
                 resolve: retouch.resolve,
                 ..window
             });
             self.emit_prechecked_body(instructions, body, loop_depth + 4, None);
             self.op(Op::Else);
-            self.paged_vector_window = Some(super::memory::PagedReadWindow {
+            self.paged_vector_window = Some(super::paged_read::PagedReadWindow {
                 retouch: None,
                 ..window
             });
@@ -2077,7 +2077,7 @@ impl Emitter {
             .op(Op::End);
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         if self.paged_read_rearm.is_some() {
-            use super::memory::PAGED_READ_REPLAY;
+            use super::paged_read::PAGED_READ_REPLAY;
             // Only checked entries count down. Warm admission executes
             // the original guard sequence and pays no cooldown test.
             self.op(Op::Else)

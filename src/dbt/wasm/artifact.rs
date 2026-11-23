@@ -10,7 +10,7 @@ use super::{
     paged_copy::{CopyGroup, ScalarCopyGroup},
     paged_prefix,
     paged_prefix::{paged_prefix_handoffs, paged_register_prefixes, register_prefix_operation},
-    read_loop, stack_slots,
+    paged_read, read_loop, stack_slots,
 };
 use crate::embedding::layout::DISPATCH;
 use crate::x86::context::Segment;
@@ -2454,14 +2454,14 @@ fn emit_body(
             let dirty = next_local;
             locals.push((1, ValType::I32));
             next_local += 1;
-            memory::VectorWindowRetouch {
+            paged_read::VectorWindowRetouch {
                 alignment,
                 resolve,
                 touch,
                 dirty,
             }
         });
-        memory::PagedReadWindow {
+        paged_read::PagedReadWindow {
             resolve,
             base,
             limit: base + 1,
@@ -2519,13 +2519,13 @@ fn emit_body(
                 let address = next_local;
                 locals.extend([(1, ValType::I64), (1, ValType::I32)]);
                 next_local += 2;
-                memory::DwordPairHandoff {
+                paged_read::DwordPairHandoff {
                     read,
                     address,
                     ready: address + 1,
                 }
             });
-            memory::PagedDwordReadPair {
+            paged_read::PagedDwordReadPair {
                 first,
                 second,
                 base,
