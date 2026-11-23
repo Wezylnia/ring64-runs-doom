@@ -3590,6 +3590,10 @@ fn emit_body(
     }
     let code_start = bytes.len();
     code.append_to(&mut bytes);
+    if bytes.len() > max_artifact_bytes {
+        // Optional annotations never displace executable code under the owner's limit.
+        bytes.drain(hints_start..code_start);
+    }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if bytes.len() > max_artifact_bytes && emitter.direct_loop_reads {
         return emit_body(
@@ -4307,10 +4311,6 @@ fn emit_body(
             optional,
             max_artifact_bytes,
         );
-    }
-    if bytes.len() > max_artifact_bytes {
-        // Optional annotations never displace executable code under the owner's limit.
-        bytes.drain(hints_start..code_start);
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if float_outline.is_some() && bytes.len() > max_artifact_bytes {
