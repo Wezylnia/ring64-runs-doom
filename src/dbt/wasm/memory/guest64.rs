@@ -3,6 +3,9 @@ use crate::dbt::wasm::{GUEST_MEMORY, PRIVATE_MEMORY};
 use crate::memory::GuestSpan;
 use wasm_encoder::{BlockType, Instruction as Op, MemArg};
 
+// A base, length and RAM offset for each of stack/data and read/write.
+pub(in crate::dbt::wasm) const SPAN_WORDS: u32 = 12;
+
 #[derive(Clone, Copy)]
 pub(in crate::dbt::wasm) struct SpanLocals {
     pub(in crate::dbt::wasm) first: u32,
@@ -21,10 +24,11 @@ impl Emitter {
         exit_depth: u32,
         slow: impl FnOnce(&mut Self, u32),
     ) {
-        let base = cache.first + if store { 3 } else { 0 };
+        let stack = self.segment == crate::x86::context::Segment::Ss;
+        let base = cache.first + 6 * u32::from(stack) + 3 * u32::from(store);
         let length = base + 1;
         let host = base + 2;
-        let descriptor = cache.first + 6;
+        let descriptor = cache.first + SPAN_WORDS;
         match operand {
             DirectOperand::VectorDword(_) | DirectOperand::VectorBlock(_) => {
                 self.op(Op::LocalSet(ADDRESS));
