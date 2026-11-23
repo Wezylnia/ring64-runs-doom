@@ -1,5 +1,5 @@
-import { stack, ONE } from '../x87/fixture.js';
-import { banks } from '../simd/fixture.js';
+import { stack, ONE } from '../numeric/x87/fixture.js';
+import { banks } from '../numeric/simd/fixture.js';
 import {
   createCpu,
   fixture,

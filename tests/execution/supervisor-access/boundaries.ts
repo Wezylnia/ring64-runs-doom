@@ -1,5 +1,5 @@
 import { createCpu } from '../../../sdk/src/index.js';
-import { banks, stack } from '../x87/fixture.js';
+import { banks, stack } from '../numeric/x87/fixture.js';
 import {
   AC,
   AUX,

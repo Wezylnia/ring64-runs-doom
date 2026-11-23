@@ -1,4 +1,4 @@
-import { ONE, stack, banks } from '../x87/fixture.js';
+import { ONE, stack, banks } from '../numeric/x87/fixture.js';
 import {
   AC,
   AUX,

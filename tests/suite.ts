@@ -1,7 +1,7 @@
 import { resetScenarios } from './execution/reset/index.js';
 import { ioScenarios } from './execution/io/index.js';
 import { mmioScenarios } from './execution/mmio/index.js';
-import { numericControlScenarios } from './execution/numeric-controls.js';
+import { numericControlScenarios } from './execution/numeric/controls.js';
 import { integerScenarios } from './execution/instructions/integer/index.js';
 import { stackScenarios } from './execution/instructions/stack/index.js';
 import { addressingScenarios } from './execution/addressing/index.js';
@@ -14,15 +14,15 @@ import { modeScenarios } from './execution/modes/index.js';
 import { stringScenarios } from './execution/instructions/strings/index.js';
 import { nearControlScenarios } from './execution/near-control/index.js';
 import { exchangeScenarios } from './execution/instructions/exchange/index.js';
-import { simdScenarios } from './execution/simd/index.js';
-import { floatingScenarios } from './execution/floating/index.js';
-import { x87Scenarios } from './execution/x87/index.js';
-import { numericStateScenarios } from './execution/mmx/index.js';
+import { simdScenarios } from './execution/numeric/simd/index.js';
+import { floatingScenarios } from './execution/numeric/floating/index.js';
+import { x87Scenarios } from './execution/numeric/x87/index.js';
+import { numericStateScenarios } from './execution/numeric/mmx/index.js';
 import { farControlScenarios } from './execution/far-control/index.js';
 import { taskSwitchingScenarios } from './execution/task-switching/index.js';
 import { callGateScenarios } from './execution/call-gates/index.js';
 import { protectionScenarios } from './execution/protection/index.js';
-import { streamingScenarios } from './execution/streaming/index.js';
+import { streamingScenarios } from './execution/numeric/streaming/index.js';
 import { systemFlagScenarios } from './execution/system-flags/index.js';
 import { softwareEventScenarios } from './execution/software-events/index.js';
 import { exceptionDeliveryScenarios } from './execution/exception-delivery/index.js';
@@ -40,7 +40,7 @@ import { cr3CodeReuseScenarios } from './execution/cr3-code-reuse/index.js';
 import { identityTimeScenarios } from './execution/identity-time/index.js';
 import { supervisorAccessScenarios } from './execution/supervisor-access/index.js';
 import { alignmentCheckingScenarios } from './execution/alignment-checking/index.js';
-import { xstateScenarios } from './execution/xstate/index.js';
+import { xstateScenarios } from './execution/numeric/xstate/index.js';
 import { protectionKeysScenarios } from './execution/protection-keys/index.js';
 
 export async function runScenarios(

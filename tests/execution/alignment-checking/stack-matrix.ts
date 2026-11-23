@@ -1,5 +1,5 @@
 import { using as usingModel } from '../identity-time/oracle.js';
-import { stack, ONE, banks } from '../x87/fixture.js';
+import { stack, ONE, banks } from '../numeric/x87/fixture.js';
 import { cells } from './matrix.js';
 import {
   AC,

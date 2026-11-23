@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createCpu } from '../../../../../src/index.js';
-import { simdFault } from '../../../../../../tests/execution/floating/fixture.js';
+import { simdFault } from '../../../../../../tests/execution/numeric/floating/fixture.js';
 import {
   LIMITS,
   changed,

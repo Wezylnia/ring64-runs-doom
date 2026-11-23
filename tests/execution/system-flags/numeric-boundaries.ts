@@ -8,7 +8,7 @@ import {
   preserveNumeric,
   type Scenario,
 } from './fixture.js';
-import { pending } from '../x87/fixture.js';
+import { pending } from '../numeric/x87/fixture.js';
 
 const FLAGS = 0x3d7ed7n;
 const HISTORY = { sti: false, ss: true };

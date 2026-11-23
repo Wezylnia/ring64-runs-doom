@@ -11,7 +11,7 @@ import {
   initial,
   type Scenario,
 } from './fixture.js';
-import { integer, stack } from '../x87/fixture.js';
+import { integer, stack } from '../numeric/x87/fixture.js';
 import { pagingVectorAccessScenarios } from './vector-access.js';
 
 function page(): Uint8Array {
