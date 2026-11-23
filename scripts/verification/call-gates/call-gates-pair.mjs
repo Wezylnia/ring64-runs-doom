@@ -4,7 +4,7 @@ import { dirname, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import os from 'node:os';
 import { encode, freeze, hash, manifest, root } from '../artifacts.mjs';
-import { callGateIterationCount, callGateNames } from './call-gate-kernels.mjs';
+import { callGateIterationCount, callGateNames } from './kernels.mjs';
 import { evaluateInChromium } from '../browser.mjs';
 
 const args = process.argv.slice(2),
@@ -90,8 +90,8 @@ for (const [label, path] of selected) {
 }
 const sourcePaths = [
   'scripts/verification/call-gates/call-gates-pair.mjs',
-  'scripts/verification/call-gates/call-gates-pair-kernels.mjs',
-  'scripts/verification/call-gates/call-gate-kernels.mjs',
+  'scripts/verification/call-gates/pair-kernels.mjs',
+  'scripts/verification/call-gates/kernels.mjs',
   'scripts/verification/artifacts.mjs',
   'scripts/verification/browser.mjs',
 ];
@@ -105,7 +105,7 @@ const sources = await sourceHashes(),
   driverRoot = resolve(root, 'build/verification', `call-gates-pair-driver-${tag}`);
 await mkdir(driverRoot, { recursive: true });
 const kernelFiles = {};
-for (const name of ['call-gates-pair-kernels.mjs', 'call-gate-kernels.mjs']) {
+for (const name of ['pair-kernels.mjs', 'kernels.mjs']) {
   const path = `scripts/verification/call-gates/${name}`;
   kernelFiles[name] = await readFile(resolve(root, path));
   if (hash(kernelFiles[name]) !== sources[path])
@@ -123,7 +123,7 @@ if (!browserMode) {
     factories.push({ label: side.label, createCpu, compiler });
   }
   const { measureCallGatesPair } = await import(
-    pathToFileURL(resolve(driverRoot, 'call-gates-pair-kernels.mjs'))
+    pathToFileURL(resolve(driverRoot, 'pair-kernels.mjs'))
   );
   result = await measureCallGatesPair(factories, knobs);
 } else {
@@ -169,7 +169,7 @@ if (!browserMode) {
         );
         factories.push({ label: side.label, createCpu, compiler });
       }
-      const { measureCallGatesPair } = await import('/driver/call-gates-pair-kernels.mjs');
+      const { measureCallGatesPair } = await import('/driver/pair-kernels.mjs');
       return {
         ...(await measureCallGatesPair(factories, knobs)),
         browserUserAgent: navigator.userAgent,

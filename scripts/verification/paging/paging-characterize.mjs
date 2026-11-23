@@ -4,7 +4,7 @@ import { dirname, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import os from 'node:os';
 import { encode, freeze, hash, manifest, root } from '../artifacts.mjs';
-import { measurePaging, pagingNames } from './paging-kernels.mjs';
+import { measurePaging, pagingNames } from './kernels.mjs';
 import { evaluateInChromium } from '../browser.mjs';
 
 const args = process.argv.slice(2);
@@ -54,7 +54,7 @@ if (!browserMode) {
       const file = resolve(base, '.' + pathname);
       if (!(
         file.startsWith(resolve(base, 'build') + sep) ||
-        file === resolve(root, 'scripts/verification/paging/paging-kernels.mjs')
+        file === resolve(root, 'scripts/verification/paging/kernels.mjs')
       ))
         throw Error('outside allowed route');
       response.writeHead(200, {
@@ -70,7 +70,7 @@ if (!browserMode) {
   results = await evaluateInChromium(
     server,
     async (knobs) => {
-      const { measurePaging } = await import('/scripts/verification/paging/paging-kernels.mjs');
+      const { measurePaging } = await import('/scripts/verification/paging/kernels.mjs');
       const { createCpu } = await import('/build/host/index.js');
       const compiler = await WebAssembly.compile(
         await (await fetch('/build/ring64.wasm')).arrayBuffer(),
@@ -97,9 +97,7 @@ await writeFile(
     },
     manifest: current,
     knobs,
-    kernelSha256: hash(
-      await readFile(resolve(root, 'scripts/verification/paging/paging-kernels.mjs')),
-    ),
+    kernelSha256: hash(await readFile(resolve(root, 'scripts/verification/paging/kernels.mjs'))),
     ...results,
   }),
 );

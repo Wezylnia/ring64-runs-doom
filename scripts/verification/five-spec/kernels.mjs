@@ -1,7 +1,7 @@
-import { transitionKernel } from './five-spec-transitions.mjs';
-import { x87ExtraNames, x87ExtraKernel } from './five-spec-x87-extra.mjs';
-import { numericExtraNames, numericExtraKernel } from './five-spec-numeric-extra.mjs';
-import { legacyExtraNames, legacyExtraKernel } from './five-spec-legacy-extra.mjs';
+import { transitionKernel } from './fixtures/transitions.mjs';
+import { x87ExtraNames, x87ExtraKernel } from './fixtures/x87.mjs';
+import { numericExtraNames, numericExtraKernel } from './fixtures/numeric.mjs';
+import { legacyExtraNames, legacyExtraKernel } from './fixtures/legacy.mjs';
 const limits = {
   maxInstructions: 128,
   maxSourceBytes: 2048,

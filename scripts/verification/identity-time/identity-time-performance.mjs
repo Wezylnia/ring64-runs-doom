@@ -4,7 +4,7 @@ import { dirname, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import os from 'node:os';
 import { encode, freeze, hash, manifest, root } from '../artifacts.mjs';
-import { identityTimeNames, identityTimePlan } from './identity-time-kernels.mjs';
+import { identityTimeNames, identityTimePlan } from './kernels.mjs';
 import { evaluateInChromium } from '../browser.mjs';
 
 // The caller owns the quiet measurement window; this driver never builds or starts other jobs.
@@ -55,7 +55,7 @@ const current = values.snapshot
   : await freeze(resolve(values.current), `identity-time-performance-build-${tag}`);
 const sourcePaths = [
   'scripts/verification/identity-time/identity-time-performance.mjs',
-  'scripts/verification/identity-time/identity-time-kernels.mjs',
+  'scripts/verification/identity-time/kernels.mjs',
   'scripts/verification/artifacts.mjs',
   'scripts/verification/browser.mjs',
 ];
@@ -66,9 +66,7 @@ const sourceHashes = async () =>
     ),
   );
 const sources = await sourceHashes(),
-  kernelBytes = await readFile(
-    resolve(root, 'scripts/verification/identity-time/identity-time-kernels.mjs'),
-  );
+  kernelBytes = await readFile(resolve(root, 'scripts/verification/identity-time/kernels.mjs'));
 const frozenKernel = resolve(current.path, 'identity-time-performance-kernels.mjs');
 await writeFile(frozenKernel, kernelBytes);
 let result;

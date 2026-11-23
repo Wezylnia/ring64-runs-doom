@@ -1,4 +1,4 @@
-import { fastReuseFixture, seedFastNumeric } from '../fast-system/fast-system-kernels.mjs';
+import { fastReuseFixture, seedFastNumeric } from '../fast-system/kernels.mjs';
 
 export const reuseNames = [
   'fast-syscall-sysret64',

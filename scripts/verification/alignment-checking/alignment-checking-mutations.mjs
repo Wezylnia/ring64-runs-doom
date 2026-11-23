@@ -13,7 +13,7 @@ import {
 } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { mutants, exclusions } from './alignment-checking-mutation-cases.mjs';
+import { mutants, exclusions } from './mutation-cases.mjs';
 
 // Execution is opt-in. The source checkout is read-only; every edit and build uses
 // a fresh /tmp copy. Run this driver serially with the repository's other gates.
@@ -118,11 +118,9 @@ for (const name of ['Cargo.toml', 'Cargo.lock', 'package.json', 'tsconfig.json']
 await symlink(await realpath(join(root, 'node_modules')), join(work, 'node_modules'), 'dir');
 await mkdir(join(work, 'build'));
 const driver = await readFile(fileURLToPath(import.meta.url));
-const catalog = await readFile(
-  fileURLToPath(new URL('./alignment-checking-mutation-cases.mjs', import.meta.url)),
-);
+const catalog = await readFile(fileURLToPath(new URL('./mutation-cases.mjs', import.meta.url)));
 await writeFile(join(evidence, 'alignment-checking-mutations.mjs'), driver);
-await writeFile(join(evidence, 'alignment-checking-mutation-cases.mjs'), catalog);
+await writeFile(join(evidence, 'mutation-cases.mjs'), catalog);
 const env = {
   ...process.env,
   CARGO_TARGET_DIR: join(await realpath(work), 'target'),

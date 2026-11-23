@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { relative, resolve } from 'node:path';
-import { baselineCommit, checkedBaseline } from './fast-system-support.mjs';
+import { baselineCommit, checkedBaseline } from './baseline.mjs';
 import {
   benchmarkInputs as listBenchmarkInputs,
   inheritedBenchmarkInput,
@@ -70,11 +70,11 @@ for (const originalPath of await listBenchmarkInputs(old.path)) {
   if (!before.equals(now)) throw Error('inherited benchmark driver changed: ' + path);
 }
 const pagingKernel = await readFile(
-  resolve(root, 'scripts/verification/paging/paging-kernels.mjs'),
+  resolve(root, 'scripts/verification/paging/kernels.mjs'),
   'utf8',
 );
 benchmarkInputs.push({
-  path: 'scripts/verification/paging/paging-kernels.mjs',
+  path: 'scripts/verification/paging/kernels.mjs',
   baselineSha256: hash(baselineSource('scripts/paging-kernels.mjs')),
   currentSha256: hash(pagingKernel),
   identical: pagingKernel === baselineSource('scripts/paging-kernels.mjs'),

@@ -3,12 +3,9 @@ import { createServer } from 'node:http';
 import { dirname, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { coreModulePath } from '../../bench/emitted-host.mjs';
-import { assertFastCandidate, baseline, checkedBaseline } from './fast-system-support.mjs';
+import { assertFastCandidate, baseline, checkedBaseline } from './baseline.mjs';
 import { benchmarkInputs, encode, freeze, hash, manifest, root } from '../artifacts.mjs';
-import {
-  checkedContextBaseline,
-  contextBaseline,
-} from '../context-reuse/context-reuse-support.mjs';
+import { checkedContextBaseline, contextBaseline } from '../context-reuse/baseline.mjs';
 import { evaluateInChromium } from '../browser.mjs';
 
 const args = process.argv.slice(2);
@@ -16,9 +13,9 @@ const browserMode = args.includes('--browser');
 const contextReuse = args.includes('--context-reuse');
 const inputFiles = [
   ...(await benchmarkInputs(root)),
-  'scripts/verification/paging/paging-kernels.mjs',
-  'scripts/verification/fast-system/fast-system-kernels.mjs',
-  'scripts/verification/context-reuse/context-reuse-kernels.mjs',
+  'scripts/verification/paging/kernels.mjs',
+  'scripts/verification/fast-system/kernels.mjs',
+  'scripts/verification/context-reuse/kernels.mjs',
   'scripts/verification/fast-system/fast-system-observer.mjs',
   'scripts/bench/emitted-host.mjs',
 ];
@@ -628,14 +625,10 @@ if (!browserMode) {
       })),
     ),
     kernels: pathToFileURL(resolve(root, 'benchmarks/kernels.mjs')).href,
-    pagingKernels: pathToFileURL(resolve(root, 'scripts/verification/paging/paging-kernels.mjs'))
+    pagingKernels: pathToFileURL(resolve(root, 'scripts/verification/paging/kernels.mjs')).href,
+    fastKernels: pathToFileURL(resolve(root, 'scripts/verification/fast-system/kernels.mjs')).href,
+    reuseKernels: pathToFileURL(resolve(root, 'scripts/verification/context-reuse/kernels.mjs'))
       .href,
-    fastKernels: pathToFileURL(
-      resolve(root, 'scripts/verification/fast-system/fast-system-kernels.mjs'),
-    ).href,
-    reuseKernels: pathToFileURL(
-      resolve(root, 'scripts/verification/context-reuse/context-reuse-kernels.mjs'),
-    ).href,
     includeFast: args.includes('--include-fast'),
     contextReuse,
     sameBuildControl: args.includes('--baseline-control'),
@@ -652,9 +645,9 @@ if (!browserMode) {
       }
       if (
         [
-          '/scripts/verification/paging/paging-kernels.mjs',
-          '/scripts/verification/fast-system/fast-system-kernels.mjs',
-          '/scripts/verification/context-reuse/context-reuse-kernels.mjs',
+          '/scripts/verification/paging/kernels.mjs',
+          '/scripts/verification/fast-system/kernels.mjs',
+          '/scripts/verification/context-reuse/kernels.mjs',
         ].includes(pathname)
       ) {
         response.writeHead(200, { 'content-type': 'text/javascript', 'cache-control': 'no-store' });
@@ -686,9 +679,9 @@ if (!browserMode) {
       wasm: `/${label}/ring64.wasm`,
     })),
     kernels: '/benchmarks/kernels.mjs',
-    pagingKernels: '/scripts/verification/paging/paging-kernels.mjs',
-    fastKernels: '/scripts/verification/fast-system/fast-system-kernels.mjs',
-    reuseKernels: '/scripts/verification/context-reuse/context-reuse-kernels.mjs',
+    pagingKernels: '/scripts/verification/paging/kernels.mjs',
+    fastKernels: '/scripts/verification/fast-system/kernels.mjs',
+    reuseKernels: '/scripts/verification/context-reuse/kernels.mjs',
     includeFast: args.includes('--include-fast'),
     contextReuse,
     sameBuildControl: args.includes('--baseline-control'),

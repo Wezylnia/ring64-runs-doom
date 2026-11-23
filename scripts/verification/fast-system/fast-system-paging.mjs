@@ -3,21 +3,14 @@ import { createServer } from 'node:http';
 import { dirname, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import os from 'node:os';
-import { assertFastCandidate, baseline, checkedBaseline } from './fast-system-support.mjs';
+import { assertFastCandidate, baseline, checkedBaseline } from './baseline.mjs';
 import { encode, freeze, hash, manifest, root } from '../artifacts.mjs';
-import { measurePaging, pagingNames } from '../paging/paging-kernels.mjs';
-import { measurePagingPair } from './fast-system-paging-pair.mjs';
-import { measureInheritedMsr, inheritedMsrNames } from './fast-system-kernels.mjs';
-import { measureFast, fastNames } from './fast-system-kernels.mjs';
-import {
-  checkedContextBaseline,
-  contextBaseline,
-} from '../context-reuse/context-reuse-support.mjs';
-import {
-  measureReusePair,
-  reuseNames,
-  populationNames,
-} from '../context-reuse/context-reuse-kernels.mjs';
+import { measurePaging, pagingNames } from '../paging/kernels.mjs';
+import { measurePagingPair } from './paging-pair.mjs';
+import { measureInheritedMsr, inheritedMsrNames } from './kernels.mjs';
+import { measureFast, fastNames } from './kernels.mjs';
+import { checkedContextBaseline, contextBaseline } from '../context-reuse/baseline.mjs';
+import { measureReusePair, reuseNames, populationNames } from '../context-reuse/kernels.mjs';
 import { evaluateInChromium } from '../browser.mjs';
 
 const args = process.argv.slice(2);
@@ -114,10 +107,10 @@ if (!browserMode) {
       let file;
       if (
         [
-          '/scripts/verification/paging/paging-kernels.mjs',
-          '/scripts/verification/fast-system/fast-system-paging-pair.mjs',
-          '/scripts/verification/fast-system/fast-system-kernels.mjs',
-          '/scripts/verification/context-reuse/context-reuse-kernels.mjs',
+          '/scripts/verification/paging/kernels.mjs',
+          '/scripts/verification/fast-system/paging-pair.mjs',
+          '/scripts/verification/fast-system/kernels.mjs',
+          '/scripts/verification/context-reuse/kernels.mjs',
         ].includes(pathname)
       )
         file = resolve(root, '.' + pathname);
@@ -142,13 +135,12 @@ if (!browserMode) {
     server,
     async ({ definitions, knobs, msrMode, fastMode, reuseMode, populationMode }) => {
       const { measurePaging, pagingNames } =
-        await import('/scripts/verification/paging/paging-kernels.mjs');
+        await import('/scripts/verification/paging/kernels.mjs');
       const { measurePagingPair } =
-        await import('/scripts/verification/fast-system/fast-system-paging-pair.mjs');
+        await import('/scripts/verification/fast-system/paging-pair.mjs');
       const { measureFast, fastNames, measureInheritedMsr, inheritedMsrNames } =
-        await import('/scripts/verification/fast-system/fast-system-kernels.mjs');
-      const { measureReusePair } =
-        await import('/scripts/verification/context-reuse/context-reuse-kernels.mjs');
+        await import('/scripts/verification/fast-system/kernels.mjs');
+      const { measureReusePair } = await import('/scripts/verification/context-reuse/kernels.mjs');
       const sides = await Promise.all(
         definitions.map(async ([label]) => {
           const { createCpu } = await import(`/${label}/build/host/index.js`);
@@ -215,19 +207,17 @@ await writeFile(
         resolve(
           root,
           reuseMode || populationMode
-            ? 'scripts/verification/context-reuse/context-reuse-kernels.mjs'
+            ? 'scripts/verification/context-reuse/kernels.mjs'
             : msrMode || fastMode
-              ? 'scripts/verification/fast-system/fast-system-kernels.mjs'
-              : 'scripts/verification/paging/paging-kernels.mjs',
+              ? 'scripts/verification/fast-system/kernels.mjs'
+              : 'scripts/verification/paging/kernels.mjs',
         ),
       ),
     ),
     ...(reuseMode
       ? {
           fixtureSha256: hash(
-            await readFile(
-              resolve(root, 'scripts/verification/fast-system/fast-system-kernels.mjs'),
-            ),
+            await readFile(resolve(root, 'scripts/verification/fast-system/kernels.mjs')),
           ),
         }
       : {}),
@@ -236,8 +226,8 @@ await writeFile(
         resolve(
           root,
           reuseMode || populationMode
-            ? 'scripts/verification/context-reuse/context-reuse-kernels.mjs'
-            : 'scripts/verification/fast-system/fast-system-paging-pair.mjs',
+            ? 'scripts/verification/context-reuse/kernels.mjs'
+            : 'scripts/verification/fast-system/paging-pair.mjs',
         ),
       ),
     ),

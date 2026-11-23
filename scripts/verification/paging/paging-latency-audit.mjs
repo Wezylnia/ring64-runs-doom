@@ -4,12 +4,8 @@ import { resolve, dirname, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import os from 'node:os';
 import { freeze, manifest, hash, encode, root } from '../artifacts.mjs';
-import { measurePaging, pagingWorkloads } from './paging-latency-kernels.mjs';
-import {
-  measureReusePair,
-  reuseNames,
-  populationNames,
-} from '../context-reuse/context-reuse-kernels.mjs';
+import { measurePaging, pagingWorkloads } from './latency-kernels.mjs';
+import { measureReusePair, reuseNames, populationNames } from '../context-reuse/kernels.mjs';
 import { systemChromeExecutable } from '../../support/browser.mjs';
 const scriptRoot = dirname(fileURLToPath(import.meta.url));
 const options = {
@@ -122,12 +118,12 @@ async function browserRun() {
       }
       let file;
       if (pathname === '/driver.mjs' && !contextMode)
-        file = resolve(scriptRoot, 'paging-latency-kernels.mjs');
+        file = resolve(scriptRoot, 'latency-kernels.mjs');
       else if (
         contextMode &&
         [
-          '/scripts/verification/context-reuse/context-reuse-kernels.mjs',
-          '/scripts/verification/fast-system/fast-system-kernels.mjs',
+          '/scripts/verification/context-reuse/kernels.mjs',
+          '/scripts/verification/fast-system/kernels.mjs',
         ].includes(pathname)
       )
         file = resolve(root, '.' + pathname);
@@ -165,9 +161,7 @@ async function browserRun() {
       async ({ manifests, options }) => {
         const contextMode = options.contextReuse || options.population;
         const driver = await import(
-          contextMode
-            ? '/scripts/verification/context-reuse/context-reuse-kernels.mjs'
-            : '/driver.mjs'
+          contextMode ? '/scripts/verification/context-reuse/kernels.mjs' : '/driver.mjs'
         );
         const sides = [];
         for (const side of manifests) {
@@ -218,16 +212,14 @@ const report = {
   kernelSha256: hash(
     await readFile(
       new URL(
-        contextMode ? '../context-reuse/context-reuse-kernels.mjs' : './paging-latency-kernels.mjs',
+        contextMode ? '../context-reuse/kernels.mjs' : './latency-kernels.mjs',
         import.meta.url,
       ),
     ),
   ),
   ...(contextMode
     ? {
-        fixtureSha256: hash(
-          await readFile(new URL('../fast-system/fast-system-kernels.mjs', import.meta.url)),
-        ),
+        fixtureSha256: hash(await readFile(new URL('../fast-system/kernels.mjs', import.meta.url))),
       }
     : {}),
   ...result,

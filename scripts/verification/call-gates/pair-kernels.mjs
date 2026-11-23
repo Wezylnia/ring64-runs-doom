@@ -1,4 +1,4 @@
-import { measureCallGates } from './call-gate-kernels.mjs';
+import { measureCallGates } from './kernels.mjs';
 
 const stable = (value) =>
   JSON.stringify(value, (_, item) =>

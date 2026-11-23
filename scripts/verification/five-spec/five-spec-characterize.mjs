@@ -4,7 +4,7 @@ import { dirname, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import os from 'node:os';
 import { encode, freeze, hash, manifest, root } from '../artifacts.mjs';
-import { measureFive, newSpecNames } from './five-spec-kernels.mjs';
+import { measureFive, newSpecNames } from './kernels.mjs';
 import { evaluateInChromium } from '../browser.mjs';
 
 const args = process.argv.slice(2);
@@ -53,11 +53,11 @@ if (!browserMode) {
       if (!(
         file.startsWith(resolve(base, 'build') + sep) ||
         [
-          'scripts/verification/five-spec/five-spec-kernels.mjs',
-          'scripts/verification/five-spec/five-spec-transitions.mjs',
-          'scripts/verification/five-spec/five-spec-x87-extra.mjs',
-          'scripts/verification/five-spec/five-spec-numeric-extra.mjs',
-          'scripts/verification/five-spec/five-spec-legacy-extra.mjs',
+          'scripts/verification/five-spec/kernels.mjs',
+          'scripts/verification/five-spec/fixtures/transitions.mjs',
+          'scripts/verification/five-spec/fixtures/x87.mjs',
+          'scripts/verification/five-spec/fixtures/numeric.mjs',
+          'scripts/verification/five-spec/fixtures/legacy.mjs',
         ].some((path) => file === resolve(root, path))
       ))
         throw Error('outside allowed route');
@@ -74,7 +74,7 @@ if (!browserMode) {
   results = await evaluateInChromium(
     server,
     async (knobs) => {
-      const { measureFive } = await import('/scripts/verification/five-spec/five-spec-kernels.mjs');
+      const { measureFive } = await import('/scripts/verification/five-spec/kernels.mjs');
       const { createCpu } = await import('/build/host/index.js');
       const compiler = await WebAssembly.compile(
         await (await fetch('/build/ring64.wasm')).arrayBuffer(),
@@ -101,20 +101,16 @@ await writeFile(
     },
     manifest: current,
     knobs,
-    kernelSha256: hash(
-      await readFile(resolve(root, 'scripts/verification/five-spec/five-spec-kernels.mjs')),
-    ),
+    kernelSha256: hash(await readFile(resolve(root, 'scripts/verification/five-spec/kernels.mjs'))),
     transitionFixtureSha256: hash(
-      await readFile(resolve(root, 'scripts/verification/five-spec/five-spec-transitions.mjs')),
+      await readFile(resolve(root, 'scripts/verification/five-spec/fixtures/transitions.mjs')),
     ),
     extraFixtureSha256: Object.fromEntries(
       await Promise.all(
         ['x87', 'numeric', 'legacy'].map(async (name) => [
           name,
           hash(
-            await readFile(
-              resolve(root, `scripts/verification/five-spec/five-spec-${name}-extra.mjs`),
-            ),
+            await readFile(resolve(root, `scripts/verification/five-spec/fixtures/${name}.mjs`)),
           ),
         ]),
       ),

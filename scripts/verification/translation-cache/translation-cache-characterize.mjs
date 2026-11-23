@@ -9,7 +9,7 @@ import {
   translationCacheNames,
   translationCacheCommonNames,
   translationCachePlan,
-} from './translation-cache-kernels.mjs';
+} from './kernels.mjs';
 import { chromiumExecutable } from '../../support/browser.mjs';
 
 // The caller owns artifact builds, process inventory and the serialized quiet window.
@@ -75,7 +75,7 @@ const candidate = values.snapshot
 const baseline = values.baseline ? await manifest(resolve(values.baseline)) : undefined;
 const sourcePaths = [
   'scripts/verification/translation-cache/translation-cache-characterize.mjs',
-  'scripts/verification/translation-cache/translation-cache-kernels.mjs',
+  'scripts/verification/translation-cache/kernels.mjs',
   'scripts/verification/artifacts.mjs',
 ];
 const sources = async () =>
@@ -121,10 +121,7 @@ async function browserRun() {
       }
       let path;
       if (pathname === '/kernel.mjs')
-        path = resolve(
-          root,
-          'scripts/verification/translation-cache/translation-cache-kernels.mjs',
-        );
+        path = resolve(root, 'scripts/verification/translation-cache/kernels.mjs');
       else {
         const prefix = pathname.startsWith('/candidate/')
           ? '/candidate/'

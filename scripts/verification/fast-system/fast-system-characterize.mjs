@@ -3,9 +3,9 @@ import { createServer } from 'node:http';
 import { dirname, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import os from 'node:os';
-import { assertFastCandidate } from './fast-system-support.mjs';
+import { assertFastCandidate } from './baseline.mjs';
 import { encode, freeze, hash, manifest, root } from '../artifacts.mjs';
-import { measureFast, fastNames } from './fast-system-kernels.mjs';
+import { measureFast, fastNames } from './kernels.mjs';
 import { evaluateInChromium } from '../browser.mjs';
 
 const args = process.argv.slice(2);
@@ -54,7 +54,7 @@ if (!browserMode) {
       const file = resolve(base, '.' + pathname);
       if (!(
         file.startsWith(resolve(base, 'build') + sep) ||
-        file === resolve(root, 'scripts/verification/fast-system/fast-system-kernels.mjs')
+        file === resolve(root, 'scripts/verification/fast-system/kernels.mjs')
       ))
         throw Error('outside allowed route');
       response.writeHead(200, {
@@ -70,8 +70,7 @@ if (!browserMode) {
   results = await evaluateInChromium(
     server,
     async (knobs) => {
-      const { measureFast } =
-        await import('/scripts/verification/fast-system/fast-system-kernels.mjs');
+      const { measureFast } = await import('/scripts/verification/fast-system/kernels.mjs');
       const { createCpu } = await import('/build/host/index.js');
       const compiler = await WebAssembly.compile(
         await (await fetch('/build/ring64.wasm')).arrayBuffer(),
@@ -99,7 +98,7 @@ await writeFile(
     manifest: current,
     knobs,
     kernelSha256: hash(
-      await readFile(resolve(root, 'scripts/verification/fast-system/fast-system-kernels.mjs')),
+      await readFile(resolve(root, 'scripts/verification/fast-system/kernels.mjs')),
     ),
     ...results,
   }),

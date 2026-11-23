@@ -13,10 +13,7 @@ import {
   manifest,
   root,
 } from '../artifacts.mjs';
-import {
-  alignmentPerformanceNames,
-  alignmentPerformancePlan,
-} from './alignment-checking-performance-kernels.mjs';
+import { alignmentPerformanceNames, alignmentPerformancePlan } from './kernels.mjs';
 import { evaluateInChromium } from '../browser.mjs';
 
 // Build, guest-process serialization and the quiet timing window belong to the caller.
@@ -182,7 +179,7 @@ const current = values.snapshot
   : await freeze(resolve(values.current), `alignment-performance-${tag}-current`);
 const sourcePaths = [
   'scripts/verification/alignment-checking/alignment-checking-performance.mjs',
-  'scripts/verification/alignment-checking/alignment-checking-performance-kernels.mjs',
+  'scripts/verification/alignment-checking/kernels.mjs',
   'scripts/verification/artifacts.mjs',
   'scripts/verification/browser.mjs',
 ];
@@ -264,12 +261,9 @@ if (args.includes('--prepare-only')) {
   process.exit(0);
 }
 const kernelBytes = await readFile(
-  resolve(
-    root,
-    'scripts/verification/alignment-checking/alignment-checking-performance-kernels.mjs',
-  ),
+  resolve(root, 'scripts/verification/alignment-checking/kernels.mjs'),
 );
-const frozenKernel = resolve(current.path, 'alignment-checking-performance-kernels.mjs');
+const frozenKernel = resolve(current.path, 'kernels.mjs');
 await writeFile(frozenKernel, kernelBytes);
 let result;
 if (!browserMode) {
@@ -309,8 +303,7 @@ if (!browserMode) {
     server,
     async (knobs) => {
       const { createCpu } = await import('/build/host/index.js');
-      const { measureAlignmentPerformance } =
-        await import('/alignment-checking-performance-kernels.mjs');
+      const { measureAlignmentPerformance } = await import('/kernels.mjs');
       const compiler = await WebAssembly.compile(
         await (await fetch('/build/ring64.wasm')).arrayBuffer(),
       );

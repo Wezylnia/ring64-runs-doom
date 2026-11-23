@@ -4,7 +4,7 @@ import { dirname, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import os from 'node:os';
 import { encode, freeze, hash, manifest, root } from '../artifacts.mjs';
-import { callGateNames, checkCallGates, measureCallGates } from './call-gate-kernels.mjs';
+import { callGateNames, checkCallGates, measureCallGates } from './kernels.mjs';
 import { evaluateInChromium } from '../browser.mjs';
 
 // This driver freezes existing artifacts. Build and CPU scheduling belong to the caller.
@@ -50,7 +50,7 @@ if (knobs.workloads.some((name) => !callGateNames.includes(name)))
   throw Error('unknown call-gate workload');
 const sourcePaths = [
   'scripts/verification/call-gates/call-gates-audit.mjs',
-  'scripts/verification/call-gates/call-gate-kernels.mjs',
+  'scripts/verification/call-gates/kernels.mjs',
   'scripts/verification/artifacts.mjs',
   'scripts/verification/browser.mjs',
 ];
@@ -61,9 +61,7 @@ const sourceHashes = async () =>
     ),
   );
 const beforeSources = await sourceHashes();
-const kernelBytes = await readFile(
-  resolve(root, 'scripts/verification/call-gates/call-gate-kernels.mjs'),
-);
+const kernelBytes = await readFile(resolve(root, 'scripts/verification/call-gates/kernels.mjs'));
 let result;
 if (!browserMode) {
   const { createCpu } = await import(pathToFileURL(resolve(current.path, 'build/host/index.js')));
@@ -83,8 +81,7 @@ if (!browserMode) {
         return;
       }
       let bytes;
-      if (pathname === '/scripts/verification/call-gates/call-gate-kernels.mjs')
-        bytes = kernelBytes;
+      if (pathname === '/scripts/verification/call-gates/kernels.mjs') bytes = kernelBytes;
       else {
         const file = resolve(current.path, '.' + pathname);
         if (!(
@@ -108,7 +105,7 @@ if (!browserMode) {
     server,
     async ({ characterization, knobs }) => {
       const { checkCallGates, measureCallGates } =
-        await import('/scripts/verification/call-gates/call-gate-kernels.mjs');
+        await import('/scripts/verification/call-gates/kernels.mjs');
       const { createCpu } = await import('/build/host/index.js');
       const compiler = await WebAssembly.compile(
         await (await fetch('/build/ring64.wasm')).arrayBuffer(),
