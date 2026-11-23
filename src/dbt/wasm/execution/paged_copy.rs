@@ -23,11 +23,11 @@ pub(super) struct CopyGroup {
 #[derive(Clone, Copy)]
 pub(super) struct FlatVectorCopy {
     group: CopyGroup,
-    tail: Option<FlatCopyTail>,
+    tail: Option<CopyTail>,
 }
 
 #[derive(Clone, Copy)]
-struct FlatCopyTail {
+struct CopyTail {
     advance: RegisterView,
     step: u64,
     compare: RegisterView,
@@ -45,22 +45,7 @@ impl FlatVectorCopy {
         let Some(tail) = self.tail else {
             return false;
         };
-        let group = self.group;
-        if group.adjustment.is_some_and(|adjustment| {
-            adjustment.register.bank == tail.advance.bank
-                || !separate_copy_register(adjustment.register, group.destination)
-        }) {
-            return false;
-        }
-        let stride = |address: Address| {
-            let base = u64::from(address.base == AddressBase::Register(tail.advance.bank));
-            let index = address
-                .index
-                .filter(|index| index.register == tail.advance.bank);
-            tail.step * (base + index.map_or(0, |index| u64::from(index.scale)))
-        };
-        stride(group.source) == u64::from(group.width)
-            && stride(group.destination) == u64::from(group.width)
+        self.group.has_fixed_stride(tail)
     }
 
     pub(super) fn can_defer_flags(self) -> bool {
@@ -78,29 +63,10 @@ impl FlatVectorCopy {
             )
         })
     }
-
-    fn counts_to_destination_limit(self, tail: FlatCopyTail) -> bool {
-        let group = self.group;
-        let width = u64::from(group.width);
-        if tail.condition != Condition::Below || tail.step != width || tail.limit == tail.advance {
-            return false;
-        }
-        if let Some(adjustment) = group.adjustment {
-            adjustment.register == tail.compare
-                && adjustment.register != tail.limit
-                && adjustment.advance == width
-                && group.destination.displacement == adjustment.address.displacement
-        } else {
-            tail.compare == tail.advance
-                && group.destination.base == AddressBase::Register(tail.advance.bank)
-                && group.destination.index.is_none()
-                && group.destination.displacement == 0
-        }
-    }
 }
 
-impl FlatCopyTail {
-    fn recognize(instructions: &[Instruction], head: u64) -> Option<Self> {
+impl CopyTail {
+    fn recognize(instructions: &[Instruction], head: u64, width: Width) -> Option<Self> {
         let [advance, compare, branch, ..] = instructions else {
             return None;
         };
@@ -108,7 +74,7 @@ impl FlatCopyTail {
             kind: Alu::Add,
             dst: advance_register,
             src: DataOperand::Immediate(step),
-            width: Width::W32,
+            width: advance_width,
         } = advance.operation
         else {
             return None;
@@ -117,7 +83,7 @@ impl FlatCopyTail {
             kind: Alu::Cmp,
             dst: compare_register,
             src: DataOperand::Register(limit),
-            width: Width::W32,
+            width: compare_width,
         } = compare.operation
         else {
             return None;
@@ -125,14 +91,20 @@ impl FlatCopyTail {
         let Operation::Jcc { condition, target } = branch.operation else {
             return None;
         };
-        (target == head).then_some(Self {
-            advance: advance_register,
-            step,
-            compare: compare_register,
-            limit,
-            condition,
-            next_pc: branch.next_pc,
-        })
+        (target == head
+            && advance_width == width
+            && compare_width == width
+            && !advance_register.high_byte
+            && !compare_register.high_byte
+            && !limit.high_byte)
+            .then_some(Self {
+                advance: advance_register,
+                step,
+                compare: compare_register,
+                limit,
+                condition,
+                next_pc: branch.next_pc,
+            })
     }
 }
 
@@ -332,6 +304,42 @@ impl ScalarCopyGroup {
 }
 
 impl CopyGroup {
+    fn has_fixed_stride(self, tail: CopyTail) -> bool {
+        if self.adjustment.is_some_and(|adjustment| {
+            adjustment.register.bank == tail.advance.bank
+                || !separate_copy_register(adjustment.register, self.destination)
+        }) {
+            return false;
+        }
+        let stride = |address: Address| {
+            let base = u64::from(address.base == AddressBase::Register(tail.advance.bank));
+            let index = address
+                .index
+                .filter(|index| index.register == tail.advance.bank);
+            tail.step * (base + index.map_or(0, |index| u64::from(index.scale)))
+        };
+        stride(self.source) == u64::from(self.width)
+            && stride(self.destination) == u64::from(self.width)
+    }
+
+    fn counts_to_destination_limit(self, tail: CopyTail) -> bool {
+        let width = u64::from(self.width);
+        if tail.condition != Condition::Below || tail.step != width || tail.limit == tail.advance {
+            return false;
+        }
+        if let Some(adjustment) = self.adjustment {
+            adjustment.register == tail.compare
+                && adjustment.register != tail.limit
+                && adjustment.advance == width
+                && self.destination.displacement == adjustment.address.displacement
+        } else {
+            tail.compare == tail.advance
+                && self.destination.base == AddressBase::Register(tail.advance.bank)
+                && self.destination.index.is_none()
+                && self.destination.displacement == 0
+        }
+    }
+
     pub(super) fn finite_prefix(
         unit: &Unit,
         loops: [Option<StructuredLoop>; 2],
@@ -393,8 +401,11 @@ impl CopyGroup {
             }) else {
                 continue;
             };
-            let tail =
-                FlatCopyTail::recognize(&tail[group.instruction_count() as usize..], first.pc);
+            let tail = CopyTail::recognize(
+                &tail[group.instruction_count() as usize..],
+                first.pc,
+                Width::W32,
+            );
             if !unit.sampled && tail.is_none() {
                 continue;
             }
@@ -680,7 +691,7 @@ impl Emitter {
         }
     }
 
-    fn restore_flat_copy_flags(&mut self, tail: FlatCopyTail, start: u32) {
+    fn restore_flat_copy_flags(&mut self, tail: CopyTail, start: u32) {
         // A refused guard leaves the previous lap's compare registers live.
         self.op(Op::LocalGet(REMAINING))
             .op(Op::LocalGet(start))
@@ -708,7 +719,7 @@ impl Emitter {
         let FlatVectorCopy { group, tail } = copy;
         let tail = tail.expect("batched copy carries an advancing tail");
         let count = copy.instruction_count();
-        let counted = copy.counts_to_destination_limit(tail);
+        let counted = copy.group.counts_to_destination_limit(tail);
         self.op(Op::LocalGet(REMAINING)).op(Op::LocalSet(start));
         self.op(Op::Loop(BlockType::Empty));
         self.guard_linear_copy(
@@ -786,7 +797,7 @@ impl Emitter {
         &mut self,
         instructions: &[Instruction],
         group: CopyGroup,
-        tail: FlatCopyTail,
+        tail: CopyTail,
         count: u32,
         loop_depth: u32,
         laps: u32,
@@ -895,7 +906,7 @@ impl Emitter {
     fn emit_flat_copy_lap(
         &mut self,
         group: CopyGroup,
-        tail: FlatCopyTail,
+        tail: CopyTail,
         count: u32,
         defer_flags: bool,
     ) {
@@ -1028,8 +1039,31 @@ impl Emitter {
             .op(Op::LocalSet(STORE_STATUS));
     }
 
-    pub(super) fn emit_paged_copy_group(&mut self, window: CopyWindow, exit_depth: u32) {
+    pub(super) fn emit_paged_copy_group(
+        &mut self,
+        window: CopyWindow,
+        exit_depth: u32,
+        instructions: &[Instruction],
+        body: StructuredLoop,
+    ) {
         let group = window.group;
+        let count = body.max_lap_len;
+        let tail = if body.paged_vector_copy()
+            && !body.forward_edges()
+            && count == group.instruction_count() + 3
+        {
+            let head = body.head as usize;
+            CopyTail::recognize(
+                &instructions[head + group.instruction_count() as usize..=body.tail as usize],
+                instructions[head].pc,
+                Width::W64,
+            )
+            .filter(|tail| {
+                group.counts_to_destination_limit(*tail) && group.has_fixed_stride(*tail)
+            })
+        } else {
+            None
+        };
         self.address(group.source, 0);
         self.op(Op::LocalTee(LHS))
             .op(Op::LocalGet(window.source_base))
@@ -1070,6 +1104,23 @@ impl Emitter {
             .op(Op::LocalSet(ADDRESS))
             .op(Op::End);
 
+        if tail.is_some() {
+            // Both offsets are inside the current descriptor. Reserve its last
+            // reachable lap for the original group and branch tail.
+            self.op(Op::LocalGet(window.limit))
+                .op(Op::I64Const(1))
+                .op(Op::I64Sub)
+                .op(Op::LocalGet(VALUE))
+                .op(Op::LocalGet(ADDRESS))
+                .op(Op::LocalGet(VALUE))
+                .op(Op::LocalGet(ADDRESS))
+                .op(Op::I64GtU)
+                .op(Op::Select)
+                .op(Op::I64Sub)
+                .op(Op::I64Const(i64::from(group.width)))
+                .op(Op::I64DivU)
+                .op(Op::LocalSet(LHS));
+        }
         self.op(Op::LocalGet(VALUE))
             .op(Op::I32WrapI64)
             .op(Op::LocalGet(window.source_host))
@@ -1081,7 +1132,81 @@ impl Emitter {
             .op(Op::I32Add)
             .op(Op::I64ExtendI32U)
             .op(Op::LocalSet(ADDRESS));
+        if let Some(tail) = tail {
+            self.emit_paged_copy_extra_laps(group, tail, count);
+        }
         self.emit_ordered_copy(group);
+    }
+
+    fn emit_paged_copy_extra_laps(&mut self, group: CopyGroup, tail: CopyTail, count: u32) {
+        let width = i64::from(group.width);
+        self.op(Op::Block(BlockType::Empty))
+            .op(Op::LocalGet(LHS))
+            .op(Op::I64Eqz)
+            .op(Op::BrIf(0));
+        self.data_register(tail.limit, Width::W64);
+        self.op(Op::LocalTee(VALUE))
+            .op(Op::LocalGet(RHS))
+            .op(Op::I64LeU)
+            .op(Op::BrIf(0))
+            // After every skipped latch, the proved next destination must
+            // still be strictly below the unsigned comparison limit.
+            .op(Op::LocalGet(VALUE))
+            .op(Op::LocalGet(RHS))
+            .op(Op::I64Sub)
+            .op(Op::I64Const(1))
+            .op(Op::I64Sub)
+            .op(Op::I64Const(width))
+            .op(Op::I64DivU)
+            .op(Op::LocalSet(RHS));
+        self.select_smaller_copy_bound();
+        self.op(Op::LocalSet(LHS))
+            .op(Op::LocalGet(REMAINING))
+            .op(Op::I64Const(i64::from(count)))
+            .op(Op::I64DivU)
+            .op(Op::I64Const(1))
+            .op(Op::I64Sub)
+            .op(Op::LocalSet(RHS));
+        self.select_smaller_copy_bound();
+        self.op(Op::LocalTee(LHS))
+            .op(Op::I64Eqz)
+            .op(Op::BrIf(0))
+            .op(Op::LocalGet(REMAINING))
+            .op(Op::LocalGet(LHS))
+            .op(Op::I64Const(i64::from(count)))
+            .op(Op::I64Mul)
+            .op(Op::I64Sub)
+            .op(Op::LocalSet(REMAINING))
+            .op(Op::LocalGet(LHS))
+            .op(Op::I64Const(width))
+            .op(Op::I64Mul)
+            .op(Op::LocalSet(RHS))
+            .op(Op::Loop(BlockType::Empty));
+        self.copy_ordered_vectors(CopyGroup {
+            adjustment: None,
+            ..group
+        });
+        self.op(Op::LocalGet(STORE_STATUS))
+            .op(Op::I32Const(group.width as i32))
+            .op(Op::I32Add)
+            .op(Op::LocalSet(STORE_STATUS))
+            .op(Op::LocalGet(ADDRESS))
+            .op(Op::I64Const(width))
+            .op(Op::I64Add)
+            .op(Op::LocalSet(ADDRESS))
+            .op(Op::LocalGet(LHS))
+            .op(Op::I64Const(1))
+            .op(Op::I64Sub)
+            .op(Op::LocalTee(LHS))
+            .op(Op::I32WrapI64)
+            .op(Op::BrIf(0))
+            .op(Op::End);
+        // The final ordinary lap rebuilds the destination adjustment and
+        // publishes all flags. The intermediate copies cannot exit or fault.
+        self.data_register(tail.advance, Width::W64);
+        self.op(Op::LocalGet(RHS)).op(Op::I64Add);
+        self.write_register(tail.advance, Width::W64);
+        self.op(Op::End);
     }
 
     fn resolve_copy_window(&mut self, width: u32, resolve: u32) {

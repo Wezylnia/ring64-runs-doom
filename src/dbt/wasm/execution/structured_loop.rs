@@ -2352,7 +2352,7 @@ impl Emitter {
                 && position < window.group.instruction_count()
             {
                 if position == 0 {
-                    self.emit_paged_copy_group(window, depth + 1);
+                    self.emit_paged_copy_group(window, depth + 1, instructions, body);
                 }
                 continue;
             }

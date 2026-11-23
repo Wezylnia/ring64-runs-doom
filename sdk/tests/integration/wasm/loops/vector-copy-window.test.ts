@@ -92,3 +92,80 @@ test('paired vector windows preserve overlapping load/store order and exact chec
     proto.artifactImports = imports;
   }
 });
+
+for (const [shape, code, length, registers] of [
+  [
+    'direct',
+    '0f1004300f11000f104430100f1140104883c0204839c872e7',
+    7,
+    (source: bigint, destination: bigint) => ({
+      0: destination,
+      6: BigInt.asUintN(64, source - destination),
+    }),
+  ],
+  [
+    'adjusted',
+    '0f100407488d34024883c6200f1146e00f104407100f1146f04883c0204839ce72de',
+    9,
+    (source: bigint, destination: bigint) => ({ 0: 0n, 2: destination, 7: source }),
+  ],
+] as const) {
+  test(`counted ${shape} vector windows publish exact overlap, exit flags and partial budgets`, async () => {
+    const source = PC + 0x1003n;
+    const destination = source + 16n;
+    const stop = PC + BigInt(code.length / 2);
+    const seed = Uint8Array.from({ length: 16 }, (_, index) => index * 23 + 1);
+    const repeated = (size: number) =>
+      Uint8Array.from({ length: size }, (_, index) => seed[index % seed.length]!);
+    const ram = new Uint8Array(0x1000);
+    ram.set(seed, 3);
+
+    await usingPaged(
+      compiler,
+      {
+        code,
+        words: [[0x4008n, 0xa003n]],
+        spans: [{ physical: 0xa000n, bytes: ram }],
+      },
+      async (cpu) => {
+        const enter = () =>
+          cpu.setState(initial(PC, { ...registers(source, destination), 1: destination + 65n }));
+        for (let wave = 0; wave < 4; wave++) {
+          enter();
+          const full = await cpu.run({ budget: 100n, stop });
+          assert.equal(full.reason, 'stop');
+          assert.equal(full.retired, BigInt(length * 3));
+          assert.equal(full.state.flags & 0x8d5n, 0x10n);
+          assert.deepEqual(cpu.readPhysicalMemory(0xa013n, 96), repeated(96));
+        }
+
+        cpu.writePhysicalMemory(0xa013n, new Uint8Array(96));
+        enter();
+        const inside = await cpu.run({ budget: 100n, stop: PC + 4n });
+        assert.equal(inside.reason, 'stop');
+        assert.equal(inside.retired, 1n);
+        assert.equal(inside.state.rip, PC + 4n);
+        assert.deepEqual(cpu.readPhysicalMemory(0xa013n, 96), new Uint8Array(96));
+
+        enter();
+        const exact = await cpu.run({ budget: BigInt(length * 2), stop });
+        assert.equal(exact.reason, 'budget');
+        assert.equal(exact.retired, BigInt(length * 2));
+        assert.equal(exact.state.rip, PC);
+        assert.equal(exact.state.flags & 0x8d5n, 0x95n);
+        assert.deepEqual(cpu.readPhysicalMemory(0xa013n, 64), repeated(64));
+        assert.deepEqual(cpu.readPhysicalMemory(0xa053n, 32), new Uint8Array(32));
+
+        cpu.writePhysicalMemory(0xa013n, new Uint8Array(96));
+        enter();
+        const partial = await cpu.run({ budget: BigInt(length * 2 + 1), stop });
+        assert.equal(partial.reason, 'budget');
+        assert.equal(partial.retired, BigInt(length * 2 + 1));
+        assert.equal(partial.state.rip, PC + 4n);
+        assert.equal(partial.state.flags & 0x8d5n, 0x95n);
+        assert.deepEqual(cpu.readPhysicalMemory(0xa013n, 64), repeated(64));
+        assert.deepEqual(cpu.readPhysicalMemory(0xa053n, 32), new Uint8Array(32));
+      },
+    );
+  });
+}
