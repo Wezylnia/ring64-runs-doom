@@ -435,12 +435,15 @@ impl Emitter {
                         std::mem::offset_of!(crate::memory::DirectSpan, host) as u64,
                     )));
             }
-            self.op(match source_width {
-                Width::W8 => Op::I64Load8U(mem(0)),
-                Width::W16 => Op::I64Load16U(mem(0)),
-                Width::W32 => Op::I64Load32U(mem(0)),
-                Width::W64 => unreachable!("unsupported prefix read width"),
-            });
+            self.ram_load(
+                match source_width {
+                    Width::W8 => Op::I64Load8U,
+                    Width::W16 => Op::I64Load16U,
+                    Width::W32 => Op::I64Load32U,
+                    Width::W64 => unreachable!("unsupported prefix read width"),
+                },
+                mem(0),
+            );
             self.write_register(register, width);
             if !batch_retirement {
                 self.commit(first.next_pc);

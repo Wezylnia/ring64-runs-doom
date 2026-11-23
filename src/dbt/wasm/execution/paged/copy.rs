@@ -1030,7 +1030,7 @@ impl Emitter {
 
         // Load after the stores even when the stack aliases their backing.
         self.op(Op::LocalGet(stack))
-            .op(Op::I64Load(memory(0)))
+            .ram_load(Op::I64Load, memory(0))
             .op(Op::LocalSet(LHS));
         self.data_register(tail.advance, Width::W64);
         self.op(Op::LocalSet(RHS));
@@ -1760,14 +1760,14 @@ impl Emitter {
             // Both guest loads must complete before either aliased store.
             for (offset, bank) in [(0, xmm), (16, second)] {
                 self.op(Op::LocalGet(STORE_STATUS))
-                    .op(Op::V128Load(memory(offset)))
+                    .ram_load(Op::V128Load, memory(offset))
                     .op(Op::LocalSet(bank));
             }
             for (offset, bank) in [(0, xmm), (16, second)] {
                 self.op(Op::LocalGet(ADDRESS))
                     .op(Op::I32WrapI64)
                     .op(Op::LocalGet(bank))
-                    .op(Op::V128Store(memory(offset)));
+                    .ram_store(Op::V128Store, memory(offset), wasm_encoder::ValType::V128);
             }
             return;
         }
@@ -1776,7 +1776,7 @@ impl Emitter {
                 && let Some(adjustment) = group.adjustment
             {
                 self.op(Op::LocalGet(STORE_STATUS))
-                    .op(Op::V128Load(memory(0)))
+                    .ram_load(Op::V128Load, memory(0))
                     .op(Op::LocalSet(xmm));
                 let width = adjustment.address.size;
                 self.lea(adjustment.register, adjustment.address, width, 0);
@@ -1790,18 +1790,22 @@ impl Emitter {
                 self.op(Op::LocalGet(ADDRESS))
                     .op(Op::I32WrapI64)
                     .op(Op::LocalGet(xmm))
-                    .op(Op::V128Store(memory(0)));
+                    .ram_store(Op::V128Store, memory(0), wasm_encoder::ValType::V128);
                 continue;
             }
             // A dependent later load sees the preceding store even on aliased physical backing.
             self.op(Op::LocalGet(ADDRESS))
                 .op(Op::I32WrapI64)
                 .op(Op::LocalGet(STORE_STATUS))
-                .op(Op::V128Load(memory(u64::from(offset))));
+                .ram_load(Op::V128Load, memory(u64::from(offset)));
             if offset + 16 == group.width {
                 self.op(Op::LocalTee(xmm));
             }
-            self.op(Op::V128Store(memory(u64::from(offset))));
+            self.ram_store(
+                Op::V128Store,
+                memory(u64::from(offset)),
+                wasm_encoder::ValType::V128,
+            );
         }
     }
 }

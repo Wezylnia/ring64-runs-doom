@@ -1519,6 +1519,13 @@ fn emit_body(
         locals.push((dword_writes.count_ones(), ValType::I64));
     }
     #[cfg(guest_memory64)]
+    let paged_ram_locals = next_local;
+    #[cfg(guest_memory64)]
+    if paged {
+        locals.extend([(2, ValType::I32), (1, ValType::I64), (1, ValType::V128)]);
+        next_local += 4;
+    }
+    #[cfg(guest_memory64)]
     let guest64_cache = guest64_resolve.map(|resolve| {
         let first = next_local;
         locals.extend([(6, ValType::I64), (1, ValType::I32)]);
@@ -2183,6 +2190,8 @@ fn emit_body(
     let mut emitter = Emitter {
         #[cfg(guest_memory64)]
         guest64_cache,
+        #[cfg(guest_memory64)]
+        paged_ram_locals,
         paged,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_copy_access_cache: copy_access_cache.map(|(index, _)| index),
@@ -2819,7 +2828,7 @@ fn emit_body(
         code.function(&paged_copy::emit_copy_access_cache(resolver));
     }
     #[cfg(guest_memory64)]
-    if guest64_cache.is_some() {
+    if guest64_cache.is_some() || paged {
         imports.import(
             "env",
             "guest_ram",

@@ -260,7 +260,7 @@ impl Emitter {
                 .op(Op::LocalGet(ADDRESS))
                 .op(Op::I32WrapI64)
                 .op(Op::I32Add)
-                .op(Op::I64Load32U(field(0, 2)))
+                .ram_load(Op::I64Load32U, field(0, 2))
                 .op(Op::Br(1))
                 .op(Op::End);
         }
@@ -306,7 +306,7 @@ impl Emitter {
             .op(Op::LocalGet(ADDRESS))
             .op(Op::I32WrapI64)
             .op(Op::I32Add)
-            .op(Op::I64Load32U(field(0, 2)))
+            .ram_load(Op::I64Load32U, field(0, 2))
             .op(Op::Br(1))
             .op(Op::End)
             .op(Op::LocalGet(ADDRESS))
@@ -387,11 +387,14 @@ impl Emitter {
         self.op(Op::If(BlockType::Result(ValType::I64)))
             .op(Op::LocalGet(VALUE))
             .op(Op::I32WrapI64)
-            .op(Op::I64Load32U(MemArg {
-                offset: 0,
-                align: 0,
-                memory_index: 0,
-            }))
+            .ram_load(
+                Op::I64Load32U,
+                MemArg {
+                    offset: 0,
+                    align: 0,
+                    memory_index: 0,
+                },
+            )
             .op(Op::Else)
             .op(Op::LocalGet(ADDRESS))
             .op(Op::Call(read))
@@ -433,11 +436,14 @@ impl Emitter {
                     .op(Op::I32And)
                     .op(Op::If(BlockType::Empty))
                     .op(Op::LocalGet(pair.host))
-                    .op(Op::I64Load32U(MemArg {
-                        offset: 0,
-                        align: 0,
-                        memory_index: 0,
-                    }))
+                    .ram_load(
+                        Op::I64Load32U,
+                        MemArg {
+                            offset: 0,
+                            align: 0,
+                            memory_index: 0,
+                        },
+                    )
                     .op(Op::Br(1))
                     .op(Op::End)
                     .op(Op::LocalGet(ADDRESS));
@@ -502,11 +508,14 @@ impl Emitter {
         self.op(Op::LocalGet(pair.host));
         // The intervening ADD updates only its destination and flags. The
         // second load still executes at the second instruction's own position.
-        self.op(Op::I64Load32U(MemArg {
-            offset: if first { 0 } else { 4 },
-            align: 0,
-            memory_index: 0,
-        }))
+        self.ram_load(
+            Op::I64Load32U,
+            MemArg {
+                offset: if first { 0 } else { 4 },
+                align: 0,
+                memory_index: 0,
+            },
+        )
         .op(Op::Else);
         if first {
             self.op(Op::LocalGet(ADDRESS));
@@ -609,11 +618,14 @@ impl Emitter {
         self.op(Op::I32WrapI64)
             .op(Op::LocalGet(host))
             .op(Op::I32Add)
-            .op(Op::I64Load32U(MemArg {
-                offset: 0,
-                align: 0,
-                memory_index: 0,
-            }));
+            .ram_load(
+                Op::I64Load32U,
+                MemArg {
+                    offset: 0,
+                    align: 0,
+                    memory_index: 0,
+                },
+            );
     }
 
     pub(in crate::dbt::wasm) fn retry_guarded_paged_operand(

@@ -12,6 +12,8 @@ use std::rc::Rc;
 #[cfg(guest_memory64)]
 mod memory64;
 #[cfg(guest_memory64)]
+pub(crate) mod paged_windows;
+#[cfg(guest_memory64)]
 pub(crate) use memory64::GuestSpan;
 mod storage;
 pub(super) use storage::BackingOffset;
@@ -423,6 +425,15 @@ impl Image {
         }
         // The installed mapping covers canonical addresses and a stable backing slice.
         let backing = &self.backings[mapping.backing];
+        #[cfg(guest_memory64)]
+        if self.physical {
+            return paged_windows::span(
+                mapping,
+                backing.extent.base + mapping.offset,
+                address,
+                width,
+            );
+        }
         Some(DirectSpan {
             base: mapping.base,
             length: mapping.length,
@@ -442,16 +453,16 @@ impl Image {
         }
         let mapping = &self.mappings[self.locate_index(source)?];
         let read_span = self.readable_direct_span_in(mapping, source, width)?;
-        let write_offset = destination.wrapping_sub(mapping.base);
-        if write_offset < u64::from(mapping.length) {
-            if !self.direct_mapping_writable(mapping, write_offset, width) {
+        if destination.wrapping_sub(read_span.base) <= u64::from(read_span.length - width) {
+            if !self.direct_mapping_writable(mapping, destination - mapping.base, width) {
                 return None;
             }
-            let span = DirectSpan {
+            #[cfg(not(guest_memory64))]
+            let read_span = DirectSpan {
                 host: self.backings[mapping.backing].host_pointer_mut(mapping.offset)? as u32,
                 ..read_span
             };
-            return Some((span, span));
+            return Some((read_span, read_span));
         }
         Some((read_span, self.writable_direct_span(destination, width)?))
     }
@@ -479,6 +490,15 @@ impl Image {
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     fn writable_direct_span(&mut self, address: u64, width: u32) -> Option<DirectSpan> {
         let (mapping, _) = self.writable_direct_mapping(address, width)?;
+        #[cfg(guest_memory64)]
+        if self.physical {
+            return paged_windows::span(
+                mapping,
+                self.backings[mapping.backing].extent.base + mapping.offset,
+                address,
+                width,
+            );
+        }
         let (base, length, offset, backing) = (
             mapping.base,
             mapping.length,

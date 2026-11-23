@@ -10,7 +10,7 @@ unsafe extern "C" {
 
 #[derive(Debug)]
 pub(super) struct Extent {
-    base: u64,
+    pub(super) base: u64,
     pub(super) length: u64,
 }
 

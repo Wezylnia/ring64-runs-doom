@@ -229,7 +229,7 @@ impl Emitter {
         self.write_register(group.shape.value_register, Width::W32);
         self.op(Op::LocalGet(group.host))
             .op(Op::LocalGet(group.value))
-            .op(Op::I32Store(field(0, 2)))
+            .ram_store(Op::I32Store, field(0, 2), wasm_encoder::ValType::I32)
             .op(Op::I64Const(group.shape.next_pc as i64))
             .op(Op::LocalSet(RIP));
         self.retire_instructions(5);
@@ -283,7 +283,7 @@ impl Emitter {
             .op(Op::BrIf(0));
         self.address(address, next_pc);
         self.indexed_page_host(group, 0, 1);
-        self.op(Op::I64Load8U(field(0, 0)))
+        self.ram_load(Op::I64Load8U, field(0, 0))
             .op(Op::LocalTee(VALUE))
             .op(Op::I64Eqz)
             .op(Op::If(BlockType::Empty));
@@ -310,7 +310,7 @@ impl Emitter {
             .op(Op::I64Shl)
             .op(Op::I64Add);
         self.indexed_page_host(group, 1, 4);
-        self.op(Op::I32Load(field(0, 2)))
+        self.ram_load(Op::I32Load, field(0, 2))
             .op(Op::LocalSet(group.value));
         self.address(group.shape.destination, 0);
         self.indexed_page_host(group, 2, 4);

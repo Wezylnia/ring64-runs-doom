@@ -212,11 +212,14 @@ impl Emitter {
             self.op(Op::I32WrapI64)
                 .op(Op::LocalGet(bias + slot))
                 .op(Op::I32Add)
-                .op(Op::V128Load(MemArg {
-                    offset: 0,
-                    align: 0,
-                    memory_index: 0,
-                }))
+                .ram_load(
+                    Op::V128Load,
+                    MemArg {
+                        offset: 0,
+                        align: 0,
+                        memory_index: 0,
+                    },
+                )
                 .op(Op::LocalSet(input));
         }
         const fn splat(bits: i32) -> i128 {

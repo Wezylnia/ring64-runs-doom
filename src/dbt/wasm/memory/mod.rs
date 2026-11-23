@@ -8,6 +8,8 @@ pub(super) mod mmio;
 pub(super) mod paged_read;
 #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
 pub(super) mod parallel;
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+mod ram_operand;
 #[cfg(any(test, all(not(feature = "parallel"), target_arch = "wasm32")))]
 pub(super) mod read_loop;
 #[cfg(any(test, all(not(feature = "parallel"), target_arch = "wasm32")))]
@@ -273,11 +275,14 @@ impl Emitter {
                 .op(Op::I32Const(2))
                 .op(Op::I32Shl)
                 .op(Op::I32Add)
-                .op(Op::I64Load32U(MemArg {
-                    offset: 0,
-                    align: 2,
-                    memory_index: 0,
-                }));
+                .ram_load(
+                    Op::I64Load32U,
+                    MemArg {
+                        offset: 0,
+                        align: 2,
+                        memory_index: 0,
+                    },
+                );
             self.write_register(dst, width);
             self.op(Op::Else);
             self.load_value(address, width, next_pc, false, exit_depth + 1);
@@ -361,12 +366,15 @@ impl Emitter {
                 align: 0,
                 memory_index: 0,
             };
-            self.op(match width {
-                Width::W8 => Op::I64Load8U(operand),
-                Width::W16 => Op::I64Load16U(operand),
-                Width::W32 => Op::I64Load32U(operand),
-                Width::W64 => Op::I64Load(operand),
-            })
+            self.ram_load(
+                match width {
+                    Width::W8 => Op::I64Load8U,
+                    Width::W16 => Op::I64Load16U,
+                    Width::W32 => Op::I64Load32U,
+                    Width::W64 => Op::I64Load,
+                },
+                operand,
+            )
             .op(Op::LocalSet(VALUE));
             return;
         }
@@ -516,7 +524,7 @@ impl Emitter {
         let long64 = self.context.is_long64();
         if long64 {
             // The load has already zero-extended the architectural destination.
-            self.op(Op::I64Load32U(memory));
+            self.ram_load(Op::I64Load32U, memory);
             self.write_register(dst, Width::W32);
         } else {
             self.direct_scalar_load(Width::W32, memory);
@@ -806,14 +814,15 @@ impl Emitter {
     fn direct_operand(&mut self, operand: DirectOperand, memory: MemArg) {
         match operand {
             DirectOperand::VectorDword(vector) => {
-                self.op(Op::V128Load32Zero(memory)).op(Op::LocalSet(vector));
+                self.ram_load(Op::V128Load32Zero, memory)
+                    .op(Op::LocalSet(vector));
             }
             DirectOperand::VectorBlock(vector) => {
-                self.op(Op::V128Load(memory)).op(Op::LocalSet(vector));
+                self.ram_load(Op::V128Load, memory).op(Op::LocalSet(vector));
             }
             DirectOperand::VectorBlockStore { value, .. } => {
                 self.op(Op::LocalGet(value))
-                    .op(Op::V128Store(memory))
+                    .ram_store(Op::V128Store, memory, wasm_encoder::ValType::V128)
                     .op(Op::I32Const(1))
                     .op(Op::LocalSet(STORE_STATUS));
             }
@@ -964,23 +973,30 @@ impl Emitter {
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     pub(super) fn direct_scalar_load(&mut self, width: Width, memory: MemArg) {
-        self.op(match width {
-            Width::W8 => Op::I64Load8U(memory),
-            Width::W16 => Op::I64Load16U(memory),
-            Width::W32 => Op::I64Load32U(memory),
-            Width::W64 => Op::I64Load(memory),
-        })
+        self.ram_load(
+            match width {
+                Width::W8 => Op::I64Load8U,
+                Width::W16 => Op::I64Load16U,
+                Width::W32 => Op::I64Load32U,
+                Width::W64 => Op::I64Load,
+            },
+            memory,
+        )
         .op(Op::LocalSet(VALUE));
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     pub(super) fn direct_scalar_store(&mut self, width: Width, memory: MemArg) {
-        self.op(match width {
-            Width::W8 => Op::I64Store8(memory),
-            Width::W16 => Op::I64Store16(memory),
-            Width::W32 => Op::I64Store32(memory),
-            Width::W64 => Op::I64Store(memory),
-        });
+        self.ram_store(
+            match width {
+                Width::W8 => Op::I64Store8,
+                Width::W16 => Op::I64Store16,
+                Width::W32 => Op::I64Store32,
+                Width::W64 => Op::I64Store,
+            },
+            memory,
+            wasm_encoder::ValType::I64,
+        );
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]

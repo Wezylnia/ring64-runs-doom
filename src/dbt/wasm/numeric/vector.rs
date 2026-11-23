@@ -244,11 +244,14 @@ impl Emitter {
             self.op(Op::I32WrapI64)
                 .op(Op::LocalGet(first_bias + slot))
                 .op(Op::I32Add)
-                .op(Op::V128Load32Zero(MemArg {
-                    offset,
-                    align: 0,
-                    memory_index: 0,
-                }));
+                .ram_load(
+                    Op::V128Load32Zero,
+                    MemArg {
+                        offset,
+                        align: 0,
+                        memory_index: 0,
+                    },
+                );
             return;
         }
         if bytes == 4
@@ -272,7 +275,7 @@ impl Emitter {
             if self.guarded_paged_lap {
                 if let Some(window) = self.paged_vector_window {
                     self.paged_vector_window_pointer(window, read, exit_depth);
-                    self.op(Op::V128Load(memory(0)));
+                    self.ram_load(Op::V128Load, memory(0));
                     return;
                 }
                 if !returns_host {
@@ -290,7 +293,7 @@ impl Emitter {
                         host
                     ))));
                 }
-                self.op(Op::V128Load(memory(0)));
+                self.ram_load(Op::V128Load, memory(0));
                 return;
             }
             if let Some((ready, order)) = self.paged_read_rearm
@@ -306,7 +309,7 @@ impl Emitter {
             self.op(Op::LocalTee(STORE_STATUS))
                 .op(Op::If(BlockType::Result(ValType::V128)))
                 .op(Op::LocalGet(STORE_STATUS))
-                .op(Op::V128Load(memory(0)))
+                .ram_load(Op::V128Load, memory(0))
                 .op(Op::Else)
                 .op(Op::LocalGet(ADDRESS));
             self.vector_load_offset(bytes, aligned, exit_depth + 1);
@@ -521,7 +524,7 @@ impl Emitter {
                 .op(Op::If(BlockType::Empty))
                 .op(Op::LocalGet(STORE_STATUS))
                 .op(Op::LocalGet(value))
-                .op(Op::V128Store(memory(0)))
+                .ram_store(Op::V128Store, memory(0), wasm_encoder::ValType::V128)
                 .op(Op::I32Const(1))
                 .op(Op::LocalSet(STORE_STATUS))
                 .op(Op::Else);

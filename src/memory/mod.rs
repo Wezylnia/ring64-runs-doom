@@ -12,7 +12,7 @@ pub use address::{Access, Cause, Fault, PHYSICAL_ADDRESS_END, canonical48};
 #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
 pub(crate) use image::DirectSpan;
 #[cfg(guest_memory64)]
-pub(crate) use image::GuestSpan;
+pub(crate) use image::{GuestSpan, paged_windows};
 pub use image::{Image, MappingInput, MemoryError, MemoryLimits, Permissions};
 #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
 pub(crate) use mmio::{MmioOperand, MmioRange};
