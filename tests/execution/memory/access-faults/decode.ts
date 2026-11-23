@@ -6,7 +6,7 @@ import {
   same,
   delivery,
   type Scenario,
-} from '../../exception-delivery/fixture.js';
+} from '../../events/exception-delivery/fixture.js';
 
 // Intel instruction-reference illegal forms, one row for each Invalid producer family.
 const illegal = [

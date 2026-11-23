@@ -14,7 +14,7 @@ import {
   equal,
   delivery,
   type Scenario,
-} from '../../exception-delivery/fixture.js';
+} from '../../events/exception-delivery/fixture.js';
 
 export function entryScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [

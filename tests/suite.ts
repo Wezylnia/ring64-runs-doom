@@ -24,13 +24,13 @@ import { callGateScenarios } from './execution/control-flow/call-gates/index.js'
 import { protectionScenarios } from './execution/protection/index.js';
 import { streamingScenarios } from './execution/numeric/streaming/index.js';
 import { systemFlagScenarios } from './execution/system-flags/index.js';
-import { softwareEventScenarios } from './execution/software-events/index.js';
-import { exceptionDeliveryScenarios } from './execution/exception-delivery/index.js';
-import { externalInterruptScenarios } from './execution/external-interrupts/index.js';
+import { softwareEventScenarios } from './execution/events/software-events/index.js';
+import { exceptionDeliveryScenarios } from './execution/events/exception-delivery/index.js';
+import { externalInterruptScenarios } from './execution/events/external-interrupts/index.js';
 
 import { accessFaultScenarios } from './execution/memory/access-faults/index.js';
 
-import { hardwareDebugScenarios } from './execution/hardware-debug/index.js';
+import { hardwareDebugScenarios } from './execution/events/hardware-debug/index.js';
 import { legacyPagingScenarios } from './execution/memory/legacy-paging/index.js';
 import { pagingScenarios } from './execution/memory/paging/index.js';
 import { fsgsbaseScenarios } from './execution/fsgsbase/index.js';

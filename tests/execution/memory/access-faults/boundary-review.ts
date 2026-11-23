@@ -17,8 +17,8 @@ import {
   check,
   preserveNumeric,
   type Scenario,
-} from '../../exception-delivery/fixture.js';
-import { TSS } from '../../software-events/fixture.js';
+} from '../../events/exception-delivery/fixture.js';
+import { TSS } from '../../events/software-events/fixture.js';
 
 const HOLE = 0x800000000000n;
 

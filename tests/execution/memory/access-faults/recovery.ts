@@ -21,8 +21,8 @@ import {
   LIMITS,
   hex,
   type Scenario,
-} from '../../exception-delivery/fixture.js';
-import { TSS } from '../../software-events/fixture.js';
+} from '../../events/exception-delivery/fixture.js';
+import { TSS } from '../../events/software-events/fixture.js';
 
 export function recoveryScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [

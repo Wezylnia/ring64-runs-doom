@@ -1,6 +1,6 @@
 import { type Cpu, type EventState, type Registers } from '../../../../../sdk/src/index.js';
 import { longSnapshot } from '../../../../support/context.js';
-import { gate } from '../../../software-events/fixture.js';
+import { gate } from '../../../events/software-events/fixture.js';
 import { preserveNumeric } from '../../../control-flow/far/fixture.js';
 import {
   BANK,

@@ -6,7 +6,7 @@ import {
   memory as physicalMemory,
   put,
 } from '../../../memory/supervisor-access/fixture.js';
-import { gate } from '../../../software-events/fixture.js';
+import { gate } from '../../../events/software-events/fixture.js';
 import {
   PC,
   RAM_BASE,

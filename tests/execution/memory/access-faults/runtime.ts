@@ -6,7 +6,7 @@ import {
   same,
   preserveNumeric,
   type Scenario,
-} from '../../exception-delivery/fixture.js';
+} from '../../events/exception-delivery/fixture.js';
 const HOLE = 0x800000000000n;
 
 export function runtimeScenarios(compiler: WebAssembly.Module): Scenario[] {

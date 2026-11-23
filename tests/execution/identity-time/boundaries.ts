@@ -2,7 +2,7 @@ import { createCpu, type Cpu } from '../../../sdk/src/index.js';
 import { equal, hex, initial, throws, type Scenario } from '../../support/fixture.js';
 import { using, snapshot, same, preserveNumeric } from '../control-flow/far/fixture.js';
 import { usingGate } from '../control-flow/call-gates/fixture.js';
-import { gate, image } from '../software-events/fixture.js';
+import { gate, image } from '../events/software-events/fixture.js';
 import {
   using as usingTime,
   input,

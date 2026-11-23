@@ -1,6 +1,6 @@
 import type { FastSystemState } from '../../../../sdk/src/index.js';
 import { longSnapshot } from '../../../support/context.js';
-import { gate } from '../../software-events/fixture.js';
+import { gate } from '../../events/software-events/fixture.js';
 import { preserveNumeric } from '../far/fixture.js';
 import {
   BANK,

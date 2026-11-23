@@ -13,8 +13,8 @@ import {
   same,
   equal,
   type Scenario,
-} from '../../exception-delivery/fixture.js';
-import { TSS } from '../../software-events/fixture.js';
+} from '../../events/exception-delivery/fixture.js';
+import { TSS } from '../../events/software-events/fixture.js';
 
 function execution(switching: boolean) {
   const context = snapshot('protected', switching ? 3 : 0);

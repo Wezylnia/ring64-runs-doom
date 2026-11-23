@@ -14,7 +14,7 @@ import {
   equal,
   preserveNumeric,
   type Scenario,
-} from '../../exception-delivery/fixture.js';
+} from '../../events/exception-delivery/fixture.js';
 
 export function correctnessReviewScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [
