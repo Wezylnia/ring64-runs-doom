@@ -151,17 +151,8 @@ pub extern "C" fn core_import_state() -> i32 {
             target.debug.continuation = continuation;
             target.interrupts = interrupts;
         };
-        core.fault = None;
-        core.alignment_fault = None;
-        core.alignment_check = None;
-        core.simd_exception = None;
-        core.numeric_fault = None;
+        core.clear_instruction_faults();
         core.numeric_form = None;
-        core.general_protection = None;
-        core.protection_fault = None;
-        core.system_memory_fault = None;
-        core.divide_failed = false;
-        core.segment_fault = None;
         core.debug_exception = None;
         core.decode_fault = None;
         0

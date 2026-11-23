@@ -311,6 +311,23 @@ pub extern "C" fn core_init(code_base: u64, code_len: u32, ram_base: u64, ram_le
     })
 }
 
+impl Core {
+    // Instruction helpers clear these transient faults only after accepting their arguments.
+    // Debug, decode, paging, and pending architectural sources have separate lifetimes.
+    fn clear_instruction_faults(&mut self) {
+        self.fault = None;
+        self.segment_fault = None;
+        self.alignment_fault = None;
+        self.alignment_check = None;
+        self.simd_exception = None;
+        self.numeric_fault = None;
+        self.general_protection = None;
+        self.protection_fault = None;
+        self.system_memory_fault = None;
+        self.divide_failed = false;
+    }
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn core_clear_fault() -> i32 {
     BRIDGE.with_borrow_mut(|bridge| {
@@ -319,18 +336,9 @@ pub extern "C" fn core_clear_fault() -> i32 {
         core.pdpte_load_fault = None;
         core.paging_system = None;
         core.debug_candidate = 0;
-        core.fault = None;
-        core.alignment_fault = None;
-        core.alignment_check = None;
-        core.simd_exception = None;
-        core.numeric_fault = None;
+        core.clear_instruction_faults();
         core.numeric_form = None;
-        core.general_protection = None;
-        core.protection_fault = None;
-        core.system_memory_fault = None;
-        core.divide_failed = false;
         core.decode_fault = None;
-        core.segment_fault = None;
         core.debug_exception = None;
         unsafe {
             (*core.state.get()).target = 0;

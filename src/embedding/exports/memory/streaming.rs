@@ -38,16 +38,7 @@ fn core_masked_store_impl<const OBSERVED: bool, const PAGED: bool>(
     };
     BRIDGE.with_borrow_mut(|bridge| {
         let core = bridge.core.as_mut().unwrap();
-        core.fault = None;
-        core.segment_fault = None;
-        core.alignment_fault = None;
-        core.alignment_check = None;
-        core.simd_exception = None;
-        core.numeric_fault = None;
-        core.general_protection = None;
-        core.protection_fault = None;
-        core.system_memory_fault = None;
-        core.divide_failed = false;
+        core.clear_instruction_faults();
         unsafe {
             let state = &mut *core.state.get();
             state.target = 0;
@@ -131,16 +122,7 @@ fn core_clflush_impl<const PAGED: bool>(offset: u64, segment: u32) -> i32 {
     };
     BRIDGE.with_borrow_mut(|bridge| {
         let core = bridge.core.as_mut().unwrap();
-        core.fault = None;
-        core.segment_fault = None;
-        core.alignment_fault = None;
-        core.alignment_check = None;
-        core.simd_exception = None;
-        core.numeric_fault = None;
-        core.general_protection = None;
-        core.protection_fault = None;
-        core.system_memory_fault = None;
-        core.divide_failed = false;
+        core.clear_instruction_faults();
         unsafe {
             let state = &mut *core.state.get();
             state.target = 0;

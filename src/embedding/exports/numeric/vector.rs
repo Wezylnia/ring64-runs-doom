@@ -85,16 +85,7 @@ pub extern "C" fn core_import_xmm() -> i32 {
             state.target = 0;
             state.fault_segment = Segment::Cs as u32;
         }
-        core.fault = None;
-        core.segment_fault = None;
-        core.alignment_fault = None;
-        core.alignment_check = None;
-        core.simd_exception = None;
-        core.numeric_fault = None;
-        core.general_protection = None;
-        core.protection_fault = None;
-        core.system_memory_fault = None;
-        core.divide_failed = false;
+        core.clear_instruction_faults();
         0
     })
 }

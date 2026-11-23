@@ -60,16 +60,7 @@ fn x87_environment(
 }
 
 fn clear_x87_diagnostics(core: &mut Core) {
-    core.fault = None;
-    core.segment_fault = None;
-    core.alignment_fault = None;
-    core.alignment_check = None;
-    core.simd_exception = None;
-    core.numeric_fault = None;
-    core.general_protection = None;
-    core.protection_fault = None;
-    core.system_memory_fault = None;
-    core.divide_failed = false;
+    core.clear_instruction_faults();
     unsafe {
         let state = &mut *core.state.get();
         state.target = 0;

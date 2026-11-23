@@ -92,17 +92,8 @@ pub extern "C" fn core_flags(operation: u32, flags: u64, input: u64) -> i32 {
         if !operation.valid_in_mode(&core.context) {
             return -1;
         }
-        core.fault = None;
-        core.segment_fault = None;
-        core.alignment_fault = None;
-        core.alignment_check = None;
-        core.simd_exception = None;
-        core.numeric_fault = None;
-        core.general_protection = None;
-        core.protection_fault = None;
-        core.system_memory_fault = None;
+        core.clear_instruction_faults();
         core.debug_exception = None;
-        core.divide_failed = false;
         core.decode_fault = None;
         let result = match operation.kind {
             SystemFlagsKind::Push => flags::push(flags, operation.width, &core.context),

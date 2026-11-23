@@ -100,16 +100,7 @@ pub extern "C" fn core_set_context() -> i32 {
         };
         core.task_work = None;
         core.debug_exception = None;
-        core.fault = None;
-        core.alignment_fault = None;
-        core.alignment_check = None;
-        core.simd_exception = None;
-        core.numeric_fault = None;
-        core.general_protection = None;
-        core.protection_fault = None;
-        core.system_memory_fault = None;
-        core.segment_fault = None;
-        core.divide_failed = false;
+        core.clear_instruction_faults();
         if core.context != context {
             core.context = context;
             core.context_changed();

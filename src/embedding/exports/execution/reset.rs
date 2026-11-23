@@ -15,18 +15,9 @@ impl Core {
         self.paging_failure = None;
         self.pdpte_load_fault = None;
         self.paging_system = None;
-        self.fault = None;
-        self.divide_failed = false;
+        self.clear_instruction_faults();
         self.decode_fault = None;
-        self.segment_fault = None;
-        self.alignment_fault = None;
-        self.alignment_check = None;
-        self.simd_exception = None;
-        self.numeric_fault = None;
         self.numeric_form = None;
-        self.general_protection = None;
-        self.protection_fault = None;
-        self.system_memory_fault = None;
         self.debug_exception = None;
         self.debug_candidate = 0;
     }

@@ -210,17 +210,8 @@ pub extern "C" fn core_deliver_exception() -> i32 {
             };
             (event, state.registers[4], state.flags)
         };
-        core.fault = None;
-        core.segment_fault = None;
-        core.alignment_fault = None;
-        core.alignment_check = None;
-        core.simd_exception = None;
-        core.numeric_fault = None;
-        core.general_protection = None;
-        core.protection_fault = None;
-        core.system_memory_fault = None;
+        core.clear_instruction_faults();
         core.debug_exception = None;
-        core.divide_failed = false;
         core.decode_fault = None;
         core.paging_failure = None;
         core.pdpte_load_fault = None;

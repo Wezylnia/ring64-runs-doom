@@ -44,17 +44,8 @@ fn core_software_event_impl<const OBSERVED: bool, const PAGED: bool>(
         if operation.kind == SoftwareEventKind::Return {
             unsafe { (*core.state.get()).interrupts.nmi_blocked = 0 };
         }
-        core.fault = None;
-        core.segment_fault = None;
-        core.alignment_fault = None;
-        core.alignment_check = None;
-        core.simd_exception = None;
-        core.numeric_fault = None;
-        core.general_protection = None;
-        core.protection_fault = None;
-        core.system_memory_fault = None;
+        core.clear_instruction_faults();
         core.debug_exception = None;
-        core.divide_failed = false;
         unsafe {
             (*core.state.get()).target = 0;
             (*core.state.get()).fault_segment = Segment::Cs as u32;

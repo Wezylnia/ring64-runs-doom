@@ -29,16 +29,7 @@ fn execute<const OBSERVED: bool, const PAGED: bool>(descriptor: u32) -> i32 {
         if !operation.valid_in_mode(&core.context) {
             return -1;
         }
-        core.fault = None;
-        core.segment_fault = None;
-        core.alignment_fault = None;
-        core.alignment_check = None;
-        core.simd_exception = None;
-        core.numeric_fault = None;
-        core.general_protection = None;
-        core.protection_fault = None;
-        core.system_memory_fault = None;
-        core.divide_failed = false;
+        core.clear_instruction_faults();
         unsafe {
             (*core.state.get()).target = 0;
             (*core.state.get()).fault_segment = Segment::Ss as u32;

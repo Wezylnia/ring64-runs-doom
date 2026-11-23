@@ -61,16 +61,7 @@ fn core_protection_impl<const OBSERVED: bool, const PAGED: bool>(
         if !semantics::valid_in_mode(descriptor, &core.context) {
             return -1;
         }
-        core.fault = None;
-        core.segment_fault = None;
-        core.alignment_fault = None;
-        core.alignment_check = None;
-        core.simd_exception = None;
-        core.numeric_fault = None;
-        core.general_protection = None;
-        core.protection_fault = None;
-        core.system_memory_fault = None;
-        core.divide_failed = false;
+        core.clear_instruction_faults();
         unsafe {
             (*core.state.get()).target = 0;
             (*core.state.get()).fault_segment = segment as u32;
