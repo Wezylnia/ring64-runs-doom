@@ -1,3 +1,4 @@
+import { observeArtifactImports } from '../../support/artifact-imports.js';
 import { Core } from '../../../sdk/src/wasm/core.js';
 import { snapshot } from '../far-control/fixture.js';
 import { context } from '../modes/fixture.js';
@@ -33,26 +34,16 @@ export function pagingBoundaryReviewScenarios(compiler: WebAssembly.Module): Sce
         // INC ECX; CMP ECX,[RSI]; JB end; MOV ECX,3; end: HLT.
         const code = 'ffc13b0e7205b903000000f4';
         const guards: number[] = [];
-        const create = Core.create;
-        Core.create = async (...args) => {
-          const core = await create(...args);
-          const imports = Reflect.get(core, 'artifactImports') as (
-            observed: boolean,
-          ) => Record<string, WebAssembly.ImportValue>;
-          Reflect.set(core, 'artifactImports', (observed: boolean) => {
-            const env = imports.call(core, observed);
-            const guard = env.paged_loop_guard;
-            if (typeof guard === 'function') {
-              env.paged_loop_guard = (pc: bigint, bytes: number, flags: bigint, shadow: number) => {
-                const status = guard(pc, bytes, flags, shadow);
-                if (pc === head && bytes === 6) guards.push(status);
-                return status;
-              };
-            }
-            return env;
-          });
-          return core;
-        };
+        const restore = observeArtifactImports((env) => {
+          const guard = env.paged_loop_guard;
+          if (typeof guard === 'function') {
+            env.paged_loop_guard = (pc: bigint, bytes: number, flags: bigint, shadow: number) => {
+              const status = guard(pc, bytes, flags, shadow);
+              if (pc === head && bytes === 6) guards.push(status);
+              return status;
+            };
+          }
+        });
         try {
           await usingPaged(
             compiler,
@@ -102,7 +93,7 @@ export function pagingBoundaryReviewScenarios(compiler: WebAssembly.Module): Sce
             },
           );
         } finally {
-          Core.create = create;
+          restore();
         }
       },
     },
@@ -115,26 +106,16 @@ export function pagingBoundaryReviewScenarios(compiler: WebAssembly.Module): Sce
         // MOV EDX,[RDI]; INC ECX; MOV [RSI],EAX; XOR EAX,5; MOV EBX,[RDI]; INC EDX; HLT.
         const code = '8b17ffc1890683f0058b1fffc2f4';
         const writes: Array<[bigint, number]> = [];
-        const create = Core.create;
-        Core.create = async (...args) => {
-          const core = await create(...args);
-          const imports = Reflect.get(core, 'artifactImports') as (
-            observed: boolean,
-          ) => Record<string, WebAssembly.ImportValue>;
-          Reflect.set(core, 'artifactImports', (observed: boolean) => {
-            const env = imports.call(core, observed);
-            const write = env.paged_loop_write_dword;
-            if (typeof write === 'function') {
-              env.paged_loop_write_dword = (address: bigint, value: number) => {
-                const result = write(address, value);
-                writes.push([address, result]);
-                return result;
-              };
-            }
-            return env;
-          });
-          return core;
-        };
+        const restore = observeArtifactImports((env) => {
+          const write = env.paged_loop_write_dword;
+          if (typeof write === 'function') {
+            env.paged_loop_write_dword = (address: bigint, value: number) => {
+              const result = write(address, value);
+              writes.push([address, result]);
+              return result;
+            };
+          }
+        });
         try {
           await usingPaged(
             compiler,
@@ -189,7 +170,7 @@ export function pagingBoundaryReviewScenarios(compiler: WebAssembly.Module): Sce
             },
           );
         } finally {
-          Core.create = create;
+          restore();
         }
       },
     },
@@ -204,26 +185,16 @@ export function pagingBoundaryReviewScenarios(compiler: WebAssembly.Module): Sce
         // INC ECX; MOV EAX,[RDI]; XOR EAX,5; ADD EAX,[RSI]; INC EDX; HLT.
         const code = 'ffc18b0783f0050306ffc2f4';
         const reads: Array<[bigint, boolean]> = [];
-        const create = Core.create;
-        Core.create = async (...args) => {
-          const core = await create(...args);
-          const imports = Reflect.get(core, 'artifactImports') as (
-            observed: boolean,
-          ) => Record<string, WebAssembly.ImportValue>;
-          Reflect.set(core, 'artifactImports', (observed: boolean) => {
-            const env = imports.call(core, observed);
-            const read = env.paged_loop_read_span;
-            if (typeof read === 'function') {
-              env.paged_loop_read_span = (address: bigint, width: number, segment: number) => {
-                const pointer = read(address, width, segment);
-                reads.push([address, pointer !== 0]);
-                return pointer;
-              };
-            }
-            return env;
-          });
-          return core;
-        };
+        const restore = observeArtifactImports((env) => {
+          const read = env.paged_loop_read_span;
+          if (typeof read === 'function') {
+            env.paged_loop_read_span = (address: bigint, width: number, segment: number) => {
+              const pointer = read(address, width, segment);
+              reads.push([address, pointer !== 0]);
+              return pointer;
+            };
+          }
+        });
         try {
           await usingPaged(
             compiler,
@@ -291,7 +262,7 @@ export function pagingBoundaryReviewScenarios(compiler: WebAssembly.Module): Sce
             },
           );
         } finally {
-          Core.create = create;
+          restore();
         }
       },
     },
@@ -304,26 +275,16 @@ export function pagingBoundaryReviewScenarios(compiler: WebAssembly.Module): Sce
         const end = head + 14n;
         const code = '89f8ffc0d1e083f00525ff000000890690';
         const guards: number[] = [];
-        const create = Core.create;
-        Core.create = async (...args) => {
-          const core = await create(...args);
-          const imports = Reflect.get(core, 'artifactImports') as (
-            observed: boolean,
-          ) => Record<string, WebAssembly.ImportValue>;
-          Reflect.set(core, 'artifactImports', (observed: boolean) => {
-            const env = imports.call(core, observed);
-            const guard = env.paged_loop_guard;
-            if (typeof guard === 'function') {
-              env.paged_loop_guard = (pc: bigint, size: number, flags: bigint, shadow: number) => {
-                const status = guard(pc, size, flags, shadow);
-                if (pc === head && size === 14) guards.push(status);
-                return status;
-              };
-            }
-            return env;
-          });
-          return core;
-        };
+        const restore = observeArtifactImports((env) => {
+          const guard = env.paged_loop_guard;
+          if (typeof guard === 'function') {
+            env.paged_loop_guard = (pc: bigint, size: number, flags: bigint, shadow: number) => {
+              const status = guard(pc, size, flags, shadow);
+              if (pc === head && size === 14) guards.push(status);
+              return status;
+            };
+          }
+        });
         try {
           await usingPaged(compiler, { code }, async (cpu) => {
             const start = initial(head, { 0: 42n, 6: 0x401000n, 7: 3n }, 2n);
@@ -370,7 +331,7 @@ export function pagingBoundaryReviewScenarios(compiler: WebAssembly.Module): Sce
           });
           same(guards, [1, 1, 2, 1], 'guard admits both live owners and refuses TF');
         } finally {
-          Core.create = create;
+          restore();
         }
       },
     },
@@ -419,29 +380,19 @@ export function pagingBoundaryReviewScenarios(compiler: WebAssembly.Module): Sce
         // inner: CMP [EDI],EDX; JAE rotate; INC EBX; CMP EBX,ECX; JB inner; JMP head.
         const code = '8904243b04248b16eb0439cb73f2391773f84339cb72f7ebe7';
         let refusals = 0;
-        const create = Core.create;
-        Core.create = async (...args) => {
-          const core = await create(...args);
-          const imports = Reflect.get(core, 'artifactImports') as (
-            observed: boolean,
-          ) => Record<string, WebAssembly.ImportValue>;
-          Reflect.set(core, 'artifactImports', (observed: boolean) => {
-            const env = imports.call(core, observed);
-            const read = env.paged_loop_read_dword;
-            if (typeof read === 'function' && typeof env.paged_write_loop_guard32 === 'function') {
-              env.paged_loop_read_dword = (address: bigint) => {
-                const value = read(address);
-                if (address === unaligned) {
-                  equal(++refusals, 1, 'reject a retry of the same guarded stack operand');
-                  equal(value, -1n, 'the unaligned operand must use the checked path');
-                }
-                return value;
-              };
-            }
-            return env;
-          });
-          return core;
-        };
+        const restore = observeArtifactImports((env) => {
+          const read = env.paged_loop_read_dword;
+          if (typeof read === 'function' && typeof env.paged_write_loop_guard32 === 'function') {
+            env.paged_loop_read_dword = (address: bigint) => {
+              const value = read(address);
+              if (address === unaligned) {
+                equal(++refusals, 1, 'reject a retry of the same guarded stack operand');
+                equal(value, -1n, 'the unaligned operand must use the checked path');
+              }
+              return value;
+            };
+          }
+        });
         try {
           await usingPaged(
             compiler,
@@ -480,7 +431,7 @@ export function pagingBoundaryReviewScenarios(compiler: WebAssembly.Module): Sce
             },
           );
         } finally {
-          Core.create = create;
+          restore();
         }
       },
     },
@@ -492,35 +443,25 @@ export function pagingBoundaryReviewScenarios(compiler: WebAssembly.Module): Sce
         // Four MOV EAX,[RDI+RAX*4]; DEC ECX; JNZ head; HLT.
         const code = '8b04878b04878b04878b0487ffc975f0f4';
         const calls = { refused: 0, ready: 0, guarded: 0 };
-        const create = Core.create;
-        Core.create = async (...args) => {
-          const core = await create(...args);
-          const imports = Reflect.get(core, 'artifactImports') as (
-            observed: boolean,
-          ) => Record<string, WebAssembly.ImportValue>;
-          Reflect.set(core, 'artifactImports', (observed: boolean) => {
-            const env = imports.call(core, observed);
-            const read = env.paged_loop_walk_dword;
-            const ready = env.paged_loop_read_ready;
-            if (typeof read === 'function') {
-              env.paged_loop_walk_dword = (address: bigint) => {
-                const result = read(address);
-                if (result === -1n) calls.refused++;
-                else calls.guarded++;
-                return result;
-              };
-            }
-            if (typeof ready === 'function') {
-              env.paged_loop_read_ready = (address: bigint, width: number) => {
-                const result = ready(address, width);
-                if (result === 1) calls.ready++;
-                return result;
-              };
-            }
-            return env;
-          });
-          return core;
-        };
+        const restore = observeArtifactImports((env) => {
+          const read = env.paged_loop_walk_dword;
+          const ready = env.paged_loop_read_ready;
+          if (typeof read === 'function') {
+            env.paged_loop_walk_dword = (address: bigint) => {
+              const result = read(address);
+              if (result === -1n) calls.refused++;
+              else calls.guarded++;
+              return result;
+            };
+          }
+          if (typeof ready === 'function') {
+            env.paged_loop_read_ready = (address: bigint, width: number) => {
+              const result = ready(address, width);
+              if (result === 1) calls.ready++;
+              return result;
+            };
+          }
+        });
         try {
           for (const mode of ['cold', 'absent', 'denied', 'stop', 'single-step'] as const) {
             Object.assign(calls, { refused: 0, ready: 0, guarded: 0 });
@@ -587,7 +528,7 @@ export function pagingBoundaryReviewScenarios(compiler: WebAssembly.Module): Sce
             );
           }
         } finally {
-          Core.create = create;
+          restore();
         }
       },
     },
@@ -886,33 +827,23 @@ export function pagingBoundaryReviewScenarios(compiler: WebAssembly.Module): Sce
         let replayReady = false;
         let guardedWrites = 0;
         const guardRefusals: bigint[] = [];
-        const create = Core.create;
-        Core.create = async (...args) => {
-          const core = await create(...args);
-          const imports = Reflect.get(core, 'artifactImports') as (
-            observed: boolean,
-          ) => Record<string, WebAssembly.ImportValue>;
-          Reflect.set(core, 'artifactImports', (observed: boolean) => {
-            const env = imports.call(core, observed);
-            const ready = env.paged_loop_read_ready;
-            const write = env.paged_loop_write_byte;
-            if (typeof ready === 'function' && typeof write === 'function') {
-              env.paged_loop_read_ready = (address: bigint, width: number) => {
-                const result = ready(address, width);
-                if (result === 1) replayReady = true;
-                return result;
-              };
-              env.paged_loop_write_byte = (address: bigint, value: number) => {
-                const result = write(address, value);
-                if (replayReady && result === 1) guardedWrites++;
-                if (replayReady && result === 0) guardRefusals.push(address);
-                return result;
-              };
-            }
-            return env;
-          });
-          return core;
-        };
+        const restore = observeArtifactImports((env) => {
+          const ready = env.paged_loop_read_ready;
+          const write = env.paged_loop_write_byte;
+          if (typeof ready === 'function' && typeof write === 'function') {
+            env.paged_loop_read_ready = (address: bigint, width: number) => {
+              const result = ready(address, width);
+              if (result === 1) replayReady = true;
+              return result;
+            };
+            env.paged_loop_write_byte = (address: bigint, value: number) => {
+              const result = write(address, value);
+              if (replayReady && result === 1) guardedWrites++;
+              if (replayReady && result === 0) guardRefusals.push(address);
+              return result;
+            };
+          }
+        });
         try {
           await usingPaged(
             compiler,
@@ -956,7 +887,7 @@ export function pagingBoundaryReviewScenarios(compiler: WebAssembly.Module): Sce
             },
           );
         } finally {
-          Core.create = create;
+          restore();
         }
       },
     },
@@ -971,33 +902,23 @@ export function pagingBoundaryReviewScenarios(compiler: WebAssembly.Module): Sce
         const input = new Uint8Array(40).fill(1);
         input[0] = 0;
         const routes: string[] = [];
-        const create = Core.create;
-        Core.create = async (...args) => {
-          const core = await create(...args);
-          const imports = Reflect.get(core, 'artifactImports') as (
-            observed: boolean,
-          ) => Record<string, WebAssembly.ImportValue>;
-          Reflect.set(core, 'artifactImports', (observed: boolean) => {
-            const env = imports.call(core, observed);
-            for (const name of [
-              'paged_loop_read_ready',
-              'paged_loop_read_dword',
-              'paged_loop_write_ready',
-              'paged_loop_write_dword',
-            ]) {
-              const helper = env[name];
-              if (typeof helper !== 'function') continue;
-              env[name] = (...args: (bigint | number)[]) => {
-                const result = helper(...args);
-                if (name === 'paged_loop_read_dword' ? result !== -1n : result === 1)
-                  routes.push(name);
-                return result;
-              };
-            }
-            return env;
-          });
-          return core;
-        };
+        const restore = observeArtifactImports((env) => {
+          for (const name of [
+            'paged_loop_read_ready',
+            'paged_loop_read_dword',
+            'paged_loop_write_ready',
+            'paged_loop_write_dword',
+          ]) {
+            const helper = env[name];
+            if (typeof helper !== 'function') continue;
+            env[name] = (...args: (bigint | number)[]) => {
+              const result = helper(...args);
+              if (name === 'paged_loop_read_dword' ? result !== -1n : result === 1)
+                routes.push(name);
+              return result;
+            };
+          }
+        });
         try {
           await usingPaged(
             compiler,
@@ -1055,7 +976,7 @@ export function pagingBoundaryReviewScenarios(compiler: WebAssembly.Module): Sce
             },
           );
         } finally {
-          Core.create = create;
+          restore();
         }
       },
     },
@@ -1071,26 +992,16 @@ export function pagingBoundaryReviewScenarios(compiler: WebAssembly.Module): Sce
         bytes.set(little([7n, 13n], 4), 0x100);
         bytes.set(little([7n], 4), 0xffc);
         const spans: boolean[] = [];
-        const create = Core.create;
-        Core.create = async (...args) => {
-          const core = await create(...args);
-          const imports = Reflect.get(core, 'artifactImports') as (
-            observed: boolean,
-          ) => Record<string, WebAssembly.ImportValue>;
-          Reflect.set(core, 'artifactImports', (observed: boolean) => {
-            const env = imports.call(core, observed);
-            const span = env.paged_loop_read_span;
-            if (typeof span === 'function') {
-              env.paged_loop_read_span = (address: bigint, width: number, segment: number) => {
-                const pointer = span(address, width, segment);
-                if (width === 8) spans.push(pointer !== 0);
-                return pointer;
-              };
-            }
-            return env;
-          });
-          return core;
-        };
+        const restore = observeArtifactImports((env) => {
+          const span = env.paged_loop_read_span;
+          if (typeof span === 'function') {
+            env.paged_loop_read_span = (address: bigint, width: number, segment: number) => {
+              const pointer = span(address, width, segment);
+              if (width === 8) spans.push(pointer !== 0);
+              return pointer;
+            };
+          }
+        });
         try {
           for (const split of [false, true]) {
             await usingPaged(
@@ -1134,7 +1045,7 @@ export function pagingBoundaryReviewScenarios(compiler: WebAssembly.Module): Sce
           }
           same(spans, [true, false], 'the guard admits one leaf and refuses the crossing pair');
         } finally {
-          Core.create = create;
+          restore();
         }
       },
     },
@@ -1152,42 +1063,32 @@ export function pagingBoundaryReviewScenarios(compiler: WebAssembly.Module): Sce
         let splitReady = false;
         let retainedAfterSplit = 0;
         const refused: bigint[] = [];
-        const create = Core.create;
-        Core.create = async (...args) => {
-          const core = await create(...args);
-          const imports = Reflect.get(core, 'artifactImports') as (
-            observed: boolean,
-          ) => Record<string, WebAssembly.ImportValue>;
-          Reflect.set(core, 'artifactImports', (observed: boolean) => {
-            const env = imports.call(core, observed);
-            const ready = env.paged_loop_split_read_ready;
-            const read = env.paged_loop_block_host;
-            const window = env.paged_loop_block_window;
-            if (
-              typeof ready === 'function' &&
-              typeof read === 'function' &&
-              typeof window === 'function'
-            ) {
-              env.paged_loop_split_read_ready = (address: bigint, width: number) => {
-                const result = ready(address, width);
-                if (address === source && width === 16 && result === 1) splitReady = true;
-                return result;
-              };
-              env.paged_loop_block_window = (address: bigint) => {
-                const result = window(address) as bigint;
-                if (splitReady && result !== 0n) retainedAfterSplit++;
-                return result;
-              };
-              env.paged_loop_block_host = (address: bigint) => {
-                const result = read(address);
-                if (splitReady && result === 0) refused.push(address);
-                return result;
-              };
-            }
-            return env;
-          });
-          return core;
-        };
+        const restore = observeArtifactImports((env) => {
+          const ready = env.paged_loop_split_read_ready;
+          const read = env.paged_loop_block_host;
+          const window = env.paged_loop_block_window;
+          if (
+            typeof ready === 'function' &&
+            typeof read === 'function' &&
+            typeof window === 'function'
+          ) {
+            env.paged_loop_split_read_ready = (address: bigint, width: number) => {
+              const result = ready(address, width);
+              if (address === source && width === 16 && result === 1) splitReady = true;
+              return result;
+            };
+            env.paged_loop_block_window = (address: bigint) => {
+              const result = window(address) as bigint;
+              if (splitReady && result !== 0n) retainedAfterSplit++;
+              return result;
+            };
+            env.paged_loop_block_host = (address: bigint) => {
+              const result = read(address);
+              if (splitReady && result === 0) refused.push(address);
+              return result;
+            };
+          }
+        });
         const replay = (mode: 'long64' | 'compatibility') =>
           usingPaged(
             compiler,
@@ -1236,7 +1137,7 @@ export function pagingBoundaryReviewScenarios(compiler: WebAssembly.Module): Sce
           refused.length = 0;
           await replay('compatibility');
         } finally {
-          Core.create = create;
+          restore();
         }
       },
     },
