@@ -126,6 +126,90 @@ test('paged scalar copies preserve overlapping memory and a later write fault', 
   }
 });
 
+test('a paged scalar copy retires a local jump only when the whole block is funded', async () => {
+  // Three scalar transfers; JMP over HLT; INC RCX; HLT.
+  const code = '488b07488906488b4708488946080fb7471066894610eb01f448ffc1f4';
+  const jump = PC + 22n;
+  const stop = PC + 28n;
+  const ram = new Uint8Array(4096);
+  const input = Uint8Array.from({ length: 18 }, (_, index) => index + 1);
+  ram.set(input, 3);
+  const imports = proto.artifactImports;
+  let extendedGuards = 0;
+  proto.artifactImports = function (observed) {
+    const env = imports.call(this, observed);
+    const guard = env.paged_sse_loop_guard;
+    if (typeof guard === 'function') {
+      env.paged_sse_loop_guard = (pc: bigint, width: number, ...args: unknown[]) => {
+        const result = guard(pc, width, ...args);
+        if (pc === PC && width === 24 && result === 1) extendedGuards++;
+        return result;
+      };
+    }
+    return env;
+  };
+  try {
+    await usingPaged(
+      compiler,
+      {
+        code,
+        words: [
+          [0x4008n, 0xa063n],
+          [0x4010n, 0xb063n],
+        ],
+        spans: [
+          { physical: 0xa000n, bytes: ram },
+          { physical: 0xb000n, bytes: new Uint8Array(4096) },
+        ],
+      },
+      async (cpu) => {
+        const enter = () => cpu.setState(initial(PC, { 1: 0n, 6: target, 7: source }));
+        for (let wave = 0; wave < 3; wave++) {
+          enter();
+          const completed = await cpu.run({ budget: 20n, stop });
+          assert.equal(completed.reason, 'stop');
+          assert.equal(completed.retired, 8n);
+          assert.equal(completed.state.registers[1], 1n);
+          assert.deepEqual(cpu.readPhysicalMemory(0xb00bn, 18), input);
+        }
+        assert.ok(extendedGuards > 0, 'the admitted block includes the local jump');
+
+        const beforePartial = extendedGuards;
+        enter();
+        const interior = await cpu.run({ budget: 20n, stop: jump });
+        assert.equal(interior.reason, 'stop');
+        assert.equal(interior.retired, 6n);
+        assert.equal(interior.state.rip, jump);
+        enter();
+        const budget = await cpu.run({ budget: 6n, stop });
+        assert.equal(budget.reason, 'budget');
+        assert.equal(budget.retired, 6n);
+        assert.equal(budget.state.rip, jump);
+        assert.equal(extendedGuards, beforePartial);
+
+        const successor = PC + 25n;
+        cpu.setDebugState({ addresses: [successor, 0n, 0n, 0n], dr6: 0n, dr7: 1n });
+        enter();
+        const watched = await cpu.run({ budget: 20n, stop });
+        assert.equal(watched.reason, 'debug-exception');
+        assert.equal(watched.retired, 7n);
+        assert.equal(watched.state.rip, successor);
+        assert.equal(watched.state.registers[1], 0n);
+
+        cpu.setDebugState({ addresses: [0n, 0n, 0n, 0n], dr6: 0n, dr7: 0n });
+        cpu.writePhysicalMemory(0x9019n, Uint8Array.of(0x48, 0xff, 0xc9)); // DEC RCX
+        enter();
+        const replaced = await cpu.run({ budget: 20n, stop });
+        assert.equal(replaced.reason, 'stop');
+        assert.equal(replaced.retired, 8n);
+        assert.equal(replaced.state.registers[1], 0xffffffffffffffffn);
+      },
+    );
+  } finally {
+    proto.artifactImports = imports;
+  }
+});
+
 test('flat scalar copy groups preserve MOVSD/MOVQ upper lanes and partial retirement', async () => {
   const body = 'f20f1007f20f1106f30f7e4708660fd646080fb7471066894610';
   const code = hex(body + '85c074e2');

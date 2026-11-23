@@ -3217,12 +3217,27 @@ fn emit_body(
         }
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         if let Some((head, group)) = scalar_copy_prefix.filter(|(head, _)| *head == index) {
+            let guard = copy_prefix_guard.expect("copy prefix guard");
+            let resolve = paged_copy_resolver.expect("copy prefix operand resolver");
+            if let Some(target) = group.following_jump(unit, head)
+                && emitter.entries.contains_key(&target)
+            {
+                emitter.emit_finite_scalar_copy(
+                    &unit.instructions[head..head + group.instructions + 1],
+                    group,
+                    loop_depth,
+                    guard,
+                    resolve,
+                    Some(target),
+                );
+            }
             emitter.emit_finite_scalar_copy(
                 &unit.instructions[head..head + group.instructions],
                 group,
                 loop_depth,
-                copy_prefix_guard.expect("copy prefix guard"),
-                paged_copy_resolver.expect("copy prefix operand resolver"),
+                guard,
+                resolve,
+                None,
             );
         }
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]

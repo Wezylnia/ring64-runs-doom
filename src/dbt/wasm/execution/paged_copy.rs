@@ -359,6 +359,21 @@ fn follows_address(base: Address, address: Address, offset: u32) -> bool {
 }
 
 impl ScalarCopyGroup {
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn following_jump(self, unit: &Unit, head: usize) -> Option<u64> {
+        let first = unit.instructions.get(head)?.pc;
+        let jump = unit.instructions.get(head + self.instructions)?;
+        let Operation::Jump { target } = jump.operation else {
+            return None;
+        };
+        let length = u32::try_from(jump.next_pc.checked_sub(first)?).ok()?;
+        (jump.pc == self.end
+            && first >> 12 == target >> 12
+            && unit.context.single_page_code_span(first, length)
+            && unit.fetch_proof.physical_span(first, length).is_some())
+        .then_some(target)
+    }
+
     pub(super) fn finite_prefix(
         unit: &Unit,
         loops: [Option<StructuredLoop>; 2],
@@ -864,7 +879,7 @@ impl Emitter {
             group.width,
             spans,
         );
-        self.emit_scalar_transfers(group);
+        self.emit_scalar_transfers(group, group.end, group.instructions as u32);
         self.current_operation = instructions[group.instructions - 1].operation;
         self.stores = false;
         self.route(group.end, loop_depth + 3, loop_depth + 4);
@@ -1225,14 +1240,15 @@ impl Emitter {
         loop_depth: u32,
         guard: u32,
         resolve: u32,
+        jump: Option<u64>,
     ) {
         self.guard_straight_paged_prefix(
-            &instructions[..group.instructions],
+            instructions,
             guard,
             None,
             self.paged_copy_access_cache.is_some(),
             PagedPrefixFetch::RetainedSse,
-            false,
+            jump.is_some(),
         );
         self.address(group.source, 0);
         self.op(Op::LocalSet(LHS));
@@ -1241,12 +1257,17 @@ impl Emitter {
         self.resolve_copy_window(group.width | crate::embedding::layout::COPY_SCALAR, resolve);
         self.op(Op::If(BlockType::Empty));
         self.copy_descriptor_hosts();
-        self.emit_scalar_transfers(group);
+        let target = jump.unwrap_or(group.end);
+        self.emit_scalar_transfers(group, target, instructions.len() as u32);
         self.guarded_paged_lap = true;
         self.stores = false;
-        self.route(group.end, loop_depth + 3, loop_depth + 4);
+        self.route(target, loop_depth + 3, loop_depth + 4);
         self.guarded_paged_lap = false;
         self.op(Op::End).op(Op::End).op(Op::End);
+        if jump.is_some() {
+            // A refused copy enters checked execution without the source-page proof.
+            self.clear_quiet_fetch();
+        }
     }
 
     pub(super) fn emit_finite_copy_prefix(
@@ -1480,7 +1501,7 @@ impl Emitter {
             .op(Op::LocalTee(STORE_STATUS));
     }
 
-    fn emit_scalar_transfers(&mut self, group: ScalarCopyGroup) {
+    fn emit_scalar_transfers(&mut self, group: ScalarCopyGroup, target: u64, count: u32) {
         let mut offset = 0;
         for movement in group.transfers.into_iter().flatten() {
             self.op(Op::LocalGet(STORE_STATUS));
@@ -1504,9 +1525,8 @@ impl Emitter {
             self.direct_scalar_store(movement.width, memory(offset));
             offset += u64::from(movement.width.bytes());
         }
-        self.op(Op::I64Const(group.end as i64))
-            .op(Op::LocalSet(RIP));
-        self.retire_instructions(group.instructions as u32);
+        self.op(Op::I64Const(target as i64)).op(Op::LocalSet(RIP));
+        self.retire_instructions(count);
     }
 
     fn emit_ordered_copy(&mut self, group: CopyGroup) {
