@@ -53,6 +53,38 @@ pub(super) fn fixture() -> (Image, State, Request) {
 
 #[cfg(not(feature = "parallel"))]
 #[test]
+fn indexed_operand_span_checks_width_and_slot_replacement() {
+    let (mut image, state, read) = fixture();
+    let cache = Cache::new(1);
+    let fill = |image: &mut Image| {
+        let translation = walk::walk(image, &state, read, &ProtectionKeys::ZERO).unwrap();
+        cache.fill(&state, read, translation);
+    };
+    let mut slot = None;
+    let mut resolve = |linear, width| {
+        cache.entries.borrow().indexed_write_span::<false>(
+            &mut slot,
+            &state,
+            Request { linear, ..read },
+            &ProtectionKeys::ZERO,
+            width,
+            &mut false,
+        )
+    };
+
+    fill(&mut image);
+    assert_eq!(resolve(0x1234, 1), Some((0, 0xa234)));
+    assert_eq!(resolve(0x1ffc, 4), Some((0, 0xaffc)));
+    assert_eq!(resolve(0x1ffd, 4), None);
+    cache.invalidate_page(0, 0x1234, true);
+    assert_eq!(resolve(0x1234, 1), None);
+    image.physical_write(0x4008, 8, 0xb067).unwrap();
+    fill(&mut image);
+    assert_eq!(resolve(0x1234, 1), Some((0, 0xb234)));
+}
+
+#[cfg(not(feature = "parallel"))]
+#[test]
 fn current_fetch_requires_the_right_physical_span_and_live_execute_rights() {
     use crate::x86::paging::{CR4_SMAP, CR4_SMEP};
 

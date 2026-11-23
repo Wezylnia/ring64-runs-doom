@@ -67,11 +67,13 @@ struct AdmittedFetch {
     authority: FetchAuthority,
 }
 
-#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
 #[derive(Clone, Copy)]
 struct IndexedWriteSlot {
     index: usize,
     id: u64,
+    linear_base: u64,
+    physical_base: u64,
 }
 
 #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
@@ -418,7 +420,7 @@ impl Entries {
         self.set_hint(Some(index));
     }
 
-    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
     #[inline]
     fn indexed_write_span<const WRITE: bool>(
         &self,
@@ -429,14 +431,12 @@ impl Entries {
         width: u32,
         unsupported_leaf: &mut bool,
     ) -> Option<(usize, u64)> {
-        if let Some(retained) = *slot
-            && let Some(entry) = self.slots[retained.index]
-            && entry.translation.cache_id == Some(retained.id)
-        {
-            let t = entry.translation;
-            let delta = request.linear.wrapping_sub(t.linear_base);
-            if delta <= t.span - u64::from(width) && !(WRITE && t.dirty) {
-                return Some((retained.index, t.physical_base + delta));
+        if let Some(retained) = *slot {
+            let delta = request.linear.wrapping_sub(retained.linear_base);
+            if delta <= 4096 - u64::from(width)
+                && self.recency().live_ids[retained.index] == retained.id
+            {
+                return Some((retained.index, retained.physical_base + delta));
             }
         }
         let (index, t) = self.retained_data_span::<WRITE>(state, request, keys, width)?;
@@ -444,7 +444,14 @@ impl Entries {
             *unsupported_leaf = true;
             return None;
         }
-        *slot = t.cache_id.map(|id| IndexedWriteSlot { index, id });
+        // Until this guarded group exits, replacement is the only way a
+        // checked local leaf can lose the authority admitted for this operand.
+        *slot = t.cache_id.map(|id| IndexedWriteSlot {
+            index,
+            id,
+            linear_base: t.linear_base,
+            physical_base: t.physical_base,
+        });
         Some((index, t.physical))
     }
 
