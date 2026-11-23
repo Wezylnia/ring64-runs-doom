@@ -122,6 +122,64 @@ fn flat_integer_groups(unit: &Unit, structured: Option<StructuredLoop>) -> Vec<O
     groups
 }
 
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+fn flat_call_order(instructions: &[Instruction]) -> Option<Vec<usize>> {
+    use crate::x86::instruction::Operand;
+
+    let mut backedges =
+        instructions
+            .iter()
+            .enumerate()
+            .filter_map(|(index, i)| match i.operation {
+                Operation::Jcc { target, .. } if target < i.pc => Some((index, target)),
+                _ => None,
+            });
+    let (latch, target) = backedges.next()?;
+    if backedges.next().is_some() {
+        return None;
+    }
+    let head = instructions.binary_search_by_key(&target, |i| i.pc).ok()?;
+    let loop_body = &instructions[head..=latch];
+    if loop_body
+        .windows(2)
+        .any(|pair| pair[0].next_pc != pair[1].pc)
+    {
+        return None;
+    }
+    let mut transfers = instructions[head..latch]
+        .iter()
+        .enumerate()
+        .filter(|(_, i)| {
+            matches!(
+                i.operation,
+                Operation::Call { .. }
+                    | Operation::Return { .. }
+                    | Operation::Jump { .. }
+                    | Operation::Jcc { .. }
+                    | Operation::CountBranch { .. }
+                    | Operation::JumpRegister { .. }
+                    | Operation::JumpMemory { .. }
+            )
+        });
+    let (call, instruction) = transfers.next()?;
+    if transfers.next().is_some()
+        || !matches!(
+            instruction.operation,
+            Operation::Call {
+                target: Operand::Register(_) | Operand::Memory(_),
+                ..
+            }
+        )
+    {
+        return None;
+    }
+    // The call's return continuation runs first in layout, so the latch can
+    // branch directly to the next call without reentering the dense table.
+    let mut order = (0..instructions.len()).collect::<Vec<_>>();
+    order[head..=latch].rotate_left(call + 1);
+    Some(order)
+}
+
 // A clone can touch the executable leaf once when every admitted instruction
 // stays on that leaf and can neither access memory nor change the controls.
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -2096,18 +2154,29 @@ fn emit_body(
     // The admitted helpers leave the high dwords in the backing RunState.
     let narrow_gprs = !observed && !cfg!(feature = "parallel") && state::narrow_gprs(unit);
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    let gpr_banks = if narrow_gprs
+    let complete_flat_call = narrow_gprs
         && linear_call_spans
         && dense_dispatch.is_some()
-        && !unit.reached_instruction_limit
-    {
+        && !unit.reached_instruction_limit;
+    #[cfg(any(feature = "parallel", not(target_arch = "wasm32")))]
+    let complete_flat_call = false;
+    let gpr_banks = if complete_flat_call {
         // The complete learned owner keeps the inaccessible banks in RunState.
         8
     } else {
         16
     };
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let flat_order = (complete_flat_call && !optional.flat_trace && flat_integer_groups.is_some())
+        .then(|| flat_call_order(&unit.instructions))
+        .flatten();
     #[cfg(any(feature = "parallel", not(target_arch = "wasm32")))]
-    let gpr_banks = 16;
+    let flat_order: Option<Vec<usize>> = None;
+    let instruction_index = |placement| {
+        flat_order
+            .as_ref()
+            .map_or(placement, |order| order[placement])
+    };
     let dword_writes = if narrow_gprs {
         0
     } else {
@@ -2879,11 +2948,13 @@ fn emit_body(
         current_operation: Operation::Nop,
         body: Function::new(locals),
         branch_hints: Vec::new(),
-        entries: unit
-            .instructions
-            .iter()
-            .enumerate()
-            .map(|(index, i)| (i.pc, index as u32))
+        entries: (0..unit.instructions.len())
+            .map(|placement| {
+                (
+                    unit.instructions[instruction_index(placement)].pc,
+                    placement as u32,
+                )
+            })
             .collect(),
     };
     emitter.load_state(gpr_banks);
@@ -2932,8 +3003,9 @@ fn emit_body(
         use super::{ADDRESS, RIP};
         // Use the committed guest IP directly, including on dynamic transfers.
         let mut labels = vec![count; span as usize];
-        for (index, instruction) in unit.instructions.iter().enumerate() {
-            labels[(instruction.pc - base) as usize] = index as u32;
+        for placement in 0..unit.instructions.len() {
+            let instruction = &unit.instructions[instruction_index(placement)];
+            labels[(instruction.pc - base) as usize] = placement as u32;
         }
         emitter
             .op(Op::LocalGet(RIP))
@@ -2951,9 +3023,11 @@ fn emit_body(
             .op(Op::LocalGet(ENTRY))
             .op(Op::BrTable((0..count).collect::<Vec<_>>().into(), count));
     }
-    for (index, instruction) in unit.instructions.iter().enumerate() {
+    for placement in 0..unit.instructions.len() {
+        let index = instruction_index(placement);
+        let instruction = &unit.instructions[index];
         emitter.op(Op::End);
-        emitter.current_index = index as u32;
+        emitter.current_index = placement as u32;
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         {
             // Keep one-shot accesses out of the span caches even in an artifact with a hot loop.
@@ -2970,7 +3044,7 @@ fn emit_body(
         {
             emitter.parallel_memo_address = false;
         }
-        let loop_depth = count - index as u32;
+        let loop_depth = count - placement as u32;
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         if let Some(end) = flat_integer_groups
             .as_ref()

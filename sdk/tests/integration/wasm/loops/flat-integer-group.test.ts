@@ -99,6 +99,14 @@ test('flat sampled integer groups preserve precise budgets, stops, and interior 
         assert.equal(result.state.registers[0], 2n);
         assert.equal(result.state.registers[4], sp);
       }
+      cpu.setState(initial(head, { 0: 2n, 2: 2n, 3: head + 15n, 4: stack + 16n }));
+      const loop = await cpu.run({ budget: 20n, stop: head + 14n });
+      assert.equal(loop.reason, 'stop');
+      assert.equal(loop.retired, 14n);
+      assert.equal(loop.state.rip, head + 14n);
+      assert.equal(loop.state.registers[0], 8n);
+      assert.equal(loop.state.registers[2], 0n);
+      assert.equal(loop.state.registers[4], stack + 16n);
     } finally {
       cpu.dispose();
     }
