@@ -1116,11 +1116,12 @@ pub extern "C" fn core_paged_loop_write_block(address: u64, value_ptr: u32) -> i
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 #[unsafe(no_mangle)]
 pub extern "C" fn core_paged_loop_copy_window(source: u64, destination: u64, width: u32) -> u32 {
-    use crate::embedding::layout::COPY_SCALAR;
+    use crate::embedding::layout::{COPY_NO_SPLIT, COPY_SCALAR};
     use crate::memory::check_span;
 
     let scalar = width & COPY_SCALAR != 0;
-    let width = width & !COPY_SCALAR;
+    let no_split = width & COPY_NO_SPLIT != 0;
+    let width = width & !(COPY_NO_SPLIT | COPY_SCALAR);
     let valid = if scalar {
         (2..=32).contains(&width)
     } else {
@@ -1131,7 +1132,7 @@ pub extern "C" fn core_paged_loop_copy_window(source: u64, destination: u64, wid
     }
     let page_remaining = |address: u64| 4096 - (address & 4095);
     let split = page_remaining(source).min(page_remaining(destination)) < u64::from(width);
-    if (scalar || width == 16) && split
+    if (scalar || no_split || width == 16) && split
         || check_span(source, width, Access::Read).is_err()
         || check_span(destination, width, Access::Write).is_err()
     {

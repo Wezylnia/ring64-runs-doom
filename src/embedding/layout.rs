@@ -70,6 +70,8 @@ pub const SCALAR_STATE_SIZE: usize = 176;
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 pub(crate) const COPY_SCALAR: u32 = 1 << 31;
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+pub(crate) const COPY_NO_SPLIT: u32 = 1 << 30;
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 pub(crate) const INDEXED_WRITE_UNSUPPORTED_LEAF: u32 = 1;
 
 pub const REASONS: [&str; 29] = [

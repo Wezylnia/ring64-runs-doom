@@ -320,7 +320,7 @@ struct PrefixFetchEdge {
 fn paged_prefix_handoffs(
     unit: &Unit,
     prefixes: &[Option<usize>],
-    earlier_clones: [Option<usize>; 2],
+    earlier_clones: [Option<usize>; 3],
 ) -> Option<Vec<PrefixFetchEdge>> {
     if !unit.context.is_long64() {
         return None;
@@ -544,6 +544,7 @@ pub(crate) fn emit_paged_vector_copy(
         .flatten();
     let copy_prefix = copy_spans
         && (CopyGroup::finite_prefix(unit, [body, additional]).is_some()
+            || CopyGroup::preloaded_prefix(unit, [body, additional]).is_some()
             || unit.context.is_long64()
                 && ScalarCopyGroup::finite_prefix(unit, [body, additional]).is_some());
     if copy_prefix
@@ -1364,12 +1365,17 @@ fn emit_body(
         .then(|| CopyGroup::finite_prefix(unit, [loop_body, optional.additional_copy]))
         .flatten();
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let preloaded_copy_prefix = (paged && !mmio && optional.copy_prefix)
+        .then(|| CopyGroup::preloaded_prefix(unit, [loop_body, optional.additional_copy]))
+        .flatten();
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let scalar_copy_prefix =
         (paged && !mmio && optional.scalar_copy_prefix && unit.context.is_long64())
             .then(|| ScalarCopyGroup::finite_prefix(unit, [loop_body, optional.additional_copy]))
             .flatten();
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    let has_copy_prefix = copy_prefix.is_some() || scalar_copy_prefix.is_some();
+    let has_copy_prefix =
+        copy_prefix.is_some() || scalar_copy_prefix.is_some() || preloaded_copy_prefix.is_some();
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let copy_prefix_guard_type = has_copy_prefix.then(|| {
         paged_loop_guard_type.unwrap_or_else(|| {
@@ -2496,6 +2502,7 @@ fn emit_body(
                 prefixes,
                 [
                     copy_prefix.map(|(head, _)| head),
+                    preloaded_copy_prefix.map(|(head, _)| head),
                     scalar_copy_prefix.map(|(head, _)| head),
                 ],
             )
@@ -3149,7 +3156,10 @@ fn emit_body(
                 additional.map_or(paged_copy_window, |(_, window, _, _)| Some(window));
         }
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-        if let Some((head, group)) = copy_prefix.filter(|(head, _)| *head == index) {
+        if let Some((head, group)) = copy_prefix
+            .filter(|(head, _)| *head == index)
+            .or_else(|| preloaded_copy_prefix.filter(|(head, _)| *head == index))
+        {
             emitter.emit_finite_copy_prefix(
                 &unit.instructions[head..head + group.prefix_guard_count()],
                 group,
@@ -3509,7 +3519,9 @@ fn emit_body(
         );
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    if bytes.len() > max_artifact_bytes && copy_prefix.is_some() {
+    if bytes.len() > max_artifact_bytes
+        && (copy_prefix.is_some() || preloaded_copy_prefix.is_some())
+    {
         return emit_body(
             unit,
             observed,

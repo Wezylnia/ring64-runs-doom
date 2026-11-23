@@ -15,6 +15,7 @@ pub(super) struct CopyGroup {
     source: Address,
     destination: Address,
     register: u8,
+    second_register: Option<u8>,
     width: u32,
     end: u64,
     adjustment: Option<DestinationAdjustment>,
@@ -381,6 +382,51 @@ impl CopyGroup {
         Self::recognize_with_minimum_pairs(lap, 2, Width::W64)
     }
 
+    pub(super) fn preloaded_prefix(
+        unit: &Unit,
+        loops: [Option<StructuredLoop>; 2],
+    ) -> Option<(usize, Self)> {
+        if !unit.context.is_long64() {
+            return None;
+        }
+        unit.instructions
+            .windows(4)
+            .enumerate()
+            .find_map(|(head, body)| {
+                let (source, register) = Self::vector_move(body[0], false, Width::W64)?;
+                let (next_source, second) = Self::vector_move(body[1], false, Width::W64)?;
+                let (destination, stored) = Self::vector_move(body[2], true, Width::W64)?;
+                let (next_destination, next_stored) = Self::vector_move(body[3], true, Width::W64)?;
+                let start = body[0].pc;
+                let end = body[3].next_pc;
+                let length = u32::try_from(end.checked_sub(start)?).ok()?;
+                (register != second
+                    && stored == register
+                    && next_stored == second
+                    && follows_address(source, next_source, 16)
+                    && follows_address(destination, next_destination, 16)
+                    && body.windows(2).all(|pair| pair[0].next_pc == pair[1].pc)
+                    && unit.context.single_page_code_span(start, length)
+                    && unit.fetch_proof.physical_span(start, length).is_some()
+                    && !loops.into_iter().flatten().any(|loop_body| {
+                        (head..head + body.len())
+                            .any(|index| loop_body.order().position(index as u32).is_some())
+                    }))
+                .then_some((
+                    head,
+                    Self {
+                        source,
+                        destination,
+                        register,
+                        second_register: Some(second),
+                        width: 32,
+                        end,
+                        adjustment: None,
+                    },
+                ))
+            })
+    }
+
     pub(super) fn flat_prefixes(
         unit: &Unit,
         body: Option<StructuredLoop>,
@@ -434,30 +480,31 @@ impl CopyGroup {
         prefixes
     }
 
+    fn vector_move(instruction: Instruction, writing: bool, size: Width) -> Option<(Address, u8)> {
+        let Operation::Vector(VectorInstruction::Move {
+            operand: VectorOperand::Memory(address),
+            register,
+            bytes: 16,
+            aligned: false,
+            store,
+            ..
+        }) = instruction.operation
+        else {
+            return None;
+        };
+        (store == writing
+            && address.segment == Segment::Ds
+            && address.size == size
+            && address.base != AddressBase::NextPc)
+            .then_some((address, register))
+    }
+
     fn recognize_with_minimum_pairs(
         lap: &[Instruction],
         minimum_pairs: u32,
         size: Width,
     ) -> Option<Self> {
-        let vector_move = |instruction: Instruction, writing: bool| -> Option<(Address, u8)> {
-            let Operation::Vector(VectorInstruction::Move {
-                operand: VectorOperand::Memory(address),
-                register,
-                bytes: 16,
-                aligned: false,
-                store,
-                ..
-            }) = instruction.operation
-            else {
-                return None;
-            };
-            (store == writing
-                && address.segment == Segment::Ds
-                && address.size == size
-                && address.base != AddressBase::NextPc)
-                .then_some((address, register))
-        };
-
+        let vector_move = |instruction, writing| Self::vector_move(instruction, writing, size);
         let (source, register) = vector_move(*lap.first()?, false)?;
         let (first_store, adjustment) = if vector_move(*lap.get(1)?, true).is_some() {
             (1, None)
@@ -514,6 +561,7 @@ impl CopyGroup {
             source,
             destination,
             register,
+            second_register: None,
             width: pairs * 16,
             end: lap[instructions - 1].next_pc,
             adjustment,
@@ -1020,7 +1068,12 @@ impl Emitter {
         self.op(Op::LocalSet(LHS));
         self.address(group.destination, 0);
         self.op(Op::LocalSet(RHS));
-        self.resolve_copy_window(group.width, resolve);
+        let width = if group.second_register.is_some() {
+            group.width | crate::embedding::layout::COPY_NO_SPLIT
+        } else {
+            group.width
+        };
+        self.resolve_copy_window(width, resolve);
         self.op(Op::If(BlockType::Empty));
         self.copy_descriptor_hosts();
         self.emit_ordered_copy(group);
@@ -1260,6 +1313,22 @@ impl Emitter {
 
     fn copy_ordered_vectors(&mut self, group: CopyGroup) {
         let xmm = self.xmm(group.register);
+        if let Some(second) = group.second_register {
+            let second = self.xmm(second);
+            // Both guest loads must complete before either aliased store.
+            for (offset, bank) in [(0, xmm), (16, second)] {
+                self.op(Op::LocalGet(STORE_STATUS))
+                    .op(Op::V128Load(memory(offset)))
+                    .op(Op::LocalSet(bank));
+            }
+            for (offset, bank) in [(0, xmm), (16, second)] {
+                self.op(Op::LocalGet(ADDRESS))
+                    .op(Op::I32WrapI64)
+                    .op(Op::LocalGet(bank))
+                    .op(Op::V128Store(memory(offset)));
+            }
+            return;
+        }
         for offset in (0..group.width).step_by(16) {
             if offset == 0
                 && let Some(adjustment) = group.adjustment
