@@ -47,73 +47,73 @@ macro_rules! guest_semantics {
     }};
 }
 
-#[path = "exports/execution/admission.rs"]
+#[path = "execution/admission.rs"]
 mod admission;
-#[path = "exports/system/compound_stack.rs"]
+#[path = "system/compound_stack.rs"]
 mod compound_stack;
-#[path = "exports/system/context.rs"]
+#[path = "system/context.rs"]
 mod context;
-#[path = "exports/events/debug.rs"]
+#[path = "events/debug.rs"]
 mod debug;
-#[path = "exports/events/exception_delivery.rs"]
+#[path = "events/exception_delivery/mod.rs"]
 mod exception_delivery;
-#[path = "exports/events/external_interrupts.rs"]
+#[path = "events/external_interrupts.rs"]
 mod external_interrupts;
-#[path = "exports/system/far_control.rs"]
+#[path = "system/far_control.rs"]
 mod far_control;
-#[path = "exports/system/fast_system.rs"]
+#[path = "system/fast_system.rs"]
 mod fast_system;
-#[path = "exports/execution/invalidation.rs"]
+#[path = "execution/invalidation.rs"]
 mod invalidation;
-#[path = "exports/system/io.rs"]
+#[path = "system/io.rs"]
 mod io;
-#[path = "exports/memory/mapped.rs"]
+#[path = "memory/mapped.rs"]
 mod mapped;
 #[cfg(not(feature = "parallel"))]
-#[path = "exports/memory/mmio.rs"]
+#[path = "memory/mmio.rs"]
 mod mmio;
-#[path = "exports/numeric/mmx.rs"]
+#[path = "numeric/mmx.rs"]
 mod mmx;
-#[path = "exports/numeric/numeric.rs"]
+#[path = "numeric/numeric.rs"]
 mod numeric;
-#[path = "exports/numeric/numeric_controls.rs"]
+#[path = "numeric/numeric_controls.rs"]
 mod numeric_controls;
-#[path = "exports/numeric/numeric_image/mod.rs"]
+#[path = "numeric/numeric_image/mod.rs"]
 mod numeric_image;
-#[path = "exports/execution/paged_decode.rs"]
+#[path = "execution/paged_decode.rs"]
 mod paged_decode;
 #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
-#[path = "exports/execution/paged_region.rs"]
+#[path = "execution/paged_region.rs"]
 mod paged_region;
-#[path = "exports/memory/paging.rs"]
+#[path = "memory/paging.rs"]
 mod paging;
-#[path = "exports/system/processor.rs"]
+#[path = "system/processor.rs"]
 mod processor;
-#[path = "exports/system/protection.rs"]
+#[path = "system/protection.rs"]
 mod protection;
-#[path = "exports/memory/protection_keys.rs"]
+#[path = "memory/protection_keys.rs"]
 mod protection_keys;
-#[path = "exports/execution/reset.rs"]
+#[path = "execution/reset.rs"]
 mod reset;
-#[path = "exports/memory/scalar.rs"]
+#[path = "memory/scalar.rs"]
 mod scalar;
-#[path = "exports/events/software_events.rs"]
+#[path = "events/software_events.rs"]
 mod software_events;
-#[path = "exports/execution/state.rs"]
+#[path = "execution/state.rs"]
 mod state;
-#[path = "exports/memory/streaming.rs"]
+#[path = "memory/streaming.rs"]
 mod streaming;
-#[path = "exports/events/system_flags.rs"]
+#[path = "events/system_flags.rs"]
 mod system_flags;
-#[path = "exports/system/task_switch.rs"]
+#[path = "system/task_switch.rs"]
 mod task_switch;
-#[path = "exports/execution/translation.rs"]
+#[path = "execution/translation.rs"]
 mod translation;
-#[path = "exports/numeric/vector.rs"]
+#[path = "numeric/vector.rs"]
 mod vector;
-#[path = "exports/numeric/x87.rs"]
+#[path = "numeric/x87.rs"]
 mod x87;
-#[path = "exports/numeric/x87_state.rs"]
+#[path = "numeric/x87_state.rs"]
 mod x87_state;
 
 struct Core {
@@ -464,5 +464,5 @@ pub extern "C" fn core_dispose() {
 mod tests;
 
 #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
-#[path = "exports/memory/parallel.rs"]
+#[path = "memory/parallel.rs"]
 mod parallel;

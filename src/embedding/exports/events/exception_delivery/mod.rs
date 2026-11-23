@@ -336,5 +336,4 @@ pub extern "C" fn core_deliver_exception() -> i32 {
 }
 
 #[cfg(test)]
-#[path = "exception_delivery/paging_tests.rs"]
 mod paging_tests;
