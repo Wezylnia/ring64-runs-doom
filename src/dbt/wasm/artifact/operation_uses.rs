@@ -1,4 +1,4 @@
-use super::super::mmx;
+use crate::dbt::wasm::numeric::mmx;
 use crate::x86::instruction::{
     Instruction, Operand, Operation, PagingInstruction, Repeat, StringKind, Width,
 };

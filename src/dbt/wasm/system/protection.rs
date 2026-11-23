@@ -1,4 +1,4 @@
-use super::{Emitter, FLAGS, REASON, STORE_STATUS};
+use crate::dbt::wasm::{Emitter, FLAGS, REASON, STORE_STATUS};
 use crate::embedding::layout::RunState;
 use crate::x86::context::Segment;
 use crate::x86::instruction::{
@@ -16,7 +16,7 @@ fn memory(offset: usize) -> MemArg {
 }
 
 impl Emitter {
-    pub(super) fn protection(
+    pub(in crate::dbt::wasm) fn protection(
         &mut self,
         instruction: ProtectionInstruction,
         next_pc: u64,

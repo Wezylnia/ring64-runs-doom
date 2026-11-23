@@ -1,4 +1,6 @@
-use super::{ADDRESS, Emitter, FLAGS, LHS, REASON, RESULT, RHS, STORE_STATUS};
+use crate::dbt::wasm::{ADDRESS, Emitter, FLAGS, LHS, REASON, RESULT, RHS, STORE_STATUS, VALUE};
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+use crate::dbt::wasm::{ENTRY, RIP, execution::loops::float_loop};
 use crate::embedding::layout::RunState;
 use crate::x86::float::{Format, Kind};
 use crate::x86::instruction::{Address, FloatInstruction, Location, RegisterView, Width};
@@ -8,31 +10,36 @@ use wasm_encoder::{BlockType, Instruction as Op, ValType};
 const ROUNDING_CONTROL: i32 = 0x6000;
 const PRECISION_STATUS: i32 = 1 << 5;
 const PRECISION_MASK: i32 = 1 << 12;
-pub(super) const MASKED_STICKY_PRECISION: i32 = PRECISION_MASK | PRECISION_STATUS;
+pub(in crate::dbt::wasm) const MASKED_STICKY_PRECISION: i32 = PRECISION_MASK | PRECISION_STATUS;
 
-pub(super) fn is_f32_flag_compare(instruction: FloatInstruction) -> bool {
+pub(in crate::dbt::wasm) fn is_f32_flag_compare(instruction: FloatInstruction) -> bool {
     instruction.op.format == Format::F32 && instruction.writes_flags()
 }
 
-pub(super) fn is_scalar_f32_sub(instruction: FloatInstruction) -> bool {
+pub(in crate::dbt::wasm) fn is_scalar_f32_sub(instruction: FloatInstruction) -> bool {
     instruction.op.scalar
         && instruction.op.format == Format::F32
         && instruction.op.kind == Kind::Sub
 }
 
-pub(super) fn is_packed_f32_arithmetic(instruction: FloatInstruction) -> bool {
+pub(in crate::dbt::wasm) fn is_packed_f32_arithmetic(instruction: FloatInstruction) -> bool {
     !instruction.op.scalar
         && instruction.op.format == Format::F32
         && matches!(instruction.op.kind, Kind::Add | Kind::Sub | Kind::Mul)
 }
 
-pub(super) fn is_cmpnleps(instruction: FloatInstruction) -> bool {
+pub(in crate::dbt::wasm) fn is_cmpnleps(instruction: FloatInstruction) -> bool {
     let op = instruction.op;
     !op.scalar && op.format == Format::F32 && op.kind == Kind::Cmp && op.predicate & 7 == 6
 }
 
 impl Emitter {
-    pub(super) fn float(&mut self, instruction: FloatInstruction, next_pc: u64, exit_depth: u32) {
+    pub(in crate::dbt::wasm) fn float(
+        &mut self,
+        instruction: FloatInstruction,
+        next_pc: u64,
+        exit_depth: u32,
+    ) {
         let [left, right, result] = self.vector_temps();
         if instruction.destination_is_gpr() {
             self.op(Op::V128Const(0));
@@ -50,9 +57,9 @@ impl Emitter {
                         Width::W32
                     },
                 );
-                self.op(Op::LocalSet(super::VALUE))
+                self.op(Op::LocalSet(VALUE))
                     .op(Op::V128Const(0))
-                    .op(Op::LocalGet(super::VALUE))
+                    .op(Op::LocalGet(VALUE))
                     .op(Op::I64x2ReplaceLane(0));
             }
             Location::Register(src) => {
@@ -230,14 +237,14 @@ impl Emitter {
                     self.retire_instructions(self.current_index - body.head);
                 }
                 self.op(Op::I64Const(self.current_pc as i64))
-                    .op(Op::LocalSet(super::RIP));
+                    .op(Op::LocalSet(RIP));
                 let continuation = if self.current_index == body.head {
-                    super::float_loop::HEADER_REJECTION
+                    float_loop::HEADER_REJECTION
                 } else {
                     self.current_index as i32
                 };
                 self.op(Op::I32Const(continuation))
-                    .op(Op::LocalSet(super::ENTRY))
+                    .op(Op::LocalSet(ENTRY))
                     .op(Op::Br(exit_depth));
             } else if self.current_index == body.head {
                 self.op(Op::Br(2));
@@ -245,7 +252,7 @@ impl Emitter {
                 let (_, retry) = self.proved_read_retry.expect("proved read retry local");
                 self.op(Op::I32Const(1)).op(Op::LocalSet(retry));
                 self.op(Op::I32Const(self.current_index as i32))
-                    .op(Op::LocalSet(super::ENTRY))
+                    .op(Op::LocalSet(ENTRY))
                     .op(Op::Br(exit_depth));
             }
             return;
@@ -576,21 +583,21 @@ impl Emitter {
             .unlikely(Op::BrIf(0));
     }
 
-    pub(super) fn load_float_mxcsr(&mut self) {
+    pub(in crate::dbt::wasm) fn load_float_mxcsr(&mut self) {
         self.op(Op::LocalGet(0))
             .op(Op::I32Load(super::vector::memory(offset_of!(
                 RunState, mxcsr
             ))));
     }
 
-    pub(super) fn reject_non_nearest_fp32(&mut self) {
+    pub(in crate::dbt::wasm) fn reject_non_nearest_fp32(&mut self) {
         self.op(Op::I32Const(ROUNDING_CONTROL))
             .op(Op::I32And)
             .unlikely(Op::BrIf(0));
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) fn nearest_with_sticky_precision(&mut self) {
+    pub(in crate::dbt::wasm) fn nearest_with_sticky_precision(&mut self) {
         self.load_float_mxcsr();
         self.op(Op::I32Const(ROUNDING_CONTROL | MASKED_STICKY_PRECISION))
             .op(Op::I32And)
@@ -620,7 +627,13 @@ impl Emitter {
             .unlikely(Op::BrIf(0));
     }
 
-    pub(super) fn mxcsr(&mut self, address: Address, store: bool, next_pc: u64, exit_depth: u32) {
+    pub(in crate::dbt::wasm) fn mxcsr(
+        &mut self,
+        address: Address,
+        store: bool,
+        next_pc: u64,
+        exit_depth: u32,
+    ) {
         let helper = if store {
             self.store_mxcsr.expect("MXCSR store import")
         } else {

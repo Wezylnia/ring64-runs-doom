@@ -1,9 +1,9 @@
-use super::{Emitter, FLAGS, LHS, RESULT, RHS};
+use crate::dbt::wasm::{Emitter, FLAGS, LHS, RESULT, RHS};
 use crate::x86::instruction::{Bmi, Location, RegisterView, Width};
 use wasm_encoder::{BlockType, Instruction as Op, ValType};
 
 impl Emitter {
-    pub(super) fn bmi(
+    pub(in crate::dbt::wasm) fn bmi(
         &mut self,
         kind: Bmi,
         dst: RegisterView,

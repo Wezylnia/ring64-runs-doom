@@ -1,3 +1,5 @@
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+use crate::dbt::wasm::{ADDRESS, Emitter, LHS, REMAINING, RESULT, RHS, STORE_STATUS, VALUE};
 use crate::x86::{
     context::ExecutionContext,
     float::{Format, Kind},
@@ -8,7 +10,7 @@ use crate::x86::{
 };
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-pub(super) enum F32PairFit {
+pub(in crate::dbt::wasm) enum F32PairFit {
     Complete,
     Split(u32),
     Prefix { lap_len: u32, floor: u32 },
@@ -16,16 +18,19 @@ pub(super) enum F32PairFit {
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 #[derive(Clone, Copy)]
-pub(super) struct IndexedReadWindow {
-    pub(super) address: Address,
-    pub(super) span: super::memory::SpanCache,
-    pub(super) host: u32,
-    pub(super) limit: u32,
+pub(in crate::dbt::wasm) struct IndexedReadWindow {
+    pub(in crate::dbt::wasm) address: Address,
+    pub(in crate::dbt::wasm) span: super::SpanCache,
+    pub(in crate::dbt::wasm) host: u32,
+    pub(in crate::dbt::wasm) limit: u32,
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 impl IndexedReadWindow {
-    pub(super) fn recognize(context: &ExecutionContext, body: &[Instruction]) -> Option<Address> {
+    pub(in crate::dbt::wasm) fn recognize(
+        context: &ExecutionContext,
+        body: &[Instruction],
+    ) -> Option<Address> {
         use crate::{
             memory::Access,
             x86::context::{Mode, Segment},
@@ -138,7 +143,7 @@ enum ReadLimit {
 }
 
 #[derive(Clone, Copy)]
-pub(super) struct ReadLoop {
+pub(in crate::dbt::wasm) struct ReadLoop {
     index: u8,
     end: ReadLimit,
     count_width: Width,
@@ -149,10 +154,10 @@ pub(super) struct ReadLoop {
 
 impl ReadLoop {
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) const BIAS_LOCALS: u32 = 2;
+    pub(in crate::dbt::wasm) const BIAS_LOCALS: u32 = 2;
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) fn outline_registers(self) -> Option<(u16, u8, usize)> {
+    pub(in crate::dbt::wasm) fn outline_registers(self) -> Option<(u16, u8, usize)> {
         let ReadLimit::Register(end) = self.end else {
             return None;
         };
@@ -164,14 +169,14 @@ impl ReadLoop {
         Some((inputs, self.index, biases))
     }
 
-    pub(super) fn recognize(
+    pub(in crate::dbt::wasm) fn recognize(
         context: &ExecutionContext,
         instructions: &[Instruction],
     ) -> Option<Self> {
         Self::recognize_body(context, instructions, false)
     }
 
-    pub(super) fn recognize_integer(
+    pub(in crate::dbt::wasm) fn recognize_integer(
         context: &ExecutionContext,
         instructions: &[Instruction],
     ) -> Option<Self> {
@@ -179,7 +184,7 @@ impl ReadLoop {
     }
 
     #[cfg(all(not(feature = "parallel"), any(test, target_arch = "wasm32")))]
-    pub(super) fn recognize_paged_f32(
+    pub(in crate::dbt::wasm) fn recognize_paged_f32(
         context: &ExecutionContext,
         instructions: &[Instruction],
     ) -> Option<Self> {
@@ -211,12 +216,15 @@ impl ReadLoop {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) fn one_stream(self) -> bool {
+    pub(in crate::dbt::wasm) fn one_stream(self) -> bool {
         self.streams[1].is_none()
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) fn last_memory_stream(self, instructions: &[Instruction]) -> Option<u32> {
+    pub(in crate::dbt::wasm) fn last_memory_stream(
+        self,
+        instructions: &[Instruction],
+    ) -> Option<u32> {
         instructions.iter().rev().find_map(|instruction| {
             let address = Self::read_operand(instruction.operation, self.byte_reads)??;
             self.stream_for_address(address)
@@ -224,7 +232,7 @@ impl ReadLoop {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) fn dense_f32_lap(self, instructions: &[Instruction]) -> bool {
+    pub(in crate::dbt::wasm) fn dense_f32_lap(self, instructions: &[Instruction]) -> bool {
         self.step == 4
             && self.streams[1].is_some()
             && self.streams.iter().flatten().all(|stream| {
@@ -241,7 +249,7 @@ impl ReadLoop {
     }
 
     #[cfg(all(not(feature = "parallel"), any(test, target_arch = "wasm32")))]
-    pub(super) fn dense_ascending_bytes(self, instructions: &[Instruction]) -> bool {
+    pub(in crate::dbt::wasm) fn dense_ascending_bytes(self, instructions: &[Instruction]) -> bool {
         let [Some(stream), None] = self.streams else {
             return false;
         };
@@ -255,7 +263,7 @@ impl ReadLoop {
     }
 
     #[cfg(all(not(feature = "parallel"), any(test, target_arch = "wasm32")))]
-    pub(super) fn recognize_paged_countdown_bytes(
+    pub(in crate::dbt::wasm) fn recognize_paged_countdown_bytes(
         context: &ExecutionContext,
         instructions: &[Instruction],
     ) -> Option<Self> {
@@ -345,7 +353,7 @@ impl ReadLoop {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) fn is_countdown(self) -> bool {
+    pub(in crate::dbt::wasm) fn is_countdown(self) -> bool {
         matches!(self.end, ReadLimit::Countdown(_))
     }
 
@@ -550,13 +558,13 @@ impl ReadLoop {
     }
 
     #[cfg(test)]
-    pub(super) fn stream_for(self, operation: Operation) -> Option<u32> {
+    pub(in crate::dbt::wasm) fn stream_for(self, operation: Operation) -> Option<u32> {
         let address = Self::read_operand(operation, self.byte_reads)??;
         self.stream_for_address(address)
     }
 
     #[cfg(any(test, all(not(feature = "parallel"), target_arch = "wasm32")))]
-    pub(super) fn byte_slot(self, address: Address) -> Option<(u32, Address, u64)> {
+    pub(in crate::dbt::wasm) fn byte_slot(self, address: Address) -> Option<(u32, Address, u64)> {
         if !self.byte_reads {
             return None;
         }
@@ -564,7 +572,7 @@ impl ReadLoop {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) fn vector_slot(self, address: Address) -> Option<(u32, Address, u64)> {
+    pub(in crate::dbt::wasm) fn vector_slot(self, address: Address) -> Option<(u32, Address, u64)> {
         if self.byte_reads {
             return None;
         }
@@ -603,15 +611,13 @@ impl ReadLoop {
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-use super::{
-    ADDRESS, Emitter, LHS, REMAINING, RESULT, RHS, STORE_STATUS, VALUE, memory::SpanCache,
-};
+use super::SpanCache;
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 use wasm_encoder::{BlockType, Instruction as Op, MemArg, ValType};
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 impl Emitter {
-    pub(super) fn proved_read_laps(&mut self, proof: ReadLoop) {
+    pub(in crate::dbt::wasm) fn proved_read_laps(&mut self, proof: ReadLoop) {
         let ReadLimit::Register(end) = proof.end else {
             unreachable!("outlined Float loop register bound");
         };
@@ -622,7 +628,7 @@ impl Emitter {
             .op(Op::I64ShrU);
     }
 
-    pub(super) fn multiple_read_laps(&mut self, proof: ReadLoop) {
+    pub(in crate::dbt::wasm) fn multiple_read_laps(&mut self, proof: ReadLoop) {
         // The existing span proof establishes a positive aligned trip count.
         // Reload both bounds because a checked retry can reuse the span biases.
         let ReadLimit::Register(end) = proof.end else {
@@ -635,7 +641,7 @@ impl Emitter {
             .op(Op::I64Ne);
     }
 
-    pub(super) fn guard_read_loop(
+    pub(in crate::dbt::wasm) fn guard_read_loop(
         &mut self,
         proof: ReadLoop,
         span: SpanCache,
@@ -673,7 +679,7 @@ impl Emitter {
             .op(Op::End);
     }
 
-    pub(super) fn guard_integer_read_loop(
+    pub(in crate::dbt::wasm) fn guard_integer_read_loop(
         &mut self,
         proof: ReadLoop,
         resolve: u32,
@@ -682,7 +688,7 @@ impl Emitter {
         self.guard_integer_read_span(proof, resolve, first_bias, None);
     }
 
-    pub(super) fn guard_funded_dense_read_loop(
+    pub(in crate::dbt::wasm) fn guard_funded_dense_read_loop(
         &mut self,
         proof: ReadLoop,
         resolve: u32,
@@ -770,7 +776,7 @@ impl Emitter {
             .op(Op::BrIf(0));
     }
 
-    pub(super) fn guard_paged_f32_read_loop(
+    pub(in crate::dbt::wasm) fn guard_paged_f32_read_loop(
         &mut self,
         proof: ReadLoop,
         resolve: u32,
@@ -868,7 +874,7 @@ impl Emitter {
         self.op(Op::Drop).op(Op::I32Const(1)).op(Op::End);
     }
 
-    pub(super) fn guard_paged_f32_pair(
+    pub(in crate::dbt::wasm) fn guard_paged_f32_pair(
         &mut self,
         proof: ReadLoop,
         resolve: u32,

@@ -1,5 +1,6 @@
-use super::{
+use crate::dbt::wasm::{
     DIRECTION, Emitter, FLAGS, GPR, REMAINING, REPEAT_REMAINING, RESULT, RIP, SHADOW, SYSTEM, Unit,
+    numeric::vector,
 };
 use crate::embedding::layout::RunState;
 use crate::x86::{
@@ -18,7 +19,7 @@ fn memory(offset: usize) -> MemArg {
     }
 }
 
-pub(super) fn narrow_gprs(unit: &Unit) -> bool {
+pub(in crate::dbt::wasm) fn narrow_gprs(unit: &Unit) -> bool {
     unit.context.mode() == Mode::Protected
         && unit.context.code32()
         && unit.instructions.iter().all(|i| match i.operation {
@@ -98,12 +99,12 @@ fn gpr_memory(register: usize, narrow: bool) -> MemArg {
 
 const PARITY_SHIFT: i64 = 56;
 const PARITY_INPUTS: i64 = ((0xffu64 << PARITY_SHIFT) as i64) | 4;
-pub(super) const PACKED_RESULT_MASK: i64 = !0xffff_ffff;
-pub(super) const PACKED_SIGN_INPUTS: i64 = i64::MIN | 0x80;
+pub(in crate::dbt::wasm) const PACKED_RESULT_MASK: i64 = !0xffff_ffff;
+pub(in crate::dbt::wasm) const PACKED_SIGN_INPUTS: i64 = i64::MIN | 0x80;
 const PACKED_PARITY_INPUTS: i64 = (0xffi64 << 32) | 4;
 
 impl Emitter {
-    pub(super) fn load_transferred_ip_and_sp(&mut self) {
+    pub(in crate::dbt::wasm) fn load_transferred_ip_and_sp(&mut self) {
         let scratch = offset_of!(RunState, vector_scratch) as u64;
         for (offset, local) in [(scratch, RIP), (scratch + 8, GPR + 4)] {
             self.op(Op::LocalGet(0))
@@ -118,7 +119,7 @@ impl Emitter {
 
     // XOR bit 2 with the parity of the high byte to recover PF.
     // All other status bits retain their architectural positions.
-    pub(super) fn defer_result_parity(&mut self) {
+    pub(in crate::dbt::wasm) fn defer_result_parity(&mut self) {
         self.op(Op::LocalGet(RESULT))
             .op(Op::I64Const(PARITY_SHIFT))
             .op(Op::I64Shl)
@@ -126,7 +127,7 @@ impl Emitter {
             .op(Op::I64Or);
     }
 
-    pub(super) fn parity_clear(&mut self) {
+    pub(in crate::dbt::wasm) fn parity_clear(&mut self) {
         let inputs = if self.packed_result_status {
             PACKED_PARITY_INPUTS
         } else {
@@ -141,7 +142,7 @@ impl Emitter {
             .op(Op::I64Eqz);
     }
 
-    pub(super) fn status_flags(&mut self) {
+    pub(in crate::dbt::wasm) fn status_flags(&mut self) {
         let keep = if self.packed_result_status {
             !(PACKED_RESULT_MASK | 0xc4)
         } else {
@@ -173,13 +174,13 @@ impl Emitter {
             .op(Op::I64Or);
     }
 
-    pub(super) fn retired(&mut self) {
+    pub(in crate::dbt::wasm) fn retired(&mut self) {
         self.op(Op::LocalGet(1))
             .op(Op::LocalGet(REMAINING))
             .op(Op::I64Sub);
     }
 
-    pub(super) fn load_state(&mut self, gpr_banks: usize) {
+    pub(in crate::dbt::wasm) fn load_state(&mut self, gpr_banks: usize) {
         let narrow = self.narrow_gprs;
         for register in 0..gpr_banks {
             let field = gpr_memory(register, narrow);
@@ -242,7 +243,7 @@ impl Emitter {
         for bank in 0..16 {
             if let Some(local) = self.vector_registers[bank] {
                 self.op(Op::LocalGet(0))
-                    .op(Op::V128Load(super::vector::memory(
+                    .op(Op::V128Load(vector::memory(
                         offset_of!(RunState, xmm) + bank * 16,
                     )))
                     .op(Op::LocalSet(local));
@@ -250,7 +251,7 @@ impl Emitter {
         }
     }
 
-    pub(super) fn publish_state(&mut self, gpr_banks: usize) {
+    pub(in crate::dbt::wasm) fn publish_state(&mut self, gpr_banks: usize) {
         let tsc = offset_of!(RunState, time) + offset_of!(TimeState, tsc);
         // Helpers can rebase this same bank for WRMSR; settle each native entry once.
         self.op(Op::LocalGet(0))
@@ -301,7 +302,7 @@ impl Emitter {
                 let local = self.vector_registers[bank].expect("published XMM bank");
                 self.op(Op::LocalGet(0))
                     .op(Op::LocalGet(local))
-                    .op(Op::V128Store(super::vector::memory(
+                    .op(Op::V128Store(vector::memory(
                         offset_of!(RunState, xmm) + bank * 16,
                     )));
             }

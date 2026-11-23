@@ -1,10 +1,17 @@
-use super::Emitter;
+use crate::dbt::wasm::Emitter;
 use crate::x86::instruction::Ssse3Op;
 use wasm_encoder::Instruction as Op;
 
 impl Emitter {
     /// Leaves a v128 result. The MMX caller consumes only its low eight bytes.
-    pub(super) fn ssse3(&mut self, op: Ssse3Op, immediate: u8, bytes: u8, left: u32, right: u32) {
+    pub(in crate::dbt::wasm) fn ssse3(
+        &mut self,
+        op: Ssse3Op,
+        immediate: u8,
+        bytes: u8,
+        left: u32,
+        right: u32,
+    ) {
         use Ssse3Op::*;
         match op {
             Pshufb => {

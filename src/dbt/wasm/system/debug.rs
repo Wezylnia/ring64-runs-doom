@@ -1,9 +1,9 @@
-use super::{Emitter, REASON};
+use crate::dbt::wasm::{Emitter, REASON};
 use crate::embedding::layout::{DISPATCH, RunState};
 use crate::x86::instruction::{RegisterView, Width};
 use wasm_encoder::{Instruction as Op, MemArg};
 impl Emitter {
-    pub(super) fn debug_register(
+    pub(in crate::dbt::wasm) fn debug_register(
         &mut self,
         register: u8,
         gpr: u8,

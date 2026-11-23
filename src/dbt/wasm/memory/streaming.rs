@@ -1,11 +1,11 @@
-use super::{Emitter, REASON, STORE_STATUS};
+use crate::dbt::wasm::{Emitter, REASON, STORE_STATUS, numeric::vector};
 use crate::embedding::layout::RunState;
 use crate::x86::instruction::Address;
 use std::mem::offset_of;
 use wasm_encoder::Instruction as Op;
 
 impl Emitter {
-    pub(super) fn masked_store(
+    pub(in crate::dbt::wasm) fn masked_store(
         &mut self,
         data: u8,
         mask: u8,
@@ -21,7 +21,7 @@ impl Emitter {
         } else {
             self.op(Op::LocalGet(self.xmm(data)));
         }
-        self.op(Op::V128Store(super::vector::memory(scratch)));
+        self.op(Op::V128Store(vector::memory(scratch)));
         self.address(address, next_pc);
         self.op(Op::I32Const(if mmx { 8 } else { 16 }))
             .op(Op::LocalGet(0))
@@ -41,7 +41,12 @@ impl Emitter {
         self.stores = true;
     }
 
-    pub(super) fn clflush(&mut self, address: Address, next_pc: u64, exit_depth: u32) {
+    pub(in crate::dbt::wasm) fn clflush(
+        &mut self,
+        address: Address,
+        next_pc: u64,
+        exit_depth: u32,
+    ) {
         self.address(address, next_pc);
         let helper = self.clflush.expect("CLFLUSH import");
         self.op(Op::I32Const(address.segment as i32))

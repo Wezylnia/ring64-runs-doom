@@ -1,4 +1,4 @@
-use super::{Emitter, GPR, LHS, REMAINING, RHS, VALUE};
+use crate::dbt::wasm::{Emitter, GPR, LHS, REMAINING, RHS, VALUE};
 use crate::x86::instruction::{
     Alu, Condition, Count, DataOperand, Instruction, Location, Operation, RegisterView, Shift,
     Width,
@@ -6,7 +6,7 @@ use crate::x86::instruction::{
 use wasm_encoder::{BlockType, Instruction as Op};
 
 #[derive(Clone, Copy)]
-pub(super) struct Recurrence {
+pub(in crate::dbt::wasm) struct Recurrence {
     bank: u8,
     counter: RegisterView,
     step: u32,
@@ -16,7 +16,7 @@ pub(super) struct Recurrence {
 }
 
 impl Recurrence {
-    pub(super) fn recognize(instructions: &[Instruction]) -> Option<Self> {
+    pub(in crate::dbt::wasm) fn recognize(instructions: &[Instruction]) -> Option<Self> {
         let [ref prefix @ .., adjust, latch] = *instructions else {
             return None;
         };
@@ -133,7 +133,7 @@ fn evaluate(instructions: &[Instruction], bank: u8, counter: u8, input: u32) -> 
 }
 
 impl Emitter {
-    pub(super) fn emit_linear_recurrence(&mut self, mut recurrence: Recurrence) {
+    pub(in crate::dbt::wasm) fn emit_linear_recurrence(&mut self, mut recurrence: Recurrence) {
         let step = i64::from(recurrence.step);
         let lap = i64::from(recurrence.lap);
         self.data_register(recurrence.counter, Width::W32);

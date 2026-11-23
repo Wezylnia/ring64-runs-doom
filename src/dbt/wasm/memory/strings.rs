@@ -1,4 +1,4 @@
-use super::{
+use crate::dbt::wasm::{
     ADDRESS, DIRECTION, ENTRY_FLAGS, Emitter, FLAGS, LHS, REPEAT_REMAINING, RESULT, RHS,
     STORE_STATUS, VALUE,
 };
@@ -8,12 +8,12 @@ use crate::x86::instruction::{Address, AddressBase, Alu, RegisterView, Repeat, S
 use wasm_encoder::{BlockType, Instruction as Op};
 
 impl Emitter {
-    pub(super) fn direction(&mut self, set: bool) {
+    pub(in crate::dbt::wasm) fn direction(&mut self, set: bool) {
         self.op(Op::I64Const(if set { 0x400 } else { 0 }))
             .op(Op::LocalSet(DIRECTION));
     }
 
-    pub(super) fn string(
+    pub(in crate::dbt::wasm) fn string(
         &mut self,
         kind: StringKind,
         widths: (Width, Width),
@@ -94,7 +94,7 @@ impl Emitter {
         self.op(Op::Br(0)).op(Op::End).op(Op::End);
     }
 
-    pub(super) fn restore_repeat_flags(&mut self) {
+    pub(in crate::dbt::wasm) fn restore_repeat_flags(&mut self) {
         self.op(Op::LocalGet(ENTRY_FLAGS)).op(Op::LocalSet(FLAGS));
     }
 

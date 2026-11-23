@@ -1,4 +1,6 @@
-use super::{ENTRY, Emitter, FLAGS, LHS, REASON, REMAINING, RESULT, RHS, RIP, STORE_STATUS, VALUE};
+use crate::dbt::wasm::{
+    ENTRY, Emitter, FLAGS, LHS, REASON, REMAINING, RESULT, RHS, RIP, STORE_STATUS, VALUE,
+};
 use crate::embedding::layout::{BUDGET, DISPATCH, RunState, SEGMENT, STOP, TARGET};
 use crate::memory::canonical48;
 use crate::x86::context::Segment;
@@ -6,7 +8,7 @@ use crate::x86::instruction::{Address, Condition, CountCondition, RegisterView, 
 use wasm_encoder::{BlockType, Instruction as Op, MemArg};
 
 #[derive(Clone, Copy)]
-pub(super) enum InstructionRetirement {
+pub(in crate::dbt::wasm) enum InstructionRetirement {
     One,
     Deferred,
     DeferredCommit,
@@ -19,7 +21,7 @@ pub(super) enum InstructionRetirement {
 }
 
 impl InstructionRetirement {
-    pub(super) fn prechecked_flat_entry(self) -> bool {
+    pub(in crate::dbt::wasm) fn prechecked_flat_entry(self) -> bool {
         match self {
             #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
             Self::FlatPrefix { .. } => true,
@@ -29,7 +31,7 @@ impl InstructionRetirement {
 }
 
 impl Emitter {
-    pub(super) fn target_failure(&mut self, exit_depth: u32) {
+    pub(in crate::dbt::wasm) fn target_failure(&mut self, exit_depth: u32) {
         self.record_fault_segment(Segment::Cs);
         // Runtime targets cannot be recovered by decoding the published RIP.
         self.op(Op::LocalGet(0))
@@ -42,7 +44,7 @@ impl Emitter {
         self.exit(TARGET, exit_depth);
     }
 
-    pub(super) fn check_runtime_target(&mut self, exit_depth: u32) {
+    pub(in crate::dbt::wasm) fn check_runtime_target(&mut self, exit_depth: u32) {
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         if self.linear_call_spans
             && self.context.code_limit() == u64::from(u32::MAX)
@@ -88,7 +90,7 @@ impl Emitter {
         self.op(Op::End);
     }
 
-    pub(super) fn commit_runtime_target(&mut self, exit_depth: u32) {
+    pub(in crate::dbt::wasm) fn commit_runtime_target(&mut self, exit_depth: u32) {
         self.op(Op::LocalGet(RHS)).op(Op::LocalSet(RIP));
         let count = match self.instruction_retirement {
             #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -122,14 +124,19 @@ impl Emitter {
         self.exit(DISPATCH, exit_depth);
     }
 
-    pub(super) fn jump_register(&mut self, target: u8, width: Width, exit_depth: u32) {
+    pub(in crate::dbt::wasm) fn jump_register(
+        &mut self,
+        target: u8,
+        width: Width,
+        exit_depth: u32,
+    ) {
         self.register(target, width);
         self.op(Op::LocalSet(RHS));
         self.check_runtime_target(exit_depth);
         self.commit_runtime_target(exit_depth);
     }
 
-    pub(super) fn jump_memory(
+    pub(in crate::dbt::wasm) fn jump_memory(
         &mut self,
         address: Address,
         width: Width,
@@ -142,7 +149,7 @@ impl Emitter {
         self.commit_runtime_target(exit_depth);
     }
 
-    pub(super) fn count_branch(
+    pub(in crate::dbt::wasm) fn count_branch(
         &mut self,
         condition: CountCondition,
         width: Width,
@@ -184,7 +191,7 @@ impl Emitter {
         }
     }
 
-    pub(super) fn condition(&mut self, condition: Condition) {
+    pub(in crate::dbt::wasm) fn condition(&mut self, condition: Condition) {
         use Condition::*;
         match condition {
             Overflow | NotOverflow => self.flag_bits_clear(0x800),
@@ -208,12 +215,12 @@ impl Emitter {
         }
     }
 
-    pub(super) fn cloned_condition(
+    pub(in crate::dbt::wasm) fn cloned_condition(
         &mut self,
         condition: Condition,
-        source: Option<super::loop_cfg::ConditionSource>,
+        source: Option<super::loops::loop_cfg::ConditionSource>,
     ) {
-        use super::loop_cfg::ConditionSource;
+        use super::loops::loop_cfg::ConditionSource;
         match source {
             None => self.condition(condition),
             Some(
@@ -226,7 +233,7 @@ impl Emitter {
                 }
             }
             Some(ConditionSource::ResultSign(width)) => {
-                self.op(Op::LocalGet(super::RESULT));
+                self.op(Op::LocalGet(RESULT));
                 if width == Width::W32 {
                     self.op(Op::I32WrapI64).op(Op::I32Const(0));
                     self.op(if condition == Condition::Sign {
@@ -319,13 +326,13 @@ impl Emitter {
             .op(Op::I64Eqz);
     }
 
-    pub(super) fn exit(&mut self, reason: i32, depth: u32) {
+    pub(in crate::dbt::wasm) fn exit(&mut self, reason: i32, depth: u32) {
         self.op(Op::I32Const(reason))
             .op(Op::LocalSet(REASON))
             .op(Op::Br(depth));
     }
 
-    pub(super) fn gates(&mut self, exit_depth: u32) {
+    pub(in crate::dbt::wasm) fn gates(&mut self, exit_depth: u32) {
         self.op(Op::LocalGet(REMAINING))
             .op(Op::I64Eqz)
             .unlikely(Op::If(BlockType::Empty));
@@ -341,7 +348,7 @@ impl Emitter {
         self.op(Op::End);
     }
 
-    pub(super) fn commit(&mut self, next: u64) {
+    pub(in crate::dbt::wasm) fn commit(&mut self, next: u64) {
         let retired = match self.instruction_retirement {
             InstructionRetirement::One => Some(1),
             InstructionRetirement::Deferred => None,
@@ -367,7 +374,7 @@ impl Emitter {
         }
     }
 
-    pub(super) fn retire_before_read_fault(&mut self) {
+    pub(in crate::dbt::wasm) fn retire_before_read_fault(&mut self) {
         match self.instruction_retirement {
             InstructionRetirement::AfterPrefix(count) => self.retire_instructions(count),
             #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -382,7 +389,7 @@ impl Emitter {
         }
     }
 
-    pub(super) fn retire_instructions(&mut self, count: u32) {
+    pub(in crate::dbt::wasm) fn retire_instructions(&mut self, count: u32) {
         // Bulk paths cannot report individual PCs. An incomplete capture is discarded.
         if count == 1
             && let Some(retire) = self.flat_retire
@@ -396,7 +403,7 @@ impl Emitter {
             .op(Op::LocalSet(REMAINING));
     }
 
-    pub(super) fn route(&mut self, target: u64, loop_depth: u32, exit_depth: u32) {
+    pub(in crate::dbt::wasm) fn route(&mut self, target: u64, loop_depth: u32, exit_depth: u32) {
         if self.finish_instruction(exit_depth) {
             return;
         }
@@ -428,7 +435,7 @@ impl Emitter {
                     // ordinary JMP/checked paths never produce this handoff.
                     self.op(Op::LocalGet(inherited))
                         .op(Op::I32Const(
-                            super::structured_loop::CONTINUE_PAGED_PREAMBLE,
+                            super::loops::structured_loop::CONTINUE_PAGED_PREAMBLE,
                         ))
                         .op(Op::I32Mul)
                         .op(Op::LocalSet(handoff));
@@ -478,7 +485,11 @@ impl Emitter {
         }
     }
 
-    pub(super) fn code_write_boundary(&mut self, exit_depth: u32, prefix: Option<(u64, u32)>) {
+    pub(in crate::dbt::wasm) fn code_write_boundary(
+        &mut self,
+        exit_depth: u32,
+        prefix: Option<(u64, u32)>,
+    ) {
         if self.stores {
             // Status two is successful storage that invalidated this owner.
             // All instruction effects and its retirement are committed first.
@@ -496,7 +507,11 @@ impl Emitter {
         }
     }
 
-    pub(super) fn check_static_target(&mut self, target: u64, exit_depth: u32) -> bool {
+    pub(in crate::dbt::wasm) fn check_static_target(
+        &mut self,
+        target: u64,
+        exit_depth: u32,
+    ) -> bool {
         if self.context.is_long64() {
             if !canonical48(target) {
                 self.op(Op::I64Const(target as i64)).op(Op::LocalSet(RHS));
@@ -511,7 +526,7 @@ impl Emitter {
         true
     }
 
-    pub(super) fn target(&mut self, target: u64, loop_depth: u32, exit_depth: u32) {
+    pub(in crate::dbt::wasm) fn target(&mut self, target: u64, loop_depth: u32, exit_depth: u32) {
         if self.check_static_target(target, exit_depth) {
             self.commit(target);
             self.route(target, loop_depth, exit_depth);

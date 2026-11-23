@@ -1,4 +1,4 @@
-use super::{
+use crate::dbt::wasm::{
     ADDRESS, DIRECTION, Emitter, FLAGS, GPR, LHS, REASON, RESULT, SHADOW, STORE_STATUS, SYSTEM,
     VALUE,
 };
@@ -71,7 +71,11 @@ impl Emitter {
             .op(Op::I64Store(memory));
     }
 
-    pub(super) fn system_flags(&mut self, operation: SystemFlagsDescriptor, exit_depth: u32) {
+    pub(in crate::dbt::wasm) fn system_flags(
+        &mut self,
+        operation: SystemFlagsDescriptor,
+        exit_depth: u32,
+    ) {
         match operation.kind {
             SystemFlagsKind::Push => {
                 self.flags_call(operation, None, exit_depth);
@@ -120,7 +124,7 @@ impl Emitter {
         }
     }
 
-    pub(super) fn pop_ss(&mut self, width: Width, exit_depth: u32) {
+    pub(in crate::dbt::wasm) fn pop_ss(&mut self, width: Width, exit_depth: u32) {
         let protection = self.protection.expect("SS protection import");
         self.stack_word(width, exit_depth);
         let stack_width = self.context.stack_width();

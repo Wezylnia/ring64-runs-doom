@@ -1,15 +1,15 @@
-use super::Emitter;
+use crate::dbt::wasm::Emitter;
 use crate::x86::instruction::Operation;
 use wasm_encoder::{BlockType, Instruction as Op};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum IndexedOperand {
+pub(in crate::dbt::wasm) enum IndexedOperand {
     Read,
     Write,
     ReadModifyWrite,
 }
 
-pub(super) fn indexed_scalar_read(operation: Operation) -> bool {
+pub(in crate::dbt::wasm) fn indexed_scalar_read(operation: Operation) -> bool {
     use crate::x86::context::Segment;
     use crate::x86::instruction::{Location, MemoryAluOperands, Width};
     let address = match operation {
@@ -35,7 +35,7 @@ pub(super) fn indexed_scalar_read(operation: Operation) -> bool {
     matches!(address.segment, Segment::Ds | Segment::Ss)
 }
 
-pub(super) fn indexed_scalar_write(operation: Operation, sampled: bool) -> bool {
+pub(in crate::dbt::wasm) fn indexed_scalar_write(operation: Operation, sampled: bool) -> bool {
     use crate::x86::context::Segment;
     use crate::x86::instruction::{Operand, Width};
 
@@ -53,7 +53,7 @@ pub(super) fn indexed_scalar_write(operation: Operation, sampled: bool) -> bool 
     }
 }
 
-pub(super) fn indexed_scalar_rmw(operation: Operation) -> bool {
+pub(in crate::dbt::wasm) fn indexed_scalar_rmw(operation: Operation) -> bool {
     use crate::x86::context::Segment;
     use crate::x86::instruction::{Location, MemoryAluOperands, Width};
 
@@ -75,26 +75,26 @@ pub(super) fn indexed_scalar_rmw(operation: Operation) -> bool {
 }
 
 impl Emitter {
-    pub(super) fn uses_indexed_scalar_read(&self, operation: Operation) -> bool {
+    pub(in crate::dbt::wasm) fn uses_indexed_scalar_read(&self, operation: Operation) -> bool {
         self.indexed_scalar_stamp.is_some()
             && !self.guarded_paged_lap
             && indexed_scalar_read(operation)
     }
 
-    pub(super) fn uses_indexed_scalar_write(&self, operation: Operation) -> bool {
+    pub(in crate::dbt::wasm) fn uses_indexed_scalar_write(&self, operation: Operation) -> bool {
         self.indexed_store_fill.is_some()
             && !self.guarded_paged_lap
             && indexed_scalar_write(operation, self.sampled_region)
     }
 
-    pub(super) fn uses_indexed_scalar_rmw(&self) -> bool {
+    pub(in crate::dbt::wasm) fn uses_indexed_scalar_rmw(&self) -> bool {
         self.indexed_store_fill.is_some()
             && !self.guarded_paged_lap
             && indexed_scalar_rmw(self.current_operation)
     }
 
-    pub(super) fn indexed_prefix_operand_host(&mut self, read: u32, width: u8) {
-        use super::{ADDRESS, STORE_STATUS};
+    pub(in crate::dbt::wasm) fn indexed_prefix_operand_host(&mut self, read: u32, width: u8) {
+        use crate::dbt::wasm::{ADDRESS, STORE_STATUS};
         use wasm_encoder::{MemArg, ValType};
 
         self.op(Op::LocalSet(ADDRESS));
@@ -128,14 +128,14 @@ impl Emitter {
             .op(Op::End);
     }
 
-    pub(super) fn indexed_read_host(
+    pub(in crate::dbt::wasm) fn indexed_read_host(
         &mut self,
         [table, entry, data, fetch]: [u32; 4],
         width: u8,
         preserve_fetch: bool,
         operand: IndexedOperand,
     ) {
-        use super::{ADDRESS, VALUE};
+        use crate::dbt::wasm::{ADDRESS, VALUE};
         use crate::embedding::layout::StateStorage;
         use crate::x86::paging::cache::{
             CAPACITY, INDEXED_READ_ENTRIES, INDEXED_VALID, INDEXED_WRITE_READABLE,

@@ -1,4 +1,4 @@
-use super::{ADDRESS, Emitter, GPR};
+use crate::dbt::wasm::{ADDRESS, Emitter, GPR};
 use crate::{
     memory::Access,
     x86::{
@@ -11,8 +11,8 @@ use crate::{
 };
 use wasm_encoder::{BlockType, Instruction as Op, ValType};
 
-pub(super) struct FlatDataWindow {
-    pub(super) head: usize,
+pub(in crate::dbt::wasm) struct FlatDataWindow {
+    pub(in crate::dbt::wasm) head: usize,
     base: u8,
     first: i64,
     bytes: u32,
@@ -22,7 +22,10 @@ pub(super) struct FlatDataWindow {
 }
 
 impl FlatDataWindow {
-    pub(super) fn recognize(context: &ExecutionContext, group: &[Instruction]) -> Option<Self> {
+    pub(in crate::dbt::wasm) fn recognize(
+        context: &ExecutionContext,
+        group: &[Instruction],
+    ) -> Option<Self> {
         if context.mode() != Mode::Protected
             || context.segment(Segment::Ds).limit != u32::MAX
             || [Access::Read, Access::Write]
@@ -94,7 +97,7 @@ impl FlatDataWindow {
         })
     }
 
-    pub(super) fn uses(&self, index: usize) -> bool {
+    pub(in crate::dbt::wasm) fn uses(&self, index: usize) -> bool {
         self.uses & (1 << index) != 0
     }
 }
@@ -222,7 +225,11 @@ fn result_bound(op: Operation, bounds: &[u32; 16]) -> u32 {
 }
 
 impl Emitter {
-    pub(super) fn guard_flat_data_window(&mut self, plan: &FlatDataWindow, bias: u32) {
+    pub(in crate::dbt::wasm) fn guard_flat_data_window(
+        &mut self,
+        plan: &FlatDataWindow,
+        bias: u32,
+    ) {
         let read = plan
             .reads
             .then(|| self.read_span.expect("flat data read span"));

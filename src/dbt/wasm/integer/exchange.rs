@@ -1,9 +1,11 @@
-use super::{ADDRESS, Emitter, FLAGS, GPR, LHS, RESULT, RHS, STORE_STATUS, VALUE, vector::memory};
+use crate::dbt::wasm::{
+    ADDRESS, Emitter, FLAGS, GPR, LHS, RESULT, RHS, STORE_STATUS, VALUE, numeric::vector::memory,
+};
 use crate::x86::instruction::{Address, Alu, Location, RegisterView, Width};
 use wasm_encoder::{BlockType, Instruction as Op};
 
 impl Emitter {
-    pub(super) fn exchange(
+    pub(in crate::dbt::wasm) fn exchange(
         &mut self,
         dst: Location,
         src: RegisterView,
@@ -19,7 +21,7 @@ impl Emitter {
         self.write_register(src, width);
     }
 
-    pub(super) fn xadd(
+    pub(in crate::dbt::wasm) fn xadd(
         &mut self,
         dst: Location,
         src: RegisterView,
@@ -43,7 +45,7 @@ impl Emitter {
         self.arithmetic_flags(Alu::Add, width);
     }
 
-    pub(super) fn compare_exchange(
+    pub(in crate::dbt::wasm) fn compare_exchange(
         &mut self,
         dst: Location,
         src: RegisterView,
@@ -83,7 +85,12 @@ impl Emitter {
         self.op(Op::I64Or);
     }
 
-    pub(super) fn compare_exchange8b(&mut self, address: Address, next_pc: u64, exit_depth: u32) {
+    pub(in crate::dbt::wasm) fn compare_exchange8b(
+        &mut self,
+        address: Address,
+        next_pc: u64,
+        exit_depth: u32,
+    ) {
         self.read_location(
             Location::Memory(address),
             Width::W64,
@@ -123,7 +130,12 @@ impl Emitter {
             .op(Op::End);
     }
 
-    pub(super) fn compare_exchange16b(&mut self, address: Address, next_pc: u64, exit_depth: u32) {
+    pub(in crate::dbt::wasm) fn compare_exchange16b(
+        &mut self,
+        address: Address,
+        next_pc: u64,
+        exit_depth: u32,
+    ) {
         let read = self
             .block16_for_write
             .expect("16-byte read-for-write import");

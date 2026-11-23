@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use wasm_encoder::{BlockType, Function, Instruction as Op, ValType};
 
-pub(super) fn emit(entries: &BTreeMap<u64, u32>, dense: bool) -> Function {
+pub(in crate::dbt::wasm) fn emit(entries: &BTreeMap<u64, u32>, dense: bool) -> Function {
     let entries: Vec<_> = entries.iter().map(|(&pc, &index)| (pc, index)).collect();
     if dense
         && let [first, .., last] = entries.as_slice()

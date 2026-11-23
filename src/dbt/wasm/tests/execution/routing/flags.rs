@@ -3,7 +3,7 @@ use super::*;
 #[cfg(not(feature = "parallel"))]
 #[test]
 fn guarded_forward_graph_skips_only_unobservable_arithmetic_status() {
-    use super::super::loop_cfg::{CompareAction, compare_predicates, select};
+    use crate::dbt::wasm::execution::loops::loop_cfg::{CompareAction, compare_predicates, select};
     use crate::embedding::layout::DATA;
     use crate::x86::instruction::Width;
 
@@ -90,7 +90,9 @@ fn guarded_forward_graph_skips_only_unobservable_arithmetic_status() {
 
 #[test]
 fn memory_compare_predicate_keeps_flags_at_faults_and_checked_entries() {
-    use super::super::loop_cfg::{CompareAction, ConditionSource, compare_predicates, select};
+    use crate::dbt::wasm::execution::loops::loop_cfg::{
+        CompareAction, ConditionSource, compare_predicates, select,
+    };
     use crate::embedding::layout::DATA;
 
     let decrement = |bank| Operation::Alu {
@@ -265,7 +267,7 @@ fn memory_compare_predicate_keeps_flags_at_faults_and_checked_entries() {
 
 #[test]
 fn compare_predicate_restores_flags_only_on_its_fallthrough_load_fault() {
-    use super::super::loop_cfg::{
+    use crate::dbt::wasm::execution::loops::loop_cfg::{
         CompareAction, ConditionSource, ReadFaultFlags, compare_predicates, select,
     };
     use crate::embedding::layout::DATA;
@@ -424,7 +426,9 @@ fn compare_predicate_restores_flags_only_on_its_fallthrough_load_fault() {
 
 #[test]
 fn compare_predicate_restores_status_on_a_taken_loop_exit() {
-    use super::super::loop_cfg::{CompareAction, ConditionSource, compare_predicates, select};
+    use crate::dbt::wasm::execution::loops::loop_cfg::{
+        CompareAction, ConditionSource, compare_predicates, select,
+    };
     use crate::embedding::layout::DATA;
 
     let artifact = compiled_fixture(
@@ -524,7 +528,7 @@ fn compare_predicate_restores_status_on_a_taken_loop_exit() {
 
 #[test]
 fn conditional_move_preserves_sub_flags_across_an_intervening_scalar_load() {
-    use super::super::loop_cfg::{
+    use crate::dbt::wasm::execution::loops::loop_cfg::{
         CompareAction, ConditionSource, ReadFaultFlags, compare_predicates, select,
     };
     use crate::embedding::layout::DATA;
@@ -643,7 +647,9 @@ fn conditional_move_preserves_sub_flags_across_an_intervening_scalar_load() {
 
 #[test]
 fn guarded_backedge_uses_compare_operands_and_keeps_all_flags() {
-    use super::super::loop_cfg::{CompareAction, ConditionSource, compare_predicates, select};
+    use crate::dbt::wasm::execution::loops::loop_cfg::{
+        CompareAction, ConditionSource, compare_predicates, select,
+    };
 
     let artifact = compiled_fixture(
         0x1000,
@@ -739,7 +745,7 @@ fn guarded_backedge_uses_compare_operands_and_keeps_all_flags() {
 
 #[test]
 fn guarded_shift_restores_flags_on_a_read_fault_before_compare_branch() {
-    use super::super::loop_cfg::{
+    use crate::dbt::wasm::execution::loops::loop_cfg::{
         CompareAction, ConditionSource, ReadFaultFlags, compare_predicates, read_prefix_len, select,
     };
     use crate::embedding::layout::DATA;
@@ -939,7 +945,9 @@ fn guarded_read_loop_publishes_preceding_add_flags_on_load_fault_and_budget() {
 
 #[test]
 fn guarded_conditional_move_uses_comparison_and_result_sign_after_overflow() {
-    use super::super::loop_cfg::{CompareAction, ConditionSource, compare_predicates, select};
+    use crate::dbt::wasm::execution::loops::loop_cfg::{
+        CompareAction, ConditionSource, compare_predicates, select,
+    };
     use crate::embedding::layout::DATA;
     use crate::x86::instruction::{Location, Unary};
 

@@ -1,4 +1,4 @@
-use super::{ADDRESS, Emitter, RESULT, VALUE};
+use crate::dbt::wasm::{ADDRESS, Emitter, RESULT, VALUE, execution::loops::loop_cfg};
 use crate::x86::instruction::{Condition, Location, RegisterView, Width};
 use wasm_encoder::Instruction as Op;
 
@@ -14,7 +14,7 @@ impl Emitter {
         }
     }
 
-    pub(super) fn extend(
+    pub(in crate::dbt::wasm) fn extend(
         &mut self,
         dst: RegisterView,
         src: Location,
@@ -50,7 +50,7 @@ impl Emitter {
         self.write_register(dst, width);
     }
 
-    pub(super) fn sign_high(&mut self, width: Width) {
+    pub(in crate::dbt::wasm) fn sign_high(&mut self, width: Width) {
         self.op(Op::I64Const(0));
         self.register(0, width);
         self.op(Op::I64Const(i64::from(width.bits() - 1)))
@@ -60,7 +60,7 @@ impl Emitter {
         self.write_register(RegisterView::low(2), width);
     }
 
-    pub(super) fn setcc(
+    pub(in crate::dbt::wasm) fn setcc(
         &mut self,
         dst: Location,
         condition: Condition,
@@ -83,12 +83,12 @@ impl Emitter {
         }
     }
 
-    pub(super) fn cmov(
+    pub(in crate::dbt::wasm) fn cmov(
         &mut self,
         dst: RegisterView,
         src: Location,
         width: Width,
-        (condition, source): (Condition, Option<super::loop_cfg::ConditionSource>),
+        (condition, source): (Condition, Option<loop_cfg::ConditionSource>),
         next_pc: u64,
         exit_depth: u32,
     ) {

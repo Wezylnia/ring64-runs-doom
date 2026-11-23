@@ -1,9 +1,9 @@
-use super::{Emitter, FLAGS, GPR, LHS, RESULT, RHS, VALUE};
+use crate::dbt::wasm::{Emitter, FLAGS, GPR, LHS, RESULT, RHS, VALUE};
 use crate::x86::instruction::{Alu, Carry, Location, RegisterView, Unary, Width};
 use wasm_encoder::Instruction as Op;
 
 impl Emitter {
-    pub(super) fn read_location(
+    pub(in crate::dbt::wasm) fn read_location(
         &mut self,
         location: Location,
         width: Width,
@@ -22,7 +22,12 @@ impl Emitter {
         self.op(Op::LocalSet(LHS));
     }
 
-    pub(super) fn write_location(&mut self, location: Location, width: Width, exit_depth: u32) {
+    pub(in crate::dbt::wasm) fn write_location(
+        &mut self,
+        location: Location,
+        width: Width,
+        exit_depth: u32,
+    ) {
         match location {
             Location::Register(register) => {
                 self.op(Op::LocalGet(RESULT));
@@ -32,7 +37,7 @@ impl Emitter {
         }
     }
 
-    pub(super) fn unary(
+    pub(in crate::dbt::wasm) fn unary(
         &mut self,
         kind: Unary,
         dst: Location,
@@ -163,7 +168,7 @@ impl Emitter {
             .op(Op::LocalSet(FLAGS));
     }
 
-    pub(super) fn carry(&mut self, kind: Carry) {
+    pub(in crate::dbt::wasm) fn carry(&mut self, kind: Carry) {
         self.op(Op::LocalGet(FLAGS));
         match kind {
             Carry::Clear => {
@@ -179,7 +184,7 @@ impl Emitter {
         self.op(Op::LocalSet(FLAGS));
     }
 
-    pub(super) fn lahf(&mut self) {
+    pub(in crate::dbt::wasm) fn lahf(&mut self) {
         self.status_flags();
         self.op(Op::I64Const(0xd5))
             .op(Op::I64And)
@@ -188,7 +193,7 @@ impl Emitter {
         self.write_register(RegisterView::high_byte(0), Width::W8);
     }
 
-    pub(super) fn sahf(&mut self) {
+    pub(in crate::dbt::wasm) fn sahf(&mut self) {
         self.data_register(RegisterView::high_byte(0), Width::W8);
         self.op(Op::I64Const(0xd5))
             .op(Op::I64And)

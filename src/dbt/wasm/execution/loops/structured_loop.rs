@@ -1,12 +1,17 @@
-use super::{
-    Emitter, GPR, REASON, REMAINING,
-    control::InstructionRetirement,
-    loop_cfg::{CompareAction, LoopOrder, ReadFaultFlags},
+use super::loop_cfg::{CompareAction, LoopOrder, ReadFaultFlags};
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+use super::loop_cfg::{ConditionSource, ReadLoopDiamond};
+#[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+use crate::dbt::wasm::memory::parallel;
+use crate::dbt::wasm::{
+    Emitter, GPR, REASON, REMAINING, SHADOW, Unit, execution::control::InstructionRetirement,
 };
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-use super::{
+use crate::dbt::wasm::{
     RIP, STORE_STATUS,
-    loop_cfg::{ConditionSource, ReadLoopDiamond},
+    execution::paged::copy as paged_copy,
+    memory::{self, paged_read, read_loop, stack_slots},
+    numeric::float,
 };
 use wasm_encoder::{BlockType, Instruction as Op};
 
@@ -40,34 +45,34 @@ enum LoopKind {
 }
 
 #[derive(Clone, Copy)]
-pub(super) struct StructuredLoop {
+pub(in crate::dbt::wasm) struct StructuredLoop {
     earlier: u32,
-    pub(super) head: u32,
-    pub(super) tail: u32,
-    pub(super) max_lap_len: u32,
+    pub(in crate::dbt::wasm) head: u32,
+    pub(in crate::dbt::wasm) tail: u32,
+    pub(in crate::dbt::wasm) max_lap_len: u32,
     kind: LoopKind,
     project_dwords: bool,
-    pub(super) paged_fetch_bytes: Option<u32>,
-    pub(super) paged_stack_writes: bool,
+    pub(in crate::dbt::wasm) paged_fetch_bytes: Option<u32>,
+    pub(in crate::dbt::wasm) paged_stack_writes: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) paged_read_span: Option<super::read_loop::ReadLoop>,
+    pub(in crate::dbt::wasm) paged_read_span: Option<read_loop::ReadLoop>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) paged_dword_window: bool,
+    pub(in crate::dbt::wasm) paged_dword_window: bool,
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 #[derive(Clone, Copy)]
-pub(super) struct PagedPreamble {
-    pub(super) body: StructuredLoop,
-    pub(super) inner_head: u32,
-    pub(super) stack_reads: bool,
+pub(in crate::dbt::wasm) struct PagedPreamble {
+    pub(in crate::dbt::wasm) body: StructuredLoop,
+    pub(in crate::dbt::wasm) inner_head: u32,
+    pub(in crate::dbt::wasm) stack_reads: bool,
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-pub(super) const CONTINUE_PAGED_PREAMBLE: i32 = 3;
+pub(in crate::dbt::wasm) const CONTINUE_PAGED_PREAMBLE: i32 = 3;
 
 impl StructuredLoop {
-    pub(super) fn dword_writes(self, unit: &super::Unit) -> u16 {
+    pub(in crate::dbt::wasm) fn dword_writes(self, unit: &Unit) -> u16 {
         if !self.project_dwords || self.kind != LoopKind::Registers || unit.context.is_long64() {
             return 0;
         }
@@ -126,59 +131,59 @@ impl StructuredLoop {
     }
 
     #[cfg(any(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) fn without_dword_projection(mut self) -> Self {
+    pub(in crate::dbt::wasm) fn without_dword_projection(mut self) -> Self {
         self.project_dwords = false;
         self
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) fn read_proof(self, unit: &super::Unit) -> Option<super::read_loop::ReadLoop> {
+    pub(in crate::dbt::wasm) fn read_proof(self, unit: &Unit) -> Option<read_loop::ReadLoop> {
         if self.precheck_gates_without_read_proof() {
             return None;
         }
-        super::read_loop::ReadLoop::recognize(
+        read_loop::ReadLoop::recognize(
             &unit.context,
             &unit.instructions[self.head as usize..=self.tail as usize],
         )
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) fn stack_proof(self, unit: &super::Unit) -> Option<super::stack_slots::StackSlots> {
+    pub(in crate::dbt::wasm) fn stack_proof(self, unit: &Unit) -> Option<stack_slots::StackSlots> {
         if !self.forward_edges() {
             return None;
         }
-        super::stack_slots::StackSlots::recognize(
+        stack_slots::StackSlots::recognize(
             &unit.context,
             &unit.instructions[self.earlier as usize..=self.tail as usize],
         )
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) fn indexed_read_address(self, unit: &super::Unit) -> Option<Address> {
+    pub(in crate::dbt::wasm) fn indexed_read_address(self, unit: &Unit) -> Option<Address> {
         if self.kind != LoopKind::IntegerReads {
             return None;
         }
-        super::read_loop::IndexedReadWindow::recognize(
+        read_loop::IndexedReadWindow::recognize(
             &unit.context,
             &unit.instructions[self.head as usize..=self.tail as usize],
         )
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) fn integer_read_proof(
+    pub(in crate::dbt::wasm) fn integer_read_proof(
         self,
-        unit: &super::Unit,
-    ) -> Option<super::read_loop::ReadLoop> {
+        unit: &Unit,
+    ) -> Option<read_loop::ReadLoop> {
         if self.kind != LoopKind::IntegerReads {
             return None;
         }
-        super::read_loop::ReadLoop::recognize_integer(
+        read_loop::ReadLoop::recognize_integer(
             &unit.context,
             &unit.instructions[self.head as usize..=self.tail as usize],
         )
     }
 
-    pub(super) fn precheck_gates_without_read_proof(self) -> bool {
+    pub(in crate::dbt::wasm) fn precheck_gates_without_read_proof(self) -> bool {
         if cfg!(feature = "parallel") {
             matches!(
                 self.kind,
@@ -189,7 +194,7 @@ impl StructuredLoop {
         }
     }
 
-    pub(super) fn active_labels(self, ordinal: u32) -> u32 {
+    pub(in crate::dbt::wasm) fn active_labels(self, ordinal: u32) -> u32 {
         if self.forward_edges() {
             let order = self.order();
             order.len() - 1 - order.position(ordinal).unwrap()
@@ -198,7 +203,7 @@ impl StructuredLoop {
         }
     }
 
-    pub(super) fn forward_edges(self) -> bool {
+    pub(in crate::dbt::wasm) fn forward_edges(self) -> bool {
         match self.kind {
             LoopKind::ForwardEdges => true,
             #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -208,7 +213,7 @@ impl StructuredLoop {
     }
 
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
-    pub(super) fn guarded_dword_reads(self, unit: &super::Unit) -> bool {
+    pub(in crate::dbt::wasm) fn guarded_dword_reads(self, unit: &Unit) -> bool {
         self.kind == LoopKind::PagedReads
             && self.paged_source_span(unit).is_some_and(|(linear, bytes)| {
                 unit.fetch_proof.physical_span(linear, bytes).is_some()
@@ -216,13 +221,13 @@ impl StructuredLoop {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) fn paged_source_is_4k(self, unit: &super::Unit) -> bool {
+    pub(in crate::dbt::wasm) fn paged_source_is_4k(self, unit: &Unit) -> bool {
         self.paged_source_span(unit)
             .is_some_and(|(linear, _)| unit.fetch_proof.leaf_is_4k(linear))
     }
 
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
-    fn paged_source_span(self, unit: &super::Unit) -> Option<(u64, u32)> {
+    fn paged_source_span(self, unit: &Unit) -> Option<(u64, u32)> {
         let bytes = self.paged_fetch_bytes?;
         let pc = unit.instructions[self.earlier as usize].pc;
         let linear = if unit.context.is_long64() {
@@ -234,7 +239,7 @@ impl StructuredLoop {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) fn paged_preamble(self, unit: &super::Unit) -> Option<PagedPreamble> {
+    pub(in crate::dbt::wasm) fn paged_preamble(self, unit: &Unit) -> Option<PagedPreamble> {
         // Bridge one finite preamble to an existing rotated, read-only inner
         // placement. A general nested graph is outside this proof.
         if !self.paged_dword_window || !self.forward_edges() || self.earlier == self.head {
@@ -335,16 +340,16 @@ impl StructuredLoop {
         })
     }
 
-    pub(super) fn natural_forward_loop(self) -> bool {
+    pub(in crate::dbt::wasm) fn natural_forward_loop(self) -> bool {
         self.forward_edges() && self.earlier == self.head
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) fn straight_paged_reads(self) -> bool {
+    pub(in crate::dbt::wasm) fn straight_paged_reads(self) -> bool {
         self.kind == LoopKind::PagedReads && self.earlier == self.head
     }
 
-    pub(super) fn order(self) -> LoopOrder {
+    pub(in crate::dbt::wasm) fn order(self) -> LoopOrder {
         LoopOrder {
             earlier: self.earlier,
             head: self.head,
@@ -353,14 +358,16 @@ impl StructuredLoop {
     }
 
     #[cfg(not(feature = "parallel"))]
-    pub(super) fn select_paged_registers(instructions: &[Instruction]) -> Option<Self> {
+    pub(in crate::dbt::wasm) fn select_paged_registers(
+        instructions: &[Instruction],
+    ) -> Option<Self> {
         Self::select_registers(instructions).map(Self::without_dword_projection)
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) fn linear_recurrence(
+    pub(in crate::dbt::wasm) fn linear_recurrence(
         self,
-        unit: &super::Unit,
+        unit: &Unit,
     ) -> Option<super::linear_recurrence::Recurrence> {
         if self.kind != LoopKind::Registers || !(unit.context.is_long64() || unit.context.code32())
         {
@@ -372,7 +379,7 @@ impl StructuredLoop {
     }
 
     #[cfg(not(feature = "parallel"))]
-    pub(super) fn select_paged_reads(unit: &super::Unit) -> Option<Self> {
+    pub(in crate::dbt::wasm) fn select_paged_reads(unit: &Unit) -> Option<Self> {
         let long64 = unit.context.is_long64();
         if !long64 && !unit.context.flat_paged_data32() {
             return None;
@@ -434,7 +441,7 @@ impl StructuredLoop {
     }
 
     #[cfg(not(feature = "parallel"))]
-    fn select_paged_stack_writes(unit: &super::Unit) -> Option<Self> {
+    fn select_paged_stack_writes(unit: &Unit) -> Option<Self> {
         use crate::memory::Access;
 
         let addr32 = Some(Width::W32);
@@ -471,7 +478,7 @@ impl StructuredLoop {
     }
 
     #[cfg(not(feature = "parallel"))]
-    pub(super) fn paged_read_widths(self, unit: &super::Unit) -> [bool; 2] {
+    pub(in crate::dbt::wasm) fn paged_read_widths(self, unit: &Unit) -> [bool; 2] {
         if self.paged_sse() {
             return [false, true];
         }
@@ -504,7 +511,7 @@ impl StructuredLoop {
     }
 
     #[cfg(not(feature = "parallel"))]
-    pub(super) fn has_paged_byte_store(self, unit: &super::Unit) -> bool {
+    pub(in crate::dbt::wasm) fn has_paged_byte_store(self, unit: &Unit) -> bool {
         (unit.context.is_long64() || self.paged_stack_writes)
             && self.paged_fetch_bytes.is_some()
             && self.natural_forward_loop()
@@ -514,7 +521,7 @@ impl StructuredLoop {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) fn paged_byte_write_pair(self, unit: &super::Unit) -> Option<(u32, u32)> {
+    pub(in crate::dbt::wasm) fn paged_byte_write_pair(self, unit: &Unit) -> Option<(u32, u32)> {
         use crate::x86::instruction::AddressBase;
 
         if !unit.context.is_long64()
@@ -564,7 +571,7 @@ impl StructuredLoop {
     }
 
     #[cfg(not(feature = "parallel"))]
-    pub(super) fn select_paged_scalar_f32(unit: &super::Unit) -> Option<Self> {
+    pub(in crate::dbt::wasm) fn select_paged_scalar_f32(unit: &Unit) -> Option<Self> {
         let long64 = unit.context.is_long64();
         if !long64 && !unit.context.flat_paged_data32() {
             return None;
@@ -588,12 +595,12 @@ impl StructuredLoop {
     }
 
     #[cfg(not(feature = "parallel"))]
-    pub(super) fn paged_sse(self) -> bool {
+    pub(in crate::dbt::wasm) fn paged_sse(self) -> bool {
         self.kind == LoopKind::PagedScalarF32
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) fn select_sse_write(unit: &super::Unit, paged: bool) -> Option<Self> {
+    pub(in crate::dbt::wasm) fn select_sse_write(unit: &Unit, paged: bool) -> Option<Self> {
         use crate::x86::{
             context::Segment,
             instruction::{AddressBase, VectorMask, VectorOperand},
@@ -622,8 +629,7 @@ impl StructuredLoop {
                     true
                 }
                 Operation::Float(float)
-                    if super::float::is_cmpnleps(float)
-                        && matches!(float.src, Location::Register(_)) =>
+                    if float::is_cmpnleps(float) && matches!(float.src, Location::Register(_)) =>
                 {
                     compare = true;
                     true
@@ -691,22 +697,25 @@ impl StructuredLoop {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) fn paged_sse_write(self) -> bool {
+    pub(in crate::dbt::wasm) fn paged_sse_write(self) -> bool {
         self.kind == LoopKind::PagedSseWrite
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) fn select_paged_vector_copy(unit: &super::Unit) -> Option<Self> {
+    pub(in crate::dbt::wasm) fn select_paged_vector_copy(unit: &Unit) -> Option<Self> {
         Self::select_vector_copy(unit, None)
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) fn select_additional_paged_copy(unit: &super::Unit, occupied: Self) -> Option<Self> {
+    pub(in crate::dbt::wasm) fn select_additional_paged_copy(
+        unit: &Unit,
+        occupied: Self,
+    ) -> Option<Self> {
         Self::select_vector_copy(unit, Some(occupied))
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    fn select_vector_copy(unit: &super::Unit, occupied: Option<Self>) -> Option<Self> {
+    fn select_vector_copy(unit: &Unit, occupied: Option<Self>) -> Option<Self> {
         use crate::x86::{context::Segment, instruction::VectorOperand};
 
         if !unit.context.is_long64() {
@@ -747,7 +756,7 @@ impl StructuredLoop {
                                 bytes <= 4096
                                     && unit.context.single_page_code_span(first.pc, bytes as u32)
                             })
-                            && super::paged_copy::CopyGroup::recognize(instructions).is_some()
+                            && paged_copy::CopyGroup::recognize(instructions).is_some()
                     })
                     && instructions
                         .iter()
@@ -762,7 +771,7 @@ impl StructuredLoop {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) fn paged_vector_copy(self) -> bool {
+    pub(in crate::dbt::wasm) fn paged_vector_copy(self) -> bool {
         matches!(
             self.kind,
             LoopKind::PagedVectorCopy | LoopKind::PagedVectorCopySpans
@@ -770,8 +779,8 @@ impl StructuredLoop {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) fn with_paged_copy_spans(mut self, unit: &super::Unit) -> Option<Self> {
-        super::paged_copy::CopyGroup::recognize(
+    pub(in crate::dbt::wasm) fn with_paged_copy_spans(mut self, unit: &Unit) -> Option<Self> {
+        paged_copy::CopyGroup::recognize(
             &unit.instructions[self.head as usize..=self.tail as usize],
         )?;
         self.kind = LoopKind::PagedVectorCopySpans;
@@ -779,12 +788,12 @@ impl StructuredLoop {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) fn paged_copy_group(
+    pub(in crate::dbt::wasm) fn paged_copy_group(
         self,
-        unit: &super::Unit,
-    ) -> Option<super::paged_copy::CopyGroup> {
+        unit: &Unit,
+    ) -> Option<paged_copy::CopyGroup> {
         (self.kind == LoopKind::PagedVectorCopySpans).then(|| {
-            super::paged_copy::CopyGroup::recognize(
+            paged_copy::CopyGroup::recognize(
                 &unit.instructions[self.head as usize..=self.tail as usize],
             )
             .expect("copy span matches admission")
@@ -792,7 +801,7 @@ impl StructuredLoop {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) fn select_paged_scalar_writes(unit: &super::Unit) -> Option<Self> {
+    pub(in crate::dbt::wasm) fn select_paged_scalar_writes(unit: &Unit) -> Option<Self> {
         use crate::x86::context::Segment;
 
         let store = |operation| {
@@ -831,14 +840,14 @@ impl StructuredLoop {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) fn paged_scalar_writes(self) -> bool {
+    pub(in crate::dbt::wasm) fn paged_scalar_writes(self) -> bool {
         self.kind == LoopKind::PagedScalarWrites
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) fn paged_dword_read_pair(
+    pub(in crate::dbt::wasm) fn paged_dword_read_pair(
         self,
-        unit: &super::Unit,
+        unit: &Unit,
     ) -> Option<(u32, u32, u8, Option<u32>)> {
         use crate::x86::{
             context::Segment,
@@ -927,7 +936,7 @@ impl StructuredLoop {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) fn has_single_paged_vector_load(self, unit: &super::Unit) -> bool {
+    pub(in crate::dbt::wasm) fn has_single_paged_vector_load(self, unit: &Unit) -> bool {
         use crate::x86::instruction::VectorOperand;
 
         let mut loads = unit.instructions[self.earlier as usize..=self.tail as usize]
@@ -946,7 +955,7 @@ impl StructuredLoop {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) fn paged_vector_alignment(self, unit: &super::Unit) -> Option<(u8, i64)> {
+    pub(in crate::dbt::wasm) fn paged_vector_alignment(self, unit: &Unit) -> Option<(u8, i64)> {
         use crate::x86::instruction::{AddressBase, DataOperand, VectorOperand};
 
         let body = &unit.instructions[self.earlier as usize..=self.tail as usize];
@@ -1031,17 +1040,14 @@ impl StructuredLoop {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) fn with_paged_read_span(mut self, unit: &super::Unit) -> Option<Self> {
+    pub(in crate::dbt::wasm) fn with_paged_read_span(mut self, unit: &Unit) -> Option<Self> {
         if self.kind != LoopKind::PagedReads || self.paged_read_widths(unit) != [true, false] {
             return None;
         }
         let instructions = &unit.instructions[self.head as usize..=self.tail as usize];
-        let proof = super::read_loop::ReadLoop::recognize_integer(&unit.context, instructions)
-            .or_else(|| {
-                super::read_loop::ReadLoop::recognize_paged_countdown_bytes(
-                    &unit.context,
-                    instructions,
-                )
+        let proof =
+            read_loop::ReadLoop::recognize_integer(&unit.context, instructions).or_else(|| {
+                read_loop::ReadLoop::recognize_paged_countdown_bytes(&unit.context, instructions)
             })?;
         if !proof.one_stream() {
             return None;
@@ -1051,7 +1057,7 @@ impl StructuredLoop {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) fn with_paged_dword_window(mut self, unit: &super::Unit) -> Option<Self> {
+    pub(in crate::dbt::wasm) fn with_paged_dword_window(mut self, unit: &Unit) -> Option<Self> {
         if !self.forward_edges() || self.paged_fetch_bytes.is_none() {
             return None;
         }
@@ -1081,9 +1087,9 @@ impl StructuredLoop {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) fn with_paged_f32_read_span(mut self, unit: &super::Unit) -> Option<Self> {
+    pub(in crate::dbt::wasm) fn with_paged_f32_read_span(mut self, unit: &Unit) -> Option<Self> {
         debug_assert!(self.paged_sse());
-        self.paged_read_span = Some(super::read_loop::ReadLoop::recognize_paged_f32(
+        self.paged_read_span = Some(read_loop::ReadLoop::recognize_paged_f32(
             &unit.context,
             &unit.instructions[self.head as usize..=self.tail as usize],
         )?);
@@ -1091,7 +1097,7 @@ impl StructuredLoop {
     }
 
     #[cfg(not(feature = "parallel"))]
-    pub(super) fn within_paged_fetch(mut self, unit: &super::Unit) -> Option<Self> {
+    pub(in crate::dbt::wasm) fn within_paged_fetch(mut self, unit: &Unit) -> Option<Self> {
         let first = unit.instructions[self.earlier as usize].pc;
         let end = unit.instructions[self.tail as usize].next_pc;
         let length = u32::try_from(end.checked_sub(first)?).ok()?;
@@ -1103,17 +1109,17 @@ impl StructuredLoop {
     }
 
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
-    pub(super) fn select_shared_float(instructions: &[Instruction]) -> Option<Self> {
+    pub(in crate::dbt::wasm) fn select_shared_float(instructions: &[Instruction]) -> Option<Self> {
         Self::select_float(instructions).filter(|body| body.max_lap_len <= 64)
     }
 
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
-    pub(super) fn is_shared_float(self) -> bool {
+    pub(in crate::dbt::wasm) fn is_shared_float(self) -> bool {
         self.kind == LoopKind::Float
     }
 
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
-    pub(super) fn select_shared_rotated_reads(unit: &super::Unit) -> Option<Self> {
+    pub(in crate::dbt::wasm) fn select_shared_rotated_reads(unit: &Unit) -> Option<Self> {
         if unit.context.mode() != Mode::Protected || !unit.context.code32() {
             return None;
         }
@@ -1121,12 +1127,14 @@ impl StructuredLoop {
     }
 
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
-    pub(super) fn select_shared_natural_memory(instructions: &[Instruction]) -> Option<Self> {
+    pub(in crate::dbt::wasm) fn select_shared_natural_memory(
+        instructions: &[Instruction],
+    ) -> Option<Self> {
         super::loop_cfg::select_shared_natural_memory(instructions).map(Self::forward)
     }
 
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
-    fn select_shared_integer_reads(unit: &super::Unit) -> Option<Self> {
+    fn select_shared_integer_reads(unit: &Unit) -> Option<Self> {
         if !(unit.context.is_long64()
             || unit.context.mode() == Mode::Protected && unit.context.code32())
         {
@@ -1136,16 +1144,16 @@ impl StructuredLoop {
     }
 
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
-    pub(super) fn shared_memory_prechecked(self) -> bool {
+    pub(in crate::dbt::wasm) fn shared_memory_prechecked(self) -> bool {
         self.kind == LoopKind::IntegerReads || self.natural_forward_loop()
     }
 
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
-    pub(super) fn is_optional_shared_loop(self) -> bool {
+    pub(in crate::dbt::wasm) fn is_optional_shared_loop(self) -> bool {
         self.kind != LoopKind::Registers
     }
 
-    pub(super) fn select(unit: &super::Unit) -> Option<Self> {
+    pub(in crate::dbt::wasm) fn select(unit: &Unit) -> Option<Self> {
         let instructions = &unit.instructions;
         if cfg!(feature = "parallel") {
             let body = Self::select_registers(instructions);
@@ -1168,8 +1176,8 @@ impl StructuredLoop {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    fn select_rotated_stack(unit: &super::Unit) -> Option<Self> {
-        use super::stack_slots::{StackSlots, unary_slot};
+    fn select_rotated_stack(unit: &Unit) -> Option<Self> {
+        use crate::dbt::wasm::memory::stack_slots::{StackSlots, unary_slot};
         use crate::x86::context::Segment;
 
         if unit.context.mode() != Mode::Protected
@@ -1192,7 +1200,7 @@ impl StructuredLoop {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    fn select_increment_reads(unit: &super::Unit) -> Option<Self> {
+    fn select_increment_reads(unit: &Unit) -> Option<Self> {
         Self::select_straight_body(
             &unit.instructions,
             LoopKind::Float,
@@ -1218,7 +1226,7 @@ impl StructuredLoop {
                         ..
                     }
                 ) && reads.iter().any(|i| scalar_f32(i.operation))
-                    && super::read_loop::ReadLoop::recognize(&unit.context, body).is_some()
+                    && read_loop::ReadLoop::recognize(&unit.context, body).is_some()
             },
         )
     }
@@ -1319,7 +1327,7 @@ impl StructuredLoop {
     }
 }
 
-pub(super) fn inside_register_body(operation: Operation) -> bool {
+pub(in crate::dbt::wasm) fn inside_register_body(operation: Operation) -> bool {
     matches!(
         operation,
         Operation::Alu { .. }
@@ -1639,7 +1647,7 @@ fn normal_low_after(known: u16, operation: Operation) -> u16 {
 
 impl Emitter {
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) fn emit_guarded_preamble(
+    pub(in crate::dbt::wasm) fn emit_guarded_preamble(
         &mut self,
         instructions: &[Instruction],
         body: StructuredLoop,
@@ -1682,7 +1690,7 @@ impl Emitter {
         self.op(Op::I64Const(instructions[body.head as usize].pc as i64))
             .op(Op::I32Const(body.paged_fetch_bytes.unwrap() as i32));
         self.system_bits();
-        self.op(Op::LocalGet(super::SHADOW));
+        self.op(Op::LocalGet(SHADOW));
         if self.paged_copy_access_cache.is_some() {
             self.op(Op::I32Const(
                 crate::embedding::layout::paging::INDEXED_PAGED_READ_GUARD as i32,
@@ -1708,7 +1716,11 @@ impl Emitter {
         self.op(Op::End).op(Op::End);
     }
 
-    pub(super) fn exclude_loop_stop(&mut self, instructions: &[Instruction], body: StructuredLoop) {
+    pub(in crate::dbt::wasm) fn exclude_loop_stop(
+        &mut self,
+        instructions: &[Instruction],
+        body: StructuredLoop,
+    ) {
         let first = instructions[body.earlier as usize].pc as i64;
         let last = instructions[body.tail as usize].pc as i64;
         self.op(Op::LocalGet(3))
@@ -1723,7 +1735,7 @@ impl Emitter {
             .op(Op::I32Eqz);
     }
 
-    pub(super) fn emit_prechecked_loop(
+    pub(in crate::dbt::wasm) fn emit_prechecked_loop(
         &mut self,
         instructions: &[Instruction],
         body: StructuredLoop,
@@ -1738,7 +1750,7 @@ impl Emitter {
         #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
         let trial = if let Some((_, _, budget_floor)) = self.parallel_vector_span {
             let lap = i64::from(body.max_lap_len);
-            let trial_cost = super::parallel::VECTOR_SPAN_TRIAL_LAPS * lap;
+            let trial_cost = parallel::VECTOR_SPAN_TRIAL_LAPS * lap;
             // Reuse the lap gate. If three laps find no hit, enter the
             // original loop at its head with the already committed state.
             self.op(Op::LocalGet(REMAINING))
@@ -1768,13 +1780,13 @@ impl Emitter {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) fn emit_stack_loops(
+    pub(in crate::dbt::wasm) fn emit_stack_loops(
         &mut self,
         instructions: &[Instruction],
         body: StructuredLoop,
         loop_depth: u32,
         write_segment_base: Option<u32>,
-        guard: super::stack_slots::StackGuard,
+        guard: stack_slots::StackGuard,
     ) {
         self.op(Op::If(BlockType::Empty));
         self.guard_stack_slots(guard);
@@ -1788,13 +1800,13 @@ impl Emitter {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) fn emit_integer_read_loops(
+    pub(in crate::dbt::wasm) fn emit_integer_read_loops(
         &mut self,
         instructions: &[Instruction],
         body: StructuredLoop,
         loop_depth: u32,
         write_segment_base: Option<u32>,
-        guard: (super::read_loop::ReadLoop, super::memory::SpanCache, u32),
+        guard: (read_loop::ReadLoop, memory::SpanCache, u32),
     ) {
         let (proof, span, first_bias) = guard;
         self.op(Op::If(BlockType::Empty));
@@ -1808,7 +1820,7 @@ impl Emitter {
         self.op(Op::End).op(Op::End);
     }
 
-    pub(super) fn emit_guarded_paged_loop(
+    pub(in crate::dbt::wasm) fn emit_guarded_paged_loop(
         &mut self,
         instructions: &[Instruction],
         body: StructuredLoop,
@@ -1880,7 +1892,7 @@ impl Emitter {
         self.op(Op::I64Const(pc as i64))
             .op(Op::I32Const(body.paged_fetch_bytes.unwrap() as i32));
         self.system_bits();
-        self.op(Op::LocalGet(super::SHADOW));
+        self.op(Op::LocalGet(SHADOW));
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         if body.paged_vector_copy() && self.paged_copy_access_cache.is_some()
             || self.indexed_paged_read.is_some()
@@ -1942,7 +1954,7 @@ impl Emitter {
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         if let Some((proof, resolve, bias)) = self.paged_read_span {
             if body.paged_sse() {
-                use super::read_loop::F32PairFit;
+                use crate::dbt::wasm::memory::read_loop::F32PairFit;
                 if let Some(floor) = self.paged_f32_prefix_floor {
                     self.op(Op::I64Const(i64::from(body.max_lap_len)))
                         .op(Op::LocalSet(floor));
@@ -2029,13 +2041,13 @@ impl Emitter {
                 .op(Op::I64And)
                 .op(Op::I64Eqz)
                 .op(Op::If(BlockType::Empty));
-            self.paged_vector_window = Some(super::paged_read::PagedReadWindow {
+            self.paged_vector_window = Some(paged_read::PagedReadWindow {
                 resolve: retouch.resolve,
                 ..window
             });
             self.emit_prechecked_body(instructions, body, loop_depth + 4, None);
             self.op(Op::Else);
-            self.paged_vector_window = Some(super::paged_read::PagedReadWindow {
+            self.paged_vector_window = Some(paged_read::PagedReadWindow {
                 retouch: None,
                 ..window
             });
@@ -2063,7 +2075,7 @@ impl Emitter {
             .op(Op::End);
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         if self.paged_read_rearm.is_some() {
-            use super::paged_read::PAGED_READ_REPLAY;
+            use crate::dbt::wasm::memory::paged_read::PAGED_READ_REPLAY;
             // Only checked entries count down. Warm admission executes
             // the original guard sequence and pays no cooldown test.
             self.op(Op::Else)
@@ -2086,7 +2098,7 @@ impl Emitter {
         self.op(Op::End);
     }
 
-    pub(super) fn emit_prechecked_body(
+    pub(in crate::dbt::wasm) fn emit_prechecked_body(
         &mut self,
         instructions: &[Instruction],
         body: StructuredLoop,
@@ -2123,7 +2135,7 @@ impl Emitter {
         self.current_index = current_index;
     }
 
-    pub(super) fn restore_loop_registers(&mut self) {
+    pub(in crate::dbt::wasm) fn restore_loop_registers(&mut self) {
         for (bank, upper) in self.register_upper_dwords.into_iter().enumerate() {
             if let Some(upper) = upper {
                 let bank = GPR + bank as u32;
@@ -2203,7 +2215,7 @@ impl Emitter {
         self.route(exit[0], depth, depth + 1);
     }
 
-    pub(super) fn emit_structured_loop(
+    pub(in crate::dbt::wasm) fn emit_structured_loop(
         &mut self,
         instructions: &[Instruction],
         body: StructuredLoop,

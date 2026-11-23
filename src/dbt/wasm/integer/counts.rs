@@ -1,4 +1,4 @@
-use super::{Emitter, FLAGS, LHS, RESULT, RHS, VALUE};
+use crate::dbt::wasm::{Emitter, FLAGS, LHS, RESULT, RHS, VALUE};
 use crate::x86::instruction::{Count, DoubleShift, Location, RegisterView, Shift, Width};
 use wasm_encoder::{BlockType, Instruction as Op};
 
@@ -15,7 +15,7 @@ impl Emitter {
             .op(Op::LocalSet(RHS));
     }
 
-    pub(super) fn shift(
+    pub(in crate::dbt::wasm) fn shift(
         &mut self,
         kind: Shift,
         dst: Location,
@@ -95,7 +95,7 @@ impl Emitter {
         self.shift_flags(kind, width);
     }
 
-    pub(super) fn shift_flags(&mut self, kind: Shift, width: Width) {
+    pub(in crate::dbt::wasm) fn shift_flags(&mut self, kind: Shift, width: Width) {
         self.op(Op::LocalGet(RHS))
             .op(Op::I64Const(0))
             .op(Op::I64Ne)
@@ -124,7 +124,7 @@ impl Emitter {
         self.op(Op::End).op(Op::End);
     }
 
-    pub(super) fn signed(&mut self, width: Width) {
+    pub(in crate::dbt::wasm) fn signed(&mut self, width: Width) {
         match width {
             Width::W8 => {
                 self.op(Op::I64Extend8S);
@@ -330,7 +330,7 @@ impl Emitter {
             .op(Op::LocalSet(FLAGS));
     }
 
-    pub(super) fn double_shift(
+    pub(in crate::dbt::wasm) fn double_shift(
         &mut self,
         kind: DoubleShift,
         dst: Location,

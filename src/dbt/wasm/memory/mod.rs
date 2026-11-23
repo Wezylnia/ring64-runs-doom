@@ -1,9 +1,26 @@
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-use super::indexed::IndexedOperand;
-use super::{ADDRESS, Emitter, GPR, REASON, RESULT, STORE_STATUS, VALUE};
+pub(super) mod flat;
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+pub(super) mod indexed;
+pub(super) mod mmio;
+pub(super) mod paged_read;
+#[cfg(all(feature = "parallel", target_arch = "wasm32"))]
+pub(super) mod parallel;
+#[cfg(any(test, all(not(feature = "parallel"), target_arch = "wasm32")))]
+pub(super) mod read_loop;
+#[cfg(any(test, all(not(feature = "parallel"), target_arch = "wasm32")))]
+pub(super) mod stack_slots;
+mod streaming;
+mod strings;
+
+use crate::dbt::wasm::{
+    ADDRESS, Emitter, GPR, REASON, RESULT, STORE_STATUS, VALUE, execution::loops::loop_cfg,
+};
 use crate::embedding::layout::{DATA, RunState};
 use crate::x86::context::Segment;
 use crate::x86::instruction::{Address, AddressBase, DataOperand, RegisterView, Width};
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+use indexed::IndexedOperand;
 use wasm_encoder::{BlockType, Instruction as Op, MemArg};
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -181,15 +198,13 @@ impl Emitter {
     pub(super) fn restore_preceding_read_state(&mut self) {
         self.retire_before_read_fault();
         match self.flags_on_read_fault {
-            Some(super::loop_cfg::ReadFaultFlags::Arithmetic(kind, width)) => {
+            Some(loop_cfg::ReadFaultFlags::Arithmetic(kind, width)) => {
                 if kind == crate::x86::instruction::Alu::Cmp {
                     self.arithmetic_result(kind, width);
                 }
                 self.arithmetic_flags(kind, width);
             }
-            Some(super::loop_cfg::ReadFaultFlags::Shift(kind, width)) => {
-                self.shift_flags(kind, width)
-            }
+            Some(loop_cfg::ReadFaultFlags::Shift(kind, width)) => self.shift_flags(kind, width),
             None => {}
         }
     }
@@ -385,10 +400,10 @@ impl Emitter {
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     pub(super) fn guard_indexed_read_window(
         &mut self,
-        window: super::read_loop::IndexedReadWindow,
+        window: read_loop::IndexedReadWindow,
         lap: u32,
     ) {
-        use super::{LHS, REMAINING, RHS};
+        use crate::dbt::wasm::{LHS, REMAINING, RHS};
         use crate::memory::DirectSpan;
 
         let field = |offset, align| MemArg {
@@ -472,7 +487,7 @@ impl Emitter {
     fn load_indexed_dword(
         &mut self,
         dst: RegisterView,
-        window: super::read_loop::IndexedReadWindow,
+        window: read_loop::IndexedReadWindow,
         next_pc: u64,
         exit_depth: u32,
     ) {

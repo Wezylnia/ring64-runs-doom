@@ -1,15 +1,15 @@
-use super::{ADDRESS, Emitter, REASON, RESULT, STORE_STATUS, VALUE};
+use crate::dbt::wasm::{ADDRESS, Emitter, REASON, RESULT, STORE_STATUS, VALUE};
 use crate::embedding::layout::RunState;
 use crate::x86::instruction::{Address, DataOperand, RegisterView, Width};
 use wasm_encoder::{BlockType, Instruction as Op, MemArg};
 
-pub(super) enum Move {
+pub(in crate::dbt::wasm) enum Move {
     Read(RegisterView),
     Write(DataOperand),
 }
 
 impl Emitter {
-    pub(super) fn mmio_move(
+    pub(in crate::dbt::wasm) fn mmio_move(
         &mut self,
         instruction: Move,
         address: Address,
@@ -29,7 +29,7 @@ impl Emitter {
 
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         let direct = {
-            use super::memory::DirectOperand;
+            use super::DirectOperand;
             // Span resolvers only cover ordinary RAM mappings. A device or a
             // partial overlap uses the reached operand helper below.
             let operand = if matches!(instruction, Move::Read(_)) {

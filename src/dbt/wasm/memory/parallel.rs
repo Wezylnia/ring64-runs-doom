@@ -1,4 +1,6 @@
-use super::{ADDRESS, Emitter, LHS, REMAINING, RESULT, RHS, STORE_STATUS, VALUE};
+use crate::dbt::wasm::{
+    ADDRESS, Emitter, LHS, REMAINING, RESULT, RHS, STORE_STATUS, VALUE, execution::control,
+};
 use crate::embedding::layout::RunState;
 use crate::x86::{
     context::Segment,
@@ -12,14 +14,14 @@ use wasm_encoder::{BlockType, Instruction as Op, MemArg, ValType};
 
 const BOUNDARY: i32 = 29;
 const ATTEMPTS: i32 = crate::memory::SHARED_CAS_ATTEMPTS as i32;
-pub(super) const VECTOR_SPAN_TRIAL_LAPS: i64 = 3;
+pub(in crate::dbt::wasm) const VECTOR_SPAN_TRIAL_LAPS: i64 = 3;
 const LANE: MemArg = MemArg {
     offset: 0,
     align: 3,
     memory_index: 1,
 };
 
-pub(super) fn native_lock_memo_site(instructions: &[Instruction]) -> Option<u32> {
+pub(in crate::dbt::wasm) fn native_lock_memo_site(instructions: &[Instruction]) -> Option<u32> {
     let mut add = None;
     let mut other = None;
     let mut multiple_others = false;
@@ -69,7 +71,7 @@ pub(super) fn native_lock_memo_site(instructions: &[Instruction]) -> Option<u32>
 }
 
 #[derive(Clone, Copy)]
-pub(super) struct Atomic {
+pub(in crate::dbt::wasm) struct Atomic {
     enter: u32,
     leave: u32,
     guard: u32,
@@ -79,7 +81,7 @@ pub(super) struct Atomic {
 }
 
 impl Atomic {
-    pub(super) fn new(first: u32, token: u32) -> Self {
+    pub(in crate::dbt::wasm) fn new(first: u32, token: u32) -> Self {
         Self {
             enter: first,
             leave: first + 1,
@@ -92,7 +94,7 @@ impl Atomic {
 }
 
 #[derive(Clone, Copy)]
-pub(super) struct Scalar {
+pub(in crate::dbt::wasm) struct Scalar {
     resolve: u32,
     address: u32,
     attempts: u32,
@@ -103,7 +105,7 @@ pub(super) struct Scalar {
 }
 
 impl Scalar {
-    pub(super) fn new(resolve: u32, first: u32) -> Self {
+    pub(in crate::dbt::wasm) fn new(resolve: u32, first: u32) -> Self {
         Self {
             resolve,
             address: first,
@@ -117,7 +119,7 @@ impl Scalar {
 }
 
 #[derive(Clone, Copy)]
-pub(super) struct VectorSpanMemo {
+pub(in crate::dbt::wasm) struct VectorSpanMemo {
     key: Address,
     offset: u32,
     limit: u32,
@@ -125,7 +127,7 @@ pub(super) struct VectorSpanMemo {
 }
 
 impl VectorSpanMemo {
-    pub(super) fn new(key: Address, first: u32) -> Self {
+    pub(in crate::dbt::wasm) fn new(key: Address, first: u32) -> Self {
         Self {
             key,
             offset: first,
@@ -134,7 +136,7 @@ impl VectorSpanMemo {
         }
     }
 
-    pub(super) fn groups(instructions: &[Instruction]) -> [Option<Address>; 2] {
+    pub(in crate::dbt::wasm) fn groups(instructions: &[Instruction]) -> [Option<Address>; 2] {
         let mut groups = [None; 2];
         for key in instructions.iter().filter_map(|i| Self::key(i.operation)) {
             if groups.contains(&Some(key)) {
@@ -180,7 +182,7 @@ impl VectorSpanMemo {
 }
 
 #[derive(Clone, Copy)]
-pub(super) struct DwordWindow {
+pub(in crate::dbt::wasm) struct DwordWindow {
     resolve: u32,
     base: u32,
     limit: u32,
@@ -191,7 +193,12 @@ pub(super) struct DwordWindow {
 }
 
 impl DwordWindow {
-    pub(super) fn new(resolve: u32, first: u32, wide: bool, allow_bytes: bool) -> Self {
+    pub(in crate::dbt::wasm) fn new(
+        resolve: u32,
+        first: u32,
+        wide: bool,
+        allow_bytes: bool,
+    ) -> Self {
         Self {
             resolve,
             base: first,
@@ -203,7 +210,11 @@ impl DwordWindow {
         }
     }
 
-    pub(super) fn eligible(operation: Operation, allow_bytes: bool, wide: bool) -> bool {
+    pub(in crate::dbt::wasm) fn eligible(
+        operation: Operation,
+        allow_bytes: bool,
+        wide: bool,
+    ) -> bool {
         let address = match operation {
             Operation::Load {
                 address,
@@ -222,7 +233,7 @@ impl DwordWindow {
         address.is_some_and(|address| Self::supports(address, wide) && address.index.is_some())
     }
 
-    pub(super) fn eligible_base_byte(operation: Operation, wide: bool) -> bool {
+    pub(in crate::dbt::wasm) fn eligible_base_byte(operation: Operation, wide: bool) -> bool {
         Self::byte_address(operation).is_some_and(|address| {
             Self::supports(address, wide)
                 && address.index.is_none()
@@ -252,7 +263,7 @@ impl DwordWindow {
 }
 
 #[derive(Clone, Copy)]
-pub(super) struct ByteStoreSpan {
+pub(in crate::dbt::wasm) struct ByteStoreSpan {
     resolve: u32,
     base: u32,
     limit: u32,
@@ -260,7 +271,7 @@ pub(super) struct ByteStoreSpan {
 }
 
 impl ByteStoreSpan {
-    pub(super) fn new(resolve: u32, first: u32) -> Self {
+    pub(in crate::dbt::wasm) fn new(resolve: u32, first: u32) -> Self {
         Self {
             resolve,
             base: first,
@@ -269,7 +280,7 @@ impl ByteStoreSpan {
         }
     }
 
-    pub(super) fn eligible(operation: Operation, wide: bool) -> bool {
+    pub(in crate::dbt::wasm) fn eligible(operation: Operation, wide: bool) -> bool {
         let address_width = if wide { Width::W64 } else { Width::W32 };
         matches!(operation, Operation::Store { address, width: Width::W8, .. }
             if address.segment == Segment::Ds && address.size == address_width && address.index.is_some())
@@ -277,7 +288,7 @@ impl ByteStoreSpan {
 }
 
 impl Emitter {
-    pub(super) fn begin_parallel_instruction(
+    pub(in crate::dbt::wasm) fn begin_parallel_instruction(
         &mut self,
         instruction: Instruction,
         exit_depth: u32,
@@ -299,7 +310,7 @@ impl Emitter {
         exit_depth
     }
 
-    pub(super) fn end_parallel_instruction(
+    pub(in crate::dbt::wasm) fn end_parallel_instruction(
         &mut self,
         instruction: Instruction,
         exit_depth: u32,
@@ -316,13 +327,13 @@ impl Emitter {
         exit_depth
     }
 
-    pub(super) fn enter_parallel_atomic(&mut self) {
+    pub(in crate::dbt::wasm) fn enter_parallel_atomic(&mut self) {
         let atomic = self.parallel_atomic.expect("locked instruction imports");
         self.op(Op::Call(atomic.enter))
             .op(Op::LocalSet(atomic.token));
     }
 
-    pub(super) fn enter_parallel_guarded(&mut self, width: u32) {
+    pub(in crate::dbt::wasm) fn enter_parallel_guarded(&mut self, width: u32) {
         let atomic = self.parallel_atomic.expect("locked instruction imports");
         let segment = self.shared_segment();
         self.linear_address();
@@ -336,7 +347,7 @@ impl Emitter {
         self.op(Op::End);
     }
 
-    pub(super) fn leave_parallel_atomic_if_held(&mut self) {
+    pub(in crate::dbt::wasm) fn leave_parallel_atomic_if_held(&mut self) {
         let Some(atomic) = self.parallel_atomic else {
             return;
         };
@@ -355,11 +366,15 @@ impl Emitter {
             .op(Op::End);
     }
 
-    pub(super) fn parallel_boundary(&mut self, exit_depth: u32) {
+    pub(in crate::dbt::wasm) fn parallel_boundary(&mut self, exit_depth: u32) {
         self.parallel_boundary_with_flags(exit_depth, false);
     }
 
-    pub(super) fn parallel_boundary_with_flags(&mut self, exit_depth: u32, compare: bool) {
+    pub(in crate::dbt::wasm) fn parallel_boundary_with_flags(
+        &mut self,
+        exit_depth: u32,
+        compare: bool,
+    ) {
         self.parallel_signal();
         self.op(Op::If(BlockType::Empty));
         if compare {
@@ -453,7 +468,7 @@ impl Emitter {
             .op(Op::I64ExtendI32U);
     }
 
-    pub(super) fn native_locked_integer(
+    pub(in crate::dbt::wasm) fn native_locked_integer(
         &mut self,
         kind: Alu,
         address: Address,
@@ -503,7 +518,12 @@ impl Emitter {
         true
     }
 
-    pub(super) fn parallel_load(&mut self, width: Width, for_write: bool, exit_depth: u32) -> bool {
+    pub(in crate::dbt::wasm) fn parallel_load(
+        &mut self,
+        width: Width,
+        for_write: bool,
+        exit_depth: u32,
+    ) -> bool {
         let Some(scalar) = self.parallel_scalar else {
             return false;
         };
@@ -533,7 +553,11 @@ impl Emitter {
         true
     }
 
-    pub(super) fn parallel_load_dword_window(&mut self, width: Width, exit_depth: u32) -> bool {
+    pub(in crate::dbt::wasm) fn parallel_load_dword_window(
+        &mut self,
+        width: Width,
+        exit_depth: u32,
+    ) -> bool {
         let operation = self.current_operation;
         let window = self
             .parallel_dword_window
@@ -647,7 +671,7 @@ impl Emitter {
             .op(Op::LocalTee(delta));
     }
 
-    pub(super) fn parallel_vector_dword(&mut self, exit_depth: u32) -> bool {
+    pub(in crate::dbt::wasm) fn parallel_vector_dword(&mut self, exit_depth: u32) -> bool {
         let (Some(helper), Some(scalar)) = (self.parallel_vector_dword, self.parallel_scalar)
         else {
             return false;
@@ -741,7 +765,7 @@ impl Emitter {
         debug_assert!(position < lap);
         debug_assert!(matches!(
             self.instruction_retirement,
-            super::control::InstructionRetirement::One
+            control::InstructionRetirement::One
         ));
         // A cleared trial can restart on a miss. Account for the already
         // retired prefix so the same gate still admits exactly three laps.
@@ -805,7 +829,7 @@ impl Emitter {
         self.op(Op::I64AtomicRmwCmpxchg(LANE));
     }
 
-    pub(super) fn parallel_store(&mut self, width: Width, exit_depth: u32) -> bool {
+    pub(in crate::dbt::wasm) fn parallel_store(&mut self, width: Width, exit_depth: u32) -> bool {
         let Some(scalar) = self.parallel_scalar else {
             return false;
         };

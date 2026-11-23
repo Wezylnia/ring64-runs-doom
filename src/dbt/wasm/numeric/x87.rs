@@ -1,4 +1,6 @@
-use super::{Emitter, FLAGS, GPR, REASON, STORE_STATUS};
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+use crate::dbt::wasm::{ADDRESS, LHS, REMAINING, RESULT, RHS, RIP, SHADOW, VALUE};
+use crate::dbt::wasm::{Emitter, FLAGS, GPR, REASON, STORE_STATUS};
 use crate::embedding::layout::RunState;
 use crate::x86::context::Segment;
 use crate::x86::instruction::X87Instruction;
@@ -6,8 +8,6 @@ use crate::x86::x87::Kind;
 use std::mem::offset_of;
 use wasm_encoder::{Instruction as Wasm, MemArg};
 
-#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-use super::{ADDRESS, LHS, REMAINING, RESULT, RHS, RIP, SHADOW, VALUE};
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 use crate::x86::{
     instruction::{Instruction, Operation},
@@ -22,7 +22,7 @@ use crate::x86::{
 use wasm_encoder::BlockType;
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-pub(super) fn x87_pair(
+pub(in crate::dbt::wasm) fn x87_pair(
     first: Instruction,
     second: Instruction,
 ) -> Option<(X87Instruction, X87Instruction)> {
@@ -43,7 +43,7 @@ pub(super) fn x87_pair(
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-pub(super) fn paged_x87_memory_pair(first: Instruction, second: Instruction) -> bool {
+pub(in crate::dbt::wasm) fn paged_x87_memory_pair(first: Instruction, second: Instruction) -> bool {
     x87_pair(first, second).is_some_and(|(head, tail)| {
         head.address
             .is_some_and(|address| matches!(address.segment, Segment::Ds | Segment::Ss))
@@ -56,7 +56,7 @@ pub(super) fn paged_x87_memory_pair(first: Instruction, second: Instruction) -> 
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-pub(super) fn inline_x87_bank_operation(op: Op) -> bool {
+pub(in crate::dbt::wasm) fn inline_x87_bank_operation(op: Op) -> bool {
     register_store_pop(op)
         || op.kind == Kind::Constant && op.index == 6
         || op.kind == Kind::Sub && op.format == Format::Register && !op.dest_index && op.pop == 0
@@ -634,7 +634,7 @@ impl Emitter {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) fn emit_x87_pair(
+    pub(in crate::dbt::wasm) fn emit_x87_pair(
         &mut self,
         first: Instruction,
         second: Instruction,
@@ -766,7 +766,7 @@ impl Emitter {
         self.op(Wasm::End).op(Wasm::End);
     }
 
-    pub(super) fn x87(
+    pub(in crate::dbt::wasm) fn x87(
         &mut self,
         instruction: X87Instruction,
         pc: u64,

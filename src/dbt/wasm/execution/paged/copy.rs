@@ -1,7 +1,7 @@
-use super::paged_prefix::PagedPrefixFetch;
-use super::{
+use super::prefix::PagedPrefixFetch;
+use crate::dbt::wasm::{
     ADDRESS, Emitter, LHS, REMAINING, RHS, RIP, STORE_STATUS, StructuredLoop, Unit, VALUE,
-    memory::SpanCache,
+    execution::loops::loop_cfg, memory::SpanCache,
 };
 use crate::x86::context::Segment;
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -15,7 +15,7 @@ use std::mem::offset_of;
 use wasm_encoder::{BlockType, Instruction as Op, MemArg};
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-pub(super) fn emit_copy_access_cache(resolve: u32) -> wasm_encoder::Function {
+pub(in crate::dbt::wasm) fn emit_copy_access_cache(resolve: u32) -> wasm_encoder::Function {
     use crate::embedding::layout::{COPY_FILL_INDEX, RunState, StateStorage};
     use crate::x86::paging::cache::{
         CAPACITY, INDEXED_READ_ENTRIES, INDEXED_VALID, INDEXED_WRITE_READABLE, IndexedReadEntry,
@@ -216,7 +216,7 @@ pub(super) fn emit_copy_access_cache(resolve: u32) -> wasm_encoder::Function {
 }
 
 #[derive(Clone, Copy)]
-pub(super) struct CopyGroup {
+pub(in crate::dbt::wasm) struct CopyGroup {
     source: Address,
     destination: Address,
     register: u8,
@@ -227,7 +227,7 @@ pub(super) struct CopyGroup {
 }
 
 #[derive(Clone, Copy)]
-pub(super) struct FlatVectorCopy {
+pub(in crate::dbt::wasm) struct FlatVectorCopy {
     group: CopyGroup,
     tail: Option<CopyTail>,
 }
@@ -244,7 +244,7 @@ struct CopyTail {
 
 #[derive(Clone, Copy)]
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-pub(super) struct PreloadedCopyTail {
+pub(in crate::dbt::wasm) struct PreloadedCopyTail {
     advance: RegisterView,
     step: u64,
     stack: Address,
@@ -253,18 +253,18 @@ pub(super) struct PreloadedCopyTail {
 }
 
 impl FlatVectorCopy {
-    pub(super) fn instruction_count(self) -> u32 {
+    pub(in crate::dbt::wasm) fn instruction_count(self) -> u32 {
         self.group.instruction_count() + 3 * u32::from(self.tail.is_some())
     }
 
-    pub(super) fn can_retain_window(self) -> bool {
+    pub(in crate::dbt::wasm) fn can_retain_window(self) -> bool {
         let Some(tail) = self.tail else {
             return false;
         };
         self.group.has_fixed_stride(tail)
     }
 
-    pub(super) fn can_defer_flags(self) -> bool {
+    pub(in crate::dbt::wasm) fn can_defer_flags(self) -> bool {
         self.tail.is_some_and(|tail| {
             matches!(
                 tail.condition,
@@ -344,11 +344,11 @@ struct ScalarTransfer {
 }
 
 #[derive(Clone, Copy)]
-pub(super) struct ScalarCopyGroup {
+pub(in crate::dbt::wasm) struct ScalarCopyGroup {
     source: Address,
     destination: Address,
     transfers: [Option<ScalarTransfer>; 4],
-    pub(super) instructions: usize,
+    pub(in crate::dbt::wasm) instructions: usize,
     width: u32,
     end: u64,
 }
@@ -374,7 +374,7 @@ fn follows_address(base: Address, address: Address, offset: u32) -> bool {
 
 impl ScalarCopyGroup {
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) fn following_jump(self, unit: &Unit, head: usize) -> Option<u64> {
+    pub(in crate::dbt::wasm) fn following_jump(self, unit: &Unit, head: usize) -> Option<u64> {
         let first = unit.instructions.get(head)?.pc;
         let jump = unit.instructions.get(head + self.instructions)?;
         let Operation::Jump { target } = jump.operation else {
@@ -388,7 +388,7 @@ impl ScalarCopyGroup {
         .then_some(target)
     }
 
-    pub(super) fn finite_prefix(
+    pub(in crate::dbt::wasm) fn finite_prefix(
         unit: &Unit,
         loops: [Option<StructuredLoop>; 2],
     ) -> Option<(usize, Self)> {
@@ -536,7 +536,7 @@ impl ScalarCopyGroup {
 
 impl CopyGroup {
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) fn preloaded_tail(
+    pub(in crate::dbt::wasm) fn preloaded_tail(
         self,
         instructions: &[Instruction],
         unit: &Unit,
@@ -641,7 +641,7 @@ impl CopyGroup {
         }
     }
 
-    pub(super) fn finite_prefix(
+    pub(in crate::dbt::wasm) fn finite_prefix(
         unit: &Unit,
         loops: [Option<StructuredLoop>; 2],
     ) -> Option<(usize, Self)> {
@@ -678,11 +678,11 @@ impl CopyGroup {
         })
     }
 
-    pub(super) fn recognize(lap: &[Instruction]) -> Option<Self> {
+    pub(in crate::dbt::wasm) fn recognize(lap: &[Instruction]) -> Option<Self> {
         Self::recognize_with_minimum_pairs(lap, 2, Width::W64)
     }
 
-    pub(super) fn preloaded_prefix(
+    pub(in crate::dbt::wasm) fn preloaded_prefix(
         unit: &Unit,
         loops: [Option<StructuredLoop>; 2],
     ) -> Option<(usize, Self)> {
@@ -727,7 +727,7 @@ impl CopyGroup {
             })
     }
 
-    pub(super) fn flat_prefixes(
+    pub(in crate::dbt::wasm) fn flat_prefixes(
         unit: &Unit,
         body: Option<StructuredLoop>,
     ) -> Vec<(usize, FlatVectorCopy)> {
@@ -868,11 +868,11 @@ impl CopyGroup {
         })
     }
 
-    pub(super) fn instruction_count(self) -> u32 {
+    pub(in crate::dbt::wasm) fn instruction_count(self) -> u32 {
         self.width / 8 + if self.adjustment.is_some() { 2 } else { 0 }
     }
 
-    pub(super) fn prefix_guard_count(self) -> usize {
+    pub(in crate::dbt::wasm) fn prefix_guard_count(self) -> usize {
         // Admission advances fetch recency past the store. Keep the successor
         // inside the guard for a single pair without retiring it here.
         if self.width == 16 {
@@ -938,19 +938,19 @@ impl DestinationAdjustment {
 }
 
 #[derive(Clone, Copy)]
-pub(super) struct CopyWindow {
-    pub(super) group: CopyGroup,
-    pub(super) resolve: u32,
-    pub(super) source_base: u32,
-    pub(super) destination_base: u32,
-    pub(super) limit: u32,
-    pub(super) source_host: u32,
-    pub(super) destination_host: u32,
+pub(in crate::dbt::wasm) struct CopyWindow {
+    pub(in crate::dbt::wasm) group: CopyGroup,
+    pub(in crate::dbt::wasm) resolve: u32,
+    pub(in crate::dbt::wasm) source_base: u32,
+    pub(in crate::dbt::wasm) destination_base: u32,
+    pub(in crate::dbt::wasm) limit: u32,
+    pub(in crate::dbt::wasm) source_host: u32,
+    pub(in crate::dbt::wasm) destination_host: u32,
 }
 
 impl Emitter {
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) fn emit_preloaded_copy_loop(
+    pub(in crate::dbt::wasm) fn emit_preloaded_copy_loop(
         &mut self,
         instructions: &[Instruction],
         group: CopyGroup,
@@ -1069,7 +1069,7 @@ impl Emitter {
         self.op(Op::End).op(Op::End).op(Op::End).op(Op::End);
     }
 
-    pub(super) fn emit_linear_scalar_copy(
+    pub(in crate::dbt::wasm) fn emit_linear_scalar_copy(
         &mut self,
         instructions: &[Instruction],
         group: ScalarCopyGroup,
@@ -1090,7 +1090,7 @@ impl Emitter {
         self.op(Op::End).op(Op::End).op(Op::End);
     }
 
-    pub(super) fn emit_linear_vector_copy(
+    pub(in crate::dbt::wasm) fn emit_linear_vector_copy(
         &mut self,
         instructions: &[Instruction],
         copy: FlatVectorCopy,
@@ -1136,7 +1136,7 @@ impl Emitter {
                 .op(Op::LocalSet(RIP));
             self.cloned_condition(
                 tail.condition,
-                start_remaining.map(|_| super::loop_cfg::ConditionSource::Operands(Width::W32)),
+                start_remaining.map(|_| loop_cfg::ConditionSource::Operands(Width::W32)),
             );
             self.op(Op::BrIf(3));
             if start_remaining.is_some() {
@@ -1230,7 +1230,7 @@ impl Emitter {
         self.emit_flat_copy_lap(group, tail, count, true);
         self.cloned_condition(
             tail.condition,
-            Some(super::loop_cfg::ConditionSource::Operands(Width::W32)),
+            Some(loop_cfg::ConditionSource::Operands(Width::W32)),
         );
         self.op(Op::If(BlockType::Empty))
             .op(Op::LocalGet(STORE_STATUS))
@@ -1363,7 +1363,7 @@ impl Emitter {
             .op(Op::LocalSet(RIP));
         self.cloned_condition(
             tail.condition,
-            Some(super::loop_cfg::ConditionSource::Operands(Width::W32)),
+            Some(loop_cfg::ConditionSource::Operands(Width::W32)),
         );
         self.op(Op::BrIf(3))
             .op(Op::I64Const(tail.next_pc as i64))
@@ -1437,7 +1437,7 @@ impl Emitter {
             .op(Op::If(BlockType::Empty));
     }
 
-    pub(super) fn emit_finite_scalar_copy(
+    pub(in crate::dbt::wasm) fn emit_finite_scalar_copy(
         &mut self,
         instructions: &[Instruction],
         group: ScalarCopyGroup,
@@ -1484,7 +1484,7 @@ impl Emitter {
         }
     }
 
-    pub(super) fn emit_finite_copy_prefix(
+    pub(in crate::dbt::wasm) fn emit_finite_copy_prefix(
         &mut self,
         instructions: &[Instruction],
         group: CopyGroup,
@@ -1530,7 +1530,7 @@ impl Emitter {
             .op(Op::LocalSet(STORE_STATUS));
     }
 
-    pub(super) fn emit_paged_copy_group(
+    pub(in crate::dbt::wasm) fn emit_paged_copy_group(
         &mut self,
         window: CopyWindow,
         exit_depth: u32,

@@ -1,4 +1,6 @@
-use super::{ADDRESS, Emitter, RIP, STORE_STATUS, StructuredLoop, read_loop::ReadLoop};
+use crate::dbt::wasm::{
+    ADDRESS, Emitter, RIP, STORE_STATUS, StructuredLoop, memory::read_loop::ReadLoop,
+};
 use crate::x86::{
     float::{Format, Kind},
     instruction::{Address, Instruction, Location, Operation, VectorInstruction, VectorOperand},
@@ -18,7 +20,7 @@ enum Lane {
 }
 
 #[derive(Clone, Copy)]
-pub(super) struct DyadicReduction {
+pub(in crate::dbt::wasm) struct DyadicReduction {
     inputs: [(u32, Address); 2],
     accumulator: u8,
     outputs: [u8; 4],
@@ -26,9 +28,10 @@ pub(super) struct DyadicReduction {
 }
 
 impl DyadicReduction {
-    pub(super) const LOCALS: [(u32, ValType); 2] = [(4, ValType::V128), (1, ValType::I32)];
+    pub(in crate::dbt::wasm) const LOCALS: [(u32, ValType); 2] =
+        [(4, ValType::V128), (1, ValType::I32)];
 
-    pub(super) fn recognize(
+    pub(in crate::dbt::wasm) fn recognize(
         proof: ReadLoop,
         body: StructuredLoop,
         instructions: &[Instruction],
@@ -136,7 +139,7 @@ impl DyadicReduction {
 }
 
 impl Emitter {
-    pub(super) fn admit_dyadic_accumulator(&mut self, reduction: DyadicReduction) {
+    pub(in crate::dbt::wasm) fn admit_dyadic_accumulator(&mut self, reduction: DyadicReduction) {
         let (proof, _) = self
             .paged_proved_f32_reads
             .or(self.proved_reads)
@@ -191,7 +194,7 @@ impl Emitter {
             .op(Op::LocalSet(reduction.pending()));
     }
 
-    pub(super) fn try_dyadic_prefix(
+    pub(in crate::dbt::wasm) fn try_dyadic_prefix(
         &mut self,
         reduction: DyadicReduction,
         paged_prefix: Option<(u32, u64)>,
@@ -286,7 +289,7 @@ impl Emitter {
             .op(Op::End);
     }
 
-    pub(super) fn flush_dyadic_prefixes(&mut self, reduction: DyadicReduction) {
+    pub(in crate::dbt::wasm) fn flush_dyadic_prefixes(&mut self, reduction: DyadicReduction) {
         self.op(Op::LocalGet(reduction.state()))
             .op(Op::I32Const(DYADIC_PENDING))
             .op(Op::I32Eq)

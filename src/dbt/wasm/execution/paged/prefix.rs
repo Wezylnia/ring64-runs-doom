@@ -1,15 +1,15 @@
-use super::{Emitter, StructuredLoop, Unit};
+use crate::dbt::wasm::{Emitter, SHADOW, StructuredLoop, Unit, execution::loops::structured_loop};
 use crate::x86::instruction::{Alu, Instruction, Location, Operation};
 use wasm_encoder::{BlockType, Instruction as Op};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum PagedPrefixFetch {
+pub(in crate::dbt::wasm) enum PagedPrefixFetch {
     Checked,
     Retained,
     RetainedSse,
 }
 
-pub(super) fn paged_prefix_read(
+pub(in crate::dbt::wasm) fn paged_prefix_read(
     instruction: Instruction,
 ) -> Option<(
     crate::x86::instruction::RegisterView,
@@ -38,13 +38,13 @@ pub(super) fn paged_prefix_read(
     (address.segment == Segment::Ds).then_some((dst, address, source_width, width))
 }
 
-pub(super) fn paged_prefix_narrow_read(instruction: Instruction) -> bool {
+pub(in crate::dbt::wasm) fn paged_prefix_narrow_read(instruction: Instruction) -> bool {
     use crate::x86::instruction::Width;
     paged_prefix_read(instruction)
         .is_some_and(|(_, _, width, _)| matches!(width, Width::W8 | Width::W16))
 }
 
-pub(super) fn paged_prefix_dword_read(instruction: Instruction) -> bool {
+pub(in crate::dbt::wasm) fn paged_prefix_dword_read(instruction: Instruction) -> bool {
     use crate::x86::context::Segment;
     use crate::x86::instruction::{Location, MemoryAluOperands, Width};
 
@@ -72,7 +72,7 @@ pub(super) fn paged_prefix_dword_read(instruction: Instruction) -> bool {
     address.segment == Segment::Ds
 }
 
-pub(super) fn paged_prefix_wide_read(instruction: Instruction) -> bool {
+pub(in crate::dbt::wasm) fn paged_prefix_wide_read(instruction: Instruction) -> bool {
     use crate::x86::context::Segment;
     use crate::x86::instruction::{MemoryAluOperands, Width};
     matches!(
@@ -86,7 +86,7 @@ pub(super) fn paged_prefix_wide_read(instruction: Instruction) -> bool {
     )
 }
 
-pub(super) fn paged_prefix_dword_store(instruction: Instruction) -> bool {
+pub(in crate::dbt::wasm) fn paged_prefix_dword_store(instruction: Instruction) -> bool {
     use crate::x86::{
         context::Segment,
         instruction::{Address, Width},
@@ -105,8 +105,8 @@ pub(super) fn paged_prefix_dword_store(instruction: Instruction) -> bool {
     )
 }
 
-pub(super) fn register_prefix_operation(operation: Operation) -> bool {
-    super::structured_loop::inside_register_body(operation)
+pub(in crate::dbt::wasm) fn register_prefix_operation(operation: Operation) -> bool {
+    structured_loop::inside_register_body(operation)
         || matches!(
             operation,
             Operation::Extend {
@@ -118,7 +118,7 @@ pub(super) fn register_prefix_operation(operation: Operation) -> bool {
 
 // A clone can touch the executable leaf once when every admitted instruction
 // stays on that leaf and can neither access memory nor change the controls.
-pub(super) fn paged_register_prefixes(
+pub(in crate::dbt::wasm) fn paged_register_prefixes(
     unit: &Unit,
     loops: [Option<StructuredLoop>; 2],
     short_indexed_reads: bool,
@@ -266,14 +266,14 @@ pub(super) fn paged_register_prefixes(
 }
 
 #[derive(Clone, Copy, Default)]
-pub(super) struct PrefixFetchEdge {
-    pub(super) receives: bool,
-    pub(super) destination: Option<usize>,
+pub(in crate::dbt::wasm) struct PrefixFetchEdge {
+    pub(in crate::dbt::wasm) receives: bool,
+    pub(in crate::dbt::wasm) destination: Option<usize>,
 }
 
 // The admitted read-only clone leaves its executable translation newest and
 // cannot change code or controls. A same-page successor needs no new touch.
-pub(super) fn paged_prefix_handoffs(
+pub(in crate::dbt::wasm) fn paged_prefix_handoffs(
     unit: &Unit,
     prefixes: &[Option<usize>],
     earlier_clones: [Option<usize>; 3],
@@ -310,7 +310,7 @@ pub(super) fn paged_prefix_handoffs(
 }
 
 impl Emitter {
-    pub(super) fn emit_guarded_register_prefix(
+    pub(in crate::dbt::wasm) fn emit_guarded_register_prefix(
         &mut self,
         instructions: &[Instruction],
         loop_depth: u32,
@@ -319,7 +319,7 @@ impl Emitter {
         write_import: Option<u32>,
         fetch_handoff: Option<(u32, bool, Option<usize>)>,
     ) {
-        use super::control::InstructionRetirement;
+        use crate::dbt::wasm::execution::control::InstructionRetirement;
 
         let first = instructions.first().unwrap();
         let last = instructions.last().unwrap();
@@ -391,7 +391,7 @@ impl Emitter {
             keep_quiet,
         );
         if let Some((read, (register, address, source_width, width))) = read {
-            use super::{ADDRESS, STORE_STATUS};
+            use crate::dbt::wasm::{ADDRESS, STORE_STATUS};
             use crate::x86::instruction::Width;
             use wasm_encoder::{MemArg, ValType};
             let mem = |offset| MemArg {
@@ -525,8 +525,13 @@ impl Emitter {
         }
     }
 
-    pub(super) fn newest_prefix_fetch(&mut self, pc: u64, indexed_read: bool, sse: bool) {
-        use super::STORE_STATUS;
+    pub(in crate::dbt::wasm) fn newest_prefix_fetch(
+        &mut self,
+        pc: u64,
+        indexed_read: bool,
+        sse: bool,
+    ) {
+        use crate::dbt::wasm::STORE_STATUS;
         use crate::embedding::layout::debug::{Continuation, DebugState};
         use crate::embedding::layout::paging::{
             MXCSR_EXCEPTION_MASKS, NEWEST_FETCH_INDEXED, NEWEST_FETCH_SSE, NewestFetch,
@@ -736,12 +741,12 @@ impl Emitter {
             .op(Op::I64And)
             .op(Op::I64Eqz)
             .op(Op::I32Eqz)
-            .op(Op::LocalGet(super::SHADOW))
+            .op(Op::LocalGet(SHADOW))
             .op(Op::I32Or)
             .indexed_miss(Op::BrIf(0));
     }
 
-    pub(super) fn guard_straight_paged_prefix(
+    pub(in crate::dbt::wasm) fn guard_straight_paged_prefix(
         &mut self,
         instructions: &[Instruction],
         guard: u32,
@@ -750,7 +755,7 @@ impl Emitter {
         fetch: PagedPrefixFetch,
         keep_quiet: bool,
     ) {
-        use super::SHADOW;
+        use crate::dbt::wasm::SHADOW;
 
         let first = &instructions[0];
         let last = instructions.last().unwrap();

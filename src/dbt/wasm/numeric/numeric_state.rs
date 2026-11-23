@@ -1,4 +1,4 @@
-use super::{Emitter, GPR, REASON, STORE_STATUS};
+use crate::dbt::wasm::{Emitter, GPR, REASON, STORE_STATUS};
 use crate::embedding::layout::RunState;
 use crate::x86::context::Segment;
 use crate::x86::instruction::Address;
@@ -27,7 +27,7 @@ impl Emitter {
         }
     }
 
-    pub(super) fn numeric_state_result(&mut self, exit_depth: u32) {
+    pub(in crate::dbt::wasm) fn numeric_state_result(&mut self, exit_depth: u32) {
         self.op(Wasm::LocalTee(REASON))
             .op(Wasm::I32Eqz)
             .op(Wasm::LocalGet(REASON))
@@ -38,7 +38,7 @@ impl Emitter {
             .op(Wasm::BrIf(exit_depth));
     }
 
-    pub(super) fn mmx(
+    pub(in crate::dbt::wasm) fn mmx(
         &mut self,
         operation: mmx::Op,
         address: Option<Address>,
@@ -90,7 +90,7 @@ impl Emitter {
         }
     }
 
-    pub(super) fn numeric_image(
+    pub(in crate::dbt::wasm) fn numeric_image(
         &mut self,
         operation: numeric_images::ImageOp,
         address: Address,

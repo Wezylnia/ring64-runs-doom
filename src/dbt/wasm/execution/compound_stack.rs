@@ -1,4 +1,4 @@
-use super::{Emitter, GPR, REASON, STORE_STATUS};
+use crate::dbt::wasm::{Emitter, GPR, REASON, STORE_STATUS};
 use crate::embedding::layout::RunState;
 use crate::x86::compound_stack::CompoundStack;
 use std::mem::offset_of;
@@ -13,7 +13,11 @@ fn memory(offset: usize) -> MemArg {
 }
 
 impl Emitter {
-    pub(super) fn compound_stack(&mut self, operation: CompoundStack, exit_depth: u32) {
+    pub(in crate::dbt::wasm) fn compound_stack(
+        &mut self,
+        operation: CompoundStack,
+        exit_depth: u32,
+    ) {
         let helper = self.compound_stack.expect("compound stack import");
         for bank in 0..8 {
             self.op(Op::LocalGet(0))

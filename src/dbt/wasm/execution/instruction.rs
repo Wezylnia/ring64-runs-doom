@@ -1,12 +1,16 @@
+use super::loops::loop_cfg;
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-use super::ENTRY;
-use super::{Emitter, GPR, REASON, loop_cfg};
+use crate::dbt::wasm::{
+    ENTRY,
+    memory::flat::{data as flat_data, stack as flat_stack},
+};
+use crate::dbt::wasm::{Emitter, FLAGS, GPR, REASON, memory::mmio};
 use crate::embedding::layout::DISPATCH;
 use crate::x86::instruction::{Alu, Instruction, Operation};
 use wasm_encoder::{BlockType, Instruction as Op};
 
 impl Emitter {
-    pub(super) fn instruction(
+    pub(in crate::dbt::wasm) fn instruction(
         &mut self,
         instruction: Instruction,
         next: Option<&Instruction>,
@@ -24,7 +28,7 @@ impl Emitter {
         );
     }
 
-    pub(super) fn emit_instruction(
+    pub(in crate::dbt::wasm) fn emit_instruction(
         &mut self,
         instruction: Instruction,
         next: Option<&Instruction>,
@@ -244,7 +248,7 @@ impl Emitter {
             } => {
                 if self.mmio_operand.is_some() {
                     self.mmio_move(
-                        super::mmio::Move::Read(dst),
+                        mmio::Move::Read(dst),
                         address,
                         width,
                         instruction.next_pc,
@@ -262,7 +266,7 @@ impl Emitter {
                 if !guarded_store {
                     if self.mmio_operand.is_some() {
                         self.mmio_move(
-                            super::mmio::Move::Write(src),
+                            mmio::Move::Write(src),
                             address,
                             width,
                             instruction.next_pc,
@@ -413,7 +417,7 @@ impl Emitter {
                 self.cloned_condition(condition, compare_source);
                 self.op(Op::If(BlockType::Empty));
                 if zero_flags && condition == Condition::Equal {
-                    self.op(Op::I64Const(0x46)).op(Op::LocalSet(super::FLAGS));
+                    self.op(Op::I64Const(0x46)).op(Op::LocalSet(FLAGS));
                 }
                 if let Some(loop_cfg::ConditionSource::OperandsWithTakenFlags(width)) =
                     compare_source
@@ -432,7 +436,7 @@ impl Emitter {
                 self.op(Op::End);
                 if zero_flags && condition == Condition::NotEqual {
                     // TEST's zero result publishes ZF and PF before the next boundary.
-                    self.op(Op::I64Const(0x46)).op(Op::LocalSet(super::FLAGS));
+                    self.op(Op::I64Const(0x46)).op(Op::LocalSet(FLAGS));
                 }
                 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
                 if let Some((tail, retry)) = self.proved_read_retry
@@ -470,14 +474,15 @@ impl Emitter {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) fn emit_flat_integer_group(
+    pub(in crate::dbt::wasm) fn emit_flat_integer_group(
         &mut self,
         instructions: &[Instruction],
         loop_depth: u32,
-        stack: Option<(&super::flat_stack::FlatStackWindow, u32)>,
-        data: Option<(&super::flat_data::FlatDataWindow, u32)>,
+        stack: Option<(&flat_stack::FlatStackWindow, u32)>,
+        data: Option<(&flat_data::FlatDataWindow, u32)>,
     ) {
-        use super::{RIP, control::InstructionRetirement};
+        use super::control::InstructionRetirement;
+        use crate::dbt::wasm::RIP;
 
         let first = &instructions[0];
         let last = instructions.last().unwrap();
@@ -537,13 +542,13 @@ impl Emitter {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) fn guard_straight_prefix(
+    pub(in crate::dbt::wasm) fn guard_straight_prefix(
         &mut self,
         first: &Instruction,
         last: &Instruction,
         count: u32,
     ) {
-        use super::REMAINING;
+        use crate::dbt::wasm::REMAINING;
 
         debug_assert!(first.pc <= last.pc);
         // An unsigned difference places stops below the prefix above its span.

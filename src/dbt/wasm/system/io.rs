@@ -1,11 +1,17 @@
-use super::{ADDRESS, Emitter, REASON, STORE_STATUS};
+use crate::dbt::wasm::{ADDRESS, Emitter, REASON, STORE_STATUS};
 use crate::embedding::layout::RunState;
 use crate::x86::context::Segment;
 use crate::x86::instruction::{RegisterView, Width};
 use wasm_encoder::{Instruction as Op, MemArg};
 
 impl Emitter {
-    pub(super) fn io(&mut self, input: bool, port: Option<u8>, width: Width, depth: u32) {
+    pub(in crate::dbt::wasm) fn io(
+        &mut self,
+        input: bool,
+        port: Option<u8>,
+        width: Width,
+        depth: u32,
+    ) {
         self.io_effect(u32::from(!input), port, width, None, depth);
         if input {
             self.op(Op::LocalGet(0)).op(Op::I64Load(MemArg {
@@ -18,7 +24,7 @@ impl Emitter {
         }
     }
 
-    pub(super) fn io_effect(
+    pub(in crate::dbt::wasm) fn io_effect(
         &mut self,
         kind: u32,
         port: Option<u8>,

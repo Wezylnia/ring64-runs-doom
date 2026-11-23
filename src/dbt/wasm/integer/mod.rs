@@ -1,4 +1,13 @@
-use super::{Emitter, FLAGS, GPR, LHS, REMAINING, RESULT, RHS, VALUE};
+mod bits;
+mod bmi;
+mod counts;
+mod data;
+mod exchange;
+mod integer_memory;
+mod multiply_divide;
+mod unary;
+
+use crate::dbt::wasm::{Emitter, FLAGS, GPR, LHS, REMAINING, RESULT, RHS, VALUE};
 use crate::x86::instruction::{Alu, DataOperand, Operand, RegisterView, Width};
 use wasm_encoder::{BlockType, Instruction as Op};
 

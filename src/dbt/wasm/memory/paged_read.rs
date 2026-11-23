@@ -1,6 +1,8 @@
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-use super::{ADDRESS, STORE_STATUS, indexed::IndexedOperand};
-use super::{Emitter, VALUE};
+use super::indexed::IndexedOperand;
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+use crate::dbt::wasm::{ADDRESS, STORE_STATUS};
+use crate::dbt::wasm::{ENTRY, Emitter, VALUE};
 use crate::x86::context::Segment;
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 use crate::x86::instruction::AddressBase;
@@ -10,53 +12,53 @@ use wasm_encoder::MemArg;
 use wasm_encoder::{BlockType, Instruction as Op};
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-pub(super) const PAGED_READ_REPLAY: i32 = -1;
+pub(in crate::dbt::wasm) const PAGED_READ_REPLAY: i32 = -1;
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 // The replayed lap counts first; the next seven headers run checked.
 const PAGED_READ_COOLDOWN: i32 = PAGED_READ_REPLAY - 7;
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 #[derive(Clone, Copy)]
-pub(super) struct PagedReadWindow {
-    pub(super) resolve: u32,
-    pub(super) base: u32,
-    pub(super) limit: u32,
-    pub(super) host: u32,
-    pub(super) last_early_page: Option<u32>,
-    pub(super) retouch: Option<VectorWindowRetouch>,
+pub(in crate::dbt::wasm) struct PagedReadWindow {
+    pub(in crate::dbt::wasm) resolve: u32,
+    pub(in crate::dbt::wasm) base: u32,
+    pub(in crate::dbt::wasm) limit: u32,
+    pub(in crate::dbt::wasm) host: u32,
+    pub(in crate::dbt::wasm) last_early_page: Option<u32>,
+    pub(in crate::dbt::wasm) retouch: Option<VectorWindowRetouch>,
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 #[derive(Clone, Copy)]
-pub(super) struct VectorWindowRetouch {
-    pub(super) alignment: (u8, i64),
-    pub(super) resolve: u32,
-    pub(super) touch: u32,
-    pub(super) dirty: u32,
+pub(in crate::dbt::wasm) struct VectorWindowRetouch {
+    pub(in crate::dbt::wasm) alignment: (u8, i64),
+    pub(in crate::dbt::wasm) resolve: u32,
+    pub(in crate::dbt::wasm) touch: u32,
+    pub(in crate::dbt::wasm) dirty: u32,
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 #[derive(Clone, Copy)]
-pub(super) struct PagedDwordReadPair {
-    pub(super) first: u32,
-    pub(super) second: u32,
-    pub(super) base: u8,
-    pub(super) resolve: u32,
-    pub(super) host: u32,
-    pub(super) resolver_mode: u32,
-    pub(super) handoff: Option<DwordPairHandoff>,
+pub(in crate::dbt::wasm) struct PagedDwordReadPair {
+    pub(in crate::dbt::wasm) first: u32,
+    pub(in crate::dbt::wasm) second: u32,
+    pub(in crate::dbt::wasm) base: u8,
+    pub(in crate::dbt::wasm) resolve: u32,
+    pub(in crate::dbt::wasm) host: u32,
+    pub(in crate::dbt::wasm) resolver_mode: u32,
+    pub(in crate::dbt::wasm) handoff: Option<DwordPairHandoff>,
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 #[derive(Clone, Copy)]
-pub(super) struct DwordPairHandoff {
-    pub(super) read: u32,
-    pub(super) address: u32,
-    pub(super) ready: u32,
+pub(in crate::dbt::wasm) struct DwordPairHandoff {
+    pub(in crate::dbt::wasm) read: u32,
+    pub(in crate::dbt::wasm) address: u32,
+    pub(in crate::dbt::wasm) ready: u32,
 }
 
 impl Emitter {
-    pub(super) fn load_guarded_paged_value(
+    pub(in crate::dbt::wasm) fn load_guarded_paged_value(
         &mut self,
         address: Address,
         width: Width,
@@ -163,7 +165,7 @@ impl Emitter {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) fn refresh_direct_read_range(
+    pub(in crate::dbt::wasm) fn refresh_direct_read_range(
         &mut self,
         (address, [origin, limit, host]): (Address, [u32; 3]),
     ) {
@@ -614,7 +616,11 @@ impl Emitter {
             }));
     }
 
-    pub(super) fn retry_guarded_paged_operand(&mut self, exit_depth: u32, _replay: bool) {
+    pub(in crate::dbt::wasm) fn retry_guarded_paged_operand(
+        &mut self,
+        exit_depth: u32,
+        _replay: bool,
+    ) {
         let entry = self.current_index as i32;
         let (_, attempts) = self.paged_loop_guard.expect("paged loop guard");
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -663,13 +669,13 @@ impl Emitter {
             self.op(Op::I32Const(status)).op(Op::LocalSet(attempts));
         }
         self.op(Op::I32Const(entry))
-            .op(Op::LocalSet(super::ENTRY))
+            .op(Op::LocalSet(ENTRY))
             .op(Op::Br(exit_depth))
             .op(Op::End);
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) fn checked_paged_read_rearm(&self, width: Width) -> Option<u32> {
+    pub(in crate::dbt::wasm) fn checked_paged_read_rearm(&self, width: Width) -> Option<u32> {
         let (ready, order) = self.paged_read_rearm?;
         let segment = match (width, self.segment) {
             (Width::W8 | Width::W32, Segment::Ds) => true,
@@ -681,12 +687,12 @@ impl Emitter {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) fn rearm_paged_read(&mut self, width: Width, ready: u32) {
+    pub(in crate::dbt::wasm) fn rearm_paged_read(&mut self, width: Width, ready: u32) {
         self.rearm_paged_access(width.bytes(), ready);
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) fn rearm_paged_access(&mut self, bytes: u8, ready: u32) {
+    pub(in crate::dbt::wasm) fn rearm_paged_access(&mut self, bytes: u8, ready: u32) {
         let (_, attempts) = self.paged_loop_guard.expect("paged loop guard");
         let cooldown = if bytes == 16 && self.paged_copy_window.is_some() {
             // A checked copy lap can establish a new window past a page boundary.

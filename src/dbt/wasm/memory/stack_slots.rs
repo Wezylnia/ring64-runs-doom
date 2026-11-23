@@ -1,3 +1,5 @@
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+use crate::dbt::wasm::Emitter;
 use crate::x86::{
     context::{ExecutionContext, Segment},
     instruction::{
@@ -7,14 +9,17 @@ use crate::x86::{
 };
 
 #[derive(Clone, Copy)]
-pub(super) struct StackSlots {
+pub(in crate::dbt::wasm) struct StackSlots {
     first: Address,
     bytes: u32,
-    pub(super) writes: bool,
+    pub(in crate::dbt::wasm) writes: bool,
 }
 
 impl StackSlots {
-    pub(super) fn recognize(context: &ExecutionContext, body: &[Instruction]) -> Option<Self> {
+    pub(in crate::dbt::wasm) fn recognize(
+        context: &ExecutionContext,
+        body: &[Instruction],
+    ) -> Option<Self> {
         if context.is_long64() || context.segment_base(Segment::Ss) != 0 {
             return None;
         }
@@ -61,7 +66,7 @@ impl StackSlots {
         })
     }
 
-    pub(super) fn offset(self, address: Address, width: Width) -> Option<u64> {
+    pub(in crate::dbt::wasm) fn offset(self, address: Address, width: Width) -> Option<u64> {
         if !stack_slot(address) {
             return None;
         }
@@ -78,7 +83,7 @@ fn stack_slot(address: Address) -> bool {
         && address.index.is_none()
 }
 
-pub(super) fn unary_slot(operation: Operation) -> Option<Address> {
+pub(in crate::dbt::wasm) fn unary_slot(operation: Operation) -> Option<Address> {
     match operation {
         Operation::Unary {
             kind: Unary::Inc | Unary::Dec,
@@ -126,17 +131,17 @@ fn preserves_stack_pointer(operation: Operation) -> bool {
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 #[derive(Clone, Copy)]
-pub(super) struct StackGuard {
-    pub(super) slots: StackSlots,
-    pub(super) read: u32,
-    pub(super) write: Option<u32>,
-    pub(super) host: u32,
+pub(in crate::dbt::wasm) struct StackGuard {
+    pub(in crate::dbt::wasm) slots: StackSlots,
+    pub(in crate::dbt::wasm) read: u32,
+    pub(in crate::dbt::wasm) write: Option<u32>,
+    pub(in crate::dbt::wasm) host: u32,
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-impl super::Emitter {
-    pub(super) fn guard_stack_slots(&mut self, guard: StackGuard) {
-        use super::ADDRESS;
+impl Emitter {
+    pub(in crate::dbt::wasm) fn guard_stack_slots(&mut self, guard: StackGuard) {
+        use crate::dbt::wasm::ADDRESS;
         use crate::memory::DirectSpan;
         use wasm_encoder::{BlockType, Instruction as Op, MemArg, ValType};
 

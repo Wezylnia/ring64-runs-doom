@@ -1,5 +1,7 @@
-use super::control::InstructionRetirement;
-use super::{ADDRESS, Emitter, RESULT, RIP, STORE_STATUS, StructuredLoop, Unit, VALUE};
+use crate::dbt::wasm::{
+    ADDRESS, Emitter, FLAGS, RESULT, RIP, STORE_STATUS, StructuredLoop, Unit, VALUE,
+    execution::control::InstructionRetirement,
+};
 use crate::embedding::layout::INDEXED_WRITE_UNSUPPORTED_LEAF;
 use crate::x86::paging::cache::IndexedDwordWrite;
 use crate::x86::paging::cache::IndexedReadTable;
@@ -13,10 +15,10 @@ use std::mem::offset_of;
 use wasm_encoder::{BlockType, Instruction as Op, MemArg};
 
 #[derive(Clone, Copy)]
-pub(super) struct IndexedWrite {
-    pub(super) index: u32,
-    pub(super) lookup: u32,
-    pub(super) store: u32,
+pub(in crate::dbt::wasm) struct IndexedWrite {
+    pub(in crate::dbt::wasm) index: u32,
+    pub(in crate::dbt::wasm) lookup: u32,
+    pub(in crate::dbt::wasm) store: u32,
     index_register: RegisterView,
     value_register: RegisterView,
     next_pc: u64,
@@ -26,7 +28,7 @@ pub(super) struct IndexedWrite {
 }
 
 impl IndexedWrite {
-    pub(super) fn recognize(body: StructuredLoop, unit: &Unit) -> Option<Self> {
+    pub(in crate::dbt::wasm) fn recognize(body: StructuredLoop, unit: &Unit) -> Option<Self> {
         let instructions = &unit.instructions;
         let order = body.order();
         for position in 0..order.len().saturating_sub(4) {
@@ -131,17 +133,17 @@ impl IndexedWrite {
 }
 
 #[derive(Clone, Copy)]
-pub(super) struct GuardedIndexedWrite {
-    pub(super) shape: IndexedWrite,
-    pub(super) resolve: u32,
-    pub(super) record: u32,
-    pub(super) host: u32,
-    pub(super) continuing: u32,
-    pub(super) value: u32,
+pub(in crate::dbt::wasm) struct GuardedIndexedWrite {
+    pub(in crate::dbt::wasm) shape: IndexedWrite,
+    pub(in crate::dbt::wasm) resolve: u32,
+    pub(in crate::dbt::wasm) record: u32,
+    pub(in crate::dbt::wasm) host: u32,
+    pub(in crate::dbt::wasm) continuing: u32,
+    pub(in crate::dbt::wasm) value: u32,
 }
 
 impl Emitter {
-    pub(super) fn indexed_write(&self) -> Option<GuardedIndexedWrite> {
+    pub(in crate::dbt::wasm) fn indexed_write(&self) -> Option<GuardedIndexedWrite> {
         self.paged_indexed_write.filter(|_| {
             self.guarded_paged_lap
                 && self
@@ -150,7 +152,7 @@ impl Emitter {
         })
     }
 
-    pub(super) fn load_indexed_write(
+    pub(in crate::dbt::wasm) fn load_indexed_write(
         &mut self,
         group: GuardedIndexedWrite,
         address: Address,
@@ -293,7 +295,7 @@ impl Emitter {
             self.op(Op::I64Const(0));
             self.write_register(group.shape.index_register, Width::W32);
             self.op(Op::I64Const(0x46))
-                .op(Op::LocalSet(super::FLAGS))
+                .op(Op::LocalSet(FLAGS))
                 .op(Op::I64Const(group.shape.zero_target as i64))
                 .op(Op::LocalSet(RIP));
             self.retire_instructions(3);

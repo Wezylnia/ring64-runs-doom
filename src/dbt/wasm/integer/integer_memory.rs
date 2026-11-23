@@ -1,9 +1,9 @@
-use super::{Emitter, LHS, RESULT, RHS, VALUE};
+use crate::dbt::wasm::{Emitter, LHS, RESULT, RHS, VALUE};
 use crate::x86::instruction::{Address, Alu, MemoryAluOperands, Width};
 use wasm_encoder::Instruction as Op;
 
 impl Emitter {
-    pub(super) fn memory_integer(
+    pub(in crate::dbt::wasm) fn memory_integer(
         &mut self,
         kind: Alu,
         address: Address,

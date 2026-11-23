@@ -1,11 +1,16 @@
-use super::{Emitter, GPR, REASON, REMAINING};
+use crate::dbt::wasm::{Emitter, GPR, REASON, REMAINING};
 use crate::embedding::layout::DISPATCH;
 use crate::x86::context::Segment;
 use crate::x86::instruction::{FarInstruction, FarOperand};
 use wasm_encoder::Instruction as Op;
 
 impl Emitter {
-    pub(super) fn far_control(&mut self, far: FarInstruction, next_pc: u64, exit_depth: u32) {
+    pub(in crate::dbt::wasm) fn far_control(
+        &mut self,
+        far: FarInstruction,
+        next_pc: u64,
+        exit_depth: u32,
+    ) {
         let helper = self.far_control.expect("far control import");
         self.op(Op::I32Const(far.descriptor().encode() as i32));
         let (selector, segment) = match far.operand {

@@ -1,11 +1,11 @@
-use super::{DIRECTION, Emitter, FLAGS, GPR, REASON, REMAINING, RESULT, SHADOW, SYSTEM};
+use crate::dbt::wasm::{DIRECTION, Emitter, FLAGS, GPR, REASON, REMAINING, RESULT, SHADOW, SYSTEM};
 use crate::embedding::layout::{DISPATCH, RunState};
 use crate::x86::instruction::{SoftwareEventDescriptor, SoftwareEventKind};
 use std::mem::offset_of;
 use wasm_encoder::{BlockType, Instruction as Op, MemArg};
 
 impl Emitter {
-    pub(super) fn software_event(
+    pub(in crate::dbt::wasm) fn software_event(
         &mut self,
         operation: SoftwareEventDescriptor,
         next_pc: u64,

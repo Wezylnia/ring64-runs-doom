@@ -1,4 +1,4 @@
-use super::{ADDRESS, Emitter, RESULT, VALUE};
+use crate::dbt::wasm::{ADDRESS, Emitter, RESULT, VALUE};
 use crate::embedding::layout::{RunState, X87_EXCEPTION};
 use crate::x86::instruction::{Address, RegisterView, VectorBinary, VectorShift, Width};
 use crate::x86::mmx::{Kind, Op as MmxOp};
@@ -13,7 +13,7 @@ const CONTROL: usize = X87 + offset_of!(X87State, control_word);
 const STATUS: usize = X87 + offset_of!(X87State, status_word);
 const TAGS: usize = X87 + offset_of!(X87State, tag_word);
 
-pub(super) fn direct(operation: MmxOp) -> bool {
+pub(in crate::dbt::wasm) fn direct(operation: MmxOp) -> bool {
     !matches!(
         operation.kind,
         Kind::PiToPs
@@ -25,7 +25,7 @@ pub(super) fn direct(operation: MmxOp) -> bool {
     )
 }
 
-pub(super) fn vector_temps(operation: MmxOp) -> bool {
+pub(in crate::dbt::wasm) fn vector_temps(operation: MmxOp) -> bool {
     match operation.kind {
         Kind::Binary(_) => operation.kind != PUNPCKLDQ,
         Kind::Shift(_) | Kind::Ssse3(_) => true,
@@ -42,7 +42,7 @@ fn memory(offset: usize) -> MemArg {
 }
 
 impl Emitter {
-    pub(super) fn mmx_pending(&mut self, exit_depth: u32) {
+    pub(in crate::dbt::wasm) fn mmx_pending(&mut self, exit_depth: u32) {
         self.op(Op::LocalGet(0))
             .op(Op::I32Load16U(memory(STATUS)))
             .op(Op::LocalGet(0))
@@ -73,7 +73,7 @@ impl Emitter {
         self.op(Op::LocalGet(0)).op(Op::I64Load(memory(raw(bank))));
     }
 
-    pub(super) fn mmx_read_vector(&mut self, bank: u8) {
+    pub(in crate::dbt::wasm) fn mmx_read_vector(&mut self, bank: u8) {
         self.op(Op::LocalGet(0))
             .op(Op::V128Load64Zero(memory(raw(bank))));
     }
@@ -96,7 +96,7 @@ impl Emitter {
         }
     }
 
-    pub(super) fn mmx_direct(
+    pub(in crate::dbt::wasm) fn mmx_direct(
         &mut self,
         operation: MmxOp,
         address: Option<Address>,

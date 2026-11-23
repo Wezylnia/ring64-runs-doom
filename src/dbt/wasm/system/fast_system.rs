@@ -1,11 +1,16 @@
-use super::{DIRECTION, Emitter, FLAGS, GPR, REASON, REMAINING, RESULT, RIP, SYSTEM};
+use crate::dbt::wasm::{DIRECTION, Emitter, FLAGS, GPR, REASON, REMAINING, RESULT, RIP, SYSTEM};
 use crate::embedding::layout::{DISPATCH, RunState};
 use crate::x86::fast_system::Instruction;
 use std::mem::offset_of;
 use wasm_encoder::{Instruction as Op, MemArg};
 
 impl Emitter {
-    pub(super) fn fast_system(&mut self, instruction: Instruction, next: u64, depth: u32) {
+    pub(in crate::dbt::wasm) fn fast_system(
+        &mut self,
+        instruction: Instruction,
+        next: u64,
+        depth: u32,
+    ) {
         let (kind, wide) = match instruction {
             Instruction::Syscall => (0, false),
             Instruction::Sysret { wide } => (1, wide),

@@ -1,9 +1,9 @@
-#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-use super::indexed::IndexedOperand;
-use super::{ADDRESS, Emitter, REASON, RHS, STORE_STATUS};
-#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-use super::{memory::DirectOperand, paged_read::PagedReadWindow};
 use crate::dbt::unit::Unit;
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+use crate::dbt::wasm::memory::{
+    DirectOperand, indexed::IndexedOperand, paged_read::PagedReadWindow,
+};
+use crate::dbt::wasm::{ADDRESS, Emitter, REASON, RHS, STORE_STATUS, VALUE};
 use crate::embedding::layout::RunState;
 use crate::x86::instruction::{
     Address, Instruction, Location, Operation, RegisterView, VectorBinary, VectorCount,
@@ -13,7 +13,7 @@ use crate::x86::instruction::{
 use std::mem::offset_of;
 use wasm_encoder::{BlockType, Instruction as Op, MemArg, ValType};
 
-pub(super) struct Banks {
+pub(in crate::dbt::wasm) struct Banks {
     pub used: u16,
     pub written: u16,
     pub loads: bool,
@@ -25,7 +25,7 @@ impl Banks {
         Self::for_instructions(&unit.instructions)
     }
 
-    pub(super) fn for_instructions(instructions: &[Instruction]) -> Self {
+    pub(in crate::dbt::wasm) fn for_instructions(instructions: &[Instruction]) -> Self {
         let mut banks = Self {
             used: 0,
             written: 0,
@@ -136,7 +136,7 @@ impl Banks {
     }
 }
 
-pub(super) fn memory(offset: usize) -> MemArg {
+pub(in crate::dbt::wasm) fn memory(offset: usize) -> MemArg {
     MemArg {
         offset: offset as u64,
         align: 0,
@@ -145,7 +145,7 @@ pub(super) fn memory(offset: usize) -> MemArg {
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-pub(super) fn unaligned_store_address(operation: Operation) -> Option<Address> {
+pub(in crate::dbt::wasm) fn unaligned_store_address(operation: Operation) -> Option<Address> {
     match operation {
         Operation::Vector(VectorInstruction::Move {
             operand: VectorOperand::Memory(address),
@@ -159,7 +159,7 @@ pub(super) fn unaligned_store_address(operation: Operation) -> Option<Address> {
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-pub(super) fn indexed_vector_operand(operation: Operation) -> bool {
+pub(in crate::dbt::wasm) fn indexed_vector_operand(operation: Operation) -> bool {
     matches!(
         operation,
         Operation::Vector(VectorInstruction::Move {
@@ -175,7 +175,7 @@ pub(super) fn indexed_vector_operand(operation: Operation) -> bool {
 
 impl Emitter {
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) fn uses_indexed_vector_operand(&self, operation: Operation) -> bool {
+    pub(in crate::dbt::wasm) fn uses_indexed_vector_operand(&self, operation: Operation) -> bool {
         self.indexed_scalar_stamp.is_some()
             && !self.guarded_paged_lap
             && indexed_vector_operand(operation)
@@ -207,15 +207,15 @@ impl Emitter {
         }
     }
 
-    pub(super) fn xmm(&self, bank: u8) -> u32 {
+    pub(in crate::dbt::wasm) fn xmm(&self, bank: u8) -> u32 {
         self.vector_registers[usize::from(bank)].expect("selected XMM bank")
     }
-    pub(super) fn vector_temps(&self) -> [u32; 3] {
+    pub(in crate::dbt::wasm) fn vector_temps(&self) -> [u32; 3] {
         self.vector_temporaries
             .expect("vector instruction has temporaries")
     }
 
-    pub(super) fn vector_failure(&mut self, exit_depth: u32) {
+    pub(in crate::dbt::wasm) fn vector_failure(&mut self, exit_depth: u32) {
         if self.flags_on_read_fault.is_some() {
             self.restore_preceding_read_state();
         }
@@ -226,7 +226,7 @@ impl Emitter {
         .op(Op::Br(exit_depth));
     }
 
-    pub(super) fn vector_load_value(
+    pub(in crate::dbt::wasm) fn vector_load_value(
         &mut self,
         address: Address,
         bytes: u8,
@@ -256,7 +256,7 @@ impl Emitter {
             && self.load_guarded_paged_value(address, Width::W32, next_pc, exit_depth)
         {
             self.op(Op::V128Const(0))
-                .op(Op::LocalGet(super::VALUE))
+                .op(Op::LocalGet(VALUE))
                 .op(Op::I64x2ReplaceLane(0));
             return;
         }
@@ -332,7 +332,7 @@ impl Emitter {
                 self.op(Op::LocalSet(ADDRESS));
                 self.load_address_slow(Width::W32, false, exit_depth);
                 self.op(Op::V128Const(0))
-                    .op(Op::LocalGet(super::VALUE))
+                    .op(Op::LocalGet(VALUE))
                     .op(Op::I64x2ReplaceLane(0));
                 return;
             }
@@ -361,7 +361,7 @@ impl Emitter {
         self.op(Op::LocalTee(ADDRESS))
             .op(Op::LocalGet(window.base))
             .op(Op::I64Sub)
-            .op(Op::LocalTee(super::VALUE))
+            .op(Op::LocalTee(VALUE))
             .op(Op::LocalGet(window.limit))
             .op(Op::I64LtU);
         if let Some(retouch) = window.retouch {
@@ -381,14 +381,14 @@ impl Emitter {
                 .op(Op::End);
         }
         self.op(Op::If(BlockType::Result(ValType::I32)))
-            .op(Op::LocalGet(super::VALUE))
+            .op(Op::LocalGet(VALUE))
             .op(Op::I32WrapI64)
             .op(Op::LocalGet(window.host))
             .op(Op::I32Add)
             .op(Op::Else)
             .op(Op::LocalGet(ADDRESS))
             .op(Op::Call(window.resolve))
-            .op(Op::LocalTee(super::VALUE))
+            .op(Op::LocalTee(VALUE))
             .op(Op::I64Eqz)
             .op(Op::If(BlockType::Result(ValType::I32)))
             .op(Op::I64Const(0))
@@ -404,13 +404,13 @@ impl Emitter {
         }
         self.op(Op::LocalGet(ADDRESS))
             .op(Op::LocalSet(window.base))
-            .op(Op::LocalGet(super::VALUE))
+            .op(Op::LocalGet(VALUE))
             .op(Op::I64Const(32))
             .op(Op::I64ShrU)
             .op(Op::I64Const(15))
             .op(Op::I64Sub)
             .op(Op::LocalSet(window.limit))
-            .op(Op::LocalGet(super::VALUE))
+            .op(Op::LocalGet(VALUE))
             .op(Op::I32WrapI64)
             .op(Op::LocalTee(window.host))
             .op(Op::End)
@@ -451,7 +451,7 @@ impl Emitter {
             .op(Op::V128Load(memory(0)));
     }
 
-    pub(super) fn vector_operand(
+    pub(in crate::dbt::wasm) fn vector_operand(
         &mut self,
         operand: VectorOperand,
         bytes: u8,
@@ -566,7 +566,12 @@ impl Emitter {
         self.stores = true;
     }
 
-    pub(super) fn vector(&mut self, instruction: VectorInstruction, next_pc: u64, exit_depth: u32) {
+    pub(in crate::dbt::wasm) fn vector(
+        &mut self,
+        instruction: VectorInstruction,
+        next_pc: u64,
+        exit_depth: u32,
+    ) {
         let [left, right, result] = self.vector_temps();
         use VectorInstruction::*;
         match instruction {
@@ -864,7 +869,13 @@ impl Emitter {
             })));
     }
 
-    pub(super) fn vector_binary(&mut self, kind: VectorBinary, left: u32, right: u32, result: u32) {
+    pub(in crate::dbt::wasm) fn vector_binary(
+        &mut self,
+        kind: VectorBinary,
+        left: u32,
+        right: u32,
+        result: u32,
+    ) {
         use VectorBinary::*;
         match kind {
             MulHighWord { signed } => {
@@ -1035,7 +1046,12 @@ impl Emitter {
     }
 
     // A register or memory count leaves its low qword on the Wasm stack.
-    pub(super) fn shift_packed_lanes(&mut self, kind: VectorShift, left: u32, count: Option<u8>) {
+    pub(in crate::dbt::wasm) fn shift_packed_lanes(
+        &mut self,
+        kind: VectorShift,
+        left: u32,
+        count: Option<u8>,
+    ) {
         let width = match kind {
             VectorShift::Left(width)
             | VectorShift::Right(width)

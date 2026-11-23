@@ -1,10 +1,10 @@
-use super::{ADDRESS, Emitter, FLAGS, LHS, RESULT, RHS, VALUE};
+use crate::dbt::wasm::{ADDRESS, Emitter, FLAGS, LHS, RESULT, RHS, VALUE};
 use crate::embedding::layout::DIVIDE_ERROR;
 use crate::x86::instruction::{Location, RegisterView, Width};
 use wasm_encoder::{BlockType, Instruction as Op};
 
 impl Emitter {
-    pub(super) fn multiply(
+    pub(in crate::dbt::wasm) fn multiply(
         &mut self,
         signed: bool,
         src: Location,
@@ -30,7 +30,7 @@ impl Emitter {
         self.product_flags();
     }
 
-    pub(super) fn imul(
+    pub(in crate::dbt::wasm) fn imul(
         &mut self,
         dst: RegisterView,
         src: Location,
@@ -109,7 +109,7 @@ impl Emitter {
             .op(Op::LocalSet(FLAGS));
     }
 
-    pub(super) fn divide(
+    pub(in crate::dbt::wasm) fn divide(
         &mut self,
         signed: bool,
         src: Location,

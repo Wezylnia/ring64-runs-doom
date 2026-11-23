@@ -1,10 +1,15 @@
-use super::{Emitter, GPR, REASON, VALUE};
+use crate::dbt::wasm::{Emitter, GPR, REASON, VALUE};
 use crate::embedding::layout::{DISPATCH, RunState};
 use crate::x86::instruction::{Location, PagingInstruction, RegisterView, Width};
 use wasm_encoder::{Instruction as Op, MemArg};
 
 impl Emitter {
-    pub(super) fn paging_control(&mut self, operation: PagingInstruction, next: u64, depth: u32) {
+    pub(in crate::dbt::wasm) fn paging_control(
+        &mut self,
+        operation: PagingInstruction,
+        next: u64,
+        depth: u32,
+    ) {
         if let PagingInstruction::InvalidatePcid {
             address,
             gpr,

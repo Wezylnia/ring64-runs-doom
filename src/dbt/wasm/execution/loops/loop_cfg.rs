@@ -1,3 +1,6 @@
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+use crate::dbt::wasm::memory::stack_slots;
+use crate::dbt::wasm::numeric::float;
 use crate::memory::canonical48;
 use crate::x86::context::ExecutionContext;
 use crate::x86::instruction::{
@@ -6,18 +9,18 @@ use crate::x86::instruction::{
 };
 
 #[derive(Clone, Copy)]
-pub(super) struct LoopOrder {
-    pub(super) earlier: u32,
-    pub(super) head: u32,
-    pub(super) tail: u32,
+pub(in crate::dbt::wasm) struct LoopOrder {
+    pub(in crate::dbt::wasm) earlier: u32,
+    pub(in crate::dbt::wasm) head: u32,
+    pub(in crate::dbt::wasm) tail: u32,
 }
 
 impl LoopOrder {
-    pub(super) fn len(self) -> u32 {
+    pub(in crate::dbt::wasm) fn len(self) -> u32 {
         self.tail - self.earlier + 1
     }
 
-    pub(super) fn at(self, position: u32) -> u32 {
+    pub(in crate::dbt::wasm) fn at(self, position: u32) -> u32 {
         let suffix_len = self.tail - self.head + 1;
         if position < suffix_len {
             self.head + position
@@ -26,7 +29,7 @@ impl LoopOrder {
         }
     }
 
-    pub(super) fn position(self, ordinal: u32) -> Option<u32> {
+    pub(in crate::dbt::wasm) fn position(self, ordinal: u32) -> Option<u32> {
         if !(self.earlier..=self.tail).contains(&ordinal) {
             return None;
         }
@@ -62,14 +65,14 @@ impl Layout {
     }
 }
 
-pub(super) fn select(instructions: &[Instruction]) -> Option<(LoopOrder, u32)> {
+pub(in crate::dbt::wasm) fn select(instructions: &[Instruction]) -> Option<(LoopOrder, u32)> {
     let limit = instructions.len();
     select_layout(instructions, Layout::Natural, limit)
         .or_else(|| select_layout(instructions, Layout::Rotated, limit))
 }
 
 #[cfg(not(feature = "parallel"))]
-pub(super) fn select_paged_read_graph(
+pub(in crate::dbt::wasm) fn select_paged_read_graph(
     instructions: &[Instruction],
     admit: impl Fn(&[Instruction]) -> bool,
 ) -> Option<(LoopOrder, u32)> {
@@ -84,7 +87,7 @@ pub(super) fn select_paged_read_graph(
 }
 
 #[cfg(not(feature = "parallel"))]
-pub(super) fn select_paged_write_graph(
+pub(in crate::dbt::wasm) fn select_paged_write_graph(
     instructions: &[Instruction],
     admit: impl Fn(&[Instruction]) -> bool,
 ) -> Option<(LoopOrder, u32)> {
@@ -92,7 +95,7 @@ pub(super) fn select_paged_write_graph(
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-pub(super) fn select_sse_write_graph(
+pub(in crate::dbt::wasm) fn select_sse_write_graph(
     instructions: &[Instruction],
     admit: impl Fn(&[Instruction]) -> bool,
 ) -> Option<(LoopOrder, u32)> {
@@ -100,7 +103,7 @@ pub(super) fn select_sse_write_graph(
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-pub(super) fn select_paged_scalar_write_graph(
+pub(in crate::dbt::wasm) fn select_paged_scalar_write_graph(
     instructions: &[Instruction],
     admit: impl Fn(&[Instruction]) -> bool,
 ) -> Option<(LoopOrder, u32)> {
@@ -108,14 +111,16 @@ pub(super) fn select_paged_scalar_write_graph(
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-pub(super) fn select_rotated_stack(
+pub(in crate::dbt::wasm) fn select_rotated_stack(
     instructions: &[Instruction],
     admit: impl Fn(&[Instruction]) -> bool,
 ) -> Option<(LoopOrder, u32)> {
     select_layout_filtered(instructions, Layout::RotatedStack, 64, admit)
 }
 
-pub(super) fn select_natural_read_shifts(instructions: &[Instruction]) -> Option<(LoopOrder, u32)> {
+pub(in crate::dbt::wasm) fn select_natural_read_shifts(
+    instructions: &[Instruction],
+) -> Option<(LoopOrder, u32)> {
     instructions
         .iter()
         .find(|instruction| immediate_read_shift(instruction.operation).is_some())?;
@@ -135,7 +140,7 @@ pub(super) fn select_natural_read_shifts(instructions: &[Instruction]) -> Option
 }
 
 #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
-pub(super) fn select_shared_rotated_reads(
+pub(in crate::dbt::wasm) fn select_shared_rotated_reads(
     instructions: &[Instruction],
 ) -> Option<(LoopOrder, u32)> {
     // Shared compilation holds an exclusive grant. Bound the source window
@@ -153,7 +158,7 @@ pub(super) fn select_shared_rotated_reads(
 }
 
 #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
-pub(super) fn select_shared_natural_memory(
+pub(in crate::dbt::wasm) fn select_shared_natural_memory(
     instructions: &[Instruction],
 ) -> Option<(LoopOrder, u32)> {
     select_layout_filtered(instructions, Layout::Natural, 64, |body| {
@@ -241,7 +246,7 @@ fn branch_target(operation: Operation) -> Option<u64> {
     }
 }
 
-pub(super) fn read_prefix_len(instructions: &[Instruction], order: LoopOrder) -> u32 {
+pub(in crate::dbt::wasm) fn read_prefix_len(instructions: &[Instruction], order: LoopOrder) -> u32 {
     let at = |position| instructions[order.at(position) as usize];
     for position in 0..order.len() {
         let instruction = at(position);
@@ -275,20 +280,20 @@ pub(super) fn read_prefix_len(instructions: &[Instruction], order: LoopOrder) ->
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 #[derive(Clone, Copy)]
-pub(super) struct ReadLoopDiamond {
-    pub(super) read: u32,
-    pub(super) condition: Condition,
-    pub(super) low: crate::x86::instruction::RegisterView,
-    pub(super) high: crate::x86::instruction::RegisterView,
-    pub(super) advance: crate::x86::instruction::DataOperand,
-    pub(super) replace: crate::x86::instruction::DataOperand,
-    pub(super) head: u64,
-    pub(super) exit: [u64; 2],
+pub(in crate::dbt::wasm) struct ReadLoopDiamond {
+    pub(in crate::dbt::wasm) read: u32,
+    pub(in crate::dbt::wasm) condition: Condition,
+    pub(in crate::dbt::wasm) low: crate::x86::instruction::RegisterView,
+    pub(in crate::dbt::wasm) high: crate::x86::instruction::RegisterView,
+    pub(in crate::dbt::wasm) advance: crate::x86::instruction::DataOperand,
+    pub(in crate::dbt::wasm) replace: crate::x86::instruction::DataOperand,
+    pub(in crate::dbt::wasm) head: u64,
+    pub(in crate::dbt::wasm) exit: [u64; 2],
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 impl ReadLoopDiamond {
-    pub(super) fn recognize(
+    pub(in crate::dbt::wasm) fn recognize(
         instructions: &[Instruction],
         order: LoopOrder,
         context: &ExecutionContext,
@@ -439,7 +444,7 @@ impl ReadLoopDiamond {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum ConditionSource {
+pub(in crate::dbt::wasm) enum ConditionSource {
     Operands(Width),
     OperandsWithTakenFlags(Width),
     ResultSign(Width),
@@ -447,7 +452,7 @@ pub(super) enum ConditionSource {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(super) enum CompareAction {
+pub(in crate::dbt::wasm) enum CompareAction {
     #[default]
     Ordinary,
     SkipStatus,
@@ -457,12 +462,12 @@ pub(super) enum CompareAction {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum ReadFaultFlags {
+pub(in crate::dbt::wasm) enum ReadFaultFlags {
     Arithmetic(Alu, Width),
     Shift(Shift, Width),
 }
 
-pub(super) fn compare_predicates(
+pub(in crate::dbt::wasm) fn compare_predicates(
     instructions: &[Instruction],
     order: LoopOrder,
     context: &ExecutionContext,
@@ -737,7 +742,7 @@ pub(super) fn compare_predicates(
                 && matches!(
                     instructions[order.at((first + 1) as u32) as usize].operation,
                     Operation::Float(float)
-                        if super::float::is_cmpnleps(float)
+                        if float::is_cmpnleps(float)
                             && matches!(float.src, Location::Register(_))
                 )
                 && matches!(
@@ -951,7 +956,7 @@ fn reads_memory(operation: Operation) -> bool {
 fn inside_body(operation: Operation, layout: Layout) -> bool {
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if layout == Layout::RotatedStack
-        && (super::stack_slots::unary_slot(operation).is_some()
+        && (stack_slots::unary_slot(operation).is_some()
             || matches!(
                 operation,
                 Operation::MemoryAlu {

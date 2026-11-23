@@ -1,4 +1,4 @@
-use super::{ADDRESS, Emitter, GPR};
+use crate::dbt::wasm::{ADDRESS, Emitter, GPR};
 use crate::{
     memory::Access,
     x86::{
@@ -12,12 +12,12 @@ use crate::{
 use wasm_encoder::{BlockType, Instruction as Op, ValType};
 
 #[derive(Clone, Copy, Default)]
-pub(super) struct StackAccess {
-    pub(super) read: Option<i64>,
-    pub(super) write: Option<i64>,
+pub(in crate::dbt::wasm) struct StackAccess {
+    pub(in crate::dbt::wasm) read: Option<i64>,
+    pub(in crate::dbt::wasm) write: Option<i64>,
 }
 
-pub(super) struct FlatStackWindow {
+pub(in crate::dbt::wasm) struct FlatStackWindow {
     first: i64,
     bytes: u32,
     reads: bool,
@@ -26,7 +26,10 @@ pub(super) struct FlatStackWindow {
 }
 
 impl FlatStackWindow {
-    pub(super) fn recognize(context: &ExecutionContext, group: &[Instruction]) -> Option<Self> {
+    pub(in crate::dbt::wasm) fn recognize(
+        context: &ExecutionContext,
+        group: &[Instruction],
+    ) -> Option<Self> {
         if context.mode() != Mode::Protected
             || context.stack_width() != Width::W32
             || context.segment(Segment::Ss).limit != u32::MAX
@@ -180,13 +183,17 @@ impl FlatStackWindow {
         })
     }
 
-    pub(super) fn access(&self, index: usize) -> StackAccess {
+    pub(in crate::dbt::wasm) fn access(&self, index: usize) -> StackAccess {
         self.access[index]
     }
 }
 
 impl Emitter {
-    pub(super) fn guard_flat_stack_window(&mut self, plan: &FlatStackWindow, host: u32) {
+    pub(in crate::dbt::wasm) fn guard_flat_stack_window(
+        &mut self,
+        plan: &FlatStackWindow,
+        host: u32,
+    ) {
         let read = plan
             .reads
             .then(|| self.flat_stack_pointer_span.expect("flat stack read span"));

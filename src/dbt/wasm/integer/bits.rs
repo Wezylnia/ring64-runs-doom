@@ -1,9 +1,9 @@
-use super::{ADDRESS, Emitter, FLAGS, LHS, RESULT, RHS, VALUE};
+use crate::dbt::wasm::{ADDRESS, Emitter, FLAGS, LHS, RESULT, RHS, VALUE};
 use crate::x86::instruction::{Bit, BitIndex, Location, RegisterView, Width};
 use wasm_encoder::{BlockType, Instruction as Op};
 
 impl Emitter {
-    pub(super) fn bit(
+    pub(in crate::dbt::wasm) fn bit(
         &mut self,
         kind: Bit,
         dst: Location,
@@ -81,7 +81,7 @@ impl Emitter {
             .op(Op::LocalSet(FLAGS));
     }
 
-    pub(super) fn scan(
+    pub(in crate::dbt::wasm) fn scan(
         &mut self,
         reverse: bool,
         dst: RegisterView,
@@ -124,7 +124,7 @@ impl Emitter {
             .op(Op::LocalSet(FLAGS));
     }
 
-    pub(super) fn bswap(&mut self, dst: RegisterView, width: Width) {
+    pub(in crate::dbt::wasm) fn bswap(&mut self, dst: RegisterView, width: Width) {
         self.data_register(dst, width);
         self.op(Op::LocalSet(LHS));
         for (mask, shift) in [(0x00ff00ff00ff00ffu64, 8), (0x0000ffff0000ffff, 16)] {

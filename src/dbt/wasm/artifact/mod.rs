@@ -4,18 +4,32 @@ mod operation_uses;
 pub(super) mod placement;
 
 #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
-use super::parallel;
-use super::{
-    ENTRY, ENTRY_INDEX, Emitter, REASON, StructuredLoop, Unit, boundary, control, entry_lookup,
-    state, vector,
+use crate::dbt::wasm::memory::parallel;
+use crate::dbt::wasm::{
+    ENTRY, ENTRY_INDEX, Emitter, REASON, StructuredLoop, Unit,
+    execution::{boundary, control, entry_lookup, state},
+    numeric::{float, vector},
 };
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-use super::{
-    float_dyadic, float_loop, loop_cfg, memory,
-    paged_copy::{CopyGroup, ScalarCopyGroup},
-    paged_prefix,
-    paged_prefix::{paged_prefix_handoffs, paged_register_prefixes, register_prefix_operation},
-    paged_read, read_loop, stack_slots,
+use crate::dbt::wasm::{
+    GPR,
+    execution::{
+        loops::{float_dyadic, float_loop, loop_cfg},
+        paged::{
+            copy as paged_copy,
+            copy::{CopyGroup, ScalarCopyGroup},
+            indexed_write as paged_indexed_write,
+            prefix::{
+                self, paged_prefix_handoffs, paged_register_prefixes, register_prefix_operation,
+            },
+        },
+    },
+    memory::{
+        self,
+        flat::{data as flat_data, stack as flat_stack},
+        indexed, paged_read, read_loop, stack_slots,
+    },
+    numeric::x87,
 };
 use crate::embedding::layout::DISPATCH;
 use crate::x86::context::Segment;
@@ -348,13 +362,13 @@ fn emit_body(
                 && unit
                     .instructions
                     .windows(2)
-                    .any(|pair| super::x87::paged_x87_memory_pair(pair[0], pair[1]))
+                    .any(|pair| x87::paged_x87_memory_pair(pair[0], pair[1]))
         } else {
             !observed
                 && (unit.instructions.iter().any(|instruction| {
-                    matches!(instruction.operation, Operation::X87(x87) if super::x87::inline_x87_bank_operation(x87.op))
+                    matches!(instruction.operation, Operation::X87(x87) if x87::inline_x87_bank_operation(x87.op))
                 }) || unit.instructions.windows(2)
-                    .any(|pair| super::x87::x87_pair(pair[0], pair[1]).is_some()))
+                    .any(|pair| x87::x87_pair(pair[0], pair[1]).is_some()))
         };
     let has_boundary = uses.fast_system
         || observed
@@ -548,11 +562,11 @@ fn emit_body(
         .filter(|prefixes| {
             prefixes.iter().enumerate().any(|(first, end)| {
                 end.is_some_and(|end| {
-                    paged_prefix::paged_prefix_read(unit.instructions[first]).is_some()
+                    prefix::paged_prefix_read(unit.instructions[first]).is_some()
                         || unit.instructions[first..end].iter().copied().any(|i| {
-                            paged_prefix::paged_prefix_narrow_read(i)
-                                || paged_prefix::paged_prefix_dword_read(i)
-                                || paged_prefix::paged_prefix_wide_read(i)
+                            prefix::paged_prefix_narrow_read(i)
+                                || prefix::paged_prefix_dword_read(i)
+                                || prefix::paged_prefix_wide_read(i)
                         })
                 })
             })
@@ -683,7 +697,7 @@ fn emit_body(
                 && !mmio
                 && body.paged_source_is_4k(unit)
         })
-        .and_then(|body| super::paged_indexed_write::IndexedWrite::recognize(body, unit))
+        .and_then(|body| paged_indexed_write::IndexedWrite::recognize(body, unit))
         .map(|shape| {
             let signature = add_function_type(
                 &mut types,
@@ -706,7 +720,7 @@ fn emit_body(
                 unit.instructions[first + 1..end]
                     .iter()
                     .copied()
-                    .any(paged_prefix::paged_prefix_dword_store)
+                    .any(prefix::paged_prefix_dword_store)
             })
         })
     });
@@ -940,9 +954,10 @@ fn emit_body(
         && unit.context.is_long64()
         && unit.context.cpl() == 0
         && optional.indexed_scalar_read
-        && unit.instructions.iter().any(|instruction| {
-            super::indexed::indexed_scalar_write(instruction.operation, unit.sampled)
-        }))
+        && unit
+            .instructions
+            .iter()
+            .any(|instruction| indexed::indexed_scalar_write(instruction.operation, unit.sampled)))
     .then(|| {
         let signature = add_function_type(&mut types, [ValType::I64, ValType::I32], []);
         import_function("paged_store_fill", signature)
@@ -1540,7 +1555,7 @@ fn emit_body(
                 .iter()
                 .enumerate()
                 .map(|(first, end)| {
-                    super::flat_stack::FlatStackWindow::recognize(
+                    flat_stack::FlatStackWindow::recognize(
                         &unit.context,
                         &unit.instructions[first..(*end)?],
                     )
@@ -1564,7 +1579,7 @@ fn emit_body(
                 .iter()
                 .enumerate()
                 .map(|(first, end)| {
-                    super::flat_data::FlatDataWindow::recognize(
+                    flat_data::FlatDataWindow::recognize(
                         &unit.context,
                         &unit.instructions[first..(*end)?],
                     )
@@ -1899,7 +1914,7 @@ fn emit_body(
         let first = *next_local;
         locals.extend([(3, ValType::I64), (2, ValType::I32)]);
         *next_local += 5;
-        super::paged_copy::CopyWindow {
+        paged_copy::CopyWindow {
             group,
             resolve,
             source_base: first,
@@ -1958,7 +1973,7 @@ fn emit_body(
         let record = next_local;
         locals.push((4, ValType::I32));
         next_local += 4;
-        super::paged_indexed_write::GuardedIndexedWrite {
+        paged_indexed_write::GuardedIndexedWrite {
             shape,
             resolve,
             record,
@@ -2087,7 +2102,7 @@ fn emit_body(
         && (unit.sampled || paged_indexed_write.is_some())
         && unit.context.is_long64())
     .then(|| {
-        let local = super::GPR + locals.iter().map(|(count, _)| count).sum::<u32>();
+        let local = GPR + locals.iter().map(|(count, _)| count).sum::<u32>();
         locals.push((1, ValType::I64));
         local
     });
@@ -2097,13 +2112,13 @@ fn emit_body(
     let indexed_scalar_stamp = (indexed_paging
         && optional.indexed_scalar_read
         && unit.instructions.iter().any(|instruction| {
-            super::indexed::indexed_scalar_read(instruction.operation)
-                || super::vector::indexed_vector_operand(instruction.operation)
+            indexed::indexed_scalar_read(instruction.operation)
+                || vector::indexed_vector_operand(instruction.operation)
                 || indexed_store_fill.is_some()
-                    && super::indexed::indexed_scalar_write(instruction.operation, unit.sampled)
+                    && indexed::indexed_scalar_write(instruction.operation, unit.sampled)
         }))
     .then(|| {
-        let stamp = super::GPR + locals.iter().map(|(count, _)| count).sum::<u32>();
+        let stamp = GPR + locals.iter().map(|(count, _)| count).sum::<u32>();
         locals.push((1, ValType::I64));
         stamp
     });
@@ -2117,7 +2132,7 @@ fn emit_body(
                     unit.instructions[start..end]
                         .iter()
                         .copied()
-                        .any(paged_prefix::paged_prefix_dword_read)
+                        .any(prefix::paged_prefix_dword_read)
                 })
             })
         });
@@ -2127,7 +2142,7 @@ fn emit_body(
         || indexed_paging && paged_dword_read_pair.is_some_and(|pair| pair.handoff.is_some())
         || indexed_paging && unit.sampled && register_prefix_read.is_some())
     .then(|| {
-        let first = super::GPR + locals.iter().map(|(count, _)| count).sum::<u32>();
+        let first = GPR + locals.iter().map(|(count, _)| count).sum::<u32>();
         locals.push((4, ValType::I32));
         [first, first + 1, first + 2, first + 3]
     });
@@ -2139,7 +2154,7 @@ fn emit_body(
             .iter()
             .all(|i| i.pc >> 12 == unit.instructions[0].pc >> 12))
     .then(|| {
-        let local = super::GPR + locals.iter().map(|(count, _)| count).sum::<u32>();
+        let local = GPR + locals.iter().map(|(count, _)| count).sum::<u32>();
         locals.push((1, ValType::I32));
         local
     });
@@ -2147,7 +2162,7 @@ fn emit_body(
     let ordered_operand = retained_fetch_slot
         .filter(|_| !has_copy_prefix && optional.additional_copy.is_none())
         .map(|_| {
-            let base = super::GPR + locals.iter().map(|(count, _)| count).sum::<u32>();
+            let base = GPR + locals.iter().map(|(count, _)| count).sum::<u32>();
             locals.extend([(1, ValType::I64), (2, ValType::I32)]);
             (base, base + 1, base + 2)
         });
@@ -2437,7 +2452,7 @@ fn emit_body(
         emitter.op(Op::Block(BlockType::Empty));
     }
     if let Some((base, span)) = dense_dispatch {
-        use super::{ADDRESS, RIP};
+        use crate::dbt::wasm::{ADDRESS, RIP};
         // Use the committed guest IP directly, including on dynamic transfers.
         let mut labels = vec![count; span as usize];
         for placement in 0..unit.instructions.len() {
@@ -2785,7 +2800,7 @@ fn emit_body(
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if let Some((_, resolver)) = copy_access_cache {
-        code.function(&super::paged_copy::emit_copy_access_cache(resolver));
+        code.function(&paged_copy::emit_copy_access_cache(resolver));
     }
     let mut module = Module::new();
     module
@@ -2965,7 +2980,7 @@ fn emit_body(
     }
     if optional.inline_cmpnleps
         && unit.instructions.iter().any(|instruction| {
-            matches!(instruction.operation, Operation::Float(float) if super::float::is_cmpnleps(float))
+            matches!(instruction.operation, Operation::Float(float) if float::is_cmpnleps(float))
         })
     {
         optional.inline_cmpnleps = false;
@@ -3007,7 +3022,7 @@ fn emit_body(
     }
     if optional.inline_f32_packed
         && unit.instructions.iter().any(|instruction| {
-            matches!(instruction.operation, Operation::Float(float) if super::float::is_packed_f32_arithmetic(float))
+            matches!(instruction.operation, Operation::Float(float) if float::is_packed_f32_arithmetic(float))
         })
     {
         optional.inline_f32_packed = false;
@@ -3015,7 +3030,7 @@ fn emit_body(
     }
     if optional.inline_f32_sub
         && unit.instructions.iter().any(|instruction| {
-            matches!(instruction.operation, Operation::Float(float) if super::float::is_scalar_f32_sub(float))
+            matches!(instruction.operation, Operation::Float(float) if float::is_scalar_f32_sub(float))
         })
     {
         // Drop the new arithmetic path before reducing the compare or loop placement.
@@ -3024,7 +3039,7 @@ fn emit_body(
     }
     if optional.inline_f32_compares
         && unit.instructions.iter().any(|instruction| {
-            matches!(instruction.operation, Operation::Float(float) if super::float::is_f32_flag_compare(float))
+            matches!(instruction.operation, Operation::Float(float) if float::is_f32_flag_compare(float))
         })
     {
         // Keep the original placement if the direct compare exceeds its cap.

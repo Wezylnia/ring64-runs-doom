@@ -1,4 +1,6 @@
-use super::{DIRECTION, Emitter, REASON, REPEAT_REMAINING, RIP, SHADOW, SYSTEM};
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+use crate::dbt::wasm::STORE_STATUS;
+use crate::dbt::wasm::{DIRECTION, Emitter, REASON, REPEAT_REMAINING, RIP, SHADOW, SYSTEM};
 use crate::embedding::layout::{DISPATCH, HALTED, RunState};
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 use crate::x86::instruction::Location;
@@ -8,7 +10,7 @@ use crate::x86::instruction::{Operation, ProtectionKind, Repeat, SystemFlagsKind
 use std::mem::offset_of;
 use wasm_encoder::{BlockType, Instruction as Op, MemArg};
 
-pub(super) fn ss_producer(operation: Operation) -> bool {
+pub(in crate::dbt::wasm) fn ss_producer(operation: Operation) -> bool {
     matches!(
         operation,
         Operation::PopSs { .. }
@@ -67,7 +69,10 @@ impl Emitter {
         }
     }
 
-    pub(super) fn can_complete_paged_access_quietly(&self, operation: Operation) -> bool {
+    pub(in crate::dbt::wasm) fn can_complete_paged_access_quietly(
+        &self,
+        operation: Operation,
+    ) -> bool {
         #[cfg(any(feature = "parallel", not(target_arch = "wasm32")))]
         {
             let _ = operation;
@@ -100,7 +105,7 @@ impl Emitter {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) fn can_reuse_paged_rmw_fetch(&self, next_pc: u64) -> bool {
+    pub(in crate::dbt::wasm) fn can_reuse_paged_rmw_fetch(&self, next_pc: u64) -> bool {
         self.uses_indexed_scalar_rmw()
             && self.can_complete_paged_access_quietly(self.current_operation)
             && next_pc > self.current_pc
@@ -108,7 +113,7 @@ impl Emitter {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) fn require_checked_access_finish(&mut self) {
+    pub(in crate::dbt::wasm) fn require_checked_access_finish(&mut self) {
         if self.can_complete_paged_access_quietly(self.current_operation) {
             // A checked operand can invalidate code or record a data breakpoint.
             let result = self.boundary_result.unwrap();
@@ -117,7 +122,7 @@ impl Emitter {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) fn paged_return_uses_read_result(&self) -> bool {
+    pub(in crate::dbt::wasm) fn paged_return_uses_read_result(&self) -> bool {
         self.paged_quiet_completion
             && !self.guarded_paged_lap
             && matches!(
@@ -129,21 +134,21 @@ impl Emitter {
             )
     }
 
-    pub(super) fn clear_quiet_fetch(&mut self) {
+    pub(in crate::dbt::wasm) fn clear_quiet_fetch(&mut self) {
         if let Some(page) = self.quiet_fetch_page {
             self.op(Op::I64Const(0)).op(Op::LocalSet(page));
         }
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    pub(super) fn remember_quiet_fetch(&mut self, pc: u64) {
+    pub(in crate::dbt::wasm) fn remember_quiet_fetch(&mut self, pc: u64) {
         if let Some(page) = self.quiet_fetch_page {
             self.op(Op::I64Const(((pc & !4095) | 1) as i64))
                 .op(Op::LocalSet(page));
         }
     }
 
-    pub(super) fn external_boundary(&mut self, exit_depth: u32) {
+    pub(in crate::dbt::wasm) fn external_boundary(&mut self, exit_depth: u32) {
         let Some(helper) = self.external_step else {
             return;
         };
@@ -167,7 +172,7 @@ impl Emitter {
             .op(Op::End);
     }
 
-    pub(super) fn halt(&mut self, next_pc: u64, exit_depth: u32) {
+    pub(in crate::dbt::wasm) fn halt(&mut self, next_pc: u64, exit_depth: u32) {
         self.full_flags();
         self.op(Op::Call(self.halt.expect("HLT import")))
             .op(Op::LocalTee(REASON))
@@ -180,14 +185,14 @@ impl Emitter {
         self.exit(HALTED, exit_depth);
     }
 
-    pub(super) fn full_flags(&mut self) {
+    pub(in crate::dbt::wasm) fn full_flags(&mut self) {
         self.status_flags();
         self.op(Op::LocalGet(DIRECTION)).op(Op::I64Or);
         self.system_bits();
         self.op(Op::I64Or);
     }
 
-    pub(super) fn system_bits(&mut self) {
+    pub(in crate::dbt::wasm) fn system_bits(&mut self) {
         if self.observed || self.mutable_controls {
             self.op(Op::LocalGet(SYSTEM));
         } else {
@@ -203,7 +208,7 @@ impl Emitter {
         }
     }
 
-    pub(super) fn profile_guard(&mut self, exit_depth: u32) {
+    pub(in crate::dbt::wasm) fn profile_guard(&mut self, exit_depth: u32) {
         if self.paged {
             return;
         }
@@ -247,7 +252,12 @@ impl Emitter {
             .op(Op::LocalSet(SYSTEM));
     }
 
-    pub(super) fn begin(&mut self, operation: Operation, next_pc: u64, exit_depth: u32) {
+    pub(in crate::dbt::wasm) fn begin(
+        &mut self,
+        operation: Operation,
+        next_pc: u64,
+        exit_depth: u32,
+    ) {
         if !self.observed || self.guarded_paged_lap {
             return;
         }
@@ -387,7 +397,7 @@ impl Emitter {
         ss_producer(self.current_operation)
     }
 
-    pub(super) fn trap(&mut self, completed: bool, exit_depth: u32) {
+    pub(in crate::dbt::wasm) fn trap(&mut self, completed: bool, exit_depth: u32) {
         if !self.observed {
             return;
         }
@@ -412,7 +422,7 @@ impl Emitter {
         if quiet_return {
             use crate::embedding::layout::{QUIET_RETURN_READ, debug::CONTINUE_ACTIVE};
             let sampled_tf = self.sampled_tf.unwrap();
-            self.op(Op::LocalGet(super::STORE_STATUS))
+            self.op(Op::LocalGet(STORE_STATUS))
                 .op(Op::I32Const(QUIET_RETURN_READ as i32))
                 .op(Op::I32Eq)
                 .op(Op::LocalGet(sampled_tf))
@@ -468,7 +478,7 @@ impl Emitter {
         self.op(Op::I32Const(0)).op(Op::LocalSet(REASON));
     }
 
-    pub(super) fn finish_instruction(&mut self, exit_depth: u32) -> bool {
+    pub(in crate::dbt::wasm) fn finish_instruction(&mut self, exit_depth: u32) -> bool {
         if self.guarded_paged_lap {
             return false;
         }

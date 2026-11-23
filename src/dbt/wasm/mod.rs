@@ -1,4 +1,9 @@
-// Group source files by responsibility while keeping the emitter modules in one scope.
+mod execution;
+mod integer;
+mod memory;
+mod numeric;
+mod system;
+
 mod artifact;
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 pub(crate) use artifact::placement::emit_flat_trace;
@@ -7,121 +12,6 @@ pub(crate) use artifact::placement::emit_mmio_profile;
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 pub(crate) use artifact::placement::emit_paged_vector_copy;
 pub(crate) use artifact::placement::emit_profile;
-#[path = "integer/bits.rs"]
-mod bits;
-#[path = "integer/bmi.rs"]
-mod bmi;
-#[path = "execution/boundary.rs"]
-mod boundary;
-#[path = "execution/compound_stack.rs"]
-mod compound_stack;
-#[path = "execution/control.rs"]
-mod control;
-#[path = "integer/counts.rs"]
-mod counts;
-#[path = "integer/data.rs"]
-mod data;
-#[path = "system/debug.rs"]
-mod debug;
-#[path = "execution/entry_lookup.rs"]
-mod entry_lookup;
-#[path = "integer/exchange.rs"]
-mod exchange;
-#[path = "execution/far.rs"]
-mod far;
-#[path = "system/fast_system.rs"]
-mod fast_system;
-#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-#[path = "memory/flat_data.rs"]
-mod flat_data;
-#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-#[path = "memory/flat_stack.rs"]
-mod flat_stack;
-#[path = "numeric/float.rs"]
-mod float;
-#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-#[path = "execution/float_dyadic.rs"]
-mod float_dyadic;
-#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-#[path = "execution/float_loop.rs"]
-mod float_loop;
-#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-#[path = "memory/indexed.rs"]
-mod indexed;
-#[path = "execution/instruction.rs"]
-mod instruction;
-#[path = "integer/integer.rs"]
-mod integer;
-#[path = "integer/integer_memory.rs"]
-mod integer_memory;
-#[path = "system/io.rs"]
-mod io;
-#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-#[path = "execution/linear_recurrence.rs"]
-mod linear_recurrence;
-#[path = "execution/loop_cfg.rs"]
-mod loop_cfg;
-#[path = "memory/memory.rs"]
-mod memory;
-#[path = "memory/mmio.rs"]
-mod mmio;
-#[path = "numeric/mmx.rs"]
-mod mmx;
-#[path = "integer/multiply_divide.rs"]
-mod multiply_divide;
-#[path = "numeric/numeric_state.rs"]
-mod numeric_state;
-#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-#[path = "execution/paged_copy.rs"]
-mod paged_copy;
-#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-#[path = "execution/paged_indexed_write.rs"]
-mod paged_indexed_write;
-#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-#[path = "execution/paged_prefix.rs"]
-mod paged_prefix;
-#[path = "memory/paged_read.rs"]
-mod paged_read;
-#[path = "system/paging.rs"]
-mod paging;
-#[path = "system/processor.rs"]
-mod processor;
-#[path = "system/protection.rs"]
-mod protection;
-#[path = "system/protection_keys.rs"]
-mod protection_keys;
-#[cfg(any(test, all(not(feature = "parallel"), target_arch = "wasm32")))]
-#[path = "memory/read_loop.rs"]
-mod read_loop;
-#[path = "system/software_events.rs"]
-mod software_events;
-#[path = "numeric/ssse3.rs"]
-mod ssse3;
-#[path = "execution/stack.rs"]
-mod stack;
-#[cfg(any(test, all(not(feature = "parallel"), target_arch = "wasm32")))]
-#[path = "memory/stack_slots.rs"]
-mod stack_slots;
-#[path = "execution/state.rs"]
-mod state;
-#[path = "memory/streaming.rs"]
-mod streaming;
-#[path = "memory/strings.rs"]
-mod strings;
-#[path = "execution/structured_loop.rs"]
-mod structured_loop;
-#[path = "system/system_flags.rs"]
-mod system_flags;
-#[path = "integer/unary.rs"]
-mod unary;
-#[path = "numeric/vector.rs"]
-mod vector;
-#[path = "numeric/x87.rs"]
-mod x87;
-
-#[cfg(all(feature = "parallel", target_arch = "wasm32"))]
-#[path = "memory/parallel.rs"]
-mod parallel;
 
 use std::collections::BTreeMap;
 use wasm_encoder::{Function, Instruction as Op};
@@ -129,7 +19,7 @@ use wasm_encoder::{Function, Instruction as Op};
 use super::unit::Unit;
 use crate::x86::context::{ExecutionContext, Segment};
 use crate::x86::instruction::Operation;
-use structured_loop::StructuredLoop;
+use execution::loops::structured_loop::StructuredLoop;
 
 const ENTRY_INDEX: u32 = 4;
 const GPR: u32 = 5;
@@ -180,25 +70,25 @@ struct Emitter {
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     flat_stack_pointer_span: Option<memory::SpanCache>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    flat_stack_access: Option<(u32, flat_stack::StackAccess)>,
+    flat_stack_access: Option<(u32, memory::flat::stack::StackAccess)>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     flat_data_bias: Option<u32>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     stack_pointer_relative: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    read_loop_diamond: Option<loop_cfg::ReadLoopDiamond>,
+    read_loop_diamond: Option<execution::loops::loop_cfg::ReadLoopDiamond>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     write_spans: [Option<memory::SpanCache>; 2],
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     linear_call_spans: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    proved_stack: Option<(stack_slots::StackSlots, u32)>,
+    proved_stack: Option<(memory::stack_slots::StackSlots, u32)>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    indexed_read_window: Option<read_loop::IndexedReadWindow>,
+    indexed_read_window: Option<memory::read_loop::IndexedReadWindow>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    proved_reads: Option<(read_loop::ReadLoop, u32)>,
+    proved_reads: Option<(memory::read_loop::ReadLoop, u32)>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    paged_proved_f32_reads: Option<(read_loop::ReadLoop, u32)>,
+    paged_proved_f32_reads: Option<(memory::read_loop::ReadLoop, u32)>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_f32_read_pair: Option<(u32, u32, Option<u32>)>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -214,27 +104,27 @@ struct Emitter {
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     float_raw_sticky: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    float_dyadic: Option<float_dyadic::DyadicReduction>,
+    float_dyadic: Option<execution::loops::float_dyadic::DyadicReduction>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    paged_float_dyadic: Option<float_dyadic::DyadicReduction>,
+    paged_float_dyadic: Option<execution::loops::float_dyadic::DyadicReduction>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_float_sticky: bool,
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
-    parallel_atomic: Option<parallel::Atomic>,
+    parallel_atomic: Option<memory::parallel::Atomic>,
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
-    parallel_scalar: Option<parallel::Scalar>,
+    parallel_scalar: Option<memory::parallel::Scalar>,
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     parallel_vector_dword: Option<u32>,
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
-    parallel_vector_span: Option<(u32, [Option<parallel::VectorSpanMemo>; 2], u32)>,
+    parallel_vector_span: Option<(u32, [Option<memory::parallel::VectorSpanMemo>; 2], u32)>,
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     compact_shared_reads: bool,
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
-    parallel_dword_window: Option<parallel::DwordWindow>,
+    parallel_dword_window: Option<memory::parallel::DwordWindow>,
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
-    parallel_base_byte_window: Option<parallel::DwordWindow>,
+    parallel_base_byte_window: Option<memory::parallel::DwordWindow>,
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
-    parallel_byte_store_span: Option<parallel::ByteStoreSpan>,
+    parallel_byte_store_span: Option<memory::parallel::ByteStoreSpan>,
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     parallel_retry: Option<u32>,
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
@@ -258,25 +148,25 @@ struct Emitter {
     paged_prefix_fetch_out: Option<(u32, usize)>,
     paged_loop_guard: Option<(u32, u32)>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    paged_preamble: Option<(structured_loop::PagedPreamble, u32, u32)>,
+    paged_preamble: Option<(execution::loops::structured_loop::PagedPreamble, u32, u32)>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_preamble_latch: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    paged_read_rearm: Option<(u32, loop_cfg::LoopOrder)>,
+    paged_read_rearm: Option<(u32, execution::loops::loop_cfg::LoopOrder)>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    paged_read_span: Option<(read_loop::ReadLoop, u32, u32)>,
+    paged_read_span: Option<(memory::read_loop::ReadLoop, u32, u32)>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_dense_read_span: Option<u32>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    paged_dword_window: Option<paged_read::PagedReadWindow>,
+    paged_dword_window: Option<memory::paged_read::PagedReadWindow>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_dword_window_touch: Option<u32>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    paged_dword_read_pair: Option<paged_read::PagedDwordReadPair>,
+    paged_dword_read_pair: Option<memory::paged_read::PagedDwordReadPair>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    paged_indexed_write: Option<paged_indexed_write::GuardedIndexedWrite>,
+    paged_indexed_write: Option<execution::paged::indexed_write::GuardedIndexedWrite>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    paged_vector_window: Option<paged_read::PagedReadWindow>,
+    paged_vector_window: Option<memory::paged_read::PagedReadWindow>,
     paged_loop_read_byte: Option<u32>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_byte_write_pair: Option<memory::PagedByteWritePair>,
@@ -290,11 +180,11 @@ struct Emitter {
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_loop_write_block: Option<u32>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    paged_copy_window: Option<paged_copy::CopyWindow>,
+    paged_copy_window: Option<execution::paged::copy::CopyWindow>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_copy_access_cache: Option<u32>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    linear_recurrence: Option<linear_recurrence::Recurrence>,
+    linear_recurrence: Option<execution::loops::linear_recurrence::Recurrence>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     paged_write_ready: Option<u32>,
     paged_loop_write_byte: Option<u32>,
@@ -302,8 +192,8 @@ struct Emitter {
     register_upper_dwords: [Option<u32>; 16],
     narrow_gprs: bool,
     omit_result_status: bool,
-    flags_on_read_fault: Option<loop_cfg::ReadFaultFlags>,
-    instruction_retirement: control::InstructionRetirement,
+    flags_on_read_fault: Option<execution::loops::loop_cfg::ReadFaultFlags>,
+    instruction_retirement: execution::control::InstructionRetirement,
     entry_lookup: Option<u32>,
     dense_dispatch: bool,
     packed_result_status: bool,

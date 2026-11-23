@@ -1,26 +1,27 @@
-use super::{
+use super::float_dyadic::DyadicReduction;
+use crate::dbt::wasm::{
     ENTRY, Emitter, FLAGS, GPR, REMAINING, RIP, StructuredLoop, Unit,
-    float::MASKED_STICKY_PRECISION, float_dyadic::DyadicReduction, read_loop::ReadLoop,
-    vector::Banks,
+    memory::read_loop::ReadLoop,
+    numeric::{float::MASKED_STICKY_PRECISION, vector::Banks},
 };
 use crate::memory::canonical48;
 use crate::x86::instruction::{Alu, Operation};
 use wasm_encoder::{BlockType, Function, Instruction as Op, TypeSection, ValType};
 
-pub(super) const HEADER_REJECTION: i32 = -1;
+pub(in crate::dbt::wasm) const HEADER_REJECTION: i32 = -1;
 
-pub(super) struct FloatOutline {
+pub(in crate::dbt::wasm) struct FloatOutline {
     index: u32,
-    pub(super) signature: u32,
-    pub(super) sticky_index: Option<u32>,
-    pub(super) dyadic: Option<DyadicReduction>,
+    pub(in crate::dbt::wasm) signature: u32,
+    pub(in crate::dbt::wasm) sticky_index: Option<u32>,
+    pub(in crate::dbt::wasm) dyadic: Option<DyadicReduction>,
     induction_input: (u32, u32),
     inputs: Vec<(u32, ValType)>,
     outputs: Vec<(u32, ValType)>,
 }
 
 impl FloatOutline {
-    pub(super) fn new(
+    pub(in crate::dbt::wasm) fn new(
         unit: &Unit,
         body: StructuredLoop,
         proof: ReadLoop,
@@ -92,13 +93,13 @@ impl FloatOutline {
         })
     }
 
-    pub(super) fn enable_sticky(&mut self) {
+    pub(in crate::dbt::wasm) fn enable_sticky(&mut self) {
         self.sticky_index = Some(self.index + 1);
     }
 }
 
 impl Emitter {
-    pub(super) fn emit_float_outline(
+    pub(in crate::dbt::wasm) fn emit_float_outline(
         &mut self,
         outline: &FloatOutline,
         locals: &[(u32, ValType)],
@@ -182,7 +183,7 @@ impl Emitter {
         (index, body, hints)
     }
 
-    pub(super) fn call_float_outline(
+    pub(in crate::dbt::wasm) fn call_float_outline(
         &mut self,
         outline: &FloatOutline,
         body: StructuredLoop,
