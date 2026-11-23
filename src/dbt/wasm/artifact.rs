@@ -1,8 +1,10 @@
+mod operation_uses;
+
 #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
 use super::parallel;
 use super::{
     ENTRY, ENTRY_INDEX, Emitter, REASON, StructuredLoop, Unit, boundary, control, entry_lookup,
-    mmx, state, vector,
+    state, vector,
 };
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 use super::{
@@ -17,6 +19,7 @@ use crate::x86::context::Segment;
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 use crate::x86::instruction::Instruction;
 use crate::x86::instruction::{Location, MemoryAluOperands, Operation, Repeat};
+use operation_uses::OperationUses;
 use wasm_encoder::{
     BlockType, CodeSection, EntityType, ExportKind, ExportSection, Function, FunctionSection,
     ImportSection, Instruction as Op, MemoryType, Module, Section, TypeSection, ValType,
@@ -721,26 +724,10 @@ fn emit_body(
     max_artifact_bytes: usize,
 ) -> (Vec<u8>, bool) {
     let _extra_spans = optional.extra_spans;
+    let uses = OperationUses::for_instructions(&unit.instructions);
     let vector_banks = vector::Banks::for_unit(unit);
-    let has_repeat = unit
-        .instructions
-        .iter()
-        .any(|i| matches!(i.operation, Operation::String { repeat, .. } if repeat != Repeat::None));
-    let dynamic_targets = unit.instructions.iter().any(|i| {
-        matches!(
-            i.operation,
-            Operation::Return { .. }
-                | Operation::JumpRegister { .. }
-                | Operation::JumpMemory { .. }
-                | Operation::Call {
-                    target: crate::x86::instruction::Operand::Register(_)
-                        | crate::x86::instruction::Operand::Memory(_),
-                    ..
-                }
-        )
-    });
     let segmented = !unit.context.is_long64();
-    let target_type = dynamic_targets || segmented;
+    let target_type = uses.dynamic_targets || segmented;
     let mut types = TypeSection::new();
     types.ty().function(
         if segmented {
@@ -772,35 +759,14 @@ fn emit_body(
     if target_type {
         types.ty().function([ValType::I64], [ValType::I32]);
     }
-    let wide_product = unit.instructions.iter().any(|i| {
-        matches!(
-            i.operation,
-            Operation::Multiply {
-                width: crate::x86::instruction::Width::W64,
-                ..
-            } | Operation::Imul {
-                width: crate::x86::instruction::Width::W64,
-                ..
-            }
-        )
-    });
-    let wide_divide = unit.instructions.iter().any(|i| {
-        matches!(
-            i.operation,
-            Operation::Divide {
-                width: crate::x86::instruction::Width::W64,
-                ..
-            }
-        )
-    });
-    let multiply_type = wide_product.then(|| {
+    let multiply_type = uses.wide_product.then(|| {
         add_function_type(
             &mut types,
             [ValType::I64, ValType::I64, ValType::I32],
             [ValType::I64],
         )
     });
-    let divide_type = wide_divide.then(|| {
+    let divide_type = uses.wide_divide.then(|| {
         add_function_type(
             &mut types,
             [ValType::I64, ValType::I64, ValType::I64, ValType::I32],
@@ -814,11 +780,8 @@ fn emit_body(
             [ValType::I32],
         )
     });
-    let wide_compare = unit
-        .instructions
-        .iter()
-        .any(|i| matches!(i.operation, Operation::CompareExchange16b { .. }));
-    let block16_for_write_type = wide_compare
+    let block16_for_write_type = uses
+        .wide_compare
         .then(|| add_function_type(&mut types, [ValType::I64, ValType::I32], [ValType::I32]));
     let mmio_type = mmio.then(|| {
         add_function_type(
@@ -827,7 +790,7 @@ fn emit_body(
             [ValType::I32],
         )
     });
-    let vector_store_type = (vector_banks.stores || wide_compare).then(|| {
+    let vector_store_type = (vector_banks.stores || uses.wide_compare).then(|| {
         add_function_type(
             &mut types,
             [
@@ -840,25 +803,9 @@ fn emit_body(
             [ValType::I32],
         )
     });
-    let has_float = unit
-        .instructions
-        .iter()
-        .any(|i| matches!(i.operation, Operation::Float(_)));
-    let load_mxcsr_used = unit
-        .instructions
-        .iter()
-        .any(|i| matches!(i.operation, Operation::Mxcsr { store: false, .. }));
-    let store_mxcsr_used = unit
-        .instructions
-        .iter()
-        .any(|i| matches!(i.operation, Operation::Mxcsr { store: true, .. }));
-    let has_x87 = unit
-        .instructions
-        .iter()
-        .any(|i| matches!(i.operation, Operation::X87(_)));
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let x87_register_pairs = optional.x87_register_pairs
-        && has_x87
+        && uses.x87
         && !mmio
         && if paged {
             unit.context.is_long64()
@@ -873,88 +820,16 @@ fn emit_body(
                 }) || unit.instructions.windows(2)
                     .any(|pair| super::x87::x87_pair(pair[0], pair[1]).is_some()))
         };
-    let has_mmx = unit
-        .instructions
-        .iter()
-        .any(|i| matches!(i.operation, Operation::Mmx { op, .. } if !mmx::direct(op)));
-    let has_mmx_vector = unit
-        .instructions
-        .iter()
-        .any(|i| matches!(i.operation, Operation::Mmx { op, .. } if mmx::vector_temps(op)));
-    let has_numeric_image = unit
-        .instructions
-        .iter()
-        .any(|i| matches!(i.operation, Operation::NumericImage { .. }));
-    let has_masked_store = unit
-        .instructions
-        .iter()
-        .any(|i| matches!(i.operation, Operation::MaskedStore { .. }));
-    let has_clflush = unit
-        .instructions
-        .iter()
-        .any(|i| matches!(i.operation, Operation::Clflush { .. }));
-    let has_protection = unit.instructions.iter().any(|i| {
-        matches!(
-            i.operation,
-            Operation::Protection(_) | Operation::PopSs { .. }
-        )
-    });
-    let has_far = unit
-        .instructions
-        .iter()
-        .any(|i| matches!(i.operation, Operation::Far(_)));
-    let has_compound_stack = unit
-        .instructions
-        .iter()
-        .any(|i| matches!(i.operation, Operation::CompoundStack(_)));
-    let has_debug_register = unit
-        .instructions
-        .iter()
-        .any(|i| matches!(i.operation, Operation::DebugRegister { .. }));
-    let has_paging = unit
-        .instructions
-        .iter()
-        .any(|i| matches!(i.operation, Operation::Paging(operation) if !matches!(operation, crate::x86::instruction::PagingInstruction::InvalidatePcid { .. })));
-    let has_invpcid = unit.instructions.iter().any(|i| {
-        matches!(
-            i.operation,
-            Operation::Paging(crate::x86::instruction::PagingInstruction::InvalidatePcid { .. })
-        )
-    });
-    let has_fast_system = unit
-        .instructions
-        .iter()
-        .any(|i| matches!(i.operation, Operation::FastSystem(_)));
-    let has_processor = unit
-        .instructions
-        .iter()
-        .any(|i| matches!(i.operation, Operation::Processor(_)));
-    let has_protection_key = unit
-        .instructions
-        .iter()
-        .any(|i| matches!(i.operation, Operation::ProtectionKey(_)));
-    let has_system_flags = unit
-        .instructions
-        .iter()
-        .any(|i| matches!(i.operation, Operation::SystemFlags(_)));
-    let has_software_events = unit
-        .instructions
-        .iter()
-        .any(|i| matches!(i.operation, Operation::SoftwareEvent(_)));
-    let has_halt = unit
-        .instructions
-        .iter()
-        .any(|i| matches!(i.operation, Operation::Halt));
-    let has_boundary = has_fast_system
+    let has_boundary = uses.fast_system
         || observed
-        || has_system_flags
-        || has_software_events
-        || has_halt
+        || uses.system_flags
+        || uses.software_events
+        || uses.halt
         || unit
             .instructions
             .iter()
             .any(|i| boundary::ss_producer(i.operation));
-    let float_type = has_float.then(|| {
+    let float_type = uses.float.then(|| {
         add_function_type(
             &mut types,
             [
@@ -967,9 +842,9 @@ fn emit_body(
             [ValType::I32],
         )
     });
-    let mxcsr_type = (load_mxcsr_used || store_mxcsr_used)
+    let mxcsr_type = (uses.load_mxcsr || uses.store_mxcsr)
         .then(|| add_function_type(&mut types, [ValType::I64, ValType::I32], [ValType::I32]));
-    let x87_type = has_x87.then(|| {
+    let x87_type = uses.x87.then(|| {
         add_function_type(
             &mut types,
             [
@@ -983,7 +858,7 @@ fn emit_body(
             [ValType::I32],
         )
     });
-    let masked_store_type = has_masked_store.then(|| {
+    let masked_store_type = uses.masked_store.then(|| {
         add_function_type(
             &mut types,
             [
@@ -996,18 +871,20 @@ fn emit_body(
             [ValType::I32],
         )
     });
-    let clflush_type = has_clflush
+    let clflush_type = uses
+        .clflush
         .then(|| add_function_type(&mut types, [ValType::I64, ValType::I32], [ValType::I32]));
-    let protection_type = has_protection.then(|| {
+    let protection_type = uses.protection.then(|| {
         add_function_type(
             &mut types,
             [ValType::I32, ValType::I64, ValType::I64, ValType::I32],
             [ValType::I32],
         )
     });
-    let compound_stack_type =
-        has_compound_stack.then(|| add_function_type(&mut types, [ValType::I32], [ValType::I32]));
-    let far_type = has_far.then(|| {
+    let compound_stack_type = uses
+        .compound_stack
+        .then(|| add_function_type(&mut types, [ValType::I32], [ValType::I32]));
+    let far_type = uses.far.then(|| {
         add_function_type(
             &mut types,
             [
@@ -1021,28 +898,28 @@ fn emit_body(
             [ValType::I32],
         )
     });
-    let software_event_type = has_software_events.then(|| {
+    let software_event_type = uses.software_events.then(|| {
         add_function_type(
             &mut types,
             [ValType::I32, ValType::I64, ValType::I64, ValType::I64],
             [ValType::I32],
         )
     });
-    let system_flags_type = has_system_flags.then(|| {
+    let system_flags_type = uses.system_flags.then(|| {
         add_function_type(
             &mut types,
             [ValType::I32, ValType::I64, ValType::I64],
             [ValType::I32],
         )
     });
-    let debug_register_type = has_debug_register.then(|| {
+    let debug_register_type = uses.debug_register.then(|| {
         add_function_type(
             &mut types,
             [ValType::I32, ValType::I64, ValType::I64, ValType::I64],
             [ValType::I32],
         )
     });
-    let paging_type = has_paging.then(|| {
+    let paging_type = uses.paging.then(|| {
         add_function_type(
             &mut types,
             [
@@ -1056,23 +933,24 @@ fn emit_body(
             [ValType::I32],
         )
     });
-    let invpcid_type = has_invpcid.then(|| {
+    let invpcid_type = uses.invpcid.then(|| {
         add_function_type(
             &mut types,
             [ValType::I32, ValType::I64, ValType::I64, ValType::I64],
             [ValType::I32],
         )
     });
-    let processor_type = has_processor.then(|| {
+    let processor_type = uses.processor.then(|| {
         add_function_type(
             &mut types,
             [ValType::I32, ValType::I32, ValType::I32, ValType::I64],
             [ValType::I32],
         )
     });
-    let protection_key_type = has_protection_key
+    let protection_key_type = uses
+        .protection_key
         .then(|| add_function_type(&mut types, [ValType::I32; 4], [ValType::I32]));
-    let fast_system_type = has_fast_system.then(|| {
+    let fast_system_type = uses.fast_system.then(|| {
         add_function_type(
             &mut types,
             [
@@ -1088,10 +966,8 @@ fn emit_body(
             [ValType::I32],
         )
     });
-    let write_segment_base_type = unit
-        .instructions
-        .iter()
-        .any(|i| matches!(i.operation, Operation::SegmentBase { write: true, .. }))
+    let write_segment_base_type = uses
+        .write_segment_base
         .then(|| add_function_type(&mut types, [ValType::I32, ValType::I64], [ValType::I32]));
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let indexed_paging =
@@ -1375,36 +1251,24 @@ fn emit_body(
             [ValType::I32],
         )
     });
-    let halt_type = has_halt.then(|| add_function_type(&mut types, [ValType::I64], [ValType::I32]));
-    let io_type = unit
-        .instructions
-        .iter()
-        .any(|i| {
-            matches!(
-                i.operation,
-                Operation::Io { .. }
-                    | Operation::String {
-                        kind: crate::x86::instruction::StringKind::Ins
-                            | crate::x86::instruction::StringKind::Outs,
-                        ..
-                    }
-            )
-        })
-        .then(|| {
-            add_function_type(
-                &mut types,
-                [
-                    ValType::I32,
-                    ValType::I32,
-                    ValType::I64,
-                    ValType::I64,
-                    ValType::I32,
-                    ValType::I64,
-                ],
-                [ValType::I32],
-            )
-        });
-    let numeric_state_type = (has_mmx || has_numeric_image).then(|| {
+    let halt_type = uses
+        .halt
+        .then(|| add_function_type(&mut types, [ValType::I64], [ValType::I32]));
+    let io_type = uses.io.then(|| {
+        add_function_type(
+            &mut types,
+            [
+                ValType::I32,
+                ValType::I32,
+                ValType::I64,
+                ValType::I64,
+                ValType::I32,
+                ValType::I64,
+            ],
+            [ValType::I32],
+        )
+    });
+    let numeric_state_type = (uses.mmx || uses.numeric_image).then(|| {
         add_function_type(
             &mut types,
             [ValType::I32, ValType::I64, ValType::I32],
@@ -1518,7 +1382,9 @@ fn emit_body(
     };
     let multiply_high = multiply_type.map(|index| import_function("multiply_high", index));
     let divide = divide_type.map(|index| import_function("divide", index));
-    let divide_failed = wide_divide.then(|| import_function("divide_failed", 2));
+    let divide_failed = uses
+        .wide_divide
+        .then(|| import_function("divide_failed", 2));
     let access_reason = (segmented || paged).then(|| import_function("access_reason", 2));
     let mmio_operand = mmio_type.map(|index| import_function("mmio_operand", index));
     let target_check = segmented.then(|| import_function("target_check", 4));
@@ -1541,13 +1407,20 @@ fn emit_body(
         import_function("paged_store_fill", signature)
     });
     let float = float_type.map(|index| import_function("float", index));
-    let load_mxcsr = load_mxcsr_used.then(|| import_function("load_mxcsr", mxcsr_type.unwrap()));
-    let store_mxcsr = store_mxcsr_used.then(|| import_function("store_mxcsr", mxcsr_type.unwrap()));
+    let load_mxcsr = uses
+        .load_mxcsr
+        .then(|| import_function("load_mxcsr", mxcsr_type.unwrap()));
+    let store_mxcsr = uses
+        .store_mxcsr
+        .then(|| import_function("store_mxcsr", mxcsr_type.unwrap()));
     let io = io_type.map(|index| import_function("io", index));
     let x87 = x87_type.map(|index| import_function("x87", index));
-    let mmx = has_mmx.then(|| import_function("mmx", numeric_state_type.unwrap()));
-    let numeric_image =
-        has_numeric_image.then(|| import_function("numeric_image", numeric_state_type.unwrap()));
+    let mmx = uses
+        .mmx
+        .then(|| import_function("mmx", numeric_state_type.unwrap()));
+    let numeric_image = uses
+        .numeric_image
+        .then(|| import_function("numeric_image", numeric_state_type.unwrap()));
     let masked_store = masked_store_type.map(|index| import_function("masked_store", index));
     let clflush = clflush_type.map(|index| import_function("clflush", index));
     let protection = protection_type.map(|index| import_function("protection", index));
@@ -1741,7 +1614,7 @@ fn emit_body(
     });
     let external_step = external_step_type.map(|index| import_function("external_step", index));
     let halt = halt_type.map(|index| import_function("halt", index));
-    let vector_access_reason = if vector_banks.loads || vector_store.is_some() || store_mxcsr_used {
+    let vector_access_reason = if vector_banks.loads || vector_store.is_some() || uses.store_mxcsr {
         Some(access_reason.unwrap_or_else(|| import_function("access_reason", 2)))
     } else {
         None
@@ -1883,7 +1756,7 @@ fn emit_body(
         .then(|| flat_integer_groups(unit, loop_body))
         .filter(|groups| groups.iter().any(Option::is_some));
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    let dense_dispatch = if dynamic_targets
+    let dense_dispatch = if uses.dynamic_targets
         && (unit.sampled && linear_call_spans || indexed_paging)
         // Structured clones can hand off an entry ordinal independently of RIP.
         && loop_body.is_none()
@@ -1897,7 +1770,7 @@ fn emit_body(
     };
     #[cfg(any(feature = "parallel", not(target_arch = "wasm32")))]
     let dense_dispatch: Option<(u64, u64)> = None;
-    let target_lookup = dynamic_targets && dense_dispatch.is_none();
+    let target_lookup = uses.dynamic_targets && dense_dispatch.is_none();
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let mut span_import = |name| {
         let signature = add_function_type(
@@ -2003,11 +1876,11 @@ fn emit_body(
         (2, ValType::I64),
         (1, ValType::I32),
     ];
-    if has_repeat {
+    if uses.repeat {
         locals.push((2, ValType::I64));
     }
     let mut vector_registers = [None; 16];
-    let mut next_local = 35 + 2 * u32::from(has_repeat);
+    let mut next_local = 35 + 2 * u32::from(uses.repeat);
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let direct_read_range = loop_body.and_then(|body| {
         if !paged_dword_walk
@@ -2577,7 +2450,7 @@ fn emit_body(
             next_local += 1;
         }
     }
-    let vector_temporaries = (vector_banks.used != 0 || has_float || has_mmx_vector).then(|| {
+    let vector_temporaries = (vector_banks.used != 0 || uses.float || uses.mmx_vector).then(|| {
         locals.push((vector_banks.used.count_ones() + 3, ValType::V128));
         [next_local, next_local + 1, next_local + 2]
     });
@@ -2898,7 +2771,7 @@ fn emit_body(
         divide,
         divide_failed,
         stores: false,
-        has_repeat,
+        has_repeat: uses.repeat,
         restore_string_flags: false,
         context: unit.context.clone(),
         segment: Segment::Ds,
@@ -2950,11 +2823,11 @@ fn emit_body(
         external_step,
         halt,
         observed,
-        mutable_controls: has_system_flags || has_software_events || has_fast_system,
-        publish_shadow: has_fast_system
+        mutable_controls: uses.system_flags || uses.software_events || uses.fast_system,
+        publish_shadow: uses.fast_system
             || observed
-            || has_system_flags
-            || has_software_events
+            || uses.system_flags
+            || uses.software_events
             || unit
                 .instructions
                 .iter()
