@@ -14,12 +14,12 @@ if (!work.startsWith('/tmp/') || work === root)
   throw Error('mutations require an isolated /tmp copy');
 const sha = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const env = { ...process.env, CARGO_TARGET_DIR: join(work, 'target') };
-const semantic = 'src/x86/fast_system.rs';
+const semantic = 'src/x86/system/fast_system/mod.rs';
 const lowering = 'src/dbt/wasm/system/fast_system.rs';
 const mutants = [
   {
     name: 'compatibility-syscall-admitted',
-    file: 'src/x86/decode/paging.rs',
+    file: 'src/x86/decode/system/paging.rs',
     old: 'matches!(opcode, 0x05 | 0x07) && !prefixes.long64',
     replacement: 'false',
     extra: [
@@ -157,7 +157,7 @@ const mutants = [
   },
   {
     name: 'msr-base-change-keeps-old-context-owner',
-    file: 'src/embedding/exports/memory/paging.rs',
+    file: 'src/embedding/exports/memory/paging/control.rs',
     old: '                        core.context = context;\n                        core.context_changed();',
     replacement: '                        core.context = context;',
     filter: 'straight-line WRMSR FS consumer',
@@ -192,7 +192,7 @@ const mutants = [
   },
   {
     name: 'lstar-write-eagerly-probes-private-backing',
-    file: 'src/embedding/exports/memory/paging.rs',
+    file: 'src/embedding/exports/memory/paging/control.rs',
     old: '            3 => core\n                .fast_system',
     replacement:
       '            3 if register == 0xc0000082 && core.image.physical_read(value, 1).is_err() => Err(ControlFailure::GeneralProtection),\n            3 => core\n                .fast_system',

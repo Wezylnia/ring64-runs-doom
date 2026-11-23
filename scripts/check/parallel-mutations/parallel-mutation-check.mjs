@@ -15,7 +15,7 @@ const mutations = [
   ...memoryMutations,
   {
     name: 'partial-lane-reuses-stale-neighbor',
-    path: 'src/memory/parallel.rs',
+    path: 'src/memory/parallel/mod.rs',
     from: 'let mut published = false;\n        for _ in 0..CAS_ATTEMPTS {\n            let next = current & !mask | value;',
     to: 'let mut published = false;\n        let stale = current;\n        for _ in 0..CAS_ATTEMPTS {\n            let next = stale & !mask | value;',
     check: [

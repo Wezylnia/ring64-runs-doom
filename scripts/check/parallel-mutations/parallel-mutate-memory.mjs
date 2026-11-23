@@ -17,7 +17,7 @@ const alias = 'exchange through overlapping aliases snapshots once and later log
 export const memoryMutations = [
   {
     name: 'split-operand-skips-tail-permission',
-    path: 'src/memory/access.rs',
+    path: 'src/memory/access/mod.rs',
     from: 'if !permitted {\n                return Err(failure(Cause::Permission, cursor));\n            }',
     to: 'if !permitted && (index == first || !cfg!(feature = "parallel")) {\n                return Err(failure(Cause::Permission, cursor));\n            }',
     check: scenario(splitWrite),
@@ -26,7 +26,7 @@ export const memoryMutations = [
   },
   {
     name: 'page-store-dirties-prefix-before-tail-admission',
-    path: 'src/x86/paging/access.rs',
+    path: 'src/x86/memory/paging/access/mod.rs',
     from: 'let length = u64::from(width - offset).min(remaining) as u32;',
     to: `let length = u64::from(width - offset).min(remaining) as u32;
             #[cfg(all(feature = "parallel", any(target_arch = "wasm32", test)))]
@@ -42,7 +42,7 @@ export const memoryMutations = [
   },
   {
     name: 'duplicate-alias-first-byte-wins',
-    path: 'src/memory/parallel.rs',
+    path: 'src/memory/parallel/mod.rs',
     from: 'for (&offset, &byte) in offsets.iter().zip(values) {',
     to: 'for (&offset, &byte) in offsets.iter().zip(values).rev() {',
     check: scenario(alias),

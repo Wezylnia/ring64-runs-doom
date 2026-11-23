@@ -1,7 +1,7 @@
-const access = 'src/x86/paging/access.rs';
-const intent = 'src/x86/alignment.rs';
-const exceptions = 'src/x86/exception.rs';
-const controls = 'src/x86/paging/controls.rs';
+const access = 'src/x86/memory/paging/access/mod.rs';
+const intent = 'src/x86/memory/alignment.rs';
+const exceptions = 'src/x86/system/exception/mod.rs';
+const controls = 'src/x86/memory/paging/controls/mod.rs';
 const scalar = 'src/embedding/exports/memory/scalar.rs';
 const frameGate = 'alignment_uses_current_controls_and_prospective_frame_privilege';
 const granular = 'semantic operand granules suppress all candidate numeric and RMW state';
@@ -152,7 +152,7 @@ export const mutants = [
     'accessed-write-discarded-before-ac',
     'split_page_alignment_retains_accessed_but_never_dirty_or_pending_payload',
     edit(
-      'src/x86/paging/walk.rs',
+      'src/x86/memory/paging/walk/mod.rs',
       '            image.physical_write(address, width, current_word | ACCESSED)?;',
       '            let _ = (address, width, current_word | ACCESSED);',
     ),
@@ -161,7 +161,7 @@ export const mutants = [
     'a-only-source-owner-invalidation-skipped',
     'alignment_fault_retains_accessed_source_owner_invalidation_without_payload',
     edit(
-      'src/memory/validity.rs',
+      'src/memory/validity/mod.rs',
       '                owner.valid = false;',
       '                owner.valid = true;',
     ),
@@ -179,7 +179,7 @@ export const mutants = [
     'captured-ac-rechecks-disabled-live-gate',
     'alignment_staging_uses_captured_fault_even_after_eligibility_is_cleared',
     edit(
-      'src/embedding/exports/events/exception_delivery.rs',
+      'src/embedding/exports/events/exception_delivery/mod.rs',
       `            ALIGNMENT_CHECK => {
                 if core.alignment_check.is_none() {`,
       `            ALIGNMENT_CHECK => {
@@ -193,7 +193,7 @@ export const mutants = [
     'validated-control-import-keeps-stale-ac',
     'paging_import_clears_transient_alignment_only_after_validation_and_keeps_pending_source',
     edit(
-      'src/embedding/exports/memory/paging.rs',
+      'src/embedding/exports/memory/paging/control.rs',
       `        core.paging = Some(candidate);
         core.paging_work.clear();
         core.task_work = None;
@@ -221,7 +221,7 @@ export const mutants = [
     'enter-probe-widens-to-operand-width',
     'enter_alignment_does_not_widen_its_final_byte_probe',
     edit(
-      'src/x86/compound_stack.rs',
+      'src/x86/compound_stack/mod.rs',
       '            memory.probe_write(address).map_err(Failure::Operand)?;',
       '            memory.check_write_aligned(address, u32::from(width.bytes()), Intent::Natural(u32::from(width.bytes()))).map_err(Failure::Operand)?;',
     ),
@@ -246,7 +246,7 @@ export const mutants = [
     'generated-operand-refusal-loses-ac-reason',
     granular,
     edit(
-      'src/dbt/wasm/memory/memory.rs',
+      'src/dbt/wasm/memory/mod.rs',
       '        if let Some(reason) = self.access_reason {',
       '        if let Some(reason) = self.access_reason.filter(|_| false) {',
     ),
@@ -255,7 +255,7 @@ export const mutants = [
     'popa-reads-skipped-sp-slot',
     'POPA preserves all registers on AC and never accesses the saved-SP hole',
     edit(
-      'src/x86/compound_stack.rs',
+      'src/x86/compound_stack/mod.rs',
       `                if index == 3 {
                     sp = merge(sp, sp.wrapping_add(u64::from(width.bytes())), stack);`,
       `                if index == 3 {
@@ -303,7 +303,7 @@ export const mutants = [
             self.load_address_value(width, false, exit_depth);`,
     ),
     edit(
-      'src/dbt/wasm/artifact.rs',
+      'src/dbt/wasm/artifact/mod.rs',
       '    let write_intent = unit.instructions.iter().any(|instruction| {',
       `    let write_intent = unit.instructions.iter().any(|instruction| matches!(instruction.operation,
         Operation::String { kind: crate::x86::instruction::StringKind::Movs, .. }))
@@ -519,9 +519,9 @@ export const mutants = [
     'ac-misclassified-as-general-protection',
     'each_operand_admission_clears_a_previous_alignment_refusal',
     edit(
-      'src/embedding/exports/memory/paging.rs',
-      '            None if self.alignment_check.is_some() => super::super::layout::ALIGNMENT_CHECK,',
-      '            None if self.alignment_check.is_some() => super::super::layout::GENERAL_PROTECTION,',
+      'src/embedding/exports/memory/paging/mod.rs',
+      '            None if self.alignment_check.is_some() => crate::embedding::layout::ALIGNMENT_CHECK,',
+      '            None if self.alignment_check.is_some() => crate::embedding::layout::GENERAL_PROTECTION,',
     ),
   ),
   native(
@@ -571,7 +571,7 @@ export const mutants = [
     'scalar-operand-becomes-exempt',
     granular,
     edit(
-      'src/embedding/exports.rs',
+      'src/embedding/exports/mod.rs',
       'guest_access!($core, $paged, read_aligned($address, $width, crate::x86::alignment::Intent::Natural($width)))',
       'guest_access!($core, $paged, read_aligned($address, $width, crate::x86::alignment::Intent::Exempt))',
     ),
@@ -580,7 +580,7 @@ export const mutants = [
     'scalar-helper-ignores-live-ac',
     'warm middle entries observe live AM and AC without an AM-only source fence',
     edit(
-      'src/embedding/exports.rs',
+      'src/embedding/exports/mod.rs',
       '            let flags = unsafe { (*$core.state.get()).flags };',
       '            let flags = unsafe { (*$core.state.get()).flags } & !(1 << 18);',
     ),
@@ -589,7 +589,7 @@ export const mutants = [
     'rmw-operand-becomes-exempt',
     granular,
     edit(
-      'src/embedding/exports.rs',
+      'src/embedding/exports/mod.rs',
       'guest_access!($core, $paged, read_for_write_aligned($address, $width, crate::x86::alignment::Intent::Natural($width)))',
       'guest_access!($core, $paged, read_for_write_aligned($address, $width, crate::x86::alignment::Intent::Exempt))',
     ),
@@ -598,7 +598,7 @@ export const mutants = [
     'ext80-and-bcd-use-four-byte-granule',
     granular,
     edit(
-      'src/x86/x87/mod.rs',
+      'src/x86/numeric/x87/mod.rs',
       '            Format::F80 | Format::Bcd | Format::F64 | Format::I64 => Intent::Natural(8),',
       `            Format::F80 | Format::Bcd => Intent::Natural(4),
             Format::F64 | Format::I64 => Intent::Natural(8),`,
@@ -608,7 +608,7 @@ export const mutants = [
     'numeric-environment32-uses-two-byte-granule',
     granular,
     edit(
-      'src/x86/numeric_images/mod.rs',
+      'src/x86/numeric/images/mod.rs',
       '            Format::Protected32 | Format::Real32 => Intent::Natural(4),',
       '            Format::Protected32 | Format::Real32 => Intent::Natural(2),',
     ),
@@ -680,7 +680,7 @@ export const mutants = [
     'sgdt-explicit-operand-inherits-metadata-exemption',
     granular,
     edit(
-      'src/x86/protection/mod.rs',
+      'src/x86/system/protection/mod.rs',
       '                Intent::SystemRecord((length - 2) as u32),',
       '                Intent::Exempt,',
     ),

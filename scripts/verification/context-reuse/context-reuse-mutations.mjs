@@ -24,7 +24,7 @@ const evidence = resolve(arg('--evidence', `/tmp/ring64-context-reuse-mutation-e
 const hash = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const owners = 'src/dbt/ownership/mod.rs';
 const adapter = 'src/embedding/exports/execution/translation.rs';
-const validity = 'src/memory/validity.rs';
+const validity = 'src/memory/validity/mod.rs';
 const fieldOracle = 'context_reuse_assumptions_distinguish_every_normalized_context_field';
 const mutants = [
   {
@@ -131,7 +131,7 @@ const mutants = [
   {
     name: 'fs-msr-publisher-still-retires-all',
     kind: 'public-cpu',
-    file: 'src/embedding/exports/memory/paging.rs',
+    file: 'src/embedding/exports/memory/paging/control.rs',
     old: '                        core.context_changed();',
     replacement: '                        core.retire_translations();',
     filter: 'guest FS_BASE WRMSR ends the old native path',
@@ -226,7 +226,7 @@ const mutants = [
   {
     name: 'fs-msr-context-proof-not-cleared',
     kind: 'public-cpu',
-    file: 'src/embedding/exports/memory/paging.rs',
+    file: 'src/embedding/exports/memory/paging/control.rs',
     old: '                        core.context_changed();',
     replacement: `                        core.translation_owners.cancel_pending_without_proof_clear(|owner| core.image.release(owner));
                         core.context_version = core.context_version.saturating_add(1);`,

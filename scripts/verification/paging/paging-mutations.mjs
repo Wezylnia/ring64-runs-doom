@@ -14,12 +14,12 @@ if (!work.startsWith('/tmp/') || work === root)
   throw Error('mutations require an isolated /tmp copy');
 const sha = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const env = { ...process.env, CARGO_TARGET_DIR: join(work, 'target') };
-const access = 'src/x86/paging/access.rs';
-const paging = 'src/embedding/exports/memory/paging.rs';
-const exception = 'src/x86/exception.rs';
-const delivery = 'src/embedding/exports/events/exception_delivery.rs';
+const access = 'src/x86/memory/paging/access/mod.rs';
+const paging = 'src/embedding/exports/memory/paging/mod.rs';
+const exception = 'src/x86/system/exception/mod.rs';
+const delivery = 'src/embedding/exports/events/exception_delivery/mod.rs';
 const translation = 'src/embedding/exports/execution/translation.rs';
-const walk = 'src/x86/paging/walk.rs';
+const walk = 'src/x86/memory/paging/walk/mod.rs';
 const mutants = [
   {
     name: 'early-partial-dirty-publication',
@@ -80,7 +80,7 @@ const mutants = [
   },
   {
     name: 'frozen-pf-reconstructed-from-live-cr2',
-    file: paging,
+    file: 'src/embedding/exports/memory/paging/control.rs',
     old: '        core.paging = Some(candidate);\n        core.paging_work.clear();',
     replacement: `        core.paging = Some(candidate);\n        unsafe { if (*core.state.get()).event.kind == 1 && (*core.state.get()).event.vector == 14 { (*core.state.get()).paging_source.address = candidate.cr2; } }\n        core.paging_work.clear();`,
     filter: 'frozen PF import survives bank repair',
@@ -103,7 +103,7 @@ const mutants = [
     name: 'private-failure-cancels-ss-history',
     file: delivery,
     old: '        let event = match reason {',
-    replacement: `        if reason == super::super::layout::PHYSICAL_MEMORY { state.debug.continuation = super::super::layout::debug::Continuation::default(); }\n        let event = match reason {`,
+    replacement: `        if reason == crate::embedding::layout::PHYSICAL_MEMORY { state.debug.continuation = crate::embedding::layout::debug::Continuation::default(); }\n        let event = match reason {`,
     filter: 'private dirty metadata refusal preserves',
   },
   {
@@ -129,7 +129,7 @@ const mutants = [
   },
   {
     name: 'paged-effective-ss-provenance-lost',
-    file: 'src/dbt/wasm/memory/memory.rs',
+    file: 'src/dbt/wasm/memory/mod.rs',
     old: '        if self.paged {\n            self.record_fault_segment(self.segment);\n        }',
     replacement: '',
     filter: 'preserves effective stack segment',
@@ -191,7 +191,7 @@ const mutants = [
   },
   {
     name: 'physical-publication-skips-code-alias-invalidation',
-    file: 'src/memory/access.rs',
+    file: 'src/memory/access/mod.rs',
     old: '            let backing = &mut self.backings[mapping.backing];\n            if backing.has_sources {\n                self.validity\n                    .write(&backing.incarnation, offset as u32, count as u32);',
     replacement:
       '            let backing = &mut self.backings[mapping.backing];\n            if false && backing.has_sources {\n                self.validity\n                    .write(&backing.incarnation, offset as u32, count as u32);',
