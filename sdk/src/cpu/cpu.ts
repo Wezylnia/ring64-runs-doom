@@ -1018,13 +1018,13 @@ export class Cpu {
         let cached = false;
         let executionBegan = 0;
         let refusedEpoch: bigint | undefined;
-        // Finish learning the normal corridor before selecting a retained caller entrance.
+        // Let an armed flat trace learn the ordinary corridor before using covered entries.
         const useCoveredEntrance =
           linearRegionsSupported &&
           !boundaryObserved &&
           !capture &&
           resources.compilations === 0 &&
-          resources.dispatches >= corridorDispatchLimit;
+          (!flatTracing || resources.dispatches >= corridorDispatchLimit);
         for (const candidate of this.#cache.candidates(pc, boundaryObserved, useCoveredEntrance)) {
           executionBegan = performance.now();
           if (engine.activate(candidate.artifact.metadata.owner)) {
