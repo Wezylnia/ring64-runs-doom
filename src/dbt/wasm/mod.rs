@@ -160,6 +160,8 @@ struct Emitter {
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     retouch_prefix_fetch: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    retained_fetch_slot: Option<u32>,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     used_paged_quiet_completion: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     read_span: Option<memory::SpanCache>,
@@ -368,6 +370,14 @@ impl Emitter {
             Op::LocalTee(local) => Op::LocalTee(local + self.float_outline_params),
             other => other,
         };
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if matches!(instruction, Op::Call(_))
+            && let Some(slot) = self.retained_fetch_slot
+        {
+            // A successful helper can change code, translations, debug or event state.
+            self.body.instruction(&Op::I32Const(0));
+            self.body.instruction(&Op::LocalSet(slot));
+        }
         self.body.instruction(&instruction);
         self
     }

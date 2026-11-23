@@ -1084,7 +1084,7 @@ impl Emitter {
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     pub(super) fn newest_prefix_fetch(&mut self, pc: u64, indexed_read: bool, sse: bool) {
-        use super::{SHADOW, STORE_STATUS};
+        use super::STORE_STATUS;
         use crate::embedding::layout::debug::{Continuation, DebugState};
         use crate::embedding::layout::paging::{
             MXCSR_EXCEPTION_MASKS, NEWEST_FETCH_INDEXED, NEWEST_FETCH_SSE, NewestFetch,
@@ -1106,10 +1106,21 @@ impl Emitter {
         let hint = mem(offset_of!(IndexedReadTable, hint), 2);
         let ages = mem(offset_of!(IndexedReadTable, ages), 3);
         let debug = offset_of!(RunState, debug);
+        // A single-page activation can reuse the checked slot until it calls
+        // Core. Generated operands still touch the LRU, so recheck its age.
+        let retained = self.retained_fetch_slot.filter(|_| indexed_read && !sse);
+        let failed = u32::from(retained.is_some());
         self.op(Op::Block(BlockType::Result(ValType::I32)))
             .op(Op::I32Const(0))
-            .op(Op::Block(BlockType::Empty))
-            .op(Op::LocalGet(0))
+            .op(Op::Block(BlockType::Empty));
+        if let Some(slot) = retained {
+            self.guard_quiet_fetch_controls();
+            self.op(Op::Block(BlockType::Empty))
+                .op(Op::LocalGet(slot))
+                .op(Op::LocalTee(STORE_STATUS))
+                .op(Op::BrIf(0));
+        }
+        self.op(Op::LocalGet(0))
             .op(Op::I64Load(field(offset_of!(NewestFetch, tag), 3)));
         let indexed = if indexed_read {
             NEWEST_FETCH_INDEXED
@@ -1124,7 +1135,7 @@ impl Emitter {
         let tag = (pc & !4095) | 1 | indexed | numeric;
         self.op(Op::I64Const(tag as i64))
             .op(Op::I64Ne)
-            .op(Op::BrIf(0));
+            .op(Op::BrIf(failed));
         if sse {
             // Keep the original masked-SSE admission when MXCSR changes.
             self.op(Op::LocalGet(0))
@@ -1133,7 +1144,7 @@ impl Emitter {
                 .op(Op::I32And)
                 .op(Op::I32Const(MXCSR_EXCEPTION_MASKS as i32))
                 .op(Op::I32Ne)
-                .op(Op::BrIf(0));
+                .op(Op::BrIf(failed));
         }
         if indexed_read && (self.retouch_prefix_fetch || self.sampled_region) {
             self.op(Op::LocalGet(0))
@@ -1144,30 +1155,25 @@ impl Emitter {
                 .op(Op::LocalGet(0))
                 .op(Op::I32Load(table))
                 .op(Op::I32Ne)
-                .op(Op::BrIf(0));
+                .op(Op::BrIf(failed));
         }
-        self.system_bits();
-        self.op(Op::I64Const(0x10100))
-            .op(Op::I64And)
-            .op(Op::I64Eqz)
-            .op(Op::I32Eqz)
-            .op(Op::LocalGet(SHADOW))
-            .op(Op::I32Or)
-            .op(Op::BrIf(0))
-            .op(Op::LocalGet(0))
+        if retained.is_none() {
+            self.guard_quiet_fetch_controls();
+        }
+        self.op(Op::LocalGet(0))
             .op(Op::I32Load(field(
                 offset_of!(NewestFetch, source_invalid),
                 2,
             )))
             .op(Op::I32Load8U(mem(0, 0)))
-            .op(Op::BrIf(0))
+            .op(Op::BrIf(failed))
             .op(Op::LocalGet(0))
             .op(Op::I32Load(field(
                 offset_of!(NewestFetch, cache_changed),
                 2,
             )))
             .op(Op::I32Load8U(mem(0, 0)))
-            .op(Op::BrIf(0))
+            .op(Op::BrIf(failed))
             .op(Op::LocalGet(0))
             .op(Op::I32Load8U(mem(
                 debug
@@ -1175,30 +1181,30 @@ impl Emitter {
                     + offset_of!(crate::x86::debug::State, dr7),
                 0,
             )))
-            .op(Op::BrIf(0))
+            .op(Op::BrIf(failed))
             .op(Op::LocalGet(0))
             .op(Op::I32Load(mem(
                 debug + offset_of!(DebugState, continuation) + offset_of!(Continuation, slots),
                 2,
             )))
-            .op(Op::BrIf(0))
+            .op(Op::BrIf(failed))
             .op(Op::LocalGet(0))
             .op(Op::I32Load(mem(
                 offset_of!(RunState, event) + offset_of!(RawEventState, kind),
                 2,
             )))
-            .op(Op::BrIf(0))
+            .op(Op::BrIf(failed))
             .op(Op::LocalGet(0))
             .op(Op::I64Load(mem(offset_of!(RunState, interrupts), 2)))
             .op(Op::I64Eqz)
             .op(Op::I32Eqz)
-            .op(Op::BrIf(0))
+            .op(Op::BrIf(failed))
             .op(Op::LocalGet(0))
             .op(Op::I32Load(mem(
                 offset_of!(RunState, interrupts) + offset_of!(RawInterruptState, nmi_blocked),
                 2,
             )))
-            .op(Op::BrIf(0));
+            .op(Op::BrIf(failed));
         if !self.retouch_prefix_fetch {
             self.op(Op::LocalGet(0))
                 .op(Op::I32Load(table))
@@ -1206,7 +1212,7 @@ impl Emitter {
                 .op(Op::LocalGet(0))
                 .op(Op::I32Load(slot))
                 .op(Op::I32Ne)
-                .op(Op::BrIf(0));
+                .op(Op::BrIf(failed));
         }
         self.op(Op::LocalGet(0))
             .op(Op::I32Load(table))
@@ -1220,8 +1226,13 @@ impl Emitter {
             .op(Op::LocalGet(0))
             .op(Op::I64Load(field(offset_of!(NewestFetch, id), 3)))
             .op(Op::I64Ne)
-            .op(Op::BrIf(0))
-            .op(Op::LocalGet(0))
+            .op(Op::BrIf(failed));
+        if let Some(slot) = retained {
+            self.op(Op::LocalGet(STORE_STATUS))
+                .op(Op::LocalSet(slot))
+                .op(Op::End);
+        }
+        self.op(Op::LocalGet(0))
             .op(Op::I32Load(table))
             .op(Op::I64Load(clock))
             .op(Op::I64Const(-1))
@@ -1272,6 +1283,18 @@ impl Emitter {
             .op(Op::Br(1))
             .op(Op::End)
             .op(Op::End);
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    fn guard_quiet_fetch_controls(&mut self) {
+        self.system_bits();
+        self.op(Op::I64Const(0x10100))
+            .op(Op::I64And)
+            .op(Op::I64Eqz)
+            .op(Op::I32Eqz)
+            .op(Op::LocalGet(super::SHADOW))
+            .op(Op::I32Or)
+            .op(Op::BrIf(0));
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
