@@ -23,7 +23,6 @@ import {
 import { captureX87State, type X87State, type X87Exception } from '../state/numeric/x87.js';
 import {
   Core,
-  type CompileLimits,
   type CompilerSource,
   type Fault,
   type AlignmentFault,
@@ -37,6 +36,7 @@ import {
   type PhysicalMemoryFault,
 } from '../wasm/core.js';
 import type { GeneratedRun } from '../wasm/abi.js';
+import { captureInitialContext, captureLimits, type Limits } from './options.js';
 import { OwnerLinkProfile } from './owner-links.js';
 import { LinearRegionTrace, PagedCorridor, RegionTrace } from './regions.js';
 import { Translations, type Artifact, type InstalledEntry } from './translations.js';
@@ -61,11 +61,7 @@ import {
   type MemoryOptions,
 } from '../embedding/memory.js';
 
-export interface Limits extends CompileLimits {
-  maxCachedArtifacts: number;
-  maxCachedBytes: number;
-  maxTranslationsPerRun: number;
-}
+export type { Limits } from './options.js';
 
 interface CommonOptions {
   io?: IoProvider;
@@ -204,25 +200,6 @@ function validateRunDiagnostic(
     throw new Error(`core omitted ${field} for ${result.reason}`);
 }
 
-export function checkedLimits(limits: Limits): Limits {
-  const names = [
-    'maxInstructions',
-    'maxSourceBytes',
-    'maxArtifactBytes',
-    'maxCachedArtifacts',
-    'maxCachedBytes',
-    'maxTranslationsPerRun',
-  ] as const;
-  const result = { ...limits };
-  for (const name of names) {
-    const value = result[name];
-    if (!Number.isSafeInteger(value) || value <= 0 || value > 0xffffffff) {
-      throw new TypeError(`${name} must be an explicit positive wasm32 integer`);
-    }
-  }
-  return result;
-}
-
 export const CONSTRUCTION = Symbol('createCpu');
 export const BEGIN_RUN = Symbol('beginRun');
 export const FINISH_RUN = Symbol('finishRun');
@@ -264,30 +241,10 @@ export function requireSimd(): void {
   if (!WebAssembly.validate(SIMD_PROBE)) throw new TypeError('WebAssembly SIMD is required');
 }
 
-export function captureInitialContext(
-  contextInput: ExecutionContext | undefined,
-  memoryModel: MemoryModel | undefined,
-): ExecutionContext | undefined {
-  const context =
-    contextInput === undefined
-      ? undefined
-      : captureContext(contextInput, memoryModel === 'physical');
-  if (memoryModel === 'physical' && context === undefined)
-    throw new TypeError('physical memory requires a non-undefined context');
-  if (
-    memoryModel === 'ia32e-paged' &&
-    context &&
-    context.mode !== 'long64' &&
-    context.mode !== 'compatibility'
-  )
-    throw new TypeError('paged memory requires a Long64 or compatibility context');
-  return context;
-}
-
 export async function createCpu(options: Options): Promise<Cpu> {
   const began = performance.now();
   requireSimd();
-  const limits = checkedLimits(options.limits);
+  const limits = captureLimits(options.limits);
   const io = captureIo(options);
   const mmioInput = captureMmio(options);
   const memory = captureInitialMemory(options, mmioInput?.count);

@@ -5,13 +5,11 @@ import {
   FINISH_RUN,
   LEAVE_RUN,
   Cpu,
-  captureInitialContext,
-  checkedLimits,
   requireSimd,
-  type Limits,
   type RunOptions,
   type RunResult,
 } from '../cpu/cpu.js';
+import { captureInitialContext, captureLimits, type Limits } from '../cpu/options.js';
 import type { InstalledEntry } from '../cpu/translations.js';
 import { captureIo, type IoProvider } from '../embedding/io.js';
 import type {
@@ -39,7 +37,7 @@ export async function createParallelEngine(
 ): Promise<ParallelCpu> {
   const began = performance.now();
   requireSimd();
-  const limits = checkedLimits(options.limits);
+  const limits = captureLimits(options.limits);
   const io = captureIo(options);
   const memory = options.memory;
   const context = captureInitialContext(options.context, memory.memoryModel);

@@ -1,6 +1,6 @@
-import { captureContext, type ExecutionContext } from '../state/system/context.js';
+import type { ExecutionContext } from '../state/system/context.js';
 import { copyMemoryInput, unsigned64 } from '../embedding/input.js';
-import type { Limits } from '../cpu/cpu.js';
+import { captureInitialContext, captureLimits, type Limits } from '../cpu/options.js';
 import type { CompilerSource } from '../wasm/core.js';
 import {
   captureFastSystemState,
@@ -81,21 +81,7 @@ export function captureMachine(options: MachineOptions) {
   const mappings = captureMappings(mappingInput, memoryLimits, memoryModel);
   validateMappings(mappings, validateBackings(backings, new Map(), memoryLimits));
 
-  const raw = options.limits;
-  const limits = {} as Limits;
-  for (const name of [
-    'maxInstructions',
-    'maxSourceBytes',
-    'maxArtifactBytes',
-    'maxCachedArtifacts',
-    'maxCachedBytes',
-    'maxTranslationsPerRun',
-  ] as const) {
-    const value = raw[name];
-    if (!Number.isSafeInteger(value) || value <= 0 || value > 0xffffffff)
-      throw new TypeError(`${name} must be an explicit positive wasm32 integer`);
-    limits[name] = value;
-  }
+  const limits = captureLimits(options.limits);
   const list = options.cpus;
   if (!Array.isArray(list) || list.length < 2 || list.length > 0xffffffff / 128)
     throw new TypeError('parallel machines require at least two vCPUs');
@@ -118,18 +104,7 @@ export function captureMachine(options: MachineOptions) {
     if (!cpu || typeof cpu !== 'object') throw new TypeError('invalid parallel CPU record');
     const entry = cpu.entry;
     unsigned64(entry, 'entry');
-    const input = cpu.context;
-    const context =
-      input === undefined ? undefined : captureContext(input, memoryModel === 'physical');
-    if (memoryModel === 'physical' && context === undefined)
-      throw new TypeError('physical memory requires a non-undefined context');
-    if (
-      memoryModel === 'ia32e-paged' &&
-      context &&
-      context.mode !== 'long64' &&
-      context.mode !== 'compatibility'
-    )
-      throw new TypeError('paged memory requires a Long64 or compatibility context');
+    const context = captureInitialContext(cpu.context, memoryModel);
     const settings: CpuInput = { entry, ...(context === undefined ? {} : { context }) };
     if (memoryModel === 'linear') {
       if ('paging' in cpu || 'fastSystem' in cpu)

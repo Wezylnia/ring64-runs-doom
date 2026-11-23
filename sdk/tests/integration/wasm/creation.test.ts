@@ -25,6 +25,32 @@ function options() {
   };
 }
 
+test('creation captures named limits from getters without reading unrelated properties', async () => {
+  const input = options();
+  let reads = 0;
+  input.limits = Object.create(limits, {
+    maxInstructions: {
+      get() {
+        reads++;
+        return limits.maxInstructions;
+      },
+    },
+    unused: {
+      enumerable: true,
+      get() {
+        throw new Error('unrelated option');
+      },
+    },
+  });
+  const cpu = await createCpu(input);
+  try {
+    assert.equal(reads, 1);
+    assert.equal((await cpu.run({ budget: 1n })).retired, 1n);
+  } finally {
+    cpu.dispose();
+  }
+});
+
 test('creation snapshots validated span bases before asynchronous browser work', async () => {
   const input = options();
   const pending = createCpu(input);
