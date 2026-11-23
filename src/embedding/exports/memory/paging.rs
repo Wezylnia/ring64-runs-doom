@@ -1194,19 +1194,16 @@ pub extern "C" fn core_paged_loop_copy_window(source: u64, destination: u64, wid
                     [read, write],
                     &state.protection_keys,
                     width,
-                    |read, write| {
-                        let (read_span, write_span) = core.image.physical_direct_copy_spans(
-                            read.physical,
-                            write.physical,
-                            width,
-                        )?;
-                        let read_offset = (read.physical - read_span.base) as u32;
-                        let write_offset = (write.physical - write_span.base) as u32;
+                    |[(read, read_remaining), (write, write_remaining)]| {
+                        let (read_span, write_span) =
+                            core.image.physical_direct_copy_spans(read, write, width)?;
+                        let read_offset = (read - read_span.base) as u32;
+                        let write_offset = (write - write_span.base) as u32;
                         // A 4 KiB window also bounds potential shadowing by overlapping local leaves.
                         let length = page_remaining(source)
                             .min(page_remaining(destination))
-                            .min(read.remaining)
-                            .min(write.remaining)
+                            .min(read_remaining)
+                            .min(write_remaining)
                             .min(u64::from(read_span.length - read_offset))
                             .min(u64::from(write_span.length - write_offset))
                             as u32;

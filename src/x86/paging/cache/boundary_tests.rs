@@ -894,9 +894,13 @@ fn retained_copy_destination_checks_the_current_write_permission() {
         insert(&cache, &mut image, &state, request);
     }
     let resolve = |write| {
-        cache.copy_pair_then_fetch(&state, [read, write], keys, 16, |source, destination| {
-            Some((source.physical, destination.physical))
-        })
+        cache.copy_pair_then_fetch(
+            &state,
+            [read, write],
+            keys,
+            16,
+            |[(source, _), (destination, _)]| Some((source, destination)),
+        )
     };
     assert_eq!(resolve(write), Some((0xa234, 0xb234)));
     assert_eq!(
@@ -922,6 +926,44 @@ fn retained_copy_destination_checks_the_current_write_permission() {
 
 #[cfg(not(feature = "parallel"))]
 #[test]
+fn copy_sources_resolve_current_leaves_after_a_collision() {
+    let (mut image, state, first) = fixture();
+    for (address, leaf) in [(0x4010, 0xb067), (0x4018, 0xc067), (0x4088, 0xd067)] {
+        image.physical_write(address, 8, leaf).unwrap();
+    }
+    let second = Request {
+        linear: 0x11234,
+        ..first
+    };
+    let write = Request {
+        linear: 0x2234,
+        access: Access::Write,
+        ..first
+    };
+    let code = Request {
+        linear: 0x3234,
+        access: Access::Execute,
+        ..first
+    };
+    let cache = Cache::with_capacity(4);
+    let keys = &ProtectionKeys::ZERO;
+    for request in [first, second, write, code] {
+        insert(&cache, &mut image, &state, request);
+    }
+    let copy = |read| cache.copy_pair_then_fetch(&state, [read, write], keys, 16, Some);
+    assert_eq!(copy(first), Some([(0xa234, 0xdcc), (0xb234, 0xdcc)]));
+    assert_eq!(copy(second), Some([(0xd234, 0xdcc), (0xb234, 0xdcc)]));
+    assert_eq!(copy(first), Some([(0xa234, 0xdcc), (0xb234, 0xdcc)]));
+
+    cache.invalidate_page(state.pcid(), first.linear, true);
+    image.physical_write(0x4008, 8, 0xe067).unwrap();
+    insert(&cache, &mut image, &state, first);
+    assert!(cache.lookup(&state, code, keys).unwrap().is_some());
+    assert_eq!(copy(first), Some([(0xe234, 0xdcc), (0xb234, 0xdcc)]));
+}
+
+#[cfg(not(feature = "parallel"))]
+#[test]
 fn same_large_copy_leaf_checks_both_ranges_and_current_mapping() {
     let (mut image, state, read) = fixture();
     image.physical_write(0x3000, 8, 0x2000e7).unwrap();
@@ -941,9 +983,13 @@ fn same_large_copy_leaf_checks_both_ranges_and_current_mapping() {
     insert(&cache, &mut image, &state, write);
     insert(&cache, &mut image, &state, code);
     let resolve = |read| {
-        cache.copy_pair_then_fetch(&state, [read, write], keys, 16, |source, destination| {
-            Some((source.physical, destination.physical))
-        })
+        cache.copy_pair_then_fetch(
+            &state,
+            [read, write],
+            keys,
+            16,
+            |[(source, _), (destination, _)]| Some((source, destination)),
+        )
     };
     assert_eq!(resolve(read), Some((0x201234, 0x205234)));
     let before = cache.entries.borrow().recency().clock;

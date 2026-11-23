@@ -14,6 +14,9 @@ use crate::x86::protection_keys::State as ProtectionKeys;
 
 pub(crate) const CAPACITY: usize = 64;
 
+#[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+const COPY_SOURCE_SLOTS: usize = 16;
+
 mod lookup_index;
 
 #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
@@ -308,20 +311,35 @@ impl Entries {
         width: u32,
         index: usize,
     ) -> Option<Translation> {
+        let translation = &self.slots[index].as_ref().unwrap().translation;
+        Self::checked_data_extent::<WRITE>(translation, state, request, keys, width)?;
+        Some(translation.at(request.linear))
+    }
+
+    #[cfg(any(feature = "parallel", target_arch = "wasm32", test))]
+    #[inline]
+    fn checked_data_extent<const WRITE: bool>(
+        translation: &Translation,
+        state: &State,
+        request: Request,
+        keys: &ProtectionKeys,
+        width: u32,
+    ) -> Option<(u64, u64)> {
         debug_assert_eq!(
             request.access,
             if WRITE { Access::Write } else { Access::Read }
         );
-        let translation = self.slots[index].unwrap().translation.at(request.linear);
+        let offset = request.linear - translation.linear_base;
+        let remaining = translation.span - offset;
         if WRITE && translation.dirty
-            || translation.remaining < u64::from(width)
+            || remaining < u64::from(width)
             || !translation
                 .rights
                 .allows_data(state, request.class, keys, WRITE)
         {
             return None;
         }
-        Some(translation)
+        Some((translation.physical_base + offset, remaining))
     }
 
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
@@ -439,6 +457,8 @@ pub struct Cache {
     last_dword_read: Cell<Option<DwordReadMemo>>,
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
     last_copy_destination: Cell<usize>,
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    copy_source_slots: [Cell<u8>; COPY_SOURCE_SLOTS],
 }
 
 impl Default for Cache {
@@ -474,6 +494,8 @@ impl Cache {
             last_dword_read: Cell::new(None),
             #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
             last_copy_destination: Cell::new(usize::MAX),
+            #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+            copy_source_slots: std::array::from_fn(|_| Cell::new(u8::MAX)),
         }
     }
 
@@ -905,7 +927,7 @@ impl Cache {
         [read, write]: [Request; 2],
         keys: &ProtectionKeys,
         width: u32,
-        admit: impl FnOnce(Translation, Translation) -> Option<T>,
+        admit: impl FnOnce([(u64, u64); 2]) -> Option<T>,
     ) -> Option<T> {
         let mut entries = self.entries.borrow_mut();
         let fetch = entries
@@ -929,20 +951,42 @@ impl Cache {
             return None;
         }
         // Both operands often resolve to one large local leaf.
-        let source = if write_entry.translation.span > 4096
-            && write_entry.translation.contains(read.linear)
-        {
+        let shared =
+            write_entry.translation.span > 4096 && write_entry.translation.contains(read.linear);
+        let source_slot =
+            &self.copy_source_slots[(read.linear >> 12) as usize & (COPY_SOURCE_SLOTS - 1)];
+        let hint = usize::from(source_slot.get());
+        let source = if shared {
             destination
+        } else if let Some(Some(entry)) = entries.slots.get(hint)
+            && !entry.global
+            && entry.family == write_entry.family
+            && entry.pcid == write_entry.pcid
+            && entry.translation.contains(read.linear)
+        {
+            hint
         } else {
             entries.find(state, read)?
         };
-        if entries.slots[source].as_ref()?.global {
+        let read_entry = entries.slots[source].as_ref()?;
+        if read_entry.global {
             return None;
         }
-        let read = entries.retained_data_span_at::<false>(state, read, keys, width, source)?;
-        let write =
-            entries.retained_data_span_at::<true>(state, write, keys, width, destination)?;
-        let value = admit(read, write)?;
+        let read = Entries::checked_data_extent::<false>(
+            &read_entry.translation,
+            state,
+            read,
+            keys,
+            width,
+        )?;
+        let write = Entries::checked_data_extent::<true>(
+            &write_entry.translation,
+            state,
+            write,
+            keys,
+            width,
+        )?;
+        let value = admit([read, write])?;
         // An alternating read/write group has this recency whenever it completes.
         // Further accesses in the same pair of leaves preserve that order.
         for data in [source, destination] {
@@ -951,6 +995,9 @@ impl Cache {
             }
         }
         self.last_copy_destination.set(destination);
+        if !shared {
+            source_slot.set(source as u8);
+        }
         Some(value)
     }
 
