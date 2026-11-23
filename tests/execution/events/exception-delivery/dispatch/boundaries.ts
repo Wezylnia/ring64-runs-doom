@@ -20,7 +20,7 @@ import {
   noDeliveryFault,
   preserveNumeric,
   type Scenario,
-} from './fixture.js';
+} from '../fixture.js';
 
 export function boundaryScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [

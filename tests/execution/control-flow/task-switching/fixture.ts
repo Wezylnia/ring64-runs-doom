@@ -5,7 +5,7 @@ import { image } from './guest/program.js';
 
 export { check, equal, same, throws, type Scenario } from '../../../support/fixture.js';
 
-// Physical/linear addresses from the flat NASM listing in repair.asm.
+// Physical/linear addresses from the flat NASM listing in guest/repair.asm.
 export const CALL = 0x100131n,
   RESUME_A = 0x100138n,
   ENTRY_B = 0x1001e0n,

@@ -20,7 +20,7 @@ import {
   ready,
   delivery,
   type Scenario,
-} from './fixture.js';
+} from '../fixture.js';
 
 export function modeScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [

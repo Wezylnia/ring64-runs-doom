@@ -7,7 +7,7 @@ import {
   ready,
   delivery,
   type Scenario,
-} from './fixture.js';
+} from '../fixture.js';
 
 export function frontierScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [

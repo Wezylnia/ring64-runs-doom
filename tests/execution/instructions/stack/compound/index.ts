@@ -1,14 +1,14 @@
-import { compoundMatrixScenarios } from './matrix.js';
-import { compoundLiteralScenarios } from './literals.js';
-import { compoundDecodeScenarios } from './decode.js';
-import { compoundAliasScenarios } from './aliases.js';
-import { compoundPagingScenarios } from './paging.js';
-import { compoundSegmentScenarios } from './segments.js';
+import { compoundMatrixScenarios } from './operands/matrix.js';
+import { compoundLiteralScenarios } from './operands/literals.js';
+import { compoundDecodeScenarios } from './operands/decode.js';
+import { compoundAliasScenarios } from './access/aliases.js';
+import { compoundPagingScenarios } from './access/paging.js';
+import { compoundSegmentScenarios } from './access/segments.js';
 import { compoundEventScenarios } from './events.js';
 import { compoundLifecycleScenarios } from './lifecycle.js';
 import { compoundVmScenarios } from './vm.js';
-import { compoundOrderingScenarios } from './ordering.js';
-import { compoundModelScenarios } from './models.js';
+import { compoundOrderingScenarios } from './access/ordering.js';
+import { compoundModelScenarios } from './operands/models.js';
 
 export function compoundStackScenarios(core: WebAssembly.Module) {
   return [

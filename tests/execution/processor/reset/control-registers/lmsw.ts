@@ -1,7 +1,7 @@
-import { changed, equal, exit, hex, initial, type Scenario } from '../../../support/fixture.js';
-import { gate, snapshot } from '../../events/exception-delivery/fixture.js';
-import { LONG, using as linear } from '../modes/fixture.js';
-import { BANK, little, PC as LONG_PC, usingPaged } from '../../memory/paging/fixture.js';
+import { changed, equal, exit, hex, initial, type Scenario } from '../../../../support/fixture.js';
+import { gate, snapshot } from '../../../events/exception-delivery/fixture.js';
+import { LONG, using as linear } from '../../modes/fixture.js';
+import { BANK, little, PC as LONG_PC, usingPaged } from '../../../memory/paging/fixture.js';
 import {
   fixture,
   PC,
@@ -9,9 +9,9 @@ import {
   same,
   using,
   word,
-} from '../../memory/supervisor-access/fixture.js';
-import { ONE, pending, seed, stack, x87 } from '../../numeric/x87/fixture.js';
-import { createCpu, physicalCpu, resetContext } from './fixture.js';
+} from '../../../memory/supervisor-access/fixture.js';
+import { ONE, pending, seed, stack, x87 } from '../../../numeric/x87/fixture.js';
+import { createCpu, physicalCpu, resetContext } from '../fixture.js';
 
 export function lmswScenarios(compiler: WebAssembly.Module): Scenario[] {
   const side = { createCpu, compiler };

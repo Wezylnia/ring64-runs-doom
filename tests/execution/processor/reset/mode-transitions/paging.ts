@@ -1,5 +1,5 @@
-import { registerBank } from '../../../support/fixture.js';
-import { equal, hex, physicalCpu, put, resetContext, type Scenario } from './fixture.js';
+import { registerBank } from '../../../../support/fixture.js';
+import { equal, hex, physicalCpu, put, resetContext, type Scenario } from '../fixture.js';
 function context32() {
   const c = resetContext();
   c.mode = 'protected';

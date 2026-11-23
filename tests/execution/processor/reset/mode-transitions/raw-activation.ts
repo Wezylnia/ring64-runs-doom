@@ -1,5 +1,5 @@
-import { registerBank } from '../../../support/fixture.js';
-import { equal, hex, physicalCpu, put, resetContext, type Scenario } from './fixture.js';
+import { registerBank } from '../../../../support/fixture.js';
+import { equal, hex, physicalCpu, put, resetContext, type Scenario } from '../fixture.js';
 export function rawActivationScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [
     {

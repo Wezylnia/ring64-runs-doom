@@ -1,12 +1,12 @@
 import type { Scenario } from '../../../support/fixture.js';
-import { basicScenarios } from './basic.js';
-import { boundaryScenarios } from './boundaries.js';
-import { numericScenarios } from './numeric.js';
-import { escalationScenarios } from './escalation.js';
-import { modeScenarios } from './modes.js';
-import { memoryScenarios } from './memory.js';
+import { basicScenarios } from './frames/basic.js';
+import { boundaryScenarios } from './dispatch/boundaries.js';
+import { numericScenarios } from './frames/numeric.js';
+import { escalationScenarios } from './dispatch/escalation.js';
+import { modeScenarios } from './frames/modes.js';
+import { memoryScenarios } from './frames/memory.js';
 import { stateScenarios } from './state.js';
-import { frontierScenarios } from './frontiers.js';
+import { frontierScenarios } from './dispatch/frontiers.js';
 import { lifecycleScenarios } from './lifecycle.js';
 
 export function exceptionDeliveryScenarios(compiler: WebAssembly.Module): Scenario[] {

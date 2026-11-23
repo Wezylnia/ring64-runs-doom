@@ -1,6 +1,6 @@
-import { exit, fault, memory, state } from '../../../../support/fixture.js';
-import { using } from '../../../processor/modes/fixture.js';
-import { PC, compoundProfiles, equal, expected, input, same, type Scenario } from './fixture.js';
+import { exit, fault, memory, state } from '../../../../../support/fixture.js';
+import { using } from '../../../../processor/modes/fixture.js';
+import { PC, compoundProfiles, equal, expected, input, same, type Scenario } from '../fixture.js';
 
 const long = compoundProfiles.at(-1)!;
 const legacy = compoundProfiles.find((profile) => profile.name === 'protected/32/32')!;

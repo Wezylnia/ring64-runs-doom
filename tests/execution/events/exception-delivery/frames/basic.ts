@@ -17,7 +17,7 @@ import {
   delivery,
   noDeliveryFault,
   type Scenario,
-} from './fixture.js';
+} from '../fixture.js';
 
 export function basicScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [

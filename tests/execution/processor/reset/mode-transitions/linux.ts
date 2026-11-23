@@ -3,9 +3,9 @@ import type {
   ExecutionContextSnapshot,
   Options,
   PagingState,
-} from '../../../../sdk/src/index.js';
-import { LIMITS, same, registerBank } from '../../../support/fixture.js';
-import { createCpu, equal, hex, put, resetContext, type Scenario } from './fixture.js';
+} from '../../../../../sdk/src/index.js';
+import { LIMITS, same, registerBank } from '../../../../support/fixture.js';
+import { createCpu, equal, hex, put, resetContext, type Scenario } from '../fixture.js';
 
 // Linux v0.11, archive 7aadf253807264ad5561479e2a8b9de9602f966d.
 // boot/setup.s at end_move and boot/head.s at zero, with the original instructions

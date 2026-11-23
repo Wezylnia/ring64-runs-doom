@@ -1,4 +1,4 @@
-import { equal, hex, physicalCpu, put, transitionProgram, type Scenario } from './fixture.js';
+import { equal, hex, physicalCpu, put, transitionProgram, type Scenario } from '../fixture.js';
 
 export function transitionScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [

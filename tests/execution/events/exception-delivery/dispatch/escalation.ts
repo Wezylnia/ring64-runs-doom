@@ -17,7 +17,7 @@ import {
   ready,
   delivery,
   type Scenario,
-} from './fixture.js';
+} from '../fixture.js';
 
 function absentGate(): string {
   const value = gate(32, 8, 0x2000n, 0);

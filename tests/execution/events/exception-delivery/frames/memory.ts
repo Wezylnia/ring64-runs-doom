@@ -21,7 +21,7 @@ import {
   delivery,
   preserveNumeric,
   type Scenario,
-} from './fixture.js';
+} from '../fixture.js';
 
 export function memoryScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [

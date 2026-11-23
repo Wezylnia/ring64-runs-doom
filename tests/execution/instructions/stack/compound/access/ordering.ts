@@ -1,11 +1,11 @@
-import { createCpu } from '../../../../../sdk/src/index.js';
-import { exit, initial } from '../../../../support/fixture.js';
+import { createCpu } from '../../../../../../sdk/src/index.js';
+import { exit, initial } from '../../../../../support/fixture.js';
 import {
   fixture,
   families,
   using,
   memory as physicalMemory,
-} from '../../../memory/supervisor-access/fixture.js';
+} from '../../../../memory/supervisor-access/fixture.js';
 import {
   PC,
   RAM_BASE,
@@ -22,7 +22,7 @@ import {
   hex,
   preserved,
   type Scenario,
-} from './fixture.js';
+} from '../fixture.js';
 
 export function compoundOrderingScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [

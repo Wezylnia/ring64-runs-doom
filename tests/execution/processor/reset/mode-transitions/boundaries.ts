@@ -7,8 +7,8 @@ import {
   resetContext,
   transitionProgram,
   type Scenario,
-} from './fixture.js';
-import { LIMITS, registerBank } from '../../../support/fixture.js';
+} from '../fixture.js';
+import { LIMITS, registerBank } from '../../../../support/fixture.js';
 function protected32() {
   const c = resetContext();
   c.mode = 'protected';
