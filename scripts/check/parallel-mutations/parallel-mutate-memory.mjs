@@ -27,14 +27,13 @@ export const memoryMutations = [
   {
     name: 'page-store-dirties-prefix-before-tail-admission',
     path: 'src/x86/paging/access.rs',
-    from: 'let length = u64::from(width - offset).min(remaining) as u32;\n            let write = if access == Access::Write {',
+    from: 'let length = u64::from(width - offset).min(remaining) as u32;',
     to: `let length = u64::from(width - offset).min(remaining) as u32;
             #[cfg(all(feature = "parallel", any(target_arch = "wasm32", test)))]
             if access == Access::Write && dirty && offset == 0 && length < width && storage.image.parallel_attached() {
                 let update = storage.image.prepare_physical_update(leaf, entry_width).expect("mutation expects writable PTE");
                 storage.image.publish_physical_update(&update, walk::DIRTY);
-            }
-            let write = if access == Access::Write {`,
+            }`,
     check: scenario(
       'paged split write denial preserves the first payload and dirty bit until repair',
     ),
