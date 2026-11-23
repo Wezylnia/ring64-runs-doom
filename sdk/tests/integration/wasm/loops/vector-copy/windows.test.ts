@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { observeArtifactImports } from '../../../../../tests/support/artifact-imports.js';
-import { BANK, PC, initial, usingPaged } from '../../../../../tests/execution/paging/fixture.js';
-import { compiler } from './fixture.js';
+import { observeArtifactImports } from '../../../../../../tests/support/artifact-imports.js';
+import { BANK, PC, initial, usingPaged } from '../../../../../../tests/execution/paging/fixture.js';
+import { compiler } from '../fixture.js';
 
 test('paired vector windows preserve overlapping load/store order and exact checked replay', async () => {
   // Two alternating unaligned vector copies, an index advance, and one backward branch.

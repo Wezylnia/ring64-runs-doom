@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createCpu } from '../../../../src/index.js';
-import { Core } from '../../../../src/wasm/core.js';
-import { protectedSnapshot } from '../../../../../tests/support/context.js';
-import { LIMITS, hex, initial } from '../../../../../tests/support/fixture.js';
-import { compiler, head, mapping, readOnly } from './fixture.js';
+import { createCpu } from '../../../../../src/index.js';
+import { Core } from '../../../../../src/wasm/core.js';
+import { protectedSnapshot } from '../../../../../../tests/support/context.js';
+import { LIMITS, hex, initial } from '../../../../../../tests/support/fixture.js';
+import { compiler, head, mapping, readOnly } from '../fixture.js';
 
 test('repeated cached flat loop owners link and respect stop and remap boundaries', async () => {
   const codeMap = (backing: string) => ({

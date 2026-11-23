@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { observeArtifactImports } from '../../../../../tests/support/artifact-imports.js';
-import { PC, initial, usingPaged } from '../../../../../tests/execution/paging/fixture.js';
-import { compiler } from './fixture.js';
+import { observeArtifactImports } from '../../../../../../tests/support/artifact-imports.js';
+import { PC, initial, usingPaged } from '../../../../../../tests/execution/paging/fixture.js';
+import { compiler } from '../fixture.js';
 
 test('ordinary grouped dword reads reuse the indexed page and replay an interior split', async () => {
   const source = PC + 0x1000n;

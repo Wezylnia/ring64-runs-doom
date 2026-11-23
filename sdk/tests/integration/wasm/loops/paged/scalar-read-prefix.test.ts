@@ -1,16 +1,16 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Core } from '../../../../src/wasm/core.js';
-import { observeArtifactImports } from '../../../../../tests/support/artifact-imports.js';
-import { snapshot } from '../../../../../tests/execution/far-control/fixture.js';
+import { Core } from '../../../../../src/wasm/core.js';
+import { observeArtifactImports } from '../../../../../../tests/support/artifact-imports.js';
+import { snapshot } from '../../../../../../tests/execution/far-control/fixture.js';
 import {
   BANK,
   PC,
   initial,
   little,
   usingPaged,
-} from '../../../../../tests/execution/paging/fixture.js';
-import { compiler } from './fixture.js';
+} from '../../../../../../tests/execution/paging/fixture.js';
+import { compiler } from '../fixture.js';
 
 test('sampled quiet completion keeps branch, single-step, and execute breakpoint handling', async () => {
   // ADD RAX,1; JC first increment; JMP second increment; INC RAX; INC RAX; HLT.

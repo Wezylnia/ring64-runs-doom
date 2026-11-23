@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Core } from '../../../../src/wasm/core.js';
-import { observeArtifactImports } from '../../../../../tests/support/artifact-imports.js';
+import { Core } from '../../../../../src/wasm/core.js';
+import { observeArtifactImports } from '../../../../../../tests/support/artifact-imports.js';
 import {
   BANK,
   PC,
@@ -9,8 +9,8 @@ import {
   little,
   usingPaged,
   word,
-} from '../../../../../tests/execution/paging/fixture.js';
-import { compiler } from './fixture.js';
+} from '../../../../../../tests/execution/paging/fixture.js';
+import { compiler } from '../fixture.js';
 
 test('an indexed near call preserves checked fetch and writes in a guarded handler', async () => {
   // CALL RAX; INC ECX; CMP ECX,4; JB start; HLT.

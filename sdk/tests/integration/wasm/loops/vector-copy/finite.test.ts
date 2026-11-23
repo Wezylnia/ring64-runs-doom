@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { observeArtifactImports } from '../../../../../tests/support/artifact-imports.js';
-import { BANK, PC, initial, usingPaged } from '../../../../../tests/execution/paging/fixture.js';
-import { COPY_FILL_INDEX, compiler } from './fixture.js';
+import { observeArtifactImports } from '../../../../../../tests/support/artifact-imports.js';
+import { BANK, PC, initial, usingPaged } from '../../../../../../tests/execution/paging/fixture.js';
+import { COPY_FILL_INDEX, compiler } from '../fixture.js';
 
 test('a single vector pair reserves its successor and replays lost admissions', async () => {
   const code = '0f10070f11069090'; // MOVUPS XMM0,[RDI]; MOVUPS [RSI],XMM0; NOP; NOP

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createCpu } from '../../../../src/index.js';
-import { simdFault } from '../../../../../tests/execution/floating/fixture.js';
+import { createCpu } from '../../../../../src/index.js';
+import { simdFault } from '../../../../../../tests/execution/floating/fixture.js';
 import {
   LIMITS,
   changed,
@@ -9,8 +9,8 @@ import {
   fault,
   hex,
   initial,
-} from '../../../../../tests/support/fixture.js';
-import { compiler, head, row, column, readOnly, mapping } from './fixture.js';
+} from '../../../../../../tests/support/fixture.js';
+import { compiler, head, row, column, readOnly, mapping } from '../fixture.js';
 
 function body(address32 = false): Uint8Array {
   const operand = address32 ? '67f30f' : 'f30f';

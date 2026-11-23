@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createCpu } from '../../../../src/index.js';
-import { protectedSnapshot } from '../../../../../tests/support/context.js';
-import { LIMITS, fault, hex, initial } from '../../../../../tests/support/fixture.js';
-import { compiler, head, row, column, readOnly, mapping } from './fixture.js';
+import { createCpu } from '../../../../../src/index.js';
+import { protectedSnapshot } from '../../../../../../tests/support/context.js';
+import { LIMITS, fault, hex, initial } from '../../../../../../tests/support/fixture.js';
+import { compiler, head, row, column, readOnly, mapping } from '../fixture.js';
 
 test('a packed SSE loop preserves an interior stop, a partial lap, and a later read fault', async () => {
   // MOVUPS; CMPNLEPS; MOVMSKPS; TEST; LEA; JNZ head; MOV store; MOV load; JMP head.

@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createCpu } from '../../../../src/index.js';
-import { Core } from '../../../../src/wasm/core.js';
-import { observeArtifactImports } from '../../../../../tests/support/artifact-imports.js';
-import { protectedSnapshot } from '../../../../../tests/support/context.js';
-import { LIMITS, hex, initial } from '../../../../../tests/support/fixture.js';
-import { compiler } from './fixture.js';
+import { createCpu } from '../../../../../src/index.js';
+import { Core } from '../../../../../src/wasm/core.js';
+import { observeArtifactImports } from '../../../../../../tests/support/artifact-imports.js';
+import { protectedSnapshot } from '../../../../../../tests/support/context.js';
+import { LIMITS, hex, initial } from '../../../../../../tests/support/fixture.js';
+import { compiler } from '../fixture.js';
 
 test('register INC and DEC retain carry and compute dword status at wrap boundaries', async () => {
   const head = 0x31800n;

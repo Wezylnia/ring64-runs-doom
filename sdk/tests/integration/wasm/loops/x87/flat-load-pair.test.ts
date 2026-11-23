@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createCpu } from '../../../../src/index.js';
-import { observeArtifactImports } from '../../../../../tests/support/artifact-imports.js';
-import { protectedSnapshot } from '../../../../../tests/support/context.js';
-import { LIMITS, hex, initial } from '../../../../../tests/support/fixture.js';
-import { compiler, head, mapping, readOnly } from './fixture.js';
+import { createCpu } from '../../../../../src/index.js';
+import { observeArtifactImports } from '../../../../../../tests/support/artifact-imports.js';
+import { protectedSnapshot } from '../../../../../../tests/support/context.js';
+import { LIMITS, hex, initial } from '../../../../../../tests/support/fixture.js';
+import { compiler, head, mapping, readOnly } from '../fixture.js';
 
 test('flat x87 register-load pairs recheck retained reads after remapping', async () => {
   const code = hex('d9c0d803f4'); // FLD ST(0); FADD dword [EBX]; HLT

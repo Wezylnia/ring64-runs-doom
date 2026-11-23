@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Core } from '../../../../src/wasm/core.js';
-import { observeArtifactImports } from '../../../../../tests/support/artifact-imports.js';
+import { Core } from '../../../../../src/wasm/core.js';
+import { observeArtifactImports } from '../../../../../../tests/support/artifact-imports.js';
 import {
   BANK,
   PC,
@@ -9,8 +9,8 @@ import {
   little,
   usingPaged,
   word,
-} from '../../../../../tests/execution/paging/fixture.js';
-import { compiler } from './fixture.js';
+} from '../../../../../../tests/execution/paging/fixture.js';
+import { compiler } from '../fixture.js';
 
 test('paged ADD and ROL reuse a writable and readable leaf and replay invalid accesses', async () => {
   const add = PC + 2n;

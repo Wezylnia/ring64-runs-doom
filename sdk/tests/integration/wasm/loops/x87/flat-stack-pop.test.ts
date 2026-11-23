@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { observeArtifactImports } from '../../../../../tests/support/artifact-imports.js';
-import { context, input, using } from '../../../../../tests/execution/modes/fixture.js';
-import { compiler } from './fixture.js';
+import { observeArtifactImports } from '../../../../../../tests/support/artifact-imports.js';
+import { context, input, using } from '../../../../../../tests/execution/modes/fixture.js';
+import { compiler } from '../fixture.js';
 
 test('inline x87 operations preserve raw bank bits and checked retirement boundaries', async () => {
   const pc = 0x1000n;

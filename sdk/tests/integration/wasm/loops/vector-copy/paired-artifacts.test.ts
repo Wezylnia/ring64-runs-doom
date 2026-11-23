@@ -1,9 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Core } from '../../../../src/wasm/core.js';
-import { observeArtifactImports } from '../../../../../tests/support/artifact-imports.js';
-import { PC, initial, little, usingPaged } from '../../../../../tests/execution/paging/fixture.js';
-import { compiler } from './fixture.js';
+import { Core } from '../../../../../src/wasm/core.js';
+import { observeArtifactImports } from '../../../../../../tests/support/artifact-imports.js';
+import {
+  PC,
+  initial,
+  little,
+  usingPaged,
+} from '../../../../../../tests/execution/paging/fixture.js';
+import { compiler } from '../fixture.js';
 
 test('one artifact keeps its original vector loop and an independently replayable paired copy', async () => {
   // The ordinary loop is longer but has one move pair; the second has a contiguous pair group.

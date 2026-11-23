@@ -1,15 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Core } from '../../../../src/wasm/core.js';
-import { observeArtifactImports } from '../../../../../tests/support/artifact-imports.js';
+import { Core } from '../../../../../src/wasm/core.js';
+import { observeArtifactImports } from '../../../../../../tests/support/artifact-imports.js';
 import {
   BANK,
   PC,
   initial,
   usingPaged,
   word,
-} from '../../../../../tests/execution/paging/fixture.js';
-import { compiler } from './fixture.js';
+} from '../../../../../../tests/execution/paging/fixture.js';
+import { compiler } from '../fixture.js';
 
 test('sampled immediate push and pop preserve the stack store and precise intervening boundaries', async () => {
   const page = PC + 0x1000n;

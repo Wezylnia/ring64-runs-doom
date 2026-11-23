@@ -1,15 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { observeArtifactImports } from '../../../../../tests/support/artifact-imports.js';
-import { snapshot } from '../../../../../tests/execution/far-control/fixture.js';
+import { observeArtifactImports } from '../../../../../../tests/support/artifact-imports.js';
+import { snapshot } from '../../../../../../tests/execution/far-control/fixture.js';
 import {
   BANK,
   PC,
   initial,
   little,
   usingPaged,
-} from '../../../../../tests/execution/paging/fixture.js';
-import { compiler } from './fixture.js';
+} from '../../../../../../tests/execution/paging/fixture.js';
+import { compiler } from '../fixture.js';
 
 test('a stack-bounded paged vector loop reuses its proved window and keeps precise replay', async () => {
   // Two loads, two stores, ADD RAX,32; CMP [RSP],RAX; JNE back; HLT.

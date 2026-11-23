@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import test, { type TestContext } from 'node:test';
-import { createCpu } from '../../../../src/index.js';
-import { Core } from '../../../../src/wasm/core.js';
-import { observeArtifactImports } from '../../../../../tests/support/artifact-imports.js';
-import { BANK, PC, little, usingPaged } from '../../../../../tests/execution/paging/fixture.js';
-import { protectedSnapshot } from '../../../../../tests/support/context.js';
+import { createCpu } from '../../../../../src/index.js';
+import { Core } from '../../../../../src/wasm/core.js';
+import { observeArtifactImports } from '../../../../../../tests/support/artifact-imports.js';
+import { BANK, PC, little, usingPaged } from '../../../../../../tests/execution/paging/fixture.js';
+import { protectedSnapshot } from '../../../../../../tests/support/context.js';
 import {
   LIMITS,
   changed,
@@ -12,8 +12,8 @@ import {
   fault,
   hex,
   initial,
-} from '../../../../../tests/support/fixture.js';
-import { compiler, head, row, column, readOnly, mapping } from './fixture.js';
+} from '../../../../../../tests/support/fixture.js';
+import { compiler, head, row, column, readOnly, mapping } from '../fixture.js';
 
 test('affine byte reads keep ADD flags at a denied span and resume after remapping', async () => {
   const code = hex(

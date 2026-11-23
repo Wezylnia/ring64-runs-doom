@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { observeArtifactImports } from '../../../../../tests/support/artifact-imports.js';
-import { BANK, PC, initial, usingPaged } from '../../../../../tests/execution/paging/fixture.js';
-import { COPY_FILL_INDEX, compiler } from './fixture.js';
+import { observeArtifactImports } from '../../../../../../tests/support/artifact-imports.js';
+import { BANK, PC, initial, usingPaged } from '../../../../../../tests/execution/paging/fixture.js';
+import { COPY_FILL_INDEX, compiler } from '../fixture.js';
 
 test('copy windows preserve interleaved destination arithmetic and alias order', async () => {
   // Two 16-byte copies, with LEA/ADD computing both destination addresses after the first load.

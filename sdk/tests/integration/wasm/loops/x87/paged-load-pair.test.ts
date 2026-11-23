@@ -1,14 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { observeArtifactImports } from '../../../../../tests/support/artifact-imports.js';
+import { observeArtifactImports } from '../../../../../../tests/support/artifact-imports.js';
 import {
   BANK,
   PC,
   initial,
   little,
   usingPaged,
-} from '../../../../../tests/execution/paging/fixture.js';
-import { compiler } from './fixture.js';
+} from '../../../../../../tests/execution/paging/fixture.js';
+import { compiler } from '../fixture.js';
 
 function observePairs(discriminator: number) {
   let accepted = 0;

@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createCpu, type RunResult } from '../../../../src/index.js';
-import { Core } from '../../../../src/wasm/core.js';
-import { PC, initial, usingPaged } from '../../../../../tests/execution/paging/fixture.js';
-import { protectedSnapshot } from '../../../../../tests/support/context.js';
-import { LIMITS, hex } from '../../../../../tests/support/fixture.js';
-import { compiler } from './fixture.js';
+import { createCpu, type RunResult } from '../../../../../src/index.js';
+import { Core } from '../../../../../src/wasm/core.js';
+import { PC, initial, usingPaged } from '../../../../../../tests/execution/paging/fixture.js';
+import { protectedSnapshot } from '../../../../../../tests/support/context.js';
+import { LIMITS, hex } from '../../../../../../tests/support/fixture.js';
+import { compiler } from '../fixture.js';
 
 function fragmentedLoop() {
   const bytes: number[] = [];

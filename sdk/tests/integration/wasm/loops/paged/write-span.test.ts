@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createCpu } from '../../../../src/index.js';
-import { Core } from '../../../../src/wasm/core.js';
-import { observeArtifactImports } from '../../../../../tests/support/artifact-imports.js';
-import { protectedSnapshot } from '../../../../../tests/support/context.js';
+import { createCpu } from '../../../../../src/index.js';
+import { Core } from '../../../../../src/wasm/core.js';
+import { observeArtifactImports } from '../../../../../../tests/support/artifact-imports.js';
+import { protectedSnapshot } from '../../../../../../tests/support/context.js';
 import {
   LIMITS,
   changed,
@@ -12,8 +12,8 @@ import {
   hex,
   initial,
   memory,
-} from '../../../../../tests/support/fixture.js';
-import { compiler } from './fixture.js';
+} from '../../../../../../tests/support/fixture.js';
+import { compiler } from '../fixture.js';
 
 function lebSize(value: number): number {
   let size = 1;

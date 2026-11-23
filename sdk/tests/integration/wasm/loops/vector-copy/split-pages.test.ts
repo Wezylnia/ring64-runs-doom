@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { observeArtifactImports } from '../../../../../tests/support/artifact-imports.js';
-import { BANK, PC, initial, usingPaged } from '../../../../../tests/execution/paging/fixture.js';
-import { COPY_FILL_INDEX, compiler } from './fixture.js';
+import { observeArtifactImports } from '../../../../../../tests/support/artifact-imports.js';
+import { BANK, PC, initial, usingPaged } from '../../../../../../tests/execution/paging/fixture.js';
+import { COPY_FILL_INDEX, compiler } from '../fixture.js';
 
 test('retained split vector copies preserve physical aliases and denied later writes', async () => {
   const code = '0f10070f11060f1047100f114610';

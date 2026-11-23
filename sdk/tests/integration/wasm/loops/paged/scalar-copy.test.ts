@@ -1,17 +1,17 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createCpu } from '../../../../src/index.js';
-import { observeArtifactImports } from '../../../../../tests/support/artifact-imports.js';
-import { snapshot } from '../../../../../tests/execution/far-control/fixture.js';
+import { createCpu } from '../../../../../src/index.js';
+import { observeArtifactImports } from '../../../../../../tests/support/artifact-imports.js';
+import { snapshot } from '../../../../../../tests/execution/far-control/fixture.js';
 import {
   BANK,
   PC,
   hex,
   initial,
   usingPaged,
-} from '../../../../../tests/execution/paging/fixture.js';
-import { LIMITS } from '../../../../../tests/support/fixture.js';
-import { compiler } from './fixture.js';
+} from '../../../../../../tests/execution/paging/fixture.js';
+import { LIMITS } from '../../../../../../tests/support/fixture.js';
+import { compiler } from '../fixture.js';
 
 const seed = Uint8Array.from({ length: 8 }, (_, index) => 19 * index + 3);
 const expected = Uint8Array.from({ length: 18 }, (_, index) => seed[index % 8]!);
