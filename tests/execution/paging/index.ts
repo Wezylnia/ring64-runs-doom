@@ -5,7 +5,12 @@ import { pagingFetchScenarios } from './fetch.js';
 import { pagingFaultScenarios } from './faults.js';
 import { pagingReviewFetchScenarios } from './review-fetch.js';
 import { pagingReviewAccessScenarios } from './review-access.js';
-import { pagingBoundaryReviewScenarios } from './review-boundaries.js';
+import { guardedPrefixScenarios } from './guarded-prefixes.js';
+import { scalarReplayScenarios } from './scalar-replay.js';
+import { writeReplayScenarios } from './write-replay.js';
+import { indexedReadLoopScenarios } from './indexed-read-loops.js';
+import { byteReadLoopScenarios } from './byte-read-loops.js';
+import { translationLifecycleScenarios } from './translation-lifecycle.js';
 import { pagingCurrentWalkReviewScenarios } from './review-current-walk.js';
 import { pagingMutationOracleScenarios } from './mutation-oracles.js';
 import { pagingPermissionReviewScenarios } from './review-permissions.js';
@@ -26,7 +31,12 @@ export function pagingScenarios(compiler: WebAssembly.Module): Scenario[] {
     ...pagingFaultScenarios(compiler),
     ...pagingReviewFetchScenarios(compiler),
     ...pagingReviewAccessScenarios(compiler),
-    ...pagingBoundaryReviewScenarios(compiler),
+    ...guardedPrefixScenarios(compiler),
+    ...scalarReplayScenarios(compiler),
+    ...writeReplayScenarios(compiler),
+    ...indexedReadLoopScenarios(compiler),
+    ...byteReadLoopScenarios(compiler),
+    ...translationLifecycleScenarios(compiler),
     ...pagingScalarF32LoopScenarios(compiler),
     ...pagingCurrentWalkReviewScenarios(compiler),
     ...pagingMutationOracleScenarios(compiler),
