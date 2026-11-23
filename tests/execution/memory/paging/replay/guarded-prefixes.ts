@@ -4,6 +4,85 @@ import { equal, initial, little, same, usingPaged, word, type Scenario } from '.
 export function guardedPrefixScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [
     {
+      name: 'paged indexed dword reads stay inside a partial backing and follow INVLPG',
+      async run() {
+        const page = 0x401000n;
+        const data = page + 0xfe0n;
+        const head = 0x400000n;
+        let misses = 0;
+        const restore = observeArtifactImports((env) => {
+          const read = env.paged_loop_read_span;
+          if (typeof read === 'function') {
+            env.paged_loop_read_span = (address: bigint, bytes: number, segment: number) => {
+              if (bytes === 4 && segment === 17) misses++;
+              return read(address, bytes, segment);
+            };
+          }
+        });
+        try {
+          await usingPaged(
+            compiler,
+            {
+              // MOV EAX,[RDI]; INC ECX; MOV EDX,[RSI]; INC ECX; CALL RBX; HLT; INVLPG [RDI].
+              code: '8b07ffc18b16ffc1ffd3f40f013f',
+              words: [
+                [0x4008n, 0xa007n],
+                [0x4010n, 0xc007n],
+              ],
+              spans: [
+                { physical: 0xafe0n, bytes: little([11n, 12n, 13n, 14n], 4) },
+                { physical: 0xaff0n, bytes: new Uint8Array(8), read: false },
+                { physical: 0xaff8n, bytes: new Uint8Array(8).fill(0xaa) },
+                { physical: 0xc000n, bytes: new Uint8Array(8).fill(0xbb) },
+                { physical: 0xdfe0n, bytes: little([21n, 22n, 23n, 24n], 4) },
+              ],
+            },
+            async (cpu) => {
+              const run = (second: bigint) => {
+                cpu.setState(initial(head, { 1: 0n, 2: 99n, 6: second, 7: data }, 2n));
+                return cpu.run({ stop: head + 8n, budget: 12n });
+              };
+              await run(data);
+              await run(data);
+              misses = 0;
+              const hit = await run(data + 12n);
+              equal(hit.reason, 'stop', 'both dwords complete inside the clipped mapping');
+              equal(hit.state.registers[2], 14n, 'the last complete four bytes are readable');
+              equal(misses, 0, 'both operands use the previously filled indexed read');
+
+              const denied = await run(data + 14n);
+              equal(denied.reason, 'physical-memory-fault', 'the dword enters a denied mapping');
+              equal(
+                denied.physicalMemoryFault?.failingPhysicalAddress,
+                0xaff0n,
+                'first denied byte',
+              );
+              equal(denied.retired, 2n, 'only the first load and INC retire');
+              equal(denied.state.rip, head + 4n, 'fault points to the second load');
+              equal(denied.state.registers[2], 99n, 'the refused load leaves EDX intact');
+              const split = await run(page + 4094n);
+              equal(
+                split.state.registers[2],
+                0xbbbbaaaan,
+                'cross-page load reads both physical leaves',
+              );
+
+              await run(data);
+              await run(data);
+              cpu.writePhysicalMemory(0x4008n, little([0xd007n]));
+              cpu.setState(initial(head + 11n, { 7: data }, 2n));
+              equal((await cpu.run({ budget: 1n })).retired, 1n, 'INVLPG completes');
+              const remapped = await run(data + 12n);
+              equal(remapped.state.registers[0], 21n, 'the new leaf replaces the clipped record');
+              equal(remapped.state.registers[2], 24n, 'the new mapping supplies its last dword');
+            },
+          );
+        } finally {
+          restore();
+        }
+      },
+    },
+    {
       name: 'paged guarded prefixes preserve both conditional edges and precise pre-branch exits',
       async run() {
         const head = 0x400000n;
@@ -199,11 +278,8 @@ export function guardedPrefixScenarios(compiler: WebAssembly.Module): Scenario[]
               );
               same(
                 reads,
-                [
-                  [data, true],
-                  [data + 4n, true],
-                ],
-                'both warmed reads take the guard',
+                [[data, true]],
+                'the first read proves the eight mapped bytes for both dwords',
               );
 
               cpu.setState(initial(head, { 1: 4n, 2: 23n, 6: missing, 7: data }, 2n));
@@ -219,11 +295,8 @@ export function guardedPrefixScenarios(compiler: WebAssembly.Module): Scenario[]
               equal(fault.state.flags, 2n, 'the fault preserves the preceding XOR flags');
               same(
                 reads,
-                [
-                  [data, true],
-                  [missing, false],
-                ],
-                'only the original faulting slot replays',
+                [[missing, false]],
+                'the cached first read completes before the unmapped operand replays',
               );
 
               cpu.setState(start);

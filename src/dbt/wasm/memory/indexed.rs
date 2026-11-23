@@ -6,6 +6,7 @@ use wasm_encoder::{BlockType, Instruction as Op};
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(in crate::dbt::wasm) enum IndexedOperand {
     Read,
+    PrefixDwordRead,
     Write,
     ReadModifyWrite,
 }
@@ -103,7 +104,11 @@ impl Emitter {
             self.indexed_paged_read.expect("indexed prefix locals"),
             width,
             true,
-            IndexedOperand::Read,
+            if width == 4 {
+                IndexedOperand::PrefixDwordRead
+            } else {
+                IndexedOperand::Read
+            },
         );
         self.op(Op::LocalTee(STORE_STATUS))
             .op(Op::If(BlockType::Result(ValType::I32)))
@@ -153,10 +158,14 @@ impl Emitter {
         let clock = mem(offset_of!(IndexedReadTable, clock), 3);
         let ages = mem(offset_of!(IndexedReadTable, ages), 3);
         let epoch = mem(offset_of!(IndexedReadTable, epoch), 3);
-        let records = if operand != IndexedOperand::Read {
-            offset_of!(IndexedReadTable, writes)
-        } else {
+        let read = matches!(
+            operand,
+            IndexedOperand::Read | IndexedOperand::PrefixDwordRead
+        );
+        let records = if read {
             offset_of!(IndexedReadTable, entries)
+        } else {
+            offset_of!(IndexedReadTable, writes)
         };
         let stamp = if preserve_fetch {
             VALUE
@@ -172,7 +181,7 @@ impl Emitter {
         if let Some((page, bias, rights)) = self.ordered_operand {
             if preserve_fetch {
                 let needed = match operand {
-                    IndexedOperand::Read => 1,
+                    IndexedOperand::Read | IndexedOperand::PrefixDwordRead => 1,
                     IndexedOperand::Write => 2,
                     IndexedOperand::ReadModifyWrite => 3,
                 };
@@ -242,10 +251,39 @@ impl Emitter {
             .op(Op::I64Or)
             .op(Op::LocalGet(table))
             .op(Op::I64Load(epoch))
-            .op(Op::I64Or)
-            .op(Op::I64Ne)
-            .indexed_miss(Op::BrIf(0))
-            .op(Op::LocalGet(table))
+            .op(Op::I64Or);
+        if operand == IndexedOperand::PrefixDwordRead {
+            // Read records with a clipped mapping can prove this dword only.
+            // Full-page consumers, including paired accesses, compare the original tag.
+            let clipped = crate::x86::paging::cache::INDEXED_CLIPPED_READ;
+            self.op(Op::I64Xor)
+                .op(Op::LocalTee(stamp))
+                .op(Op::I64Const(0))
+                .op(Op::I64Ne)
+                .op(Op::If(BlockType::Empty))
+                .op(Op::LocalGet(stamp))
+                .op(Op::I64Const(clipped as i64))
+                .op(Op::I64Ne)
+                .indexed_miss(Op::BrIf(1))
+                .op(Op::LocalGet(ADDRESS))
+                .op(Op::LocalGet(table))
+                .op(Op::I64Load(mem(
+                    offset_of!(IndexedReadTable, clipped_base),
+                    3,
+                )))
+                .op(Op::I64Sub)
+                .op(Op::LocalGet(table))
+                .op(Op::I64Load32U(mem(
+                    offset_of!(IndexedReadTable, clipped_last_dword),
+                    2,
+                )))
+                .op(Op::I64GtU)
+                .indexed_miss(Op::BrIf(1))
+                .op(Op::End);
+        } else {
+            self.op(Op::I64Ne).indexed_miss(Op::BrIf(0));
+        }
+        self.op(Op::LocalGet(table))
             .op(Op::LocalGet(entry))
             .op(Op::I32Load(mem(
                 records + offset_of!(IndexedReadEntry, slot_offset),
@@ -339,7 +377,19 @@ impl Emitter {
                 .op(Op::LocalSet(page));
             // Reads grant no write access. A write grants read access only if
             // the write record certified the identical readable backing.
-            if operand == IndexedOperand::Read {
+            if operand == IndexedOperand::PrefixDwordRead {
+                // Local ordered-operand reuse assumes all 4096 bytes were proved.
+                self.op(Op::LocalGet(entry))
+                    .op(Op::I32Load(mem(
+                        records + offset_of!(IndexedReadEntry, tag),
+                        2,
+                    )))
+                    .op(Op::I32Const(
+                        crate::x86::paging::cache::INDEXED_CLIPPED_READ as i32,
+                    ))
+                    .op(Op::I32And)
+                    .op(Op::I32Eqz);
+            } else if operand == IndexedOperand::Read {
                 self.op(Op::I32Const(1));
             } else {
                 self.op(Op::LocalGet(entry))

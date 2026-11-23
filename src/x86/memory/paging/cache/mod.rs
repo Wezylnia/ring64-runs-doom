@@ -117,6 +117,9 @@ pub(crate) const INDEXED_VALID: u64 = 1;
 
 #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
 pub(crate) const INDEXED_WRITE_READABLE: u64 = 2;
+// Bit 1 in the separate read table requires the clipped dword bounds.
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+pub(crate) const INDEXED_CLIPPED_READ: u64 = 2;
 
 #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
 #[derive(Clone, Copy, Default)]
@@ -129,8 +132,7 @@ pub(crate) struct IndexedReadEntry {
 
 #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
 impl IndexedReadEntry {
-    fn new(page: u64, epoch: u64, slot: usize, host: u32, readable_write: bool) -> Self {
-        debug_assert_eq!(page & 4095, 0);
+    fn new(linear: u64, epoch: u64, slot: usize, host: u32, readable_write: bool) -> Self {
         debug_assert!(epoch & !0xffc == 0 && slot < CAPACITY && host != 0);
         let readable = if readable_write {
             INDEXED_WRITE_READABLE
@@ -138,9 +140,9 @@ impl IndexedReadEntry {
             0
         };
         Self {
-            tag: page | epoch | INDEXED_VALID | readable,
+            tag: (linear & !4095) | epoch | INDEXED_VALID | readable,
             slot_offset: slot as u32 * 8,
-            host_bias: host.wrapping_sub(page as u32),
+            host_bias: host.wrapping_sub(linear as u32),
         }
     }
 }
@@ -162,6 +164,10 @@ pub(crate) struct IndexedReadTable {
     pub(crate) entries: [IndexedReadEntry; INDEXED_READ_ENTRIES],
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
     pub(crate) writes: [IndexedReadEntry; INDEXED_READ_ENTRIES],
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(crate) clipped_base: u64,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(crate) clipped_last_dword: u32,
 }
 
 #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
@@ -193,6 +199,10 @@ impl Default for IndexedReadTable {
             entries: [IndexedReadEntry::default(); INDEXED_READ_ENTRIES],
             #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
             writes: [IndexedReadEntry::default(); INDEXED_READ_ENTRIES],
+            #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+            clipped_base: 0,
+            #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+            clipped_last_dword: 0,
         }
     }
 }
@@ -670,20 +680,33 @@ impl Cache {
             return;
         };
         let page = address & !4095;
-        let Some(delta) = page.checked_sub(memo.span.base) else {
-            return;
-        };
-        let Some(last) = memo.span.length.checked_sub(4096) else {
-            return;
-        };
+        let delta = address.wrapping_sub(memo.span.base);
         if address - page > 4092
-            || delta > u64::from(last)
-            || u64::from(memo.span.host) + (address - memo.span.base) != u64::from(host)
-            || self.entries.borrow().recency().live_ids[memo.slot] != memo.id
+            || delta > u64::from(memo.span.length - 4)
+            || u64::from(memo.span.host) + delta != u64::from(host)
         {
             return;
         }
-        self.remember_indexed_read(memo.slot, page, memo.span.host + delta as u32);
+        let start = page.max(memo.span.base);
+        let length =
+            (memo.span.length - (start - memo.span.base) as u32).min(4096 - (start - page) as u32);
+        let mut entries = self.entries.borrow_mut();
+        let table = entries.recency_mut();
+        if table.live_ids[memo.slot] != memo.id {
+            return;
+        }
+        // The memo is the intersection of the local translation and a direct
+        // readable mapping. Bounds only qualify the tagged page in this epoch.
+        let mut record = IndexedReadEntry::new(address, table.epoch, memo.slot, host, false);
+        if length < 4096 {
+            // Absolute bounds cover at most one page. Older clipped tags on
+            // other pages therefore miss when this range is replaced.
+            table.clipped_base = start;
+            table.clipped_last_dword = length - 4;
+            record.tag |= INDEXED_CLIPPED_READ;
+        }
+        let index = (page >> 12) as usize & (INDEXED_READ_ENTRIES - 1);
+        table.entries[index] = record;
     }
 
     #[cfg(test)]
