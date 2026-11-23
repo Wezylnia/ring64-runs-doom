@@ -16,7 +16,7 @@ export {
   throws,
   type Scenario,
 } from '../../../support/fixture.js';
-export { same, preserveNumeric, loadedCode, loadedData } from '../../far-control/fixture.js';
+export { same, preserveNumeric, loadedCode, loadedData } from '../../control-flow/far/fixture.js';
 export { longSnapshot, protectedSnapshot } from '../../../support/context.js';
 export { gate, tssDescriptor, encoded, image } from '../../software-events/fixture.js';
 export type { Cpu, ExecutionContextSnapshot, State, RunResult } from '../../../../sdk/src/index.js';

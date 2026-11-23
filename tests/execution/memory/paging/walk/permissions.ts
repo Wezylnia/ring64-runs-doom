@@ -1,6 +1,6 @@
 import { createCpu } from '../../../../../sdk/src/index.js';
 import { LIMITS } from '../../../../support/fixture.js';
-import { snapshot } from '../../../far-control/fixture.js';
+import { snapshot } from '../../../control-flow/far/fixture.js';
 import {
   BANK,
   PC,

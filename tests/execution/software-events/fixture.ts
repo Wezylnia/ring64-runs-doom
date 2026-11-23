@@ -25,7 +25,7 @@ export {
   DATA16,
   DATA32,
   preserveNumeric,
-} from '../far-control/fixture.js';
+} from '../control-flow/far/fixture.js';
 export { initial, outcome, debug } from '../system-flags/fixture.js';
 
 export const FILL = 'a5'.repeat(256);

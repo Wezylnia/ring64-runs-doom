@@ -13,7 +13,7 @@ import {
   preserveNumeric,
   type Scenario,
 } from './fixture.js';
-import { loadedCode } from '../far-control/fixture.js';
+import { loadedCode } from '../control-flow/far/fixture.js';
 
 export function steppingScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [

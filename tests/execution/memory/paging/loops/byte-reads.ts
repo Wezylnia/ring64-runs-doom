@@ -1,4 +1,4 @@
-import { snapshot } from '../../../far-control/fixture.js';
+import { snapshot } from '../../../control-flow/far/fixture.js';
 import { context } from '../../../modes/fixture.js';
 import { BANK, equal, initial, little, usingPaged, type Scenario } from '../fixture.js';
 

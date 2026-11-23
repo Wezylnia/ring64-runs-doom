@@ -1,4 +1,4 @@
-import { snapshot, loadedCode, loadedData } from '../far-control/fixture.js';
+import { snapshot, loadedCode, loadedData } from '../control-flow/far/fixture.js';
 import { BANK, PC, little } from '../memory/paging/fixture.js';
 import { check, type Scenario } from '../../support/fixture.js';
 import {

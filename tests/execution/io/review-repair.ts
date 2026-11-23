@@ -1,6 +1,6 @@
 import { createCpu, type MemoryMapping } from '../../../sdk/src/index.js';
 import { LIMITS, check, equal, hex, initial, type Scenario } from '../../support/fixture.js';
-import { snapshot, same } from '../far-control/fixture.js';
+import { snapshot, same } from '../control-flow/far/fixture.js';
 
 export function ioRepairReviewScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [

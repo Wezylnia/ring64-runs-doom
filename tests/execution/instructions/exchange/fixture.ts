@@ -1,5 +1,5 @@
 export { LONG, context, input, changed, using, type Scenario } from '../../modes/fixture.js';
-export { bytes, outcome, patch } from '../../near-control/fixture.js';
+export { bytes, outcome, patch } from '../../control-flow/near/fixture.js';
 
 export function mask(width: number): bigint {
   return (1n << BigInt(width)) - 1n;

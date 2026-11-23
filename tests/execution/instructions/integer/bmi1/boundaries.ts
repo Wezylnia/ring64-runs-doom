@@ -16,7 +16,7 @@ import {
   state as userState,
   using as usingPhysical,
 } from '../../../memory/alignment-checking/fixture.js';
-import { preserveNumeric } from '../../../far-control/fixture.js';
+import { preserveNumeric } from '../../../control-flow/far/fixture.js';
 import { legacyOptions, little } from '../../../memory/legacy-paging/fixture.js';
 import { context, LONG, using } from '../../../modes/fixture.js';
 

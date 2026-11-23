@@ -8,7 +8,7 @@ import {
   check,
   type Scenario,
 } from '../../support/fixture.js';
-import { snapshot } from '../far-control/fixture.js';
+import { snapshot } from '../control-flow/far/fixture.js';
 
 export function ioBoundaryScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [

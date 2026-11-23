@@ -1,5 +1,5 @@
 import { using, initial, equal, same, type Scenario } from '../exception-delivery/fixture.js';
-import { profiles } from '../far-control/fixture.js';
+import { profiles } from '../control-flow/far/fixture.js';
 export function registerMatrixScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [
     {

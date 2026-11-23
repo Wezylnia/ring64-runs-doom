@@ -1,6 +1,6 @@
 import { createCpu } from '../../../sdk/src/index.js';
 import { LIMITS, equal, hex, initial, type Scenario } from '../../support/fixture.js';
-import { snapshot, same } from '../far-control/fixture.js';
+import { snapshot, same } from '../control-flow/far/fixture.js';
 import { usingPaged, little, PC } from '../memory/paging/fixture.js';
 
 export function ioOperandReviewScenarios(compiler: WebAssembly.Module): Scenario[] {

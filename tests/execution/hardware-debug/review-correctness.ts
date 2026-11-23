@@ -14,7 +14,7 @@ import {
   same,
   type Scenario,
 } from '../exception-delivery/fixture.js';
-import { profiles } from '../far-control/fixture.js';
+import { profiles } from '../control-flow/far/fixture.js';
 
 export function correctnessReviewScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [

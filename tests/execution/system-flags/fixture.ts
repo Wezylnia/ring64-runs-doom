@@ -16,7 +16,7 @@ export {
   CODE64,
   DATA16,
   DATA32,
-} from '../far-control/fixture.js';
+} from '../control-flow/far/fixture.js';
 export { hex, check, equal, LIMITS, throws, state, type Scenario } from '../../support/fixture.js';
 
 export const FLAGS_MASK = 0x3d7fd7n;

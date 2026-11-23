@@ -1,6 +1,6 @@
 import { createCpu } from '../../../sdk/src/index.js';
 import { changed, check, equal, exit, initial, type Scenario } from '../../support/fixture.js';
-import { preserveNumeric, same } from '../far-control/fixture.js';
+import { preserveNumeric, same } from '../control-flow/far/fixture.js';
 import {
   controls,
   ENTRY,

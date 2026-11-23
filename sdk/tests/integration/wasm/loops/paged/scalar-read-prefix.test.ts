@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Core } from '../../../../../src/wasm/core.js';
 import { observeArtifactImports } from '../../../../../../tests/support/artifact-imports.js';
-import { snapshot } from '../../../../../../tests/execution/far-control/fixture.js';
+import { snapshot } from '../../../../../../tests/execution/control-flow/far/fixture.js';
 import {
   BANK,
   PC,
