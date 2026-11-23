@@ -356,15 +356,15 @@ for (const mutant of selected)
 const driver = await readFile(fileURLToPath(import.meta.url));
 await writeFile(join(evidence, 'context-reuse-mutations.mjs'), driver);
 const cases = `import { readFile } from 'node:fs/promises';
-import { contextReuseScenarios } from './tests/execution/context-reuse/index.ts';
-import { fastSystemScenarios } from './tests/execution/fast-system/index.ts';
-import { pagingScenarios } from './tests/execution/paging/index.ts';
+import { contextReuseScenarios } from './tests/execution/translations/context-reuse/index.ts';
+import { fastSystemScenarios } from './tests/execution/control-flow/fast-system/index.ts';
+import { pagingScenarios } from './tests/execution/memory/paging/index.ts';
 const compiler=await WebAssembly.compile(new Uint8Array(await readFile('build/ring64.wasm')));
 const all=[...contextReuseScenarios(compiler),...fastSystemScenarios(compiler),...pagingScenarios(compiler)];
 const selected=process.argv[2]?all.filter(s=>s.name.includes(process.argv[2])):all;
 if(!selected.length)throw Error('empty scenario selection');
 const passed=[];
-for(const s of selected){try{await s.run();passed.push(s.name);}catch(e){const message=String(e.message);const stack=String(e.stack);const semantic=!message.includes('cpu engine failed')&&(stack.includes('/tests/support/fixture.ts')||stack.includes('/tests/execution/context-reuse/fixture.ts'));console.log(JSON.stringify({selected:selected.length,failed:s.name,error:message,stack,semantic}));process.exitCode=1;break;}}
+for(const s of selected){try{await s.run();passed.push(s.name);}catch(e){const message=String(e.message);const stack=String(e.stack);const semantic=!message.includes('cpu engine failed')&&(stack.includes('/tests/support/fixture.ts')||stack.includes('/tests/execution/translations/context-reuse/fixture.ts'));console.log(JSON.stringify({selected:selected.length,failed:s.name,error:message,stack,semantic}));process.exitCode=1;break;}}
 if(!process.exitCode)console.log(JSON.stringify({selected:selected.length,passed:passed.length,names:passed}));
 `;
 await writeFile(join(work, 'mutation-cases.mjs'), cases);

@@ -269,7 +269,7 @@ const originals = new Map(
   ),
 );
 const cases = `import { readFile } from 'node:fs/promises';
-import { pagingScenarios } from './tests/execution/paging/index.ts';
+import { pagingScenarios } from './tests/execution/memory/paging/index.ts';
 const compiler=await WebAssembly.compile(new Uint8Array(await readFile('build/ring64.wasm')));
 const all = pagingScenarios(compiler);
 const selected=process.argv[2]?all.filter(s=>s.name.includes(process.argv[2])):all;

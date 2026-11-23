@@ -151,7 +151,7 @@ const sourceCommit = spawnSync('git', ['rev-parse', 'HEAD'], {
   encoding: 'utf8',
 }).stdout.trim();
 const runner = `import { readFile } from 'node:fs/promises';
-import { alignmentCheckingScenarios } from './tests/execution/alignment-checking/index.ts';
+import { alignmentCheckingScenarios } from './tests/execution/memory/alignment-checking/index.ts';
 const compiler=await WebAssembly.compile(new Uint8Array(await readFile('build/ring64.wasm')));
 const all=alignmentCheckingScenarios(compiler);
 const selected=process.argv[2]?all.filter(s=>s.name.includes(process.argv[2])):all;
@@ -161,7 +161,7 @@ for(const scenario of selected){
  try{await scenario.run();passed.push(scenario.name);}
  catch(error){
   const message=String(error.message),stack=String(error.stack);
-  const assertions=['/tests/support/fixture.ts:','/tests/execution/alignment-checking/fixture.ts:','/tests/execution/supervisor-access/fixture.ts:'];
+  const assertions=['/tests/support/fixture.ts:','/tests/execution/memory/alignment-checking/fixture.ts:','/tests/execution/memory/supervisor-access/fixture.ts:'];
   const assertion=assertions.some(file=>stack.includes(file)) && !/cpu engine failed|WebAssembly|unreachable|out of bounds|compil|empty scenario|timed? ?out/i.test(message);
   console.log(JSON.stringify({selected:selected.length,passed:passed.length,failed:scenario.name,error:message,stack,assertion}));process.exitCode=1;break;
  }

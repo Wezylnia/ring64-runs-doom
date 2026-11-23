@@ -278,8 +278,8 @@ const originals = new Map(
 );
 const cases = `import { readFile } from 'node:fs/promises';
 import { createCpu } from './sdk/src/index.ts';
-import { lifecycleScenarios } from './tests/execution/context-reuse/lifecycle.ts';
-import { fastSystemScenarios } from './tests/execution/fast-system/index.ts';
+import { lifecycleScenarios } from './tests/execution/translations/context-reuse/lifecycle.ts';
+import { fastSystemScenarios } from './tests/execution/control-flow/fast-system/index.ts';
 const compiler=await WebAssembly.compile(new Uint8Array(await readFile('build/ring64.wasm')));
 const aba=lifecycleScenarios(compiler, createCpu).filter(s=>s.name.includes('rejects pending context ABA'));
 const all=[...fastSystemScenarios(compiler), ...aba];
