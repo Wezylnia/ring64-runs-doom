@@ -2917,11 +2917,7 @@ fn emit_body(
     });
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let ordered_operand = retained_fetch_slot
-        .filter(|_| {
-            copy_prefix.is_none()
-                && scalar_copy_prefix.is_none()
-                && optional.additional_copy.is_none()
-        })
+        .filter(|_| !has_copy_prefix && optional.additional_copy.is_none())
         .map(|_| {
             let base = super::GPR + locals.iter().map(|(count, _)| count).sum::<u32>();
             locals.extend([(1, ValType::I64), (2, ValType::I32)]);

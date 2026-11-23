@@ -1366,8 +1366,11 @@ impl Emitter {
                 .op(Op::I32Load(table))
                 .op(Op::LocalGet(0))
                 .op(Op::I32Load(slot))
-                .op(Op::I32Store(hint))
-                .op(Op::End);
+                .op(Op::I32Store(hint));
+            if let Some((_, _, rights)) = self.ordered_operand {
+                self.op(Op::I32Const(0)).op(Op::LocalSet(rights));
+            }
+            self.op(Op::End);
         } else {
             self.indexed_miss(Op::BrIf(0));
         }
