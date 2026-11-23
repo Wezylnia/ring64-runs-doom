@@ -46,8 +46,11 @@ async function patch(file, edits) {
   const destination = resolve(scratch, 'host', file);
   let source = await readFile(destination, 'utf8');
   for (const [anchor, replacement] of edits) {
-    if (source.split(anchor).length !== 2)
-      throw Error(`unexpected trace anchor in ${file}: ${anchor}`);
+    const matches =
+      typeof anchor === 'string'
+        ? source.split(anchor).length - 1
+        : [...source.matchAll(anchor)].length;
+    if (matches !== 1) throw Error(`unexpected trace anchor in ${file}: ${anchor}`);
     source = source.replace(anchor, replacement);
   }
   await writeFile(destination, source);
@@ -63,19 +66,19 @@ async function instrument() {
       "import { LatencyTrace, latencyBuffer, latencyEvents as traceEvents } from './parallel/latency-trace.js';\nclass ParallelMachine {",
     ],
     [
-      '        this.#input = input;',
-      `        this.#input = input;
+      '    constructor(input, memory, storeLane) {',
+      `    constructor(input, memory, storeLane) {
         this.latencyTraceMemory = latencyBuffer(input.cpus.length + 1);
         this.latencyTrace = new LatencyTrace(this.latencyTraceMemory, 0);`,
     ],
     [
-      '                shared: this.#memory,',
-      '                shared: this.#memory,\n                latencyTraceMemory: this.latencyTraceMemory,',
+      "                kind: 'start',",
+      "                kind: 'start',\n                latencyTraceMemory: this.latencyTraceMemory,",
     ],
     [
-      '            const phase = this.#control.transition(true);',
+      /^            const phase = (this\.#[\w.]+\.transition\(true\));$/gm,
       `            const closing = this.latencyTrace.now();
-            const phase = this.#control.transition(true);
+            const phase = $1;
             this.latencyTrace.write(traceEvents.close, closing, 0, phase, 0);`,
     ],
     [
@@ -83,12 +86,12 @@ async function instrument() {
       '            await closed.promise;\n            this.latencyTrace.mark(traceEvents.drained, phase);',
     ],
     [
-      '        this.#control.transition(false);',
-      '        const reopened = this.#control.transition(false);\n        this.latencyTrace.mark(traceEvents.open, reopened - 1n);',
+      /^        (this\.#[\w.]+\.transition\(false\));$/gm,
+      '        const reopened = $1;\n        this.latencyTrace.mark(traceEvents.open, reopened - 1n);',
     ],
     [
-      '        this.#control.signal(peer.id, SIGNAL.pause);',
-      '        this.latencyTrace.mark(traceEvents.pauseRequest, command.sequence, peer.id);\n        this.#control.signal(peer.id, SIGNAL.pause);',
+      /^        this\.#[\w.]+\.signal\(peer\.id, SIGNAL\.pause\);$/gm,
+      '        this.latencyTrace.mark(traceEvents.pauseRequest, command.sequence, peer.id);\n$&',
     ],
     [
       '        this.#inProvider = true;',
