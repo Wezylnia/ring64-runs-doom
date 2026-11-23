@@ -874,6 +874,139 @@ fn paired_data_spans_commit_recency_only_after_both_succeed() {
 
 #[cfg(not(feature = "parallel"))]
 #[test]
+fn a_ready_copy_fills_the_destination_after_admitting_both_operands() {
+    let (mut image, state, read) = fixture();
+    let write = Request {
+        linear: 0x2234,
+        access: Access::Write,
+        ..read
+    };
+    let code = Request {
+        linear: 0x3234,
+        access: Access::Execute,
+        ..read
+    };
+    let other = Request {
+        linear: 0x4234,
+        ..read
+    };
+    let keys = &ProtectionKeys::ZERO;
+    let cache = Cache::with_capacity(3);
+    image.physical_write(0x4018, 8, 0xc067).unwrap();
+    image.physical_write(0x4020, 8, 0xd067).unwrap();
+    for request in [read, other, code] {
+        insert(&cache, &mut image, &state, request);
+    }
+    let before = cache.entries.borrow().recency().clock;
+    for leaf in [0xb007, 0xb027, 0xb065, 0xb067] {
+        image.physical_write(0x4010, 8, leaf).unwrap();
+        assert_eq!(
+            cache.ready_copy_destination(
+                &mut image,
+                &state,
+                [read, write],
+                keys,
+                32,
+                |_, _, _, _, _| {
+                    assert_eq!(leaf, 0xb067);
+                    None
+                }
+            ),
+            None
+        );
+        assert_eq!(image.physical_read(0x4010, 8).unwrap(), leaf);
+        assert_eq!(cache.entries.borrow().recency().clock, before);
+        assert!(cache.observe(&state, write, keys).unwrap().is_none());
+    }
+    assert_eq!(
+        cache.ready_copy_destination(
+            &mut image,
+            &state,
+            [read, write],
+            keys,
+            32,
+            |_, source, destination, _, _| ((source, destination) == (0xa234, 0xb234))
+                .then_some(())
+        ),
+        Some(())
+    );
+    assert!(cache.observe(&state, other, keys).unwrap().is_none());
+    for request in [read, write, code] {
+        assert!(cache.observe(&state, request, keys).unwrap().is_some());
+    }
+    let entries = cache.entries.borrow();
+    let ages = [read, write, code]
+        .map(|request| entries.recency().ages[entries.find(&state, request).unwrap()]);
+    assert!(ages[0] < ages[1] && ages[1] < ages[2]);
+}
+
+#[cfg(not(feature = "parallel"))]
+#[test]
+fn a_split_destination_fills_only_after_its_prefix_and_walk_are_admitted() {
+    let (mut image, state, read) = fixture();
+    let write = Request {
+        linear: 0x2ff8,
+        access: Access::Write,
+        ..read
+    };
+    let next = Request {
+        linear: 0x3000,
+        ..write
+    };
+    let code = Request {
+        linear: 0x4234,
+        access: Access::Execute,
+        ..read
+    };
+    let cache = Cache::with_capacity(4);
+    let keys = &ProtectionKeys::ZERO;
+    image.physical_write(0x4010, 8, 0xb067).unwrap();
+    image.physical_write(0x4020, 8, 0xe067).unwrap();
+    for request in [read, write, code] {
+        insert(&cache, &mut image, &state, request);
+    }
+    let before = cache.entries.borrow().recency().clock;
+    for leaf in [0xd067, 0xc027, 0xc067] {
+        image.physical_write(0x4018, 8, leaf).unwrap();
+        assert_eq!(
+            cache.ready_copy_destination(
+                &mut image,
+                &state,
+                [read, write],
+                keys,
+                32,
+                |_, source, dest, prefix, walked| {
+                    assert_eq!(leaf, 0xc067);
+                    assert_eq!((source, dest, prefix), (0xa234, 0xbff8, 8));
+                    assert!(walked.entries().contains(&0x4018));
+                    None
+                }
+            ),
+            None
+        );
+        assert_eq!(cache.entries.borrow().recency().clock, before);
+        assert!(cache.observe(&state, next, keys).unwrap().is_none());
+    }
+    cache
+        .ready_copy_destination(
+            &mut image,
+            &state,
+            [read, write],
+            keys,
+            32,
+            |_, _, _, _, _| Some(()),
+        )
+        .unwrap();
+    assert_eq!(
+        cache.copy_split_pair_then_fetch(&state, [read, write], keys, 32, [16; 4], |a, b| Some((
+            a, b
+        ))),
+        Some((0xa234, 0xbff8))
+    );
+}
+
+#[cfg(not(feature = "parallel"))]
+#[test]
 fn retained_copy_destination_checks_the_current_write_permission() {
     let (mut image, state, read) = fixture();
     image.physical_write(0x4010, 8, 0xb067).unwrap();
@@ -1044,13 +1177,41 @@ fn split_copy_preflights_rights_and_keeps_ordered_recency() {
     let clock = || cache.entries.borrow().recency().clock;
     let start = clock();
     assert_eq!(
-        cache.copy_split_pair_then_fetch(&state, [read, write], keys, 32, |_, _| None::<()>),
+        cache.copy_split_pair_then_fetch(
+            &state,
+            [read, write],
+            keys,
+            32,
+            [16; 4],
+            |_, _| None::<()>
+        ),
         None
     );
     assert_eq!(clock(), start);
     assert_eq!(
-        cache.copy_split_pair_then_fetch(&state, [read, write], keys, 32, |source, destination| {
-            assert_eq!((source, destination), (0xaff8, 0xcff0));
+        cache.copy_split_pair_then_fetch(
+            &state,
+            [read, write],
+            keys,
+            32,
+            [16; 4],
+            |source, destination| {
+                assert_eq!((source, destination), (0xaff8, 0xcff0));
+                Some(())
+            }
+        ),
+        Some(())
+    );
+    {
+        let entries = cache.entries.borrow();
+        let mut order = [0, 1, 2, 3, 4];
+        order.sort_unstable_by_key(|&slot| entries.recency().ages[slot]);
+        assert_eq!(order, [0, 2, 1, 3, 4]);
+    }
+
+    // The last two-byte write starts on the second page after the last read.
+    assert_eq!(
+        cache.copy_split_pair_then_fetch(&state, [read, write], keys, 18, [8, 8, 2, 0], |_, _| {
             Some(())
         }),
         Some(())
@@ -1068,9 +1229,16 @@ fn split_copy_preflights_rights_and_keeps_ordered_recency() {
     assert!(cache.lookup(&state, code, keys).unwrap().is_some());
     let start = clock();
     assert_eq!(
-        cache.copy_split_pair_then_fetch(&state, [read, write], keys, 32, |_, _| -> Option<()> {
-            unreachable!("a denied second destination leaf cannot reach backing admission")
-        }),
+        cache.copy_split_pair_then_fetch(
+            &state,
+            [read, write],
+            keys,
+            32,
+            [16; 4],
+            |_, _| -> Option<()> {
+                unreachable!("a denied second destination leaf cannot reach backing admission")
+            }
+        ),
         None
     );
     assert_eq!(clock(), start);

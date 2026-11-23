@@ -1174,7 +1174,8 @@ pub extern "C" fn core_paged_loop_copy_window(source: u64, destination: u64, wid
     let scalar = width & COPY_SCALAR != 0;
     let no_split = width & COPY_NO_SPLIT != 0;
     let populate = width & COPY_FILL_INDEX != 0;
-    let width = width & !(COPY_FILL_INDEX | COPY_NO_SPLIT | COPY_SCALAR);
+    let scalar_widths = (width >> 8) as u16;
+    let width = width & 255;
     let valid = if scalar {
         (2..=32).contains(&width)
     } else {
@@ -1185,12 +1186,23 @@ pub extern "C" fn core_paged_loop_copy_window(source: u64, destination: u64, wid
     }
     let page_remaining = |address: u64| 4096 - (address & 4095);
     let split = page_remaining(source).min(page_remaining(destination)) < u64::from(width);
-    if (scalar || no_split || width == 16) && split
+    if no_split && split
         || check_span(source, width, Access::Read).is_err()
         || check_span(destination, width, Access::Write).is_err()
     {
         return 0;
     }
+    let parts = if scalar && split {
+        let parts = std::array::from_fn(|index| u32::from((scalar_widths >> (4 * index)) & 15));
+        if parts.iter().any(|part| !matches!(part, 0 | 1 | 2 | 4 | 8))
+            || parts.iter().sum::<u32>() != width
+        {
+            return 0;
+        }
+        parts
+    } else {
+        [16; 4]
+    };
     BRIDGE
         .with_borrow_mut(|bridge| {
             let core = bridge.core.as_mut().unwrap();
@@ -1225,64 +1237,96 @@ pub extern "C" fn core_paged_loop_copy_window(source: u64, destination: u64, wid
                 class,
             };
             let mut indexed = [None; 2];
-            let (source_host, destination_host, length) = if split {
-                core.translation_cache.copy_split_pair_then_fetch(
-                    paging,
-                    [read, write],
-                    &state.protection_keys,
-                    width,
-                    |physical_read, physical_write| {
-                        let source = core
-                            .image
-                            .physical_direct_read_pointer(physical_read, width)?;
-                        let destination = core
-                            .image
-                            .physical_direct_write_span(physical_write, width)?;
-                        let offset = (physical_write - destination.base) as u32;
-                        // No subsequent range inherits a split proof.
-                        Some((source, destination.host + offset, width))
-                    },
-                )?
-            } else {
-                core.translation_cache.copy_pair_then_fetch(
-                    paging,
-                    [read, write],
-                    &state.protection_keys,
-                    width,
-                    |[(read, read_remaining), (write, write_remaining)],
-                     [read_slot, write_slot]| {
-                        let (read_span, write_span) =
-                            core.image.physical_direct_copy_spans(read, write, width)?;
-                        let read_offset = (read - read_span.base) as u32;
-                        let write_offset = (write - write_span.base) as u32;
-                        if populate && core.state.indexed_paged_reads != 0 {
-                            indexed = [
-                                indexed_copy_page(source, read_offset, read_span, read_slot),
-                                indexed_copy_page(
-                                    destination,
-                                    write_offset,
-                                    write_span,
-                                    write_slot,
-                                ),
-                            ];
-                        }
-                        // A 4 KiB window also bounds potential shadowing by overlapping local leaves.
-                        let length = page_remaining(source)
-                            .min(page_remaining(destination))
-                            .min(read_remaining)
-                            .min(write_remaining)
-                            .min(u64::from(read_span.length - read_offset))
-                            .min(u64::from(write_span.length - write_offset))
-                            as u32;
-                        debug_assert!(length >= width);
-                        Some((
-                            read_span.host + read_offset,
-                            write_span.host + write_offset,
-                            length,
-                        ))
-                    },
-                )?
+            let mut resolve = |image: &mut Image| {
+                if split {
+                    core.translation_cache.copy_split_pair_then_fetch(
+                        paging,
+                        [read, write],
+                        &state.protection_keys,
+                        width,
+                        parts,
+                        |physical_read, physical_write| {
+                            let source =
+                                image.physical_direct_read_pointer(physical_read, width)?;
+                            let destination =
+                                image.physical_direct_write_span(physical_write, width)?;
+                            let offset = (physical_write - destination.base) as u32;
+                            // No subsequent range inherits a split proof.
+                            Some((source, destination.host + offset, width))
+                        },
+                    )
+                } else {
+                    core.translation_cache.copy_pair_then_fetch(
+                        paging,
+                        [read, write],
+                        &state.protection_keys,
+                        width,
+                        |[(read, read_remaining), (write, write_remaining)],
+                         [read_slot, write_slot]| {
+                            let (read_span, write_span) =
+                                image.physical_direct_copy_spans(read, write, width)?;
+                            let read_offset = (read - read_span.base) as u32;
+                            let write_offset = (write - write_span.base) as u32;
+                            if populate && core.state.indexed_paged_reads != 0 {
+                                indexed = [
+                                    indexed_copy_page(source, read_offset, read_span, read_slot),
+                                    indexed_copy_page(
+                                        destination,
+                                        write_offset,
+                                        write_span,
+                                        write_slot,
+                                    ),
+                                ];
+                            }
+                            // A 4 KiB window also bounds potential shadowing by overlapping local leaves.
+                            let length = page_remaining(source)
+                                .min(page_remaining(destination))
+                                .min(read_remaining)
+                                .min(write_remaining)
+                                .min(u64::from(read_span.length - read_offset))
+                                .min(u64::from(write_span.length - write_offset))
+                                as u32;
+                            debug_assert!(length >= width);
+                            Some((
+                                read_span.host + read_offset,
+                                write_span.host + write_offset,
+                                length,
+                            ))
+                        },
+                    )
+                }
             };
+            let (source_host, destination_host, length) =
+                resolve(&mut core.image).or_else(|| {
+                    core.translation_cache.ready_copy_destination(
+                        &mut core.image,
+                        paging,
+                        [read, write],
+                        &state.protection_keys,
+                        width,
+                        |image, source, destination, prefix, translation| {
+                            let (_, write) =
+                                image.physical_direct_copy_spans(source, destination, width)?;
+                            if prefix != 0 {
+                                // Earlier guest stores must not change words needed by the later walk.
+                                let start = u64::from(write.host) + destination - write.base;
+                                for &entry in translation.entries() {
+                                    let slot = u64::from(image.physical_direct_read_pointer(
+                                        entry,
+                                        translation.entry_width,
+                                    )?);
+                                    if start < slot + u64::from(translation.entry_width)
+                                        && slot < start + prefix
+                                    {
+                                        return None;
+                                    }
+                                }
+                            }
+                            Some(())
+                        },
+                    )?;
+                    resolve(&mut core.image)
+                })?;
             if let Some((slot, page, host)) = indexed[0] {
                 core.translation_cache
                     .remember_indexed_read(slot, page, host);

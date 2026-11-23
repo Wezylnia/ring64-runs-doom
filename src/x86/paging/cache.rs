@@ -1134,6 +1134,82 @@ impl Cache {
 
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
     #[cold]
+    pub(crate) fn ready_copy_destination(
+        &self,
+        image: &mut crate::memory::Image,
+        state: &State,
+        [read, write]: [Request; 2],
+        keys: &ProtectionKeys,
+        width: u32,
+        admit: impl FnOnce(&mut crate::memory::Image, u64, u64, u64, &Translation) -> Option<()>,
+    ) -> Option<()> {
+        let entries = self.entries.borrow();
+        let fetch = entries.hint()?;
+        let code = entries.slots[fetch].as_ref()?;
+        if entries.capacity < 3
+            || entries.exhausted
+            || entries.next_id == u64::MAX
+            || !entries.lookup_index.only_4k_leaves()
+            || entries.recency().ages[fetch] != entries.recency().clock
+            || code.family != family(state)
+            || !code.global && code.pcid != state.pcid()
+        {
+            return None;
+        }
+        let (source, retained) = entries.retained_data_span::<false>(state, read, keys, width)?;
+        if entries.slots[source].as_ref()?.global {
+            return None;
+        }
+        let first = entries.find(state, write);
+        let (prefix, physical) = if let Some(slot) = first {
+            let entry = entries.slots[slot].as_ref()?;
+            let (physical, remaining) =
+                Entries::checked_data_extent::<true>(&entry.translation, state, write, keys, 1)?;
+            if entry.global || remaining >= u64::from(width) || entries.capacity < 4 {
+                return None;
+            }
+            (remaining, Some(physical))
+        } else {
+            (0, None)
+        };
+        let next = Request {
+            linear: write.linear.checked_add(prefix)?,
+            ..write
+        };
+        if prefix != 0 && entries.find(state, next).is_some() {
+            return None;
+        }
+        let destination = image.probe_physical_read(|image| {
+            let translation = super::walk::peek(image, state, next, keys).ok()?;
+            (translation.span == 4096
+                && translation.accessed
+                && !translation.dirty
+                && translation.remaining >= u64::from(width) - prefix
+                && !(translation.global && state.cr4 & (1 << 7) != 0)
+                && physical.is_none_or(|first| first + prefix == translation.physical))
+            .then_some(translation)
+        })?;
+        admit(
+            image,
+            retained.physical,
+            physical.unwrap_or(destination.physical),
+            prefix,
+            &destination,
+        )?;
+        drop(entries);
+        // The checked reads, writes and intervening fetches precede this fill.
+        // Keep all operands of the group resident across its one allocation.
+        for slot in [Some(source), first].into_iter().flatten() {
+            if slot != fetch {
+                self.entries.borrow_mut().touch_data_and_fetch(slot, fetch);
+            }
+        }
+        self.install_known_local_miss(state, destination, fetch);
+        Some(())
+    }
+
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    #[cold]
     #[inline(never)]
     pub(crate) fn copy_split_pair_then_fetch<T>(
         &self,
@@ -1141,10 +1217,9 @@ impl Cache {
         [read, write]: [Request; 2],
         keys: &ProtectionKeys,
         width: u32,
+        widths: [u32; 4],
         admit: impl FnOnce(u64, u64) -> Option<T>,
     ) -> Option<T> {
-        const VECTOR: u32 = 16;
-        debug_assert!((32..=64).contains(&width) && width.is_multiple_of(VECTOR));
         let mut entries = self.entries.borrow_mut();
         let fetch = entries
             .hint()
@@ -1154,15 +1229,22 @@ impl Cache {
             entries.retained_copy_span::<true>(state, write, keys, width)?,
         ];
         let value = admit(spans[0].physical, spans[1].physical)?;
-        // Each admitted vector touches its operand leaves before the next fetch.
-        for offset in (0..width).step_by(VECTOR as usize) {
+        // Each admitted load and store touches its operand leaves before the next fetch.
+        let mut offset = 0;
+        for part in widths {
+            if offset == width {
+                break;
+            }
+            if part == 0 {
+                continue;
+            }
             for span in &spans {
                 let first = span.split.is_none_or(|(split, _)| offset < split);
                 if first && entries.hint() != Some(span.first) {
                     entries.touch(span.first);
                 }
                 if let Some((split, last)) = span.split
-                    && offset + VECTOR > split
+                    && offset + part > split
                     && entries.hint() != Some(last)
                 {
                     entries.touch(last);
@@ -1171,6 +1253,7 @@ impl Cache {
                     entries.touch(fetch);
                 }
             }
+            offset += part;
         }
         Some(value)
     }

@@ -1458,7 +1458,17 @@ impl Emitter {
         self.op(Op::LocalSet(LHS));
         self.address(group.destination, 0);
         self.op(Op::LocalSet(RHS));
-        self.resolve_copy_window(group.width | crate::embedding::layout::COPY_SCALAR, resolve);
+        // Four nibbles preserve the original load/store widths on a split page.
+        let widths = group.transfers.into_iter().flatten().enumerate().fold(
+            0,
+            |encoded, (index, transfer)| {
+                encoded | (u32::from(transfer.width.bytes()) << (8 + 4 * index))
+            },
+        );
+        self.resolve_copy_window(
+            group.width | widths | crate::embedding::layout::COPY_SCALAR,
+            resolve,
+        );
         self.op(Op::If(BlockType::Empty));
         self.copy_descriptor_hosts();
         let target = jump.unwrap_or(group.end);
