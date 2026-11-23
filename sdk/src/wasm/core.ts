@@ -1,3 +1,4 @@
+import { bindArtifactImports, requiredPagedArtifactExports } from './artifact-imports.js';
 import type { LinkedRun } from './linked-run.js';
 import { IoBridge, type IoBinding } from '../embedding/io.js';
 import { byteLength, U64_MAX, unsigned64 } from '../embedding/input.js';
@@ -274,56 +275,6 @@ export function writeInput(
   }
   return header.length;
 }
-
-const PAGED_HELPERS = {
-  load: 'core_paged_load',
-  load_for_write: 'core_paged_load_for_write',
-  store: 'core_paged_store',
-  segmented_load: 'core_paged_segmented_load',
-  segmented_load_for_write: 'core_paged_segmented_load_for_write',
-  segmented_store: 'core_paged_segmented_store',
-  vector_load: 'core_paged_vector_load',
-  vector_store: 'core_paged_vector_store',
-  load_mxcsr: 'core_paged_load_mxcsr',
-  store_mxcsr: 'core_paged_store_mxcsr',
-  x87: 'core_paged_x87',
-  mmx: 'core_paged_mmx',
-  numeric_image: 'core_paged_numeric_image',
-  masked_store: 'core_paged_masked_store',
-  clflush: 'core_paged_clflush',
-  protection: 'core_paged_protection',
-  far_control: 'core_paged_far_control',
-  compound_stack: 'core_paged_compound_stack',
-  software_event: 'core_paged_software_event',
-  access_failed: 'core_paged_access_failed',
-  segmented_access_failed: 'core_paged_segmented_access_failed',
-  access_reason: 'core_paged_access_reason',
-  debug_begin: 'core_paged_debug_begin',
-  debug_finish: 'core_paged_debug_finish',
-} as const;
-
-const PAGED_OBSERVED_HELPERS = {
-  load: 'core_paged_load_observed',
-  load_for_write: 'core_paged_load_for_write_observed',
-  store: 'core_paged_store_observed',
-  segmented_load: 'core_paged_segmented_load_observed',
-  segmented_load_for_write: 'core_paged_segmented_load_for_write_observed',
-  segmented_store: 'core_paged_segmented_store_observed',
-  vector_load: 'core_paged_vector_load_observed',
-  vector_store: 'core_paged_vector_store_observed',
-  load_mxcsr: 'core_paged_load_mxcsr_observed',
-  store_mxcsr: 'core_paged_store_mxcsr_observed',
-  x87: 'core_paged_x87_observed',
-  mmx: 'core_paged_mmx_observed',
-  numeric_image: 'core_paged_numeric_image_observed',
-  masked_store: 'core_paged_masked_store_observed',
-  protection: 'core_paged_protection_observed',
-  far_control: 'core_paged_far_control_observed',
-  compound_stack: 'core_paged_compound_stack_observed',
-  software_event: 'core_paged_software_event_observed',
-} as const satisfies {
-  [Helper in keyof typeof PAGED_HELPERS]?: `${(typeof PAGED_HELPERS)[Helper]}_observed`;
-};
 
 export function captureMemoryProfile(
   memory: Pick<InitialMemory, 'memoryModel' | 'paging' | 'fastSystem'>,
@@ -685,8 +636,7 @@ export class Core {
         'core_fast_system_state',
         'core_import_fast_system',
         'core_fast_system',
-        ...Object.values(PAGED_HELPERS),
-        ...Object.values(PAGED_OBSERVED_HELPERS),
+        ...requiredPagedArtifactExports,
       ])
         if (typeof exports[name] !== 'function') throw new Error(`core must export ${name}`);
   }
@@ -1353,158 +1303,7 @@ export class Core {
   }
 
   protected artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue> {
-    const operands = observed
-      ? {
-          core_io: this.#exports.core_io_observed,
-          core_load: this.#exports.core_load_observed,
-          core_load_for_write: this.#exports.core_load_for_write_observed,
-          core_store: this.#exports.core_store_observed,
-          core_segmented_load: this.#exports.core_segmented_load_observed,
-          core_segmented_load_for_write: this.#exports.core_segmented_load_for_write_observed,
-          core_segmented_store: this.#exports.core_segmented_store_observed,
-          core_vector_load: this.#exports.core_vector_load_observed,
-          core_vector_store: this.#exports.core_vector_store_observed,
-          core_load_mxcsr: this.#exports.core_load_mxcsr_observed,
-          core_store_mxcsr: this.#exports.core_store_mxcsr_observed,
-          core_x87: this.#exports.core_x87_observed,
-          core_mmx: this.#exports.core_mmx_observed,
-          core_numeric_image: this.#exports.core_numeric_image_observed,
-          core_masked_store: this.#exports.core_masked_store_observed,
-          core_protection: this.#exports.core_protection_observed,
-          core_far_control: this.#exports.core_far_control_observed,
-          core_compound_stack: this.#exports.core_compound_stack_observed,
-          core_software_event: this.#exports.core_software_event_observed,
-        }
-      : this.#exports;
-    const env: Record<string, WebAssembly.ImportValue> = {
-      memory: this.#exports.memory,
-      io: operands.core_io,
-      load: operands.core_load,
-      load_for_write: operands.core_load_for_write,
-      store: operands.core_store,
-      access_failed: this.#exports.core_access_failed,
-      segmented_load: operands.core_segmented_load,
-      segmented_load_for_write: operands.core_segmented_load_for_write,
-      segmented_store: operands.core_segmented_store,
-      segmented_access_failed: this.#exports.core_segmented_access_failed,
-      access_reason: this.#exports.core_access_reason,
-      block16_for_write: this.isPaged
-        ? this.#exports.core_paged_block16_for_write!
-        : this.#exports.core_block16_for_write,
-      vector_load: operands.core_vector_load,
-      vector_store: operands.core_vector_store,
-      float: this.#exports.core_float,
-      load_mxcsr: operands.core_load_mxcsr,
-      store_mxcsr: operands.core_store_mxcsr,
-      x87: operands.core_x87,
-      mmx: operands.core_mmx,
-      numeric_image: operands.core_numeric_image,
-      masked_store: operands.core_masked_store,
-      clflush: this.#exports.core_clflush,
-      protection: operands.core_protection,
-      far_control: operands.core_far_control,
-      compound_stack: operands.core_compound_stack,
-      software_event: operands.core_software_event,
-      flags: this.#exports.core_flags,
-      debug_step: this.#exports.core_debug_step,
-      debug_finish: this.#exports.core_debug_finish,
-      debug_register: this.#exports.core_debug_register,
-      paging_control: this.#exports.core_paging_control,
-      invpcid: this.#exports.core_invpcid,
-      processor: this.#exports.core_processor,
-      protection_key: this.#exports.core_protection_key,
-      debug_begin: this.#exports.core_debug_begin,
-      external_step: this.#exports.core_external_step,
-      halt: this.#exports.core_halt,
-      target_check: this.#exports.core_target_check,
-      multiply_high: this.#exports.core_multiply_high,
-      divide: this.#exports.core_divide,
-      divide_failed: this.#exports.core_divide_failed,
-    };
-    if (this.#exports.core_read_span) env.read_span = this.#exports.core_read_span;
-    if (this.#exports.core_write_span) env.write_span = this.#exports.core_write_span;
-    if (this.mmio && this.#exports.core_mmio_operand)
-      env.mmio_operand = this.#exports.core_mmio_operand;
-    if (this.isPaged) {
-      env.fast_system = this.#exports.core_fast_system;
-      if (this.#exports.core_paged_loop_guard)
-        env.paged_loop_guard = this.#exports.core_paged_loop_guard;
-      if (this.#exports.core_paged_walk_guard)
-        env.paged_walk_guard = this.#exports.core_paged_walk_guard;
-      if (this.#exports.core_paged_walk_loop_guard32)
-        env.paged_walk_loop_guard32 = this.#exports.core_paged_walk_loop_guard32;
-      if (this.#exports.core_paged_read_loop_guard32)
-        env.paged_read_loop_guard32 = this.#exports.core_paged_read_loop_guard32;
-      if (this.#exports.core_paged_sse_loop_guard)
-        env.paged_sse_loop_guard = this.#exports.core_paged_sse_loop_guard;
-      if (this.#exports.core_paged_sse_write_loop_guard32)
-        env.paged_sse_write_loop_guard32 = this.#exports.core_paged_sse_write_loop_guard32;
-      if (this.#exports.core_paged_write_loop_guard32)
-        env.paged_write_loop_guard32 = this.#exports.core_paged_write_loop_guard32;
-      if (this.#exports.core_paged_loop_read_dword)
-        env.paged_loop_read_dword = this.#exports.core_paged_loop_read_dword;
-      if (this.#exports.core_paged_loop_walk_dword)
-        env.paged_loop_walk_dword = this.#exports.core_paged_loop_walk_dword;
-      if (this.#exports.core_paged_loop_read_dword_window)
-        env.paged_loop_read_dword_window = this.#exports.core_paged_loop_read_dword_window;
-      if (this.#exports.core_paged_loop_read_ready)
-        env.paged_loop_read_ready = this.#exports.core_paged_loop_read_ready;
-      if (this.#exports.core_paged_loop_split_read_ready)
-        env.paged_loop_split_read_ready = this.#exports.core_paged_loop_split_read_ready;
-      if (this.#exports.core_paged_loop_read_block)
-        env.paged_loop_read_block = this.#exports.core_paged_loop_read_block;
-      if (this.#exports.core_paged_loop_block_host)
-        env.paged_loop_block_host = this.#exports.core_paged_loop_block_host;
-      if (this.#exports.core_paged_loop_write_block)
-        env.paged_loop_write_block = this.#exports.core_paged_loop_write_block;
-      if (this.#exports.core_paged_loop_copy_window)
-        env.paged_loop_copy_window = this.#exports.core_paged_loop_copy_window;
-      if (this.#exports.core_paged_loop_block_window)
-        env.paged_loop_block_window = this.#exports.core_paged_loop_block_window;
-      if (this.#exports.core_paged_loop_retouchable_block_window)
-        env.paged_loop_retouchable_block_window =
-          this.#exports.core_paged_loop_retouchable_block_window;
-      if (this.#exports.core_paged_loop_retouch_block_window)
-        env.paged_loop_retouch_block_window = this.#exports.core_paged_loop_retouch_block_window;
-      if (this.#exports.core_paged_store_fill)
-        env.paged_store_fill = this.#exports.core_paged_store_fill;
-      if (this.#exports.core_paged_loop_write_ready)
-        env.paged_loop_write_ready = this.#exports.core_paged_loop_write_ready;
-      if (this.#exports.core_paged_loop_read_byte)
-        env.paged_loop_read_byte = this.#exports.core_paged_loop_read_byte;
-      if (this.#exports.core_paged_loop_read_byte_for_store) {
-        env.paged_loop_read_byte_for_store = this.#exports.core_paged_loop_read_byte_for_store;
-        env.paged_loop_read_byte_write_pointer =
-          this.#exports.core_paged_loop_read_byte_write_pointer ??
-          this.#exports.core_paged_loop_read_byte_for_store;
-      }
-      if (this.#exports.core_paged_loop_read_pair)
-        env.paged_loop_read_pair = this.#exports.core_paged_loop_read_pair;
-      if (this.#exports.core_paged_loop_read_split_pair)
-        env.paged_loop_read_split_pair = this.#exports.core_paged_loop_read_split_pair;
-      if (this.#exports.core_paged_loop_read_span)
-        env.paged_loop_read_span = this.#exports.core_paged_loop_read_span;
-      if (this.#exports.core_paged_loop_read_span_pages)
-        env.paged_loop_read_span_pages = this.#exports.core_paged_loop_read_span_pages;
-      if (this.#exports.core_paged_loop_read_span_ready)
-        env.paged_loop_read_span_ready = this.#exports.core_paged_loop_read_span_ready;
-      if (this.#exports.core_paged_loop_write_byte)
-        env.paged_loop_write_byte = this.#exports.core_paged_loop_write_byte;
-      if (this.#exports.core_paged_loop_write_byte_after_read)
-        env.paged_loop_write_byte_after_read = this.#exports.core_paged_loop_write_byte_after_read;
-      if (this.#exports.core_paged_loop_write_dword)
-        env.paged_loop_write_dword = this.#exports.core_paged_loop_write_dword;
-      if (this.#exports.core_paged_loop_indexed_dword_write)
-        env.paged_loop_indexed_dword_write = this.#exports.core_paged_loop_indexed_dword_write;
-      if (this.#exports.core_write_segment_base)
-        env.write_segment_base = this.#exports.core_write_segment_base;
-      for (const [name, key] of Object.entries({
-        ...PAGED_HELPERS,
-        ...(observed ? PAGED_OBSERVED_HELPERS : {}),
-      }))
-        env[name] = this.#exports[key]!;
-    }
-    return env;
+    return bindArtifactImports(this.#exports, { observed, paged: this.isPaged, mmio: !!this.mmio });
   }
 
   execute(
