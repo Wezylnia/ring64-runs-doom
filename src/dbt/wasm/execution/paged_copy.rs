@@ -4,10 +4,14 @@ use super::{
     memory::SpanCache,
 };
 use crate::x86::context::Segment;
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+use crate::x86::instruction::MemoryAluOperands;
 use crate::x86::instruction::{
     Address, AddressBase, Alu, Condition, DataOperand, Instruction, Location, Operation,
     RegisterView, VectorInstruction, VectorOperand, Width,
 };
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+use std::mem::offset_of;
 use wasm_encoder::{BlockType, Instruction as Op, MemArg};
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -235,6 +239,16 @@ struct CopyTail {
     compare: RegisterView,
     limit: RegisterView,
     condition: Condition,
+    next_pc: u64,
+}
+
+#[derive(Clone, Copy)]
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+pub(super) struct PreloadedCopyTail {
+    advance: RegisterView,
+    step: u64,
+    stack: Address,
+    compare_pc: u64,
     next_pc: u64,
 }
 
@@ -521,6 +535,76 @@ impl ScalarCopyGroup {
 }
 
 impl CopyGroup {
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn preloaded_tail(
+        self,
+        instructions: &[Instruction],
+        unit: &Unit,
+    ) -> Option<PreloadedCopyTail> {
+        // The retained stack span does not perform the user-mode CMP's alignment check.
+        if unit.context.cpl() != 0 {
+            return None;
+        }
+        let [first, _, _, _, advance, compare, branch] = instructions else {
+            return None;
+        };
+        let Operation::Alu {
+            kind: Alu::Add,
+            dst: register,
+            src: DataOperand::Immediate(step),
+            width: Width::W64,
+        } = advance.operation
+        else {
+            return None;
+        };
+        let Operation::MemoryAlu {
+            kind: Alu::Cmp,
+            width: Width::W64,
+            operands: MemoryAluOperands::MemoryFirst(DataOperand::Register(rhs)),
+            address: stack,
+        } = compare.operation
+        else {
+            return None;
+        };
+        let Operation::Jcc {
+            condition: Condition::NotEqual,
+            target,
+        } = branch.operation
+        else {
+            return None;
+        };
+        let stride = |address: Address| {
+            let base = u64::from(address.base == AddressBase::Register(register.bank));
+            let index = address
+                .index
+                .filter(|index| index.register == register.bank);
+            step.checked_mul(base + index.map_or(0, |index| u64::from(index.scale)))
+        };
+        let bytes = u32::try_from(branch.next_pc.checked_sub(first.pc)?).ok()?;
+        (self.second_register.is_some()
+            && register.bank != 4
+            && rhs == register
+            && stack.size == Width::W64
+            && matches!(stack.segment, Segment::Ss | Segment::Ds)
+            && stack.base == AddressBase::Register(4)
+            && stack.index.is_none()
+            && stride(self.source) == Some(32)
+            && stride(self.destination) == Some(32)
+            && target == first.pc
+            && instructions
+                .windows(2)
+                .all(|pair| pair[0].next_pc == pair[1].pc)
+            && unit.context.single_page_code_span(first.pc, bytes)
+            && unit.fetch_proof.physical_span(first.pc, bytes).is_some())
+        .then_some(PreloadedCopyTail {
+            advance: register,
+            step,
+            stack,
+            compare_pc: compare.pc,
+            next_pc: branch.next_pc,
+        })
+    }
+
     fn has_fixed_stride(self, tail: CopyTail) -> bool {
         if self.adjustment.is_some_and(|adjustment| {
             adjustment.register.bank == tail.advance.bank
@@ -865,6 +949,126 @@ pub(super) struct CopyWindow {
 }
 
 impl Emitter {
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn emit_preloaded_copy_loop(
+        &mut self,
+        instructions: &[Instruction],
+        group: CopyGroup,
+        tail: PreloadedCopyTail,
+        loop_depth: u32,
+        [guard, resolve, read]: [u32; 3],
+        [more, source, destination, stack]: [u32; 4],
+    ) {
+        let head = instructions[0].pc;
+        self.guard_straight_paged_prefix(
+            instructions,
+            guard,
+            None,
+            self.paged_copy_access_cache.is_some(),
+            PagedPrefixFetch::RetainedSse,
+            false,
+        );
+        self.address(group.source, 0);
+        self.op(Op::LocalSet(LHS));
+        self.address(group.destination, 0);
+        self.op(Op::LocalSet(RHS));
+        self.resolve_copy_window(32 | crate::embedding::layout::COPY_NO_SPLIT, resolve);
+        self.op(Op::If(BlockType::Empty));
+        for (offset, local) in [(0, source), (4, destination)] {
+            self.op(Op::LocalGet(STORE_STATUS))
+                .op(Op::I32Load(memory(offset)))
+                .op(Op::LocalSet(local));
+        }
+        self.op(Op::LocalGet(STORE_STATUS))
+            .op(Op::I32Load(memory(8)))
+            .op(Op::I32Const(1))
+            .op(Op::I32Sub)
+            .op(Op::I32Const(5))
+            .op(Op::I32ShrU)
+            .op(Op::LocalSet(more))
+            .op(Op::I32Const(0))
+            .op(Op::LocalSet(stack))
+            .op(Op::Loop(BlockType::Empty));
+        let depth = loop_depth + 4;
+        self.guarded_paged_lap = true;
+        self.stores = false;
+        self.op(Op::LocalGet(source))
+            .op(Op::LocalSet(STORE_STATUS))
+            .op(Op::LocalGet(destination))
+            .op(Op::I64ExtendI32U)
+            .op(Op::LocalSet(ADDRESS));
+        self.copy_ordered_vectors(group);
+        self.integer(
+            Alu::Add,
+            tail.advance,
+            DataOperand::Immediate(tail.step),
+            Width::W64,
+            None,
+        );
+
+        self.op(Op::LocalGet(stack))
+            .op(Op::I32Eqz)
+            .op(Op::If(BlockType::Empty));
+        self.address(tail.stack, 0);
+        self.op(Op::I32Const(8))
+            .op(Op::I32Const(Segment::Ds as i32))
+            .op(Op::Call(read))
+            .op(Op::LocalTee(stack))
+            .op(Op::I32Eqz)
+            .op(Op::If(BlockType::Empty))
+            .op(Op::I64Const(tail.compare_pc as i64))
+            .op(Op::LocalSet(RIP));
+        self.retire_instructions(5);
+        self.route(tail.compare_pc, depth + 2, depth + 3);
+        self.op(Op::End)
+            .op(Op::LocalGet(stack))
+            .op(Op::I32Load(memory(
+                offset_of!(crate::memory::DirectSpan, host) as u64,
+            )))
+            .op(Op::LocalSet(stack))
+            .op(Op::End);
+
+        // Load after the stores even when the stack aliases their backing.
+        self.op(Op::LocalGet(stack))
+            .op(Op::I64Load(memory(0)))
+            .op(Op::LocalSet(LHS));
+        self.data_register(tail.advance, Width::W64);
+        self.op(Op::LocalSet(RHS));
+        self.arithmetic_result(Alu::Cmp, Width::W64);
+        self.arithmetic_flags(Alu::Cmp, Width::W64);
+        self.retire_instructions(7);
+        self.condition(Condition::NotEqual);
+        self.op(Op::If(BlockType::Empty))
+            .op(Op::I64Const(head as i64))
+            .op(Op::LocalSet(RIP))
+            .op(Op::LocalGet(more))
+            .op(Op::I32Eqz)
+            .op(Op::LocalGet(REMAINING))
+            .op(Op::I64Const(7))
+            .op(Op::I64LtU)
+            .op(Op::I32Or)
+            .op(Op::If(BlockType::Empty));
+        self.route(head, depth + 2, depth + 3);
+        self.op(Op::End)
+            .op(Op::LocalGet(more))
+            .op(Op::I32Const(1))
+            .op(Op::I32Sub)
+            .op(Op::LocalSet(more));
+        for local in [source, destination] {
+            self.op(Op::LocalGet(local))
+                .op(Op::I32Const(32))
+                .op(Op::I32Add)
+                .op(Op::LocalSet(local));
+        }
+        self.op(Op::Br(1))
+            .op(Op::End)
+            .op(Op::I64Const(tail.next_pc as i64))
+            .op(Op::LocalSet(RIP));
+        self.route(tail.next_pc, depth, depth + 1);
+        self.guarded_paged_lap = false;
+        self.op(Op::End).op(Op::End).op(Op::End).op(Op::End);
+    }
+
     pub(super) fn emit_linear_scalar_copy(
         &mut self,
         instructions: &[Instruction],

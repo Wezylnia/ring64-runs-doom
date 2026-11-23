@@ -1369,6 +1369,10 @@ fn emit_body(
         .then(|| CopyGroup::preloaded_prefix(unit, [loop_body, optional.additional_copy]))
         .flatten();
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let preloaded_tail = preloaded_copy_prefix.and_then(|(head, group)| {
+        group.preloaded_tail(unit.instructions.get(head..head + 7)?, unit)
+    });
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let scalar_copy_prefix =
         (paged && !mmio && optional.scalar_copy_prefix && unit.context.is_long64())
             .then(|| ScalarCopyGroup::finite_prefix(unit, [loop_body, optional.additional_copy]))
@@ -1748,6 +1752,17 @@ fn emit_body(
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let register_prefix_read =
         register_prefix_read_type.map(|index| import_function("paged_loop_read_span", index));
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let preloaded_tail_read = preloaded_tail.map(|_| {
+        register_prefix_read.unwrap_or_else(|| {
+            let signature = add_function_type(
+                &mut types,
+                [ValType::I64, ValType::I32, ValType::I32],
+                [ValType::I32],
+            );
+            import_function("paged_loop_read_span", signature)
+        })
+    });
     let paged_loop_guard = paged_loop_guard_type.map(|index| {
         #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
         if paged_dword_walk {
@@ -2171,6 +2186,13 @@ fn emit_body(
     }
     let mut vector_registers = [None; 16];
     let mut next_local = 35 + 2 * u32::from(has_repeat);
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let preloaded_loop = preloaded_tail.zip(preloaded_tail_read).map(|(tail, read)| {
+        let local = next_local;
+        locals.push((4, ValType::I32));
+        next_local += 4;
+        (tail, read, [local, local + 1, local + 2, local + 3])
+    });
     // The admitted helpers leave the high dwords in the backing RunState.
     let narrow_gprs = !observed && !cfg!(feature = "parallel") && state::narrow_gprs(unit);
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -3207,6 +3229,22 @@ fn emit_body(
             .filter(|(head, _)| *head == index)
             .or_else(|| preloaded_copy_prefix.filter(|(head, _)| *head == index))
         {
+            if let Some((tail, read, locals)) = preloaded_loop
+                && preloaded_copy_prefix.is_some_and(|(start, _)| start == head)
+            {
+                emitter.emit_preloaded_copy_loop(
+                    &unit.instructions[head..head + 7],
+                    group,
+                    tail,
+                    loop_depth,
+                    [
+                        copy_prefix_guard.expect("copy prefix guard"),
+                        paged_copy_resolver.expect("copy prefix operand resolver"),
+                        read,
+                    ],
+                    locals,
+                );
+            }
             emitter.emit_finite_copy_prefix(
                 &unit.instructions[head..head + group.prefix_guard_count()],
                 group,
