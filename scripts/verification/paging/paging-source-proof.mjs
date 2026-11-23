@@ -12,7 +12,7 @@ const families = {
     'segmented_store',
   ],
   'src/embedding/exports/numeric/vector.rs': ['vector_load', 'vector_store'],
-  'src/embedding/exports/numeric/numeric.rs': ['load_mxcsr', 'store_mxcsr'],
+  'src/embedding/exports/numeric/mod.rs': ['load_mxcsr', 'store_mxcsr'],
   'src/embedding/exports/numeric/x87.rs': ['x87'],
   'src/embedding/exports/numeric/mmx.rs': ['mmx'],
   'src/embedding/exports/numeric/numeric_image/mod.rs': ['numeric_image'],
@@ -52,16 +52,16 @@ for (const [path, names] of Object.entries(families)) {
     }
 }
 for (const [path, anchors] of Object.entries({
-  'src/embedding/exports.rs': ['macro_rules! guest_access', 'macro_rules! guest_semantics'],
+  'src/embedding/exports/mod.rs': ['macro_rules! guest_access', 'macro_rules! guest_semantics'],
   'src/dbt/mod.rs': [
     'compile_with_paging(image, context, None, entry, limits, observed)',
     'let emit = if image.has_mmio() {\n        wasm::emit_mmio_profile\n    } else {\n        wasm::emit_profile',
     'emit(&unit, observed, paging.is_some(), max_artifact_bytes)',
   ],
   'src/dbt/wasm/artifact/placement.rs': ['let observed = observed || paged;'],
-  'src/dbt/wasm/artifact.rs': ['let access_reason = (segmented || paged).then'],
+  'src/dbt/wasm/artifact/mod.rs': ['let access_reason = (segmented || paged).then'],
   'src/dbt/wasm/execution/boundary.rs': ['if self.paged {'],
-  'src/embedding/exports/events/system_flags.rs': ['pub(super) fn boundary_observed(&self)'],
+  'src/embedding/exports/events/system_flags.rs': ['fn boundary_observed(&self)'],
   'sdk/src/wasm/core.ts': [
     'bindArtifactImports(this.#exports, { observed, paged: this.isPaged',
     'run(this.#statePointer, budget',
@@ -70,18 +70,15 @@ for (const [path, anchors] of Object.entries({
     'if (paged)',
     'observed ? observedPagedBindings : pagedBindings',
   ],
-  'src/memory/access.rs': [
+  'src/memory/access/mod.rs': [
     'fn preflight<const PHYSICAL: bool>',
     'self.preflight::<false>(address, width, Access::Read',
     'self.preflight::<true>(address, width, Access::Read',
   ],
-  'src/x86/access.rs': ['impl GuestMemory for Image'],
-  'src/embedding/exports/execution/paged_decode.rs': [
-    'pub(super) fn paged_decode(',
-    'fn encoding_current(',
-  ],
-  'src/embedding/exports/memory/paging.rs': ['pub extern "C" fn core_paged_debug_begin('],
-  'src/x86/paging/walk.rs': [
+  'src/x86/memory/access.rs': ['impl GuestMemory for Image'],
+  'src/embedding/exports/execution/paged_decode.rs': ['fn paged_decode(', 'fn encoding_current('],
+  'src/embedding/exports/memory/paging/mod.rs': ['pub extern "C" fn core_paged_debug_begin('],
+  'src/x86/memory/paging/walk/mod.rs': [
     'walk_with::<false, false>',
     'walk_with::<true, FETCH>',
     'actual_walk::<true>',

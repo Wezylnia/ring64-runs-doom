@@ -23,10 +23,10 @@ if (candidate.coreSha256 !== live.coreSha256 || candidate.hostSha256 !== live.ho
 const git = (args) => execFileSync('git', args, { cwd: root, encoding: 'utf8' });
 const baselineSource = (path) => git(['show', baselineCommit + ':' + path]);
 const untouched = [
-  ['src/embedding/layout.rs'],
+  ['src/embedding/layout/mod.rs', 'src/embedding/layout.rs'],
   ['src/embedding/exports/system/context.rs', 'src/embedding/exports/context.rs'],
   ['src/embedding/exports/numeric/vector.rs', 'src/embedding/exports/vector.rs'],
-  ['src/embedding/exports/numeric/numeric.rs', 'src/embedding/exports/numeric.rs'],
+  ['src/embedding/exports/numeric/mod.rs', 'src/embedding/exports/numeric.rs'],
   ['src/embedding/exports/numeric/x87.rs', 'src/embedding/exports/x87.rs'],
   ['src/embedding/exports/numeric/mmx.rs', 'src/embedding/exports/mmx.rs'],
   ['src/embedding/exports/numeric/numeric_image/mod.rs', 'src/embedding/exports/numeric_image.rs'],
@@ -34,10 +34,10 @@ const untouched = [
   ['src/embedding/exports/system/protection.rs', 'src/embedding/exports/protection.rs'],
   ['src/embedding/exports/system/far_control.rs', 'src/embedding/exports/far_control.rs'],
   ['src/embedding/exports/events/software_events.rs', 'src/embedding/exports/software_events.rs'],
-  ['src/memory/access.rs'],
-  ['src/x86/access.rs'],
-  ['src/x86/paging/access.rs'],
-  ['src/x86/paging/walk.rs'],
+  ['src/memory/access/mod.rs', 'src/memory/access.rs'],
+  ['src/x86/memory/access.rs', 'src/x86/access.rs'],
+  ['src/x86/memory/paging/access/mod.rs', 'src/x86/paging/access.rs'],
+  ['src/x86/memory/paging/walk/mod.rs', 'src/x86/paging/walk.rs'],
   ['src/dbt/wasm/execution/boundary.rs', 'src/dbt/wasm/boundary.rs'],
 ];
 const files = [],
@@ -97,13 +97,18 @@ for (const [path, start, end, originalPath = path, originalEnd = end] of [
   ['sdk/src/cpu/cpu.ts', '  async run(', undefined, 'host/cpu.ts'],
   ['sdk/src/wasm/core.ts', '  snapshot(): StateSnapshot {', '\n  setState(', 'host/core.ts'],
   [
-    'src/embedding/exports.rs',
+    'src/embedding/exports/mod.rs',
     'macro_rules! guest_access',
-    '\n#[path = "exports/execution/admission.rs"]',
+    '\nmod events;',
     'src/embedding/exports.rs',
     '\nmod context;',
   ],
-  ['src/embedding/exports.rs', 'pub extern "C" fn core_load(', undefined],
+  [
+    'src/embedding/exports/memory/scalar.rs',
+    'pub extern "C" fn core_load(',
+    undefined,
+    'src/embedding/exports.rs',
+  ],
 ]) {
   const current = await readFile(resolve(root, path), 'utf8'),
     baseline = baselineSource(originalPath);
@@ -129,25 +134,25 @@ for (const [path, start, end, originalPath = path, originalEnd = end] of [
 }
 const references = [];
 for (const [path, anchors] of Object.entries({
-  'src/dbt/wasm/mod.rs': [
-    'let has_fast_system = unit',
-    'let fast_system_type = has_fast_system.then',
-    'let fast_system = fast_system_type.map',
-    'Operation::FastSystem(operation)',
+  'src/dbt/wasm/artifact/operation_uses.rs': [
+    'Operation::FastSystem(_) => uses.fast_system = true',
   ],
-  'src/dbt/wasm/system/fast_system.rs': ['pub(super) fn fast_system(', 'self.fast_system.expect'],
+  'src/dbt/wasm/artifact/mod.rs': [
+    'let fast_system_type = uses.fast_system.then',
+    'let fast_system = fast_system_type.map',
+  ],
+  'src/dbt/wasm/execution/instruction.rs': ['Operation::FastSystem(operation)'],
+  'src/dbt/wasm/system/fast_system.rs': ['fn fast_system(', 'self.fast_system.expect'],
   'src/embedding/exports/system/fast_system.rs': [
     'pub extern "C" fn core_fast_system_state()',
     'pub extern "C" fn core_fast_system(',
   ],
-  'src/embedding/exports.rs': ['fast_system: crate::x86::fast_system::State'],
-  'sdk/src/wasm/core.ts': [
-    'readFastSystemState(): FastSystemState',
-    'env.fast_system = this.#exports.core_fast_system',
-  ],
-  'src/embedding/exports/memory/paging.rs': [
-    'core.fast_system.read_msr',
-    'prepare_msr_write(register, value, &core.context)',
+  'src/embedding/exports/mod.rs': ['fast_system: crate::x86::fast_system::State'],
+  'sdk/src/wasm/core.ts': ['readFastSystemState(): FastSystemState'],
+  'sdk/src/wasm/artifact-imports.ts': ['env.fast_system = exports.core_fast_system'],
+  'src/embedding/exports/memory/paging/control.rs': [
+    'read_msr_profile(register, &core.context, core.physical_controls)',
+    'prepare_msr_write_profile(',
   ],
 })) {
   const bytes = await readFile(resolve(root, path)),
