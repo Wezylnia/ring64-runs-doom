@@ -911,7 +911,6 @@ impl Cache {
         let fetch = entries
             .hint()
             .filter(|&index| entries.slots[index].is_some())?;
-        let (source, read) = entries.retained_data_span::<false>(state, read, keys, width)?;
         let last = self.last_copy_destination.get();
         // The preceding write often stays on one leaf while reads move between pages.
         // A matching local entry is unique; globals still need the ordinary lookup.
@@ -925,11 +924,24 @@ impl Cache {
         } else {
             entries.find(state, write)?
         };
-        let write =
-            entries.retained_data_span_at::<true>(state, write, keys, width, destination)?;
-        if entries.slots[source].unwrap().global || entries.slots[destination].unwrap().global {
+        let write_entry = entries.slots[destination].as_ref()?;
+        if write_entry.global {
             return None;
         }
+        // Both operands often resolve to one large local leaf.
+        let source = if write_entry.translation.span > 4096
+            && write_entry.translation.contains(read.linear)
+        {
+            destination
+        } else {
+            entries.find(state, read)?
+        };
+        if entries.slots[source].as_ref()?.global {
+            return None;
+        }
+        let read = entries.retained_data_span_at::<false>(state, read, keys, width, source)?;
+        let write =
+            entries.retained_data_span_at::<true>(state, write, keys, width, destination)?;
         let value = admit(read, write)?;
         // An alternating read/write group has this recency whenever it completes.
         // Further accesses in the same pair of leaves preserve that order.
