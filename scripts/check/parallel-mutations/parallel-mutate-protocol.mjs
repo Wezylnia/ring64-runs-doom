@@ -12,8 +12,8 @@ export const protocolMutations = [
   {
     name: 'public-machine-exposes-raw-ram',
     path: 'sdk/src/machine.ts',
-    from: '    this.#memory = memory;\n',
-    to: "    this.#memory = memory;\n    Object.defineProperty(this, 'memory', { value: memory });\n",
+    from: '    const control = new SharedControl(memory);\n',
+    to: "    const control = new SharedControl(memory);\n    Object.defineProperty(this, 'memory', { value: memory });\n",
     check: protocolTest('the public machine keeps shared RAM and worker initialization private'),
     failure: /the public machine exposes shared RAM/,
     build: 'host',

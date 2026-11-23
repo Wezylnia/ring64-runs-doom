@@ -91,8 +91,19 @@ interface Grant {
 
 type Captured = ReturnType<typeof captureMachine>;
 
+interface MachineResources extends Pick<
+  Captured,
+  'layout' | 'memoryModel' | 'memoryLimits' | 'io'
+> {
+  memory: WebAssembly.Memory;
+  storeLane: (offset: number, value: bigint) => void;
+  control: SharedControl;
+  sourceWatches: SourceWatches;
+}
+
 let initializeMachine: (
   machine: ParallelMachine,
+  input: Pick<Captured, 'limits' | 'cpus'>,
   compiler: WebAssembly.Module,
   helper: WebAssembly.Module,
 ) => Promise<void>;
@@ -149,17 +160,14 @@ export async function createMachine(options: MachineOptions): Promise<Machine> {
   }
   const backingStore = bindRam(helper, new WebAssembly.Memory({ initial: 1 }), memory);
   const machine = new ParallelMachine(input, memory, backingStore.store_lane);
-  await initializeMachine(machine, compiler, helper);
+  await initializeMachine(machine, input, compiler, helper);
   return machine;
 }
 
 class ParallelMachine implements Machine {
   readonly #cpus: readonly ParallelCpu[];
-  readonly #input: Captured;
-  readonly #memory: WebAssembly.Memory;
-  readonly #storeLane: (offset: number, value: bigint) => void;
+  #resources: MachineResources | undefined;
   readonly #peers: Peer[];
-  readonly #control: SharedControl;
   #state: 'starting' | 'idle' | 'disposing' | 'failed' | 'disposed' = 'starting';
   #failure: ParallelError | undefined;
   #dispose: Promise<void> | undefined;
@@ -172,7 +180,6 @@ class ParallelMachine implements Machine {
   #round: { phase: bigint; peers: Peer[]; finished: Deferred<void> } | undefined;
   #drain: Promise<void> | undefined;
   #writes: Range[] = [];
-  readonly #sourceWatches: SourceWatches;
   #records = new Map<string, BackingRecord>();
   #maps: MemoryMapping[];
   #incarnation = 0n;
@@ -181,21 +188,34 @@ class ParallelMachine implements Machine {
   #captureGeneration = 0n;
 
   static {
-    initializeMachine = (machine, compiler, helper) => machine.#initialize(compiler, helper);
+    initializeMachine = (machine, input, compiler, helper) =>
+      machine.#initialize(input, compiler, helper);
+  }
+
+  get #active(): MachineResources {
+    if (!this.#resources) throw new ParallelError('disposed', 'parallel machine is disposed');
+    return this.#resources;
   }
 
   constructor(
     input: Captured,
     memory: WebAssembly.Memory,
-    storeLane: (offset: number, value: bigint) => void,
+    storeLane: MachineResources['storeLane'],
   ) {
-    this.#input = input;
-    this.#memory = memory;
-    this.#storeLane = storeLane;
+    const control = new SharedControl(memory);
+    control.initialize();
+    const { layout, memoryModel, memoryLimits, io } = input;
+    this.#resources = {
+      layout,
+      memoryModel,
+      memoryLimits,
+      io,
+      memory,
+      storeLane,
+      control,
+      sourceWatches: new SourceWatches(memory, layout),
+    };
     this.#maps = input.mappings;
-    this.#control = new SharedControl(memory);
-    this.#sourceWatches = new SourceWatches(memory, input.layout);
-    this.#control.initialize();
     this.#peers = input.cpus.map((_, id) => ({
       id,
       ready: deferred(),
@@ -209,7 +229,7 @@ class ParallelMachine implements Machine {
     }));
     for (const backing of input.backings) {
       const record = this.#record(backing);
-      seedBacking(this.#storeLane, record.offset, backing.bytes);
+      seedBacking(this.#active.storeLane, record.offset, backing.bytes);
       this.#records.set(backing.id, record);
     }
     input.backings.length = 0;
@@ -236,14 +256,23 @@ class ParallelMachine implements Machine {
     return this.#cpus;
   }
 
-  async #initialize(compiler: WebAssembly.Module, helper: WebAssembly.Module): Promise<void> {
+  #launch(peer: Peer): Promise<Transport> {
+    // Worker listeners live longer than the compiler and startup records.
+    return launchWorker(
+      (message) => this.#receive(peer, message),
+      (cause) => this.#fail(cause),
+    );
+  }
+
+  async #initialize(
+    input: Pick<Captured, 'limits' | 'cpus'>,
+    compiler: WebAssembly.Module,
+    helper: WebAssembly.Module,
+  ): Promise<void> {
     for (const { ready } of this.#peers) void ready.promise.catch(() => {});
     let timer: ReturnType<typeof setTimeout> | undefined;
     const starts = this.#peers.map(async (peer) => {
-      const transport = await launchWorker(
-        (message) => this.#receive(peer, message),
-        (cause) => this.#fail(cause),
-      );
+      const transport = await this.#launch(peer);
       peer.transport = transport;
       if (this.#failure) {
         await transport.terminate();
@@ -254,14 +283,14 @@ class ParallelMachine implements Machine {
         id: peer.id,
         compiler,
         ramModule: helper,
-        shared: this.#memory,
-        layout: this.#input.layout,
-        model: this.#input.memoryModel,
-        memory: { memoryLimits: this.#input.memoryLimits, mappings: this.#maps },
-        limits: this.#input.limits,
-        state: this.#input.cpus[peer.id]!,
+        shared: this.#active.memory,
+        layout: this.#active.layout,
+        model: this.#active.memoryModel,
+        memory: { memoryLimits: this.#active.memoryLimits, mappings: this.#maps },
+        limits: input.limits,
+        state: input.cpus[peer.id]!,
         backings: [...this.#records.values()],
-        hasIo: this.#input.io !== undefined,
+        hasIo: this.#active.io !== undefined,
       };
       try {
         transport.post(start);
@@ -287,7 +316,7 @@ class ParallelMachine implements Machine {
         }),
       ]);
       if (
-        Atomics.load(new BigUint64Array(this.#memory.buffer), STARTUP_WORD / 8) !==
+        Atomics.load(new BigUint64Array(this.#active.memory.buffer), STARTUP_WORD / 8) !==
         BigInt(this.#peers.length)
       )
         throw new Error('parallel worker atomic handshake failed');
@@ -322,7 +351,7 @@ class ParallelMachine implements Machine {
   }
 
   #record(backing: MemoryBackingInput): BackingRecord {
-    const offset = findOffset(this.#input.layout, this.#records.values(), backing.bytes.length);
+    const offset = findOffset(this.#active.layout, this.#records.values(), backing.bytes.length);
     this.#incarnation = nextIdentity(this.#incarnation);
     return { id: backing.id, length: backing.bytes.length, offset, incarnation: this.#incarnation };
   }
@@ -382,9 +411,9 @@ class ParallelMachine implements Machine {
           if (admin) peer.admin = undefined;
           else peer.command = undefined;
           if (pending.method === 'run') {
-            this.#control.store(peer.id, SLOT.run, 0n);
-            this.#control.store(peer.id, SLOT.pause, 0n);
-            this.#control.clearSignal(peer.id, SIGNAL.pause);
+            this.#active.control.store(peer.id, SLOT.run, 0n);
+            this.#active.control.store(peer.id, SLOT.pause, 0n);
+            this.#active.control.clearSignal(peer.id, SIGNAL.pause);
           }
           if (message.kind === 'result') pending.resolve(message.result);
           else
@@ -412,10 +441,10 @@ class ParallelMachine implements Machine {
         case 'watch':
           if (this.#grant?.peer !== peer)
             throw new Error('parallel watch publication lacked a grant');
-          this.#sourceWatches.remember(peer.id, message.owner, message.ranges);
+          this.#active.sourceWatches.remember(peer.id, message.owner, message.ranges);
           return;
         case 'unwatch':
-          if (this.#sourceWatches.release(peer.id, message.owner)) this.#schedule();
+          if (this.#active.sourceWatches.release(peer.id, message.owner)) this.#schedule();
           return;
         case 'io':
           this.#port(peer, message);
@@ -431,7 +460,7 @@ class ParallelMachine implements Machine {
   #inProvider = false;
 
   #port(peer: Peer, message: Extract<FromWorker, { kind: 'io' }>): void {
-    const binding = this.#input.io;
+    const binding = this.#active.io;
     if (
       !binding ||
       this.#inProvider ||
@@ -469,22 +498,22 @@ class ParallelMachine implements Machine {
       ) {
         throw new TypeError('io.write must return undefined');
       }
-      this.#control.storeWord(peer.id, SLOT.ioResult, value);
-      this.#control.storeWord(peer.id, SLOT.ioStatus, 1);
+      this.#active.control.storeWord(peer.id, SLOT.ioResult, value);
+      this.#active.control.storeWord(peer.id, SLOT.ioStatus, 1);
     } catch (cause) {
-      this.#control.storeWord(peer.id, SLOT.ioStatus, -1);
+      this.#active.control.storeWord(peer.id, SLOT.ioStatus, -1);
       throw new Error('parallel port provider failed', { cause });
     } finally {
       this.#inProvider = false;
-      this.#control.wake(peer.id);
+      this.#active.control.wake(peer.id);
     }
   }
 
   #acknowledged(): void {
-    const phase = this.#control.phase;
+    const phase = this.#active.control.phase;
     if (
       this.#closed &&
-      this.#peers.every(({ id }) => this.#control.load(id, SLOT.acknowledgement) === phase)
+      this.#peers.every(({ id }) => this.#active.control.load(id, SLOT.acknowledgement) === phase)
     )
       this.#closed.resolve();
   }
@@ -495,42 +524,42 @@ class ParallelMachine implements Machine {
       round &&
       round.peers.every(
         ({ id }) =>
-          this.#control.loadWord(id, SLOT.ready) === 0 ||
-          this.#control.load(id, SLOT.roundAck) === round.phase,
+          this.#active.control.loadWord(id, SLOT.ready) === 0 ||
+          this.#active.control.load(id, SLOT.roundAck) === round.phase,
       )
     )
       round.finished.resolve();
   }
 
   async #reopen(): Promise<void> {
-    if (this.#jobs.length || this.#requests.length || this.#sourceWatches.hasReleases) {
-      const phase = nextIdentity(this.#control.phase);
+    if (this.#jobs.length || this.#requests.length || this.#active.sourceWatches.hasReleases) {
+      const phase = nextIdentity(this.#active.control.phase);
       const peers = this.#peers.filter(
         (peer) =>
           peer.command?.method === 'run' &&
-          this.#control.loadWord(peer.id, SLOT.ready) === 1 &&
+          this.#active.control.loadWord(peer.id, SLOT.ready) === 1 &&
           !this.#requests.some((request) => request.peer === peer),
       );
       if (peers.length > 0) {
         this.#round = { phase, peers, finished: deferred<void>() };
-        for (const { id } of peers) this.#control.store(id, SLOT.round, phase);
+        for (const { id } of peers) this.#active.control.store(id, SLOT.round, phase);
       }
     }
-    this.#control.transition(false);
+    this.#active.control.transition(false);
     this.#notice(false);
     if (!this.#round) return;
     this.#roundComplete();
     await this.#round.finished.promise;
-    for (const { id } of this.#round.peers) this.#control.store(id, SLOT.round, 0n);
+    for (const { id } of this.#round.peers) this.#active.control.store(id, SLOT.round, 0n);
     this.#round = undefined;
   }
 
   #notice(closing: boolean): void {
     for (const { id, transport } of this.#peers) {
-      if (closing) this.#control.signal(id, SIGNAL.phase);
+      if (closing) this.#active.control.signal(id, SIGNAL.phase);
       else {
-        this.#control.clearSignal(id, SIGNAL.phase);
-        this.#control.wake(id);
+        this.#active.control.clearSignal(id, SIGNAL.phase);
+        this.#active.control.wake(id);
       }
       transport!.post({ kind: 'phase' });
     }
@@ -544,7 +573,7 @@ class ParallelMachine implements Machine {
         this.#drain = undefined;
         if (
           !this.#failure &&
-          (this.#jobs.length || this.#requests.length || this.#sourceWatches.hasReleases)
+          (this.#jobs.length || this.#requests.length || this.#active.sourceWatches.hasReleases)
         )
           this.#schedule();
       });
@@ -553,9 +582,9 @@ class ParallelMachine implements Machine {
   async #barriers(): Promise<void> {
     while (
       !this.#failure &&
-      (this.#jobs.length || this.#requests.length || this.#sourceWatches.hasReleases)
+      (this.#jobs.length || this.#requests.length || this.#active.sourceWatches.hasReleases)
     ) {
-      const phase = this.#control.transition(true);
+      const phase = this.#active.control.transition(true);
       const closed = deferred<void>();
       this.#closed = closed;
       this.#notice(true);
@@ -567,10 +596,10 @@ class ParallelMachine implements Machine {
       while (this.#requests.length > 0) {
         const grant = { ...this.#requests.shift()!, completed: deferred<void>() };
         this.#grant = grant;
-        this.#control.store(grant.peer.id, SLOT.grant, grant.request);
-        this.#control.wake(grant.peer.id);
+        this.#active.control.store(grant.peer.id, SLOT.grant, grant.request);
+        this.#active.control.wake(grant.peer.id);
         await grant.completed.promise;
-        this.#control.store(grant.peer.id, SLOT.grant, 0n);
+        this.#active.control.store(grant.peer.id, SLOT.grant, 0n);
         this.#grant = undefined;
         if (this.#jobs.length === 0) break;
       }
@@ -589,12 +618,12 @@ class ParallelMachine implements Machine {
         }
       }
       if (this.#failure) return;
-      this.#sourceWatches.sweep();
+      this.#active.sourceWatches.sweep();
       const ranges = this.#writes.splice(0);
       if (ranges.length > 0) {
         const sequence = (this.#invalidation = nextIdentity(this.#invalidation));
         for (const { id, transport } of this.#peers) {
-          this.#control.store(id, SLOT.invalidations, sequence);
+          this.#active.control.store(id, SLOT.invalidations, sequence);
           transport!.post({ kind: 'invalidate', sequence, ranges });
         }
       }
@@ -627,7 +656,7 @@ class ParallelMachine implements Machine {
     const pending: Pending = { ...deferred(), sequence, method };
     if (permit === undefined) peer.command = pending;
     else peer.admin = pending;
-    if (method === 'run') this.#control.store(peer.id, SLOT.run, sequence);
+    if (method === 'run') this.#active.control.store(peer.id, SLOT.run, sequence);
     try {
       peer.transport!.post({
         kind: 'command',
@@ -650,7 +679,7 @@ class ParallelMachine implements Machine {
 
   #local(peer: Peer, method: LocalMethod, args: unknown[]): Promise<unknown> {
     this.#check();
-    if (method === 'reset' && this.#input.memoryModel !== 'physical')
+    if (method === 'reset' && this.#active.memoryModel !== 'physical')
       throw new TypeError('physical reset required');
     const input = this.#capture(() => structuredClone(args));
     if (method === 'setState' || method === 'reset')
@@ -661,8 +690,8 @@ class ParallelMachine implements Machine {
   #pausePeer(peer: Peer): Promise<void> {
     const command = peer.command;
     if (!command || command.method !== 'run') return Promise.resolve();
-    this.#control.store(peer.id, SLOT.pause, command.sequence);
-    this.#control.signal(peer.id, SIGNAL.pause);
+    this.#active.control.store(peer.id, SLOT.pause, command.sequence);
+    this.#active.control.signal(peer.id, SIGNAL.pause);
     peer.transport!.post({ kind: 'phase' });
     return command.promise.then(() => {});
   }
@@ -703,7 +732,7 @@ class ParallelMachine implements Machine {
 
   reset(): Promise<void> {
     this.#check();
-    if (this.#input.memoryModel !== 'physical') throw new TypeError('physical reset required');
+    if (this.#active.memoryModel !== 'physical') throw new TypeError('physical reset required');
     return this.#reserve(true);
   }
 
@@ -722,6 +751,10 @@ class ParallelMachine implements Machine {
         await this.#drain;
       } finally {
         await this.#terminate();
+        this.#resources = undefined;
+        this.#maps = [];
+        this.#records.clear();
+        for (const peer of this.#peers) delete peer.transport;
         this.#state = 'disposed';
       }
     })();
@@ -742,12 +775,12 @@ class ParallelMachine implements Machine {
     const replaced = pending
       .then((result) => {
         const { irq, nmiPending } = result as Ingress;
-        this.#control.store(
+        this.#active.control.store(
           peer.id,
           SLOT.irq,
           irq === null ? 0n : (this.#ingressId() << 9n) | BigInt(irq + 1),
         );
-        this.#control.store(peer.id, SLOT.nmi, nmiPending ? this.#ingressId() : 0n);
+        this.#active.control.store(peer.id, SLOT.nmi, nmiPending ? this.#ingressId() : 0n);
       })
       .finally(() => {
         peer.replacement = undefined;
@@ -773,11 +806,11 @@ class ParallelMachine implements Machine {
       peer.waitingIrq = waiting;
       return waiting;
     }
-    if (this.#control.load(peer.id, SLOT.irq) !== 0n) return Promise.resolve(false);
+    if (this.#active.control.load(peer.id, SLOT.irq) !== 0n) return Promise.resolve(false);
     const identity = (this.#ingressId() << 9n) | BigInt(vector + 1);
-    if (this.#control.compareExchange(peer.id, SLOT.irq, 0n, identity) !== 0n)
+    if (this.#active.control.compareExchange(peer.id, SLOT.irq, 0n, identity) !== 0n)
       return Promise.resolve(false);
-    this.#control.signal(peer.id, SIGNAL.ingress);
+    this.#active.control.signal(peer.id, SIGNAL.ingress);
     return Promise.resolve(true);
   }
 
@@ -796,9 +829,9 @@ class ParallelMachine implements Machine {
       peer.waitingNmi = waiting;
       return waiting;
     }
-    if (this.#control.load(peer.id, SLOT.nmi) === 0n) {
-      this.#control.compareExchange(peer.id, SLOT.nmi, 0n, this.#ingressId());
-      this.#control.signal(peer.id, SIGNAL.ingress);
+    if (this.#active.control.load(peer.id, SLOT.nmi) === 0n) {
+      this.#active.control.compareExchange(peer.id, SLOT.nmi, 0n, this.#ingressId());
+      this.#active.control.signal(peer.id, SIGNAL.ingress);
     }
     return Promise.resolve();
   }
@@ -815,12 +848,12 @@ class ParallelMachine implements Machine {
   addBacking(input: MemoryBackingInput): Promise<void> {
     this.#check();
     const [backing] = this.#capture(() =>
-      captureBackings([input], this.#input.memoryLimits, this.#lengths()),
+      captureBackings([input], this.#active.memoryLimits, this.#lengths()),
     );
     return this.#admin(async (permit) => {
-      validateBackings([backing!], this.#lengths(), this.#input.memoryLimits);
+      validateBackings([backing!], this.#lengths(), this.#active.memoryLimits);
       const record = this.#record(backing!);
-      seedBacking(this.#storeLane, record.offset, backing!.bytes);
+      seedBacking(this.#active.storeLane, record.offset, backing!.bytes);
       await this.#all('addBacking', [record], permit);
       this.#records.set(record.id, record);
     });
@@ -836,8 +869,8 @@ class ParallelMachine implements Machine {
         throw new TypeError('cannot remove a mapped backing');
       await this.#all('removeBacking', [id], permit);
       this.#records.delete(id);
-      const { ramBase, guardBase } = this.#input.layout;
-      const words = new Int32Array(this.#memory.buffer);
+      const { ramBase, guardBase } = this.#active.layout;
+      const words = new Int32Array(this.#active.memory.buffer);
       const first = guardBase / 4 + (record.offset - ramBase) / 64;
       const slots = Math.ceil(record.length / 4096) * 64;
       for (let i = 0; i < slots; i++) Atomics.store(words, first + i, 0);
@@ -847,7 +880,7 @@ class ParallelMachine implements Machine {
   setMappings(mappings: MemoryMapping[]): Promise<void> {
     this.#check();
     const input = this.#capture(() =>
-      captureMappings(mappings, this.#input.memoryLimits, this.#input.memoryModel),
+      captureMappings(mappings, this.#active.memoryLimits, this.#active.memoryModel),
     );
     return this.#admin(async (permit) => {
       validateMappings(input, this.#lengths());
@@ -858,7 +891,7 @@ class ParallelMachine implements Machine {
 
   #read(address: bigint, length: number, physical: boolean): Promise<Uint8Array> {
     this.#check();
-    requirePlane(this.#input.memoryModel, physical);
+    requirePlane(this.#active.memoryModel, physical);
     unsigned64(address, 'address');
     byteLength(length, 'length');
     return this.#admin(
@@ -874,7 +907,7 @@ class ParallelMachine implements Machine {
 
   #write(address: bigint, bytes: Uint8Array, physical: boolean): Promise<void> {
     this.#check();
-    requirePlane(this.#input.memoryModel, physical);
+    requirePlane(this.#active.memoryModel, physical);
     unsigned64(address, 'address');
     const input = this.#capture(() => copyMemoryInput(bytes));
     return this.#admin(async (permit) => {
