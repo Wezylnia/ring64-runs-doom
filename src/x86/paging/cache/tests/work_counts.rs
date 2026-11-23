@@ -1,4 +1,4 @@
-use super::*;
+use super::super::*;
 use crate::x86::protection_keys::State as Keys;
 use crate::x86::{instruction::Instruction, paging::walk};
 
@@ -9,7 +9,7 @@ const A: u64 = 0x1111222233334444;
 const B: u64 = 0x5555666677778888;
 
 fn completed_reads(cached: bool) -> (Vec<Row>, Vec<usize>) {
-    let (mut image, state, request) = super::tests::fixture();
+    let (mut image, state, request) = super::fixture();
     image.physical_write(0x4008, 8, 0xa027).unwrap();
     image.physical_write(0xa234, 8, A).unwrap();
     image.physical_write(0xb234, 8, B).unwrap();

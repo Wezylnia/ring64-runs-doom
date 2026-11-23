@@ -1,7 +1,7 @@
-use super::State;
-use super::access::{AccessState, Memory};
-use super::cache::Cache;
-use super::walk::{self, AccessClass, Failure, PageFault, Request, Rights};
+use super::super::State;
+use super::super::access::{AccessState, Memory};
+use super::super::cache::Cache;
+use super::super::walk::{self, AccessClass, Failure, PageFault, Request, Rights};
 use crate::memory::{Access, Image, MappingInput, MemoryLimits, Permissions};
 use crate::x86::access::GuestMemory;
 use crate::x86::context::AccessFailure;

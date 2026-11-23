@@ -1,4 +1,4 @@
-use super::*;
+use super::super::*;
 use crate::memory::{Image, MappingInput, MemoryLimits, Permissions};
 
 fn legacy(pae: bool) -> State {

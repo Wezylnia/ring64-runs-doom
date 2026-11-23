@@ -1,4 +1,4 @@
-use super::*;
+use super::super::*;
 use crate::memory::{Cause, Fault, MappingInput, MemoryLimits, Permissions};
 use crate::x86::paging::walk::{Failure, PhysicalFault};
 use crate::x86::protection_keys::State as Keys;

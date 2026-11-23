@@ -9,6 +9,4 @@ pub use controls::{
 };
 
 #[cfg(test)]
-mod key_tests;
-#[cfg(test)]
-mod transition_tests;
+mod tests;

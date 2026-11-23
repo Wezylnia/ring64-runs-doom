@@ -1,3 +1,7 @@
+mod alignment;
+mod pg0_prepared;
+mod retained;
+
 use super::*;
 use crate::memory::{MappingInput, MemoryLimits, Permissions};
 use crate::x86::paging::walk::{Failure, PageFault, PhysicalPhase};

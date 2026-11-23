@@ -1,3 +1,7 @@
+mod legacy;
+mod supervisor;
+mod unpaged;
+
 use super::*;
 use crate::memory::{MappingInput, MemoryLimits, Permissions};
 

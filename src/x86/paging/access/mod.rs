@@ -1075,12 +1075,3 @@ impl GuestMemory for Memory<'_> {
 
 #[cfg(test)]
 mod tests;
-
-#[cfg(test)]
-mod alignment_tests;
-
-#[cfg(test)]
-mod retained_tests;
-
-#[cfg(test)]
-mod pg0_prepared_tests;

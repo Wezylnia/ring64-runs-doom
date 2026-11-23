@@ -1,3 +1,8 @@
+mod guarded_access;
+mod page_sizes;
+mod replacement;
+mod work_counts;
+
 use super::*;
 #[cfg(not(feature = "parallel"))]
 use crate::memory::DirectSpan;

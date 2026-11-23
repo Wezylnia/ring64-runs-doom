@@ -482,9 +482,3 @@ impl State {
 
 #[cfg(test)]
 mod tests;
-
-#[cfg(test)]
-mod pcid_control_tests;
-
-#[cfg(test)]
-mod legacy_tests;

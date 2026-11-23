@@ -669,12 +669,3 @@ fn walk_paged_with<const EFFECTS: bool, const FETCH: bool, const IA32E: bool, co
 
 #[cfg(test)]
 mod tests;
-
-#[cfg(test)]
-mod legacy_tests;
-
-#[cfg(test)]
-mod supervisor_tests;
-
-#[cfg(test)]
-mod unpaged_tests;

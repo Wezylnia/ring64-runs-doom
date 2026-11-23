@@ -1,5 +1,5 @@
-use super::tests::fixture;
-use super::*;
+use super::super::*;
+use super::fixture;
 use crate::x86::paging::walk::{self, AccessClass, PageFault};
 
 #[test]

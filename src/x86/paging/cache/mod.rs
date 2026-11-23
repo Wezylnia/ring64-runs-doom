@@ -26,12 +26,6 @@ mod lookup_index;
 #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
 mod recency;
 
-#[cfg(test)]
-mod review_tests;
-
-#[cfg(test)]
-mod work_tests;
-
 #[derive(Clone, Copy)]
 struct Entry {
     translation: Translation,
@@ -1035,9 +1029,3 @@ fn overlaps(a: Translation, b: Translation) -> bool {
 
 #[cfg(test)]
 mod tests;
-
-#[cfg(test)]
-mod boundary_tests;
-
-#[cfg(test)]
-mod family_tests;

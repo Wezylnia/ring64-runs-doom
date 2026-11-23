@@ -1,4 +1,4 @@
-use super::*;
+use super::super::*;
 
 #[test]
 fn compact_unpaged_identity_has_literal_domain_and_fault_provenance_for_every_class() {

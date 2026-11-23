@@ -1,3 +1,6 @@
+mod legacy;
+mod pcid;
+
 use super::*;
 use ControlFailure::{GeneralProtection, Undefined, Unsupported};
 

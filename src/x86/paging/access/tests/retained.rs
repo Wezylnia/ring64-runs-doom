@@ -1,4 +1,4 @@
-use super::*;
+use super::super::*;
 
 #[cfg(not(feature = "parallel"))]
 #[test]

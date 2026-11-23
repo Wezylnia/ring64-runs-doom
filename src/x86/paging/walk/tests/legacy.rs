@@ -1,4 +1,4 @@
-use super::*;
+use super::super::*;
 use crate::memory::{MappingInput, MemoryLimits, Permissions};
 use crate::x86::protection_keys::State as Keys;
 
