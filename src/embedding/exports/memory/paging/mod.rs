@@ -1034,8 +1034,7 @@ pub extern "C" fn core_paged_loop_copy_window(source: u64, destination: u64, wid
     }
     let page_remaining = |address: u64| 4096 - (address & 4095);
     let split = page_remaining(source).min(page_remaining(destination)) < u64::from(width);
-    if no_split && split
-        || check_span(source, width, Access::Read).is_err()
+    if check_span(source, width, Access::Read).is_err()
         || check_span(destination, width, Access::Write).is_err()
     {
         return 0;
@@ -1112,19 +1111,13 @@ pub extern "C" fn core_paged_loop_copy_window(source: u64, destination: u64, wid
                                 ),
                             ];
                         }
-                        // Only the proved group may cross a page. The next lap can
-                        // request a fresh window using the separately indexed end pages.
-                        let length = if split {
-                            width
-                        } else {
-                            page_remaining(source)
-                                .min(page_remaining(destination))
-                                .min(read_remaining)
-                                .min(write_remaining)
-                                .min(u64::from(read_span.length - read_offset))
-                                .min(u64::from(write_span.length - write_offset))
-                                as u32
-                        };
+                        // Each single-leaf operand remains proved up to its translation
+                        // and backing bounds. Split translations authorize only this group.
+                        let length = read_remaining
+                            .min(write_remaining)
+                            .min(u64::from(read_span.length - read_offset))
+                            .min(u64::from(write_span.length - write_offset))
+                            as u32;
                         debug_assert!(length >= width);
                         Some((
                             read_span.host + read_offset,
@@ -1132,7 +1125,19 @@ pub extern "C" fn core_paged_loop_copy_window(source: u64, destination: u64, wid
                             length,
                         ))
                     };
-                if split {
+                if !split || !core.translation_cache.only_4k_leaves() {
+                    let result = core.translation_cache.copy_pair_then_fetch(
+                        paging,
+                        [read, write],
+                        &state.protection_keys,
+                        width,
+                        &mut admit,
+                    );
+                    if result.is_some() || !split || no_split {
+                        return result;
+                    }
+                }
+                if !no_split {
                     core.translation_cache.copy_split_pair_then_fetch(
                         paging,
                         [read, write],
@@ -1144,17 +1149,14 @@ pub extern "C" fn core_paged_loop_copy_window(source: u64, destination: u64, wid
                         },
                     )
                 } else {
-                    core.translation_cache.copy_pair_then_fetch(
-                        paging,
-                        [read, write],
-                        &state.protection_keys,
-                        width,
-                        admit,
-                    )
+                    None
                 }
             };
             let (source_host, destination_host, length) =
                 resolve(&mut core.image).or_else(|| {
+                    if no_split && split {
+                        return None;
+                    }
                     core.translation_cache.ready_copy_operand(
                         &mut core.image,
                         paging,

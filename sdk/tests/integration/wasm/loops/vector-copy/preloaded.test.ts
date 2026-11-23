@@ -134,3 +134,58 @@ test('a stack-bounded paged vector loop reuses its proved window and keeps preci
     restoreImports();
   }
 });
+
+test('a multi-lap copy stops at the large leaf even when physical RAM continues', async () => {
+  const source = 0x7feff0n;
+  const destination = 0x601000n;
+  const stack = PC + 0x1000n;
+  const sample = Uint8Array.from({ length: 0x1040 }, (_, index) => index * 7 + 1);
+  const accepted: bigint[] = [];
+  const restore = observeArtifactImports((env) => {
+    const copy = env.paged_loop_copy_window;
+    if (typeof copy === 'function') {
+      env.paged_loop_copy_window = (src: bigint, dst: bigint, width: number) => {
+        const result = copy(src, dst, width);
+        if (result) accepted.push(src);
+        return result;
+      };
+    }
+  });
+  try {
+    await usingPaged(
+      compiler,
+      {
+        // Two MOVUPS loads, two stores, ADD RAX,32, CMP [RSP],RAX, JNE head.
+        code: '0f1004070f104c07100f1104060f114c06104883c0204839042475e4f4',
+        words: [
+          [0x3018n, 0x2000e7n],
+          [0x4008n, 0xa067n],
+        ],
+        spans: [
+          { physical: 0x3feff0n, bytes: sample },
+          { physical: 0x201000n, bytes: new Uint8Array(sample.length) },
+          { physical: 0xa000n, bytes: little([0x1040n]) },
+        ],
+      },
+      async (cpu) => {
+        const run = (budget: bigint) => {
+          cpu.setState(initial(PC, { 0: 0n, 4: stack, 6: destination, 7: source }));
+          return cpu.run({ stop: PC + 28n, budget });
+        };
+        for (let wave = 0; wave < 3; wave++) assert.equal((await run(14n)).reason, 'budget');
+        accepted.length = 0;
+        const fault = await run(1000n);
+        assert.deepEqual(accepted, [source], 'one admitted window crosses the internal 4 KiB edge');
+        assert.equal(fault.reason, 'page-fault');
+        assert.equal(fault.pageFault?.address, 0x800000n);
+        assert.equal(fault.state.rip, PC + 4n);
+        assert.equal(fault.retired, 128n * 7n + 1n, 'the final lap retires only its first load');
+        assert.equal(fault.state.registers[0], 0x1000n);
+        assert.deepEqual(cpu.readPhysicalMemory(0x201000n, 0x1000), sample.subarray(0, 0x1000));
+        assert.deepEqual(cpu.readPhysicalMemory(0x202000n, 32), new Uint8Array(32));
+      },
+    );
+  } finally {
+    restore();
+  }
+});

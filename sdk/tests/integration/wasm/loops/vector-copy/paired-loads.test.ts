@@ -94,3 +94,54 @@ test('paged vector pairs retain both loads before either aliased store', async (
     restoreImports();
   }
 });
+
+test('paired vector loads cross 4 KiB inside a single large leaf', async () => {
+  const stop = PC + 14n;
+  const source = 0x600ff0n;
+  const target = 0x601ff0n;
+  const sample = Uint8Array.from({ length: 32 }, (_, index) => index * 7 + 1);
+  const bytes = new Uint8Array(0x2020);
+  bytes.set(sample, 0xff0);
+  let admitted = false;
+  const restore = observeArtifactImports((env) => {
+    const resolve = env.paged_loop_copy_window;
+    if (typeof resolve === 'function') {
+      env.paged_loop_copy_window = (src: bigint, dst: bigint, width: number) => {
+        const result = resolve(src, dst, width);
+        if (src === source && dst === target && result) admitted = true;
+        return result;
+      };
+    }
+  });
+  try {
+    await usingPaged(
+      compiler,
+      {
+        // Two MOVUPS loads followed by two stores.
+        code: '0f10070f104f100f11060f114e1090f4',
+        words: [[0x3018n, 0x2000e7n]],
+        spans: [{ physical: 0x200000n, bytes }],
+      },
+      async (cpu) => {
+        const run = (destination: bigint) => {
+          cpu.setState(initial(PC, { 6: destination, 7: source }));
+          return cpu.run({ stop, budget: 8n });
+        };
+        await run(target);
+        const copied = await run(target);
+        assert.equal(copied.reason, 'stop');
+        assert.equal(copied.retired, 4n);
+        assert.deepEqual(cpu.readPhysicalMemory(0x201ff0n, 32), sample);
+        assert.ok(admitted, 'one copy window covers both subpage boundaries');
+
+        const fault = await run(0x602028n);
+        assert.equal(fault.reason, 'physical-memory-fault');
+        assert.equal(fault.retired, 2n);
+        assert.equal(fault.state.rip, PC + 7n);
+        assert.equal(fault.physicalMemoryFault?.failingPhysicalAddress, 0x202028n);
+      },
+    );
+  } finally {
+    restore();
+  }
+});

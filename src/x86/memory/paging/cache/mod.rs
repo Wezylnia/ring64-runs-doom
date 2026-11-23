@@ -595,6 +595,11 @@ impl Cache {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(crate) fn only_4k_leaves(&self) -> bool {
+        self.entries.borrow().lookup_index.only_4k_leaves()
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     pub(crate) fn recent_indexed_read(
         &self,
         state: &State,
