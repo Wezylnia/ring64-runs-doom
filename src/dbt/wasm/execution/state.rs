@@ -98,6 +98,9 @@ fn gpr_memory(register: usize, narrow: bool) -> MemArg {
 
 const PARITY_SHIFT: i64 = 56;
 const PARITY_INPUTS: i64 = ((0xffu64 << PARITY_SHIFT) as i64) | 4;
+pub(super) const PACKED_RESULT_MASK: i64 = !0xffff_ffff;
+pub(super) const PACKED_SIGN_INPUTS: i64 = i64::MIN | 0x80;
+const PACKED_PARITY_INPUTS: i64 = (0xffi64 << 32) | 4;
 
 impl Emitter {
     // XOR bit 2 with the parity of the high byte to recover PF.
@@ -111,8 +114,13 @@ impl Emitter {
     }
 
     pub(super) fn parity_clear(&mut self) {
+        let inputs = if self.packed_result_status {
+            PACKED_PARITY_INPUTS
+        } else {
+            PARITY_INPUTS
+        };
         self.op(Op::LocalGet(FLAGS))
-            .op(Op::I64Const(PARITY_INPUTS))
+            .op(Op::I64Const(inputs))
             .op(Op::I64And)
             .op(Op::I64Popcnt)
             .op(Op::I64Const(1))
@@ -121,9 +129,29 @@ impl Emitter {
     }
 
     pub(super) fn status_flags(&mut self) {
+        let keep = if self.packed_result_status {
+            !(PACKED_RESULT_MASK | 0xc4)
+        } else {
+            !PARITY_INPUTS
+        };
         self.op(Op::LocalGet(FLAGS))
-            .op(Op::I64Const(!PARITY_INPUTS))
+            .op(Op::I64Const(keep))
             .op(Op::I64And);
+        if self.packed_result_status {
+            for (mask, flag) in [(PACKED_RESULT_MASK, 6), (PACKED_SIGN_INPUTS, 7)] {
+                self.op(Op::LocalGet(FLAGS))
+                    .op(Op::I64Const(mask))
+                    .op(Op::I64And)
+                    .op(Op::I64Eqz);
+                if flag == 7 {
+                    self.op(Op::I32Eqz);
+                }
+                self.op(Op::I64ExtendI32U)
+                    .op(Op::I64Const(flag))
+                    .op(Op::I64Shl)
+                    .op(Op::I64Or);
+            }
+        }
         self.parity_clear();
         self.op(Op::I32Eqz)
             .op(Op::I64ExtendI32U)
@@ -171,6 +199,20 @@ impl Emitter {
             .op(Op::I64Const(0x8d7))
             .op(Op::I64And)
             .op(Op::LocalSet(FLAGS));
+        if self.packed_result_status {
+            // A nonzero witness outside the parity byte preserves imported
+            // ZF independently of the original sign bit, even if both are set.
+            self.op(Op::LocalGet(FLAGS))
+                .op(Op::LocalGet(FLAGS))
+                .op(Op::I64Const(0x40))
+                .op(Op::I64And)
+                .op(Op::I64Eqz)
+                .op(Op::I64ExtendI32U)
+                .op(Op::I64Const(40))
+                .op(Op::I64Shl)
+                .op(Op::I64Or)
+                .op(Op::LocalSet(FLAGS));
+        }
         self.op(Op::LocalGet(0))
             .op(Op::I32Load(MemArg {
                 offset: offset_of!(RunState, interruptibility) as u64,

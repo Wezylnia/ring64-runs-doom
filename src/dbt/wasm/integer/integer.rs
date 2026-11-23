@@ -204,15 +204,21 @@ impl Emitter {
     }
 
     pub(super) fn arithmetic_flags(&mut self, kind: Alu, width: Width) {
-        self.op(Op::I64Const(2));
+        if self.packed_result_status {
+            self.pack_result_status(width);
+        } else {
+            self.op(Op::I64Const(2));
+        }
         if kind == Alu::Add {
             self.op(Op::LocalGet(RESULT)).op(Op::LocalGet(LHS));
         } else {
             self.op(Op::LocalGet(LHS)).op(Op::LocalGet(RHS));
         }
         self.op(Op::I64LtU).op(Op::I64ExtendI32U).op(Op::I64Or);
-        self.defer_result_parity();
-        self.op(Op::I64Or);
+        if !self.packed_result_status {
+            self.defer_result_parity();
+            self.op(Op::I64Or);
+        }
         self.op(Op::LocalGet(LHS))
             .op(Op::LocalGet(RHS))
             .op(Op::I64Xor)
@@ -221,28 +227,30 @@ impl Emitter {
             .op(Op::I64Const(16))
             .op(Op::I64And)
             .op(Op::I64Or);
-        self.op(Op::LocalGet(RESULT));
-        if !cfg!(feature = "parallel")
-            && self.loop_gates_prechecked
-            && self
-                .structured_loop
-                .is_some_and(|(body, _)| body.forward_edges() && body.order().earlier == body.head)
-        {
-            // Only zero has 64 leading zeros, the packed ZF bit.
-            self.op(Op::I64Clz).op(Op::I64Const(0x40)).op(Op::I64And);
-        } else {
-            self.op(Op::I64Eqz)
-                .op(Op::I64ExtendI32U)
-                .op(Op::I64Const(6))
-                .op(Op::I64Shl);
+        if !self.packed_result_status {
+            self.op(Op::LocalGet(RESULT));
+            if !cfg!(feature = "parallel")
+                && self.loop_gates_prechecked
+                && self.structured_loop.is_some_and(|(body, _)| {
+                    body.forward_edges() && body.order().earlier == body.head
+                })
+            {
+                // Only zero has 64 leading zeros, the packed ZF bit.
+                self.op(Op::I64Clz).op(Op::I64Const(0x40)).op(Op::I64And);
+            } else {
+                self.op(Op::I64Eqz)
+                    .op(Op::I64ExtendI32U)
+                    .op(Op::I64Const(6))
+                    .op(Op::I64Shl);
+            }
+            self.op(Op::I64Or);
+            self.op(Op::LocalGet(RESULT))
+                .op(Op::I64Const(i64::from(width.bits() - 1)))
+                .op(Op::I64ShrU)
+                .op(Op::I64Const(7))
+                .op(Op::I64Shl)
+                .op(Op::I64Or);
         }
-        self.op(Op::I64Or);
-        self.op(Op::LocalGet(RESULT))
-            .op(Op::I64Const(i64::from(width.bits() - 1)))
-            .op(Op::I64ShrU)
-            .op(Op::I64Const(7))
-            .op(Op::I64Shl)
-            .op(Op::I64Or);
         self.op(Op::LocalGet(LHS))
             .op(Op::LocalGet(RHS))
             .op(Op::I64Xor);
@@ -311,7 +319,25 @@ impl Emitter {
         self.op(Op::LocalSet(FLAGS));
     }
 
+    fn pack_result_status(&mut self, width: Width) {
+        debug_assert!(width != Width::W64);
+        self.op(Op::LocalGet(RESULT));
+        // Sign-extend narrow results to put their sign at bit 63. The low
+        // result byte still carries parity, and the high dword tests zero.
+        if width != Width::W32 {
+            self.signed(width);
+        }
+        self.op(Op::I64Const(32))
+            .op(Op::I64Shl)
+            .op(Op::I64Const(6))
+            .op(Op::I64Or);
+    }
+
     pub(super) fn result_status_flags(&mut self, width: Width) {
+        if self.packed_result_status {
+            self.pack_result_status(width);
+            return;
+        }
         self.op(Op::I64Const(2));
         self.defer_result_parity();
         self.op(Op::I64Or)

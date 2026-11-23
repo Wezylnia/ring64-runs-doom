@@ -288,6 +288,7 @@ struct Emitter {
     instruction_retirement: control::InstructionRetirement,
     entry_lookup: Option<u32>,
     dense_dispatch: bool,
+    packed_result_status: bool,
     multiply_high: Option<u32>,
     divide: Option<u32>,
     divide_failed: Option<u32>,

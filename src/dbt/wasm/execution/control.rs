@@ -276,14 +276,38 @@ impl Emitter {
         self.op(predicate);
     }
 
-    fn flag_bits_clear(&mut self, mask: i64) {
+    fn flag_bits_clear(&mut self, mut mask: i64) {
+        let zero = self.packed_result_status && mask & 0x40 != 0;
+        if zero {
+            self.op(Op::LocalGet(FLAGS))
+                .op(Op::I64Const(super::state::PACKED_RESULT_MASK))
+                .op(Op::I64And)
+                .op(Op::I64Eqz)
+                .op(Op::I32Eqz);
+            mask &= !0x40;
+            if mask == 0 {
+                return;
+            }
+        }
+        if self.packed_result_status && mask & 0x80 != 0 {
+            mask |= super::state::PACKED_SIGN_INPUTS;
+        }
         self.op(Op::LocalGet(FLAGS))
             .op(Op::I64Const(mask))
             .op(Op::I64And)
             .op(Op::I64Eqz);
+        if zero {
+            self.op(Op::I32And);
+        }
     }
 
     fn signed_flags_equal(&mut self) {
+        if self.packed_result_status {
+            self.flag_bits_clear(0x80);
+            self.flag_bits_clear(0x800);
+            self.op(Op::I32Eq);
+            return;
+        }
         // Align OF with SF before comparing their values.
         self.op(Op::LocalGet(FLAGS))
             .op(Op::LocalGet(FLAGS))

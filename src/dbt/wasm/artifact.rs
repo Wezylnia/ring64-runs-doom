@@ -2983,6 +2983,7 @@ fn emit_body(
         instruction_retirement: control::InstructionRetirement::One,
         entry_lookup: target_lookup.then_some(run_index + 1),
         dense_dispatch: dense_dispatch.is_some(),
+        packed_result_status: complete_flat_call,
         multiply_high,
         divide,
         divide_failed,

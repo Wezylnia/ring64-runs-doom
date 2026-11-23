@@ -824,3 +824,112 @@ test('bounded flat data windows replay at the first checked operand on refusal',
     Core.prototype.compile = compile;
   }
 });
+
+test('flat result status preserves imported flags, conditions, and narrow arithmetic', async () => {
+  const head = 0x31000n;
+  const stack = 0x32000n;
+  // ADD AX,1; all 16 CMOVcc EAX,ECX; CALL EBX; DEC EDX; JNZ head; HLT; RET.
+  const code = Uint8Array.from([
+    ...hex('6683c001'),
+    ...Array.from({ length: 16 }, (_, cc) => [0x0f, 0x40 + cc, 0xc1]).flat(),
+    ...hex('ffd34a75c7f4c3'),
+  ]);
+  const conditions = Array.from({ length: 16 }, (_, cc) => head + BigInt(4 + 3 * cc));
+  const seeds = [head, ...conditions, ...[52n, 54n, 55n, 57n, 58n].map((offset) => head + offset)];
+  const compile = Core.prototype.compile;
+  Core.prototype.compile = function (pc, limits, entries, regionPoints) {
+    if (pc === head && !entries?.length) return compile.call(this, pc, limits, seeds, true);
+    return compile.call(this, pc, limits, entries, regionPoints);
+  };
+  try {
+    const cpu = await createCpu({
+      compiler,
+      entry: head,
+      limits: LIMITS,
+      context: protectedSnapshot(),
+      memoryLimits: { maxBackings: 2, maxMappings: 2, maxBackingBytes: code.length + 16 },
+      memory: {
+        backings: [
+          { id: 'code', bytes: code },
+          { id: 'stack', bytes: new Uint8Array(16) },
+        ],
+        mappings: [
+          {
+            base: head,
+            backing: 'code',
+            offset: 0,
+            length: code.length,
+            permissions: { read: true, write: false, execute: true },
+          },
+          {
+            base: stack,
+            backing: 'stack',
+            offset: 0,
+            length: 16,
+            permissions: { read: true, write: true, execute: false },
+          },
+        ],
+      },
+    });
+    try {
+      for (const [ax, eax, flags] of [
+        [0x7fffn, 0xabcdefn, 0x896n],
+        [0xffffn, 0n, 0x57n],
+        [0x00ffn, 0x100n, 0x16n],
+      ] as const) {
+        cpu.setState(initial(head, { 0: ax, 1: 0xabcdefn, 3: head + 58n, 4: stack + 16n }));
+        const result = await cpu.run({ budget: 8n, stop: head + 7n });
+        assert.equal(result.reason, 'stop');
+        assert.equal(result.retired, 2n);
+        assert.equal(result.state.registers[0], eax);
+        assert.equal(result.state.flags, flags);
+      }
+
+      for (let bits = 0; bits < 64; bits++) {
+        const [carry, parity, auxiliary, zero, sign, overflow] = [0, 1, 2, 3, 4, 5].map(
+          (bit) => (bits & (1 << bit)) !== 0,
+        );
+        const flags = BigInt(
+          2 +
+            Number(carry) +
+            4 * Number(parity) +
+            16 * Number(auxiliary) +
+            64 * Number(zero) +
+            128 * Number(sign) +
+            2048 * Number(overflow),
+        );
+        const less = sign !== overflow;
+        const truth = [
+          overflow,
+          !overflow,
+          carry,
+          !carry,
+          zero,
+          !zero,
+          carry || zero,
+          !carry && !zero,
+          sign,
+          !sign,
+          parity,
+          !parity,
+          less,
+          !less,
+          zero || less,
+          !zero && !less,
+        ];
+        for (const [cc, pc] of conditions.entries()) {
+          cpu.setState(initial(pc, { 0: 1n, 1: 2n }, flags));
+          const result = await cpu.run({ budget: 8n, stop: pc + 3n });
+          assert.equal(result.reason, 'stop');
+          assert.equal(result.retired, 1n);
+          assert.equal(result.state.registers[0], truth[cc] ? 2n : 1n);
+          assert.equal(result.state.flags, flags);
+        }
+      }
+    } finally {
+      cpu.dispose();
+    }
+  } finally {
+    Core.prototype.compile = compile;
+  }
+});
