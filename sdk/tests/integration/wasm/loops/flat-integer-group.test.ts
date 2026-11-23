@@ -50,6 +50,8 @@ test('flat sampled integer groups preserve precise budgets, stops, and interior 
   };
   try {
     const cpu = await createCpu(options);
+    const upperBanks = Array.from({ length: 8 }, (_, index) => 0xa1b2c3d400000000n + BigInt(index));
+    const upper = Object.fromEntries(upperBanks.map((value, index) => [index + 8, value]));
     let groupedBytes: number;
     try {
       for (const [entry, input, budget, stop, reason, retired, rip, eax, flags] of [
@@ -59,12 +61,13 @@ test('flat sampled integer groups preserve precise budgets, stops, and interior 
         [0n, 2n, 3n, 9n, 'budget', 3n, 9n, 5n, 6n],
         [3n, 3n, 8n, 9n, 'stop', 2n, 9n, 5n, 6n],
       ] as const) {
-        cpu.setState(initial(head + entry, { 0: input, 3: head + 15n }));
+        cpu.setState(initial(head + entry, { ...upper, 0: input, 3: head + 15n }));
         const result = await cpu.run({ budget, stop: head + stop });
         assert.equal(result.reason, reason);
         assert.equal(result.state.rip, head + rip);
         assert.equal(result.retired, retired);
         assert.equal(result.state.registers[0], eax);
+        assert.deepEqual(result.state.registers.slice(8), upperBanks);
         assert.equal(result.state.flags, flags);
       }
       groupedBytes = cpu.inspectTranslations()[0]!.byteLength;

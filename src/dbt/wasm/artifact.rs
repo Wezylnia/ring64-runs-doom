@@ -2095,6 +2095,19 @@ fn emit_body(
     let mut next_local = 35 + 2 * u32::from(has_repeat);
     // The admitted helpers leave the high dwords in the backing RunState.
     let narrow_gprs = !observed && !cfg!(feature = "parallel") && state::narrow_gprs(unit);
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let gpr_banks = if narrow_gprs
+        && linear_call_spans
+        && dense_dispatch.is_some()
+        && !unit.reached_instruction_limit
+    {
+        // The complete learned owner keeps the inaccessible banks in RunState.
+        8
+    } else {
+        16
+    };
+    #[cfg(any(feature = "parallel", not(target_arch = "wasm32")))]
+    let gpr_banks = 16;
     let dword_writes = if narrow_gprs {
         0
     } else {
@@ -2873,7 +2886,7 @@ fn emit_body(
             .map(|(index, i)| (i.pc, index as u32))
             .collect(),
     };
-    emitter.load_state();
+    emitter.load_state(gpr_banks);
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if !paged
         && !observed
@@ -3193,7 +3206,7 @@ fn emit_body(
     emitter.op(Op::End);
     emitter.exit(DISPATCH, 1);
     emitter.op(Op::End).op(Op::End);
-    emitter.publish_state();
+    emitter.publish_state(gpr_banks);
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     emitter.leave_parallel_atomic_if_held();
     emitter.op(Op::LocalGet(REASON)).op(Op::End);

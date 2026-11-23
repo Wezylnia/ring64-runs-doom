@@ -138,9 +138,9 @@ impl Emitter {
             .op(Op::I64Sub);
     }
 
-    pub(super) fn load_state(&mut self) {
+    pub(super) fn load_state(&mut self, gpr_banks: usize) {
         let narrow = self.narrow_gprs;
-        for register in 0..16 {
+        for register in 0..gpr_banks {
             let field = gpr_memory(register, narrow);
             self.op(Op::LocalGet(0))
                 .op(if narrow {
@@ -195,7 +195,7 @@ impl Emitter {
         }
     }
 
-    pub(super) fn publish_state(&mut self) {
+    pub(super) fn publish_state(&mut self, gpr_banks: usize) {
         let tsc = offset_of!(RunState, time) + offset_of!(TimeState, tsc);
         // Helpers can rebase this same bank for WRMSR; settle each native entry once.
         self.op(Op::LocalGet(0))
@@ -204,7 +204,7 @@ impl Emitter {
         self.retired();
         self.op(Op::I64Add).op(Op::I64Store(memory(tsc)));
         let narrow = self.narrow_gprs;
-        for register in 0..16 {
+        for register in 0..gpr_banks {
             let field = gpr_memory(register, narrow);
             self.op(Op::LocalGet(0))
                 .op(Op::LocalGet(GPR + register as u32))
