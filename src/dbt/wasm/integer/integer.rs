@@ -307,6 +307,11 @@ impl Emitter {
     }
 
     pub(super) fn logical_flags(&mut self, width: Width) {
+        self.result_status_flags(width);
+        self.op(Op::LocalSet(FLAGS));
+    }
+
+    pub(super) fn result_status_flags(&mut self, width: Width) {
         self.op(Op::I64Const(2));
         self.defer_result_parity();
         self.op(Op::I64Or)
@@ -321,7 +326,6 @@ impl Emitter {
             .op(Op::I64ShrU)
             .op(Op::I64Const(7))
             .op(Op::I64Shl)
-            .op(Op::I64Or)
-            .op(Op::LocalSet(FLAGS));
+            .op(Op::I64Or);
     }
 }

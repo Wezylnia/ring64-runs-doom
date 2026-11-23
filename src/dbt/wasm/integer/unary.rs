@@ -1,4 +1,4 @@
-use super::{Emitter, FLAGS, LHS, RESULT, RHS, VALUE};
+use super::{Emitter, FLAGS, GPR, LHS, RESULT, RHS, VALUE};
 use crate::x86::instruction::{Alu, Carry, Location, RegisterView, Unary, Width};
 use wasm_encoder::Instruction as Op;
 
@@ -40,6 +40,14 @@ impl Emitter {
         next_pc: u64,
         exit_depth: u32,
     ) {
+        if width == Width::W32
+            && matches!(kind, Unary::Inc | Unary::Dec)
+            && let Location::Register(dst) = dst
+            && dst.shift() == 0
+        {
+            self.unit_register_dword(dst, kind == Unary::Inc);
+            return;
+        }
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         let proof = match dst {
             Location::Memory(address) => self.load_cached_rmw(address, width, next_pc, exit_depth),
@@ -114,6 +122,45 @@ impl Emitter {
             Unary::Neg if !self.omit_result_status => self.arithmetic_flags(Alu::Sub, width),
             Unary::Neg => {}
         }
+    }
+
+    fn unit_register_dword(&mut self, dst: RegisterView, increment: bool) {
+        self.op(Op::LocalGet(GPR + u32::from(dst.bank)))
+            .op(Op::LocalTee(LHS))
+            .op(Op::I32WrapI64)
+            .op(Op::I32Const(1))
+            .op(if increment { Op::I32Add } else { Op::I32Sub })
+            .op(Op::I64ExtendI32U)
+            .op(Op::LocalTee(RESULT));
+        self.write_register(dst, Width::W32);
+        if self.omit_result_status {
+            return;
+        }
+        self.result_status_flags(Width::W32);
+        // CF survives, bit 4 changes on an auxiliary carry, and signed
+        // overflow from a unit step has exactly one possible result.
+        self.op(Op::LocalGet(FLAGS))
+            .op(Op::I64Const(1))
+            .op(Op::I64And)
+            .op(Op::I64Or)
+            .op(Op::LocalGet(LHS))
+            .op(Op::LocalGet(RESULT))
+            .op(Op::I64Xor)
+            .op(Op::I64Const(16))
+            .op(Op::I64And)
+            .op(Op::I64Or)
+            .op(Op::LocalGet(RESULT))
+            .op(Op::I64Const(if increment {
+                0x8000_0000
+            } else {
+                0x7fff_ffff
+            }))
+            .op(Op::I64Eq)
+            .op(Op::I64ExtendI32U)
+            .op(Op::I64Const(11))
+            .op(Op::I64Shl)
+            .op(Op::I64Or)
+            .op(Op::LocalSet(FLAGS));
     }
 
     pub(super) fn carry(&mut self, kind: Carry) {

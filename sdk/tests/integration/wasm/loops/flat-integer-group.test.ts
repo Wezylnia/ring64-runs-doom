@@ -6,6 +6,51 @@ import { protectedSnapshot } from '../../../../../tests/support/context.js';
 import { LIMITS, hex, initial } from '../../../../../tests/support/fixture.js';
 import { compiler } from './fixture.js';
 
+test('register INC and DEC retain carry and compute dword status at wrap boundaries', async () => {
+  const head = 0x31800n;
+  const high = 0x1234567800000000n;
+  const code = hex('4048f4'); // INC EAX; DEC EAX; HLT.
+  const cpu = await createCpu({
+    compiler,
+    entry: head,
+    limits: LIMITS,
+    context: protectedSnapshot(),
+    memoryLimits: { maxBackings: 1, maxMappings: 1, maxBackingBytes: code.length },
+    memory: {
+      backings: [{ id: 'code', bytes: code }],
+      mappings: [
+        {
+          base: head,
+          backing: 'code',
+          offset: 0,
+          length: code.length,
+          permissions: { read: true, write: false, execute: true },
+        },
+      ],
+    },
+  });
+  try {
+    for (const [offset, input, flags, value, expected] of [
+      [0n, 0x7fffffffn, 3n, 0x80000000n, 0x897n],
+      [0n, 0xffffffffn, 2n, 0n, 0x56n],
+      [0n, 0xfn, 3n, 0x10n, 0x13n],
+      [1n, 0x80000000n, 3n, 0x7fffffffn, 0x817n],
+      [1n, 0n, 2n, 0xffffffffn, 0x96n],
+      [1n, 1n, 3n, 0n, 0x47n],
+    ] as const) {
+      cpu.setState(initial(head + offset, { 0: high | input }, flags));
+      const result = await cpu.run({ budget: 1n });
+      assert.equal(result.reason, 'budget');
+      assert.equal(result.retired, 1n);
+      assert.equal(result.state.rip, head + offset + 1n);
+      assert.equal(result.state.registers[0], high | value);
+      assert.equal(result.state.flags, expected);
+    }
+  } finally {
+    cpu.dispose();
+  }
+});
+
 test('restored dword stack bounds distinguish narrow retained spans from exact fits', async () => {
   const head = 0x31800n;
   const stack = 0x32000n;
