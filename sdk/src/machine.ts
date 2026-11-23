@@ -34,7 +34,7 @@ import {
   ParallelError,
   requireWorkerCapability,
   type Transport,
-} from './parallel/transport.js';
+} from './parallel/worker/transport.js';
 
 export type { MachineOptions, ParallelCpu, ParallelRunResult, RunOptions };
 export type { RunReason } from './cpu/cpu.js';

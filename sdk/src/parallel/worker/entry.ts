@@ -1,6 +1,6 @@
-import { SIGNAL, SLOT, STARTUP_WORD, SharedControl, cpuOffset, nextIdentity } from './control.js';
-import { createParallelEngine, type ParallelCpu } from './engine.js';
-import type { IoWidth } from '../embedding/io.js';
+import { SIGNAL, SLOT, STARTUP_WORD, SharedControl, cpuOffset, nextIdentity } from '../control.js';
+import { createParallelEngine, type ParallelCpu } from '../cpu/engine.js';
+import type { IoWidth } from '../../embedding/io.js';
 import type {
   Binding,
   Command,
@@ -9,9 +9,9 @@ import type {
   Range,
   Start,
   ToWorker,
-} from './protocol.js';
-import { bindRam } from './memory/ram.js';
-import { markSourceWatches } from './memory/source-watches.js';
+} from '../protocol.js';
+import { bindRam } from '../memory/ram.js';
+import { markSourceWatches } from '../memory/source-watches.js';
 import { connectWorker } from './transport.js';
 
 class WorkerRuntime implements Binding {

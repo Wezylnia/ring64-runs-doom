@@ -8,20 +8,20 @@ import {
   requireSimd,
   type RunOptions,
   type RunResult,
-} from '../cpu/cpu.js';
-import { captureInitialContext, captureLimits, type Limits } from '../cpu/options.js';
-import type { InstalledEntry } from '../cpu/translations.js';
-import { captureIo, type IoProvider } from '../embedding/io.js';
+} from '../../cpu/cpu.js';
+import { captureInitialContext, captureLimits, type Limits } from '../../cpu/options.js';
+import type { InstalledEntry } from '../../cpu/translations.js';
+import { captureIo, type IoProvider } from '../../embedding/io.js';
 import type {
   InitialMemory,
   MemoryLimits,
   MemoryMapping,
   MemoryModel,
-} from '../embedding/memory.js';
-import type { ExecutionContext } from '../state/system/context.js';
+} from '../../embedding/memory.js';
+import type { ExecutionContext } from '../../state/system/context.js';
 import { ParallelCore } from './core.js';
-import type { BackingRecord } from './options.js';
-import type { Binding, Command } from './protocol.js';
+import type { BackingRecord } from '../options.js';
+import type { Binding, Command } from '../protocol.js';
 
 interface EngineOptions {
   compiler: WebAssembly.Module;

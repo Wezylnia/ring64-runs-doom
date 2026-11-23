@@ -1,8 +1,12 @@
-import { IoBridge, type IoBinding } from '../embedding/io.js';
-import type { InitialMemory } from '../embedding/memory.js';
-import { readInterrupts, writeInterrupts, type InterruptState } from '../state/execution/events.js';
-import type { ExecutionContext } from '../state/system/context.js';
-import type { GeneratedRun, ParallelCoreExports } from '../wasm/abi.js';
+import { IoBridge, type IoBinding } from '../../embedding/io.js';
+import type { InitialMemory } from '../../embedding/memory.js';
+import {
+  readInterrupts,
+  writeInterrupts,
+  type InterruptState,
+} from '../../state/execution/events.js';
+import type { ExecutionContext } from '../../state/system/context.js';
+import type { GeneratedRun, ParallelCoreExports } from '../../wasm/abi.js';
 import {
   Core,
   backingKey,
@@ -10,9 +14,9 @@ import {
   instantiateArtifact,
   mappingInput,
   writeInput,
-} from '../wasm/core.js';
-import type { BackingRecord } from './options.js';
-import type { Binding, Range } from './protocol.js';
+} from '../../wasm/core.js';
+import type { BackingRecord } from '../options.js';
+import type { Binding, Range } from '../protocol.js';
 
 export class ParallelCore extends Core {
   readonly #parallelExports: ParallelCoreExports;

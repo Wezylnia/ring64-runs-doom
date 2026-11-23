@@ -44,11 +44,11 @@ test(
       'machine.d.ts',
       'ring64.wasm',
       'ring64-parallel.wasm',
-      'parallel/worker.js',
-      'parallel/engine.js',
-      'parallel/engine.d.ts',
-      'parallel/core.js',
-      'parallel/core.d.ts',
+      'parallel/worker/entry.js',
+      'parallel/cpu/engine.js',
+      'parallel/cpu/engine.d.ts',
+      'parallel/cpu/core.js',
+      'parallel/cpu/core.d.ts',
     ])
       assert.ok(files.has(expected), `missing package member ${expected}`);
     for (const file of files) {

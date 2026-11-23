@@ -39,7 +39,7 @@ export async function launchWorker(message: Message, failure: Failure): Promise<
   if (browser()) {
     if (typeof Worker !== 'function')
       throw new ParallelError('unsupported', 'parallel execution requires dedicated workers');
-    const worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
+    const worker = new Worker(new URL('./entry.js', import.meta.url), { type: 'module' });
     worker.addEventListener('message', (event: MessageEvent<unknown>) => message(event.data));
     worker.addEventListener('messageerror', () =>
       failure(new Error('worker message could not be decoded')),
@@ -64,7 +64,7 @@ export async function launchWorker(message: Message, failure: Failure): Promise<
       cause,
     });
   }
-  const worker = new node.Worker(new URL(import.meta.resolve('./worker.js')));
+  const worker = new node.Worker(new URL(import.meta.resolve('./entry.js')));
   let terminated = false;
   worker.on('message', message);
   worker.on('messageerror', failure);
