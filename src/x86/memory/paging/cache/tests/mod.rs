@@ -1,4 +1,8 @@
+#[cfg(not(feature = "parallel"))]
+mod copies;
 mod guarded_access;
+#[cfg(not(feature = "parallel"))]
+mod guarded_spans;
 mod page_sizes;
 mod replacement;
 mod work_counts;
@@ -11,6 +15,14 @@ use crate::x86::paging::{
     State,
     walk::{self, AccessClass, Request},
 };
+
+fn insert(cache: &Cache, image: &mut Image, state: &State, request: Request) -> Translation {
+    cache.fill(
+        state,
+        request,
+        walk::walk(image, state, request, &ProtectionKeys::ZERO).unwrap(),
+    )
+}
 
 pub(super) fn fixture() -> (Image, State, Request) {
     let mut bytes = vec![0; 0x10000];
