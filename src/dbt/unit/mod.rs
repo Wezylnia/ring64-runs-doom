@@ -5,6 +5,8 @@ pub(crate) struct Unit {
     pub context: ExecutionContext,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     pub sampled: bool,
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub reached_instruction_limit: bool,
     pub instructions: Vec<Instruction>,
     pub block_count: usize,
     pub source_bytes: usize,

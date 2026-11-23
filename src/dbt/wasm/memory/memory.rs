@@ -961,7 +961,7 @@ impl Emitter {
     pub(super) fn load_retained_flat_spans(
         &mut self,
         reads: [Option<SpanCache>; 3],
-        data_write: Option<SpanCache>,
+        writes: [Option<SpanCache>; 2],
     ) {
         use crate::embedding::layout::StateStorage;
         use crate::memory::DirectSpan;
@@ -972,7 +972,8 @@ impl Emitter {
             (read_offset, reads[0]),
             (read_offset + size_of::<DirectSpan>(), reads[1]),
             (offset_of!(StateStorage, flat_stack_pointer_read), reads[2]),
-            (offset_of!(StateStorage, flat_data_write), data_write),
+            (offset_of!(StateStorage, flat_data_write), writes[0]),
+            (offset_of!(StateStorage, flat_stack_write), writes[1]),
         ] {
             let Some(cache) = cache else {
                 continue;

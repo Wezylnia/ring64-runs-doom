@@ -291,6 +291,8 @@ pub(super) fn discover_with_entries(
         context: context.clone(),
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         sampled,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        reached_instruction_limit: instructions.len() == limits.max_instructions as usize,
         block_count: leaders
             .iter()
             .filter(|pc| instructions.contains_key(pc))

@@ -86,6 +86,8 @@ fn unit(instructions: Vec<Instruction>) -> Unit {
         context: crate::x86::context::ExecutionContext::default(),
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         sampled: false,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        reached_instruction_limit: false,
         source_bytes: instructions.len(),
         source_ranges: vec![],
         read_dependencies: vec![],

@@ -230,27 +230,44 @@ test('flat write chains preserve prior effects and exit on a code alias write', 
     length,
     permissions: { read: true, write: !execute, execute },
   });
+  const mappings = [
+    mapping(head, 'code', code.length, true),
+    mapping(alias, 'code', code.length, false),
+    mapping(data, 'data', values.length, false),
+  ];
   const compile = Core.prototype.compile;
   Core.prototype.compile = function (pc, limits, entries, regionPoints) {
     if (pc === head && !entries?.length) return compile.call(this, pc, limits, seeds, true);
     return compile.call(this, pc, limits, entries, regionPoints);
   };
+  const prototype = Core.prototype as unknown as {
+    artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue>;
+  };
+  const imports = prototype.artifactImports;
+  let probes = 0;
+  prototype.artifactImports = function (observed) {
+    const env = imports.call(this, observed);
+    const write = env.write_span;
+    if (typeof write === 'function') {
+      env.write_span = (address: bigint, width: number, segment: number) => {
+        probes++;
+        return write(address, width, segment);
+      };
+    }
+    return env;
+  };
   try {
     const cpu = await createCpu({
       compiler,
       entry: head,
-      limits: LIMITS,
+      limits: { ...LIMITS, maxInstructions: seeds.length },
       context: protectedSnapshot(),
       memory: {
         backings: [
           { id: 'code', bytes: code },
           { id: 'data', bytes: values },
         ],
-        mappings: [
-          mapping(head, 'code', code.length, true),
-          mapping(alias, 'code', code.length, false),
-          mapping(data, 'data', values.length, false),
-        ],
+        mappings,
       },
       memoryLimits: {
         maxBackings: 2,
@@ -259,6 +276,29 @@ test('flat write chains preserve prior effects and exit on a code alias write', 
       },
     });
     try {
+      const start = initial(head, { 0: 2n, 1: 0n, 4: data + 16n, 6: data, 7: data + 4n });
+      cpu.setState(start);
+      const first = await cpu.run({ budget: 10n, stop: head + 10n });
+      assert.equal(first.retired, 7n);
+      assert.equal(probes, 2);
+      cpu.setState(start);
+      const warm = await cpu.run({ budget: 10n, stop: head + 10n });
+      assert.deepEqual(warm.state, first.state);
+      assert.equal(warm.retired, first.retired);
+      assert.equal(probes, 2);
+
+      cpu.setMappings([
+        mappings[0]!,
+        mappings[1]!,
+        { ...mappings[2]!, permissions: { read: true, write: false, execute: false } },
+      ]);
+      cpu.setState(start);
+      const revoked = await cpu.run({ budget: 10n, stop: head + 10n });
+      assert.equal(revoked.reason, 'data-fault');
+      assert.equal(revoked.retired, 1n);
+      assert.equal(revoked.state.rip, head + 1n);
+      cpu.setMappings(mappings);
+
       for (const [esi, edi, esp, budget, stop, reason, retired, rip, eax, ecx, sp, contents] of [
         [
           data,
@@ -393,6 +433,7 @@ test('flat write chains preserve prior effects and exit on a code alias write', 
       cpu.dispose();
     }
   } finally {
+    prototype.artifactImports = imports;
     Core.prototype.compile = compile;
   }
 });

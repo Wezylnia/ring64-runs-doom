@@ -2881,13 +2881,21 @@ fn emit_body(
         && unit.context.mode() == crate::x86::context::Mode::Protected
         && unit.context.code32()
     {
+        // Full learned regions stay within one activation on their hot path.
+        // Avoid adding write cache setup there when most stores are local hits.
+        let retain_call_writes =
+            linear_call_spans && (!unit.sampled || unit.reached_instruction_limit);
         emitter.load_retained_flat_spans(
             [read_span, stack_read_span, flat_stack_pointer_span],
-            write_caches[0].filter(|_| {
-                cyclic_vector_store
-                    || linear_scalar_copy_prefix.is_some()
-                    || linear_vector_copy_prefixes.is_some()
-            }),
+            [
+                write_caches[0].filter(|_| {
+                    retain_call_writes
+                        || cyclic_vector_store
+                        || linear_scalar_copy_prefix.is_some()
+                        || linear_vector_copy_prefixes.is_some()
+                }),
+                write_caches[1].filter(|_| retain_call_writes),
+            ],
         );
     }
     emitter.op(Op::Block(BlockType::Empty));

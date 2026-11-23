@@ -72,13 +72,18 @@ fn core_direct_span(address: u64, width: u32, segment: i32, access: Access) -> u
             *slot = span;
             return slot as *const crate::memory::DirectSpan as u32;
         }
-        if segment == Segment::Ds as i32
-            && access == Access::Write
+        if access == Access::Write
             && core.context.mode() == crate::x86::context::Mode::Protected
             && core.context.code32()
+            && (segment == Segment::Ds as i32 || segment == Segment::Ss as i32)
         {
-            core.state.flat_data_write = span;
-            return &raw const core.state.flat_data_write as u32;
+            let slot = if segment == Segment::Ss as i32 {
+                &mut core.state.flat_stack_write
+            } else {
+                &mut core.state.flat_data_write
+            };
+            *slot = span;
+            return slot as *const crate::memory::DirectSpan as u32;
         }
         core.direct_span = span;
         &raw const core.direct_span as u32

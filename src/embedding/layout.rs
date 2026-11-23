@@ -311,6 +311,8 @@ pub(crate) struct StateStorage {
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     pub(crate) indexed_paged_writes: [crate::x86::paging::cache::IndexedReadEntry;
         crate::x86::paging::cache::INDEXED_READ_ENTRIES],
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(crate) flat_stack_write: crate::memory::DirectSpan,
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -334,6 +336,8 @@ impl StateStorage {
             #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
             indexed_paged_writes: [Default::default();
                 crate::x86::paging::cache::INDEXED_READ_ENTRIES],
+            #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+            flat_stack_write: Default::default(),
         }
     }
 
