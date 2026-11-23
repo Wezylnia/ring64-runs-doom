@@ -1,4 +1,4 @@
-use super::{DIRECTION, Emitter, FLAGS, GPR, REASON, REMAINING, RESULT, RIP, SHADOW, SYSTEM};
+use super::{DIRECTION, Emitter, FLAGS, GPR, REASON, REMAINING, RESULT, SHADOW, SYSTEM};
 use crate::embedding::layout::{DISPATCH, RunState};
 use crate::x86::instruction::{SoftwareEventDescriptor, SoftwareEventKind};
 use std::mem::offset_of;
@@ -40,16 +40,7 @@ impl Emitter {
             .op(Op::Call(helper))
             .op(Op::LocalTee(REASON))
             .op(Op::BrIf(exit_depth));
-        let scratch = offset_of!(RunState, vector_scratch) as u64;
-        for (offset, local) in [(scratch, RIP), (scratch + 8, GPR + 4)] {
-            self.op(Op::LocalGet(0))
-                .op(Op::I64Load(MemArg {
-                    offset,
-                    align: 0,
-                    memory_index: 0,
-                }))
-                .op(Op::LocalSet(local));
-        }
+        self.load_transferred_ip_and_sp();
         self.op(Op::LocalGet(0))
             .op(Op::I64Load(MemArg {
                 offset: offset_of!(RunState, flags) as u64,

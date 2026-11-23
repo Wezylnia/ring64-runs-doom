@@ -1,9 +1,8 @@
-use super::{Emitter, GPR, REASON, REMAINING, RIP};
-use crate::embedding::layout::{DISPATCH, RunState};
+use super::{Emitter, GPR, REASON, REMAINING};
+use crate::embedding::layout::DISPATCH;
 use crate::x86::context::Segment;
 use crate::x86::instruction::{FarInstruction, FarOperand};
-use std::mem::offset_of;
-use wasm_encoder::{Instruction as Op, MemArg};
+use wasm_encoder::Instruction as Op;
 
 impl Emitter {
     pub(super) fn far_control(&mut self, far: FarInstruction, next_pc: u64, exit_depth: u32) {
@@ -30,16 +29,7 @@ impl Emitter {
             .op(Op::Call(helper))
             .op(Op::LocalTee(REASON))
             .op(Op::BrIf(exit_depth));
-        let scratch = offset_of!(RunState, vector_scratch) as u64;
-        for (offset, local) in [(scratch, RIP), (scratch + 8, GPR + 4)] {
-            self.op(Op::LocalGet(0))
-                .op(Op::I64Load(MemArg {
-                    offset,
-                    align: 0,
-                    memory_index: 0,
-                }))
-                .op(Op::LocalSet(local));
-        }
+        self.load_transferred_ip_and_sp();
         self.op(Op::LocalGet(REMAINING))
             .op(Op::I64Const(1))
             .op(Op::I64Sub)

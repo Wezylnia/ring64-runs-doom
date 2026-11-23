@@ -103,6 +103,19 @@ pub(super) const PACKED_SIGN_INPUTS: i64 = i64::MIN | 0x80;
 const PACKED_PARITY_INPUTS: i64 = (0xffi64 << 32) | 4;
 
 impl Emitter {
+    pub(super) fn load_transferred_ip_and_sp(&mut self) {
+        let scratch = offset_of!(RunState, vector_scratch) as u64;
+        for (offset, local) in [(scratch, RIP), (scratch + 8, GPR + 4)] {
+            self.op(Op::LocalGet(0))
+                .op(Op::I64Load(MemArg {
+                    offset,
+                    align: 0,
+                    memory_index: 0,
+                }))
+                .op(Op::LocalSet(local));
+        }
+    }
+
     // XOR bit 2 with the parity of the high byte to recover PF.
     // All other status bits retain their architectural positions.
     pub(super) fn defer_result_parity(&mut self) {
