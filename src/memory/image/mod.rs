@@ -1,6 +1,9 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
+mod storage;
+pub(super) use storage::BackingOffset;
+
 use super::address::{physical_span_failure, span_failure};
 use super::validity::Validity;
 
@@ -22,7 +25,7 @@ pub struct Permissions {
 pub struct MappingInput {
     pub base: u64,
     pub backing: String,
-    pub offset: u32,
+    pub offset: BackingOffset,
     pub length: u32,
     pub permissions: Permissions,
 }
@@ -81,7 +84,7 @@ pub(super) struct Backing {
 pub(super) struct Mapping {
     pub(super) base: u64,
     pub(super) backing: usize,
-    pub(super) offset: u32,
+    pub(super) offset: BackingOffset,
     pub(super) length: u32,
     pub(super) permissions: Permissions,
 }
@@ -375,7 +378,7 @@ impl Image {
         Some(DirectSpan {
             base: mapping.base,
             length: mapping.length,
-            host: backing.bytes.as_ptr().wrapping_add(mapping.offset as usize) as u32,
+            host: backing.host_pointer(mapping.offset)? as u32,
         })
     }
 
@@ -397,10 +400,7 @@ impl Image {
                 return None;
             }
             let span = DirectSpan {
-                host: self.backings[mapping.backing]
-                    .bytes
-                    .as_mut_ptr()
-                    .wrapping_add(mapping.offset as usize) as u32,
+                host: self.backings[mapping.backing].host_pointer_mut(mapping.offset)? as u32,
                 ..read_span
             };
             return Some((span, span));
@@ -440,10 +440,7 @@ impl Image {
         Some(DirectSpan {
             base,
             length,
-            host: self.backings[backing]
-                .bytes
-                .as_mut_ptr()
-                .wrapping_add(offset as usize) as u32,
+            host: self.backings[backing].host_pointer_mut(offset)? as u32,
         })
     }
 
@@ -456,8 +453,8 @@ impl Image {
             return false;
         };
         let backing = mapping.backing;
-        let start = mapping.offset as usize + relative as usize;
-        self.backings[backing].bytes[start..start + 16].copy_from_slice(bytes);
+        let start = mapping.offset + relative as BackingOffset;
+        self.backings[backing].write_bytes(start, bytes);
         true
     }
 
@@ -472,8 +469,8 @@ impl Image {
         }
         let (mapping, relative) = self.writable_direct_mapping(address, WIDTH as u32)?;
         let backing = mapping.backing;
-        let index = mapping.offset as usize + relative as usize;
-        self.backings[backing].bytes[index..index + WIDTH].copy_from_slice(&value);
+        let index = mapping.offset + relative as BackingOffset;
+        self.backings[backing].write_bytes(index, &value);
         Some(())
     }
 
@@ -498,17 +495,15 @@ impl Image {
         }
         let relative = address - mapping.base;
         let backing = mapping.backing;
-        let index = mapping.offset as usize + relative as usize;
-        let value = self.backings[backing].bytes[index];
+        let index = mapping.offset + relative as BackingOffset;
+        let value = self.backings[backing].read_array::<1>(index)[0];
         // The synchronous guarded clone consumes the pointer before any host
         // call or another guest memory operation.
-        let pointer =
-            (write_ready() && self.direct_mapping_writable(mapping, relative, 1)).then(|| {
-                self.backings[backing]
-                    .bytes
-                    .as_mut_ptr()
-                    .wrapping_add(index)
-            });
+        let pointer = if write_ready() && self.direct_mapping_writable(mapping, relative, 1) {
+            self.backings[backing].host_pointer_mut(index)
+        } else {
+            None
+        };
         Some((value, pointer))
     }
 

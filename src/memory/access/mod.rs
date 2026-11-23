@@ -1,22 +1,9 @@
 use super::address::{check_physical_span, check_span};
-use super::image::locate_index;
+use super::image::{BackingOffset, locate_index};
 use super::{Access, Cause, Fault, Image};
 
 mod prepared;
 pub(crate) use prepared::{PreparedPhysicalUpdate, PreparedPhysicalWrite};
-
-#[inline]
-fn copy_field(target: &mut [u8], source: &[u8]) {
-    match target.len() {
-        1 => target[0] = source[0],
-        2 => target[..2].copy_from_slice(&source[..2]),
-        4 => target[..4].copy_from_slice(&source[..4]),
-        8 => target[..8].copy_from_slice(&source[..8]),
-        10 => target[..10].copy_from_slice(&source[..10]),
-        16 => target[..16].copy_from_slice(&source[..16]),
-        _ => target.copy_from_slice(source),
-    }
-}
 
 impl Image {
     pub fn physical_fetch(&self, address: u64) -> Result<u8, Fault> {
@@ -89,9 +76,8 @@ impl Image {
             return None;
         }
         // The validated physical mapping covers every byte of this read.
-        let offset = mapping.offset as usize + relative as usize;
-        let bytes = &self.backings[mapping.backing].bytes;
-        Some(bytes[offset..offset + N].try_into().unwrap())
+        let offset = mapping.offset + relative as BackingOffset;
+        Some(self.backings[mapping.backing].read_array(offset))
     }
 
     pub fn physical_read_for_write(&self, address: u64, width: u32) -> Result<u64, Fault> {
@@ -201,23 +187,12 @@ impl Image {
         let mapping = &self.mappings[first];
         let relative = address - mapping.base;
         if u64::from(width) <= u64::from(mapping.length) - relative {
-            let offset = mapping.offset as usize + relative as usize;
+            let offset = mapping.offset + relative as BackingOffset;
             let backing = &mut self.backings[mapping.backing];
             if backing.has_sources {
-                self.validity
-                    .write(&backing.incarnation, offset as u32, width);
+                self.validity.write(&backing.incarnation, offset, width);
             }
-            match width {
-                1 => backing.bytes[offset] = value as u8,
-                2 => {
-                    backing.bytes[offset..offset + 2].copy_from_slice(&(value as u16).to_le_bytes())
-                }
-                4 => {
-                    backing.bytes[offset..offset + 4].copy_from_slice(&(value as u32).to_le_bytes())
-                }
-                8 => backing.bytes[offset..offset + 8].copy_from_slice(&value.to_le_bytes()),
-                _ => unreachable!(),
-            }
+            backing.write_bytes(offset, &value.to_le_bytes()[..width as usize]);
         } else {
             self.write_after_preflight(address, &value.to_le_bytes()[..width as usize], first);
         }
@@ -236,17 +211,8 @@ impl Image {
             self.shared_read(address, &mut bytes, index);
             return bytes;
         }
-        let mut output = Vec::with_capacity(length as usize);
-        let mut cursor = u128::from(address);
-        let end = cursor + u128::from(length);
-        while cursor < end {
-            let mapping = &self.mappings[index];
-            let offset = mapping.offset as usize + (cursor as u64 - mapping.base) as usize;
-            let count = (end.min(mapping.end()) - cursor) as usize;
-            output.extend_from_slice(&self.backings[mapping.backing].bytes[offset..offset + count]);
-            cursor += count as u128;
-            index += 1;
-        }
+        let mut output = vec![0; length as usize];
+        self.read_across_mappings(address, &mut output, &mut index);
         output
     }
 
@@ -276,19 +242,9 @@ impl Image {
         let mapping = &self.mappings[index];
         let relative = address - mapping.base;
         if u64::from(width) <= u64::from(mapping.length) - relative {
-            let offset = mapping.offset as usize + relative as usize;
-            let source = &self.backings[mapping.backing].bytes[offset..];
-            if width == 16 {
-                return source[..16].try_into().unwrap();
-            }
+            let offset = mapping.offset + relative as BackingOffset;
             let mut output = [0; 16];
-            match width {
-                2 => output[..2].copy_from_slice(&source[..2]),
-                4 => output[..4].copy_from_slice(&source[..4]),
-                8 => output[..8].copy_from_slice(&source[..8]),
-                10 => output[..10].copy_from_slice(&source[..10]),
-                _ => unreachable!(),
-            }
+            self.backings[mapping.backing].read_bytes(offset, &mut output[..width as usize]);
             return output;
         }
         let mut output = [0; 16];
@@ -353,13 +309,12 @@ impl Image {
         let mapping = &self.mappings[index];
         let relative = address - mapping.base;
         if u64::from(width) <= u64::from(mapping.length) - relative {
-            let offset = mapping.offset as usize + relative as usize;
-            let backing = &self.backings[mapping.backing].bytes;
+            let offset = mapping.offset + relative as BackingOffset;
+            let backing = &self.backings[mapping.backing];
             for &(start, length) in fields {
-                let begin = offset + start as usize;
-                let source = &backing[begin..begin + length as usize];
+                let begin = offset + BackingOffset::from(start);
                 let target = &mut output[start as usize..(start + length) as usize];
-                copy_field(target, source);
+                backing.read_bytes(begin, target);
             }
             return Ok(());
         }
@@ -379,10 +334,9 @@ impl Image {
         while copied < target.len() {
             let mapping = &self.mappings[*index];
             let relative = (cursor - mapping.base) as usize;
-            let offset = mapping.offset as usize + relative;
+            let offset = mapping.offset + relative as BackingOffset;
             let count = (target.len() - copied).min(mapping.length as usize - relative);
-            target[copied..copied + count]
-                .copy_from_slice(&self.backings[mapping.backing].bytes[offset..offset + count]);
+            self.backings[mapping.backing].read_bytes(offset, &mut target[copied..copied + count]);
             copied += count;
             if copied < target.len() {
                 cursor += count as u64;
@@ -421,18 +375,15 @@ impl Image {
         let mapping = &self.mappings[index];
         let relative = address - mapping.base;
         if u64::from(width) <= u64::from(mapping.length) - relative {
-            let offset = mapping.offset as usize + relative as usize;
+            let offset = mapping.offset + relative as BackingOffset;
             let backing = &mut self.backings[mapping.backing];
             for &(start, length) in fields {
-                let begin = offset + start as usize;
-                let end = begin + length as usize;
+                let begin = offset + BackingOffset::from(start);
                 if backing.has_sources {
-                    self.validity
-                        .write(&backing.incarnation, begin as u32, length);
+                    self.validity.write(&backing.incarnation, begin, length);
                 }
-                let target = &mut backing.bytes[begin..end];
                 let source = &bytes[start as usize..(start + length) as usize];
-                copy_field(target, source);
+                backing.write_bytes(begin, source);
             }
             return Ok(());
         }
@@ -474,21 +425,14 @@ impl Image {
         while source < bytes.len() {
             let mapping = &self.mappings[index];
             let relative = (cursor - mapping.base) as usize;
-            let offset = mapping.offset as usize + relative;
+            let offset = mapping.offset + relative as BackingOffset;
             let count = (bytes.len() - source).min(mapping.length as usize - relative);
             let backing = &mut self.backings[mapping.backing];
             if backing.has_sources {
                 self.validity
-                    .write(&backing.incarnation, offset as u32, count as u32);
+                    .write(&backing.incarnation, offset, count as u32);
             }
-            match count {
-                8 => backing.bytes[offset..offset + 8].copy_from_slice(&bytes[source..source + 8]),
-                16 => {
-                    backing.bytes[offset..offset + 16].copy_from_slice(&bytes[source..source + 16])
-                }
-                _ => backing.bytes[offset..offset + count]
-                    .copy_from_slice(&bytes[source..source + count]),
-            }
+            backing.write_bytes(offset, &bytes[source..source + count]);
             source += count;
             if source < bytes.len() {
                 cursor += count as u64;
@@ -568,8 +512,8 @@ impl Image {
             return byte[0];
         }
         let mapping = &self.mappings[index];
-        let offset = mapping.offset as usize + (address - mapping.base) as usize;
-        self.backings[mapping.backing].bytes[offset]
+        let offset = mapping.offset + (address - mapping.base) as BackingOffset;
+        self.backings[mapping.backing].read_array::<1>(offset)[0]
     }
 
     #[inline]
@@ -582,37 +526,21 @@ impl Image {
         }
         let mapping = &self.mappings[index];
         let relative = address - mapping.base;
-        let offset = mapping.offset as usize + relative as usize;
+        let offset = mapping.offset + relative as BackingOffset;
         if width == 1 {
-            return u64::from(self.backings[mapping.backing].bytes[offset]);
+            return u64::from(self.backings[mapping.backing].read_array::<1>(offset)[0]);
         }
         if u64::from(width) <= u64::from(mapping.length) - relative {
-            let bytes = &self.backings[mapping.backing].bytes;
+            let backing = &self.backings[mapping.backing];
             return match width {
-                2 => u64::from(u16::from_le_bytes(
-                    bytes[offset..offset + 2].try_into().unwrap(),
-                )),
-                4 => u64::from(u32::from_le_bytes(
-                    bytes[offset..offset + 4].try_into().unwrap(),
-                )),
-                8 => u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap()),
+                2 => u64::from(u16::from_le_bytes(backing.read_array(offset))),
+                4 => u64::from(u32::from_le_bytes(backing.read_array(offset))),
+                8 => u64::from_le_bytes(backing.read_array(offset)),
                 _ => unreachable!(),
             };
         }
         let mut bytes = [0u8; 8];
-        let mut cursor = u128::from(address);
-        let end = cursor + u128::from(width);
-        let mut destination = 0;
-        while cursor < end {
-            let mapping = &self.mappings[index];
-            let offset = mapping.offset as usize + (cursor as u64 - mapping.base) as usize;
-            let count = (end.min(mapping.end()) - cursor) as usize;
-            bytes[destination..destination + count]
-                .copy_from_slice(&self.backings[mapping.backing].bytes[offset..offset + count]);
-            cursor += count as u128;
-            destination += count;
-            index += 1;
-        }
+        self.read_across_mappings(address, &mut bytes[..width as usize], &mut index);
         u64::from_le_bytes(bytes)
     }
 }
