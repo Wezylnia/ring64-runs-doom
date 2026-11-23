@@ -4,9 +4,9 @@ ring64 runs x86 code by translating it to wasm.
 
 ## rust core
 
-- `src/x86/` decodes instructions and implements cpu behavior, including paging and faults. `src/x86/paging/cache/` owns the translation records that authorize guarded reads, writes and copies.
+- `src/x86/` decodes instructions and implements cpu behavior, including paging and faults. `src/x86/paging/cache.rs` owns the translation records. `cache/guarded.rs` and `cache/copy.rs` use them to authorize memory accesses.
 - `src/memory/` owns backings and mappings. `Image` checks access permissions and tracks writes that invalidate translated code. `src/memory/parallel/ram.rs` handles shared ram locks and write notifications.
-- `src/dbt/` discovers code to translate, tracks what each translation depends on and emits wasm. in `src/dbt/wasm/`, `artifact/` selects a lowering that fits the artifact budget and assembles the module. `execution/` emits control flow and `memory/` emits checked accesses and their fast paths.
+- `src/dbt/` discovers code to translate, tracks what each translation depends on and emits wasm. in `src/dbt/wasm/`, `artifact/placement.rs` selects candidate lowerings. `artifact.rs` assembles the module and retries when it exceeds the byte budget. `execution/` emits control flow and `memory/` emits checked accesses and their fast paths.
 - `src/embedding/` exposes the core to the sdk and defines the layout of the state they exchange.
 
 ## typescript sdk
