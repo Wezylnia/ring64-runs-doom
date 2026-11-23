@@ -1,6 +1,6 @@
-import { createCpu } from '../../../sdk/src/index.js';
-import { LIMITS, equal, hex, initial, type Scenario } from '../../support/fixture.js';
-import { profiles, same } from '../control-flow/far/fixture.js';
+import { createCpu } from '../../../../../sdk/src/index.js';
+import { LIMITS, equal, hex, initial, type Scenario } from '../../../../support/fixture.js';
+import { profiles, same } from '../../../control-flow/far/fixture.js';
 
 export function ioScalarReviewScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [

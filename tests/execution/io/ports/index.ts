@@ -1,16 +1,16 @@
 import { ioResetScenarios } from './reset.js';
-import { ioLifecycleReviewScenarios } from './review-lifecycle.js';
-import { ioDebugReviewScenarios } from './review-debug.js';
-import { ioOperandReviewScenarios } from './review-operands.js';
-import { ioPermissionReviewScenarios } from './review-permissions.js';
-import { ioScalarReviewScenarios } from './review-scalar.js';
-import { ioRepairReviewScenarios } from './review-repair.js';
-import { ioSourcePteScenarios } from './source-pte.js';
+import { ioLifecycleReviewScenarios } from './restart/lifecycle.js';
+import { ioDebugReviewScenarios } from './restart/debug.js';
+import { ioOperandReviewScenarios } from './operands/widths.js';
+import { ioPermissionReviewScenarios } from './operands/permissions.js';
+import { ioScalarReviewScenarios } from './operands/scalar.js';
+import { ioRepairReviewScenarios } from './restart/repair.js';
+import { ioSourcePteScenarios } from './restart/source-pte.js';
 import { pagedIoScenarios } from './paging.js';
 import { ioBoundaryScenarios } from './boundaries.js';
-import { stringIoScenarios } from './strings.js';
-import { createCpu } from '../../../sdk/src/index.js';
-import { LIMITS, equal, hex, initial, type Scenario } from '../../support/fixture.js';
+import { stringIoScenarios } from './operands/strings.js';
+import { createCpu } from '../../../../sdk/src/index.js';
+import { LIMITS, equal, hex, initial, type Scenario } from '../../../support/fixture.js';
 
 export function ioScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [

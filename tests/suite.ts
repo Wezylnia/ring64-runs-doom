@@ -1,6 +1,6 @@
 import { resetScenarios } from './execution/processor/reset/index.js';
-import { ioScenarios } from './execution/io/index.js';
-import { mmioScenarios } from './execution/mmio/index.js';
+import { ioScenarios } from './execution/io/ports/index.js';
+import { mmioScenarios } from './execution/io/mmio.js';
 import { numericControlScenarios } from './execution/numeric/controls.js';
 import { integerScenarios } from './execution/instructions/integer/index.js';
 import { stackScenarios } from './execution/instructions/stack/index.js';

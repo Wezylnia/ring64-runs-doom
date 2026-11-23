@@ -1,6 +1,6 @@
-import { createCpu, type IoProvider } from '../../../sdk/src/index.js';
-import { LIMITS, equal, hex, initial, memory, type Scenario } from '../../support/fixture.js';
-import { profiles } from '../control-flow/far/fixture.js';
+import { createCpu, type IoProvider } from '../../../../../sdk/src/index.js';
+import { LIMITS, equal, hex, initial, memory, type Scenario } from '../../../../support/fixture.js';
+import { profiles } from '../../../control-flow/far/fixture.js';
 
 export function stringIoScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [

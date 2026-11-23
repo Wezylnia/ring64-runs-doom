@@ -1,4 +1,4 @@
-import { createCpu, type IoProvider } from '../../../sdk/src/index.js';
+import { createCpu, type IoProvider } from '../../../../sdk/src/index.js';
 import {
   LIMITS,
   equal,
@@ -7,8 +7,8 @@ import {
   memory,
   check,
   type Scenario,
-} from '../../support/fixture.js';
-import { snapshot } from '../control-flow/far/fixture.js';
+} from '../../../support/fixture.js';
+import { snapshot } from '../../control-flow/far/fixture.js';
 
 export function ioBoundaryScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [

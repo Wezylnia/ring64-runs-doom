@@ -1,6 +1,6 @@
-import { createCpu } from '../../../sdk/src/index.js';
-import { LIMITS, equal, hex, initial, type Scenario } from '../../support/fixture.js';
-import { little, word } from '../memory/paging/fixture.js';
+import { createCpu } from '../../../../../sdk/src/index.js';
+import { LIMITS, equal, hex, initial, type Scenario } from '../../../../support/fixture.js';
+import { little, word } from '../../../memory/paging/fixture.js';
 
 export function ioSourcePteScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [

@@ -1,6 +1,6 @@
-import { equal, initial, type Scenario } from '../../support/fixture.js';
-import { usingPaged, little, word, PC } from '../memory/paging/fixture.js';
-import { snapshot } from '../control-flow/far/fixture.js';
+import { equal, initial, type Scenario } from '../../../support/fixture.js';
+import { usingPaged, little, word, PC } from '../../memory/paging/fixture.js';
+import { snapshot } from '../../control-flow/far/fixture.js';
 
 export function pagedIoScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [
