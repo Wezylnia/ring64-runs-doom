@@ -354,6 +354,53 @@ fn guarded_upper_walk_replays_a_cold_leaf_and_reloads_words_on_new_entry() {
 
 #[cfg(not(feature = "parallel"))]
 #[test]
+fn guarded_read_ranges_join_only_adjacent_pages_with_the_same_host_bias() {
+    use crate::embedding::layout::paging::LOOP_READ_PAGES;
+    fixture("long64", true, true);
+    activate_single_instruction();
+    assert_eq!(paging::core_paged_debug_begin(PC, RF, 0), 0);
+    let guard = |flags| paging::core_paged_walk_guard(PC, 3, flags, 0);
+    assert_eq!(guard(2), 1);
+    BRIDGE.with_borrow(|bridge| {
+        let core = bridge.core.as_ref().unwrap();
+        let mut reads = core.guarded_walk.borrow_mut();
+        let mut remember = |page: u64, host: u32| {
+            reads.remember(&core.state, page, host);
+            let range = core.state.loop_read_range.get();
+            (range.base, range.dwords, range.host_bias)
+        };
+        assert_eq!(remember(0x1000, 0x21000), (0, 0, 0));
+        assert_eq!(remember(0x3000, 0x23000), (0, 0, 0));
+        assert_eq!(remember(0x4000, 0x24000), (0x3000, 2048, 0x20000));
+        assert_eq!(remember(0x2000, 0x22000), (0x1000, 4096, 0x20000));
+        assert_eq!(remember(0x5000, 0x31000), (0x1000, 4096, 0x20000));
+        assert_eq!(
+            remember(0x1000 + 4096 * LOOP_READ_PAGES as u64, 0x21000),
+            (0, 0, 0)
+        );
+        assert_eq!(remember(0x6000, 0x32000), (0, 0, 0));
+        core.translation_cache.invalidate_page(0, 0xdead_0000, true);
+    });
+    assert_eq!(guard(2), 1);
+    BRIDGE.with_borrow(|bridge| {
+        let core = bridge.core.as_ref().unwrap();
+        let mut reads = core.guarded_walk.borrow_mut();
+        reads.remember(&core.state, 0x2000, 0x22000);
+        assert_eq!(core.state.loop_read_range.get().dwords, 0);
+        reads.remember(&core.state, 0x1000, 0x21000);
+        assert_eq!(core.state.loop_read_range.get().dwords, 2048);
+    });
+    assert_ne!(guard(crate::x86::flags::TF | 2), 1);
+    BRIDGE.with_borrow(|b| {
+        assert_eq!(
+            b.core.as_ref().unwrap().state.loop_read_range.get().dwords,
+            0
+        )
+    });
+}
+
+#[cfg(not(feature = "parallel"))]
+#[test]
 fn guarded_read_generation_wrap_clears_pages_and_refused_entry_unpublishes_table() {
     use crate::embedding::layout::paging::{LOOP_READ_PAGES, LoopReadPage};
     fixture("long64", true, true);
@@ -365,6 +412,7 @@ fn guarded_read_generation_wrap_clears_pages_and_refused_entry_unpublishes_table
         let core = bridge.core.as_ref().unwrap();
         assert_eq!(core.state.loop_read_generation.get(), 1);
         let stale = LoopReadPage {
+            run_pages: 1,
             tag: 0x2001,
             host_bias: 0x6000,
         };

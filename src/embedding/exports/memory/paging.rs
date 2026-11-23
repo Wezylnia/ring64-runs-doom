@@ -430,6 +430,8 @@ pub extern "C" fn core_paged_loop_guard(pc: u64, bytes: u32, flags: u64, shadow:
 pub(super) struct GuardedReads {
     pub(super) active: Option<GuardedWalk>,
     authority: Option<(paging::State, paging::walk::AccessClass, Keys)>,
+    range: crate::embedding::layout::paging::LoopReadRange,
+    group_pages: bool,
     pub(super) pages: Vec<crate::embedding::layout::paging::LoopReadPage>,
 }
 
@@ -445,6 +447,7 @@ pub(super) struct GuardedWalk {
 impl GuardedReads {
     fn end(&mut self, state: &StateStorage) {
         state.loop_read_table.set(0);
+        state.loop_read_range.set(Default::default());
         self.active = None;
     }
 
@@ -464,11 +467,14 @@ impl GuardedReads {
             }
             state.loop_read_generation.set(generation);
             self.authority = Some(authority);
+            self.range = Default::default();
+            self.group_pages = true;
         }
         #[cfg(target_arch = "wasm32")]
         if !self.pages.is_empty() {
             state.loop_read_table.set(self.pages.as_ptr() as u32);
         }
+        state.loop_read_range.set(self.range);
         self.active = Some(GuardedWalk {
             owner,
             cr3: paging.cr3,
@@ -477,17 +483,57 @@ impl GuardedReads {
         });
     }
 
-    #[cfg(target_arch = "wasm32")]
-    fn remember(&mut self, state: &StateStorage, page: u64, host: u32) {
-        use crate::embedding::layout::paging::{LOOP_READ_PAGES, LoopReadPage};
+    #[cfg(any(target_arch = "wasm32", test))]
+    pub(super) fn remember(&mut self, state: &StateStorage, page: u64, host: u32) {
+        use crate::embedding::layout::paging::{LOOP_READ_PAGES, LoopReadPage, LoopReadRange};
         if self.pages.is_empty() {
             self.pages.resize(LOOP_READ_PAGES, Default::default());
         }
-        let slot = (page >> 12) as usize & (LOOP_READ_PAGES - 1);
-        self.pages[slot] = LoopReadPage {
-            tag: page | state.loop_read_generation.get(),
-            host_bias: host.wrapping_sub(page as u32),
+        let slot = |page: u64| (page >> 12) as usize & (LOOP_READ_PAGES - 1);
+        let generation = state.loop_read_generation.get();
+        let tag = page | generation;
+        let bias = host.wrapping_sub(page as u32);
+        let old = self.pages[slot(page)];
+        if old.tag == tag && old.host_bias == bias {
+            return;
+        }
+        // Endpoints describe uninterrupted runs in the current table. A direct-map
+        // collision ends their use for this authority; individual page hits stay valid.
+        if old.tag & 4095 == generation {
+            self.group_pages = false;
+            self.range = Default::default();
+            state.loop_read_range.set(self.range);
+        }
+        self.pages[slot(page)] = LoopReadPage {
+            tag,
+            host_bias: bias,
+            run_pages: 1,
         };
+        if self.group_pages {
+            let neighbor = |page: u64| {
+                let entry = self.pages[slot(page)];
+                if entry.tag == page | generation && entry.host_bias == bias {
+                    entry.run_pages
+                } else {
+                    0
+                }
+            };
+            let left = page.checked_sub(4096).map_or(0, neighbor);
+            let right = page.checked_add(4096).map_or(0, neighbor);
+            let first = page - u64::from(left) * 4096;
+            let last = page + u64::from(right) * 4096;
+            let count = left + 1 + right;
+            self.pages[slot(first)].run_pages = count;
+            self.pages[slot(last)].run_pages = count;
+            if count > 1 && count * 1024 > self.range.dwords {
+                self.range = LoopReadRange {
+                    base: first,
+                    dwords: count * 1024,
+                    host_bias: bias,
+                };
+                state.loop_read_range.set(self.range);
+            }
+        }
         state.loop_read_table.set(self.pages.as_ptr() as u32);
     }
 }

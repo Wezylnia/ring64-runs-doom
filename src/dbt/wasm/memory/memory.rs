@@ -505,7 +505,7 @@ impl Emitter {
     fn load_loop_read_page(&mut self, read: u32) {
         use crate::embedding::layout::{
             StateStorage,
-            paging::{LOOP_READ_PAGES, LoopReadPage},
+            paging::{LOOP_READ_PAGES, LoopReadPage, LoopReadRange},
         };
         use std::mem::{offset_of, size_of};
         use wasm_encoder::ValType;
@@ -515,8 +515,37 @@ impl Emitter {
             align,
             memory_index: 0,
         };
+        let range = offset_of!(StateStorage, loop_read_range);
         self.op(Op::LocalSet(ADDRESS))
             .op(Op::Block(BlockType::Result(ValType::I64)))
+            .op(Op::LocalGet(ADDRESS))
+            .op(Op::LocalGet(0))
+            .op(Op::I64Load(field(
+                range + offset_of!(LoopReadRange, base),
+                3,
+            )))
+            .op(Op::I64Sub)
+            // Rotate the alignment bits above the dword offset for one bounds check.
+            .op(Op::I64Const(2))
+            .op(Op::I64Rotr)
+            .op(Op::LocalGet(0))
+            .op(Op::I64Load32U(field(
+                range + offset_of!(LoopReadRange, dwords),
+                2,
+            )))
+            .op(Op::I64LtU)
+            .op(Op::If(BlockType::Empty))
+            .op(Op::LocalGet(0))
+            .op(Op::I32Load(field(
+                range + offset_of!(LoopReadRange, host_bias),
+                2,
+            )))
+            .op(Op::LocalGet(ADDRESS))
+            .op(Op::I32WrapI64)
+            .op(Op::I32Add)
+            .op(Op::I64Load32U(field(0, 2)))
+            .op(Op::Br(1))
+            .op(Op::End)
             .op(Op::Block(BlockType::Empty))
             .op(Op::LocalGet(0))
             .op(Op::I32Load(field(

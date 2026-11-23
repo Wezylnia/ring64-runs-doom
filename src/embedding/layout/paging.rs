@@ -32,6 +32,16 @@ pub(crate) const LOOP_READ_PAGES: usize = 2048;
 pub(crate) struct LoopReadPage {
     pub(crate) tag: u64,
     pub(crate) host_bias: u32,
+    pub(crate) run_pages: u32,
+}
+
+#[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+#[derive(Clone, Copy, Default)]
+#[repr(C)]
+pub(crate) struct LoopReadRange {
+    pub(crate) base: u64,
+    pub(crate) dwords: u32,
+    pub(crate) host_bias: u32,
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]

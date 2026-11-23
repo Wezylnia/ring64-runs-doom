@@ -313,6 +313,8 @@ pub(crate) struct StateStorage {
     pub(crate) loop_read_table: std::cell::Cell<u32>,
     #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
     pub(crate) loop_read_generation: std::cell::Cell<u64>,
+    #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+    pub(crate) loop_read_range: std::cell::Cell<paging::LoopReadRange>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     pub(crate) newest_fetch: paging::NewestFetch,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -344,6 +346,8 @@ impl StateStorage {
             loop_read_table: Default::default(),
             #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
             loop_read_generation: Default::default(),
+            #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
+            loop_read_range: Default::default(),
             #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
             newest_fetch: Default::default(),
             #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
