@@ -181,6 +181,60 @@ test('dependent dword reads wrap the scaled index and resume at the faulting ins
   }
 });
 
+test('a protected32 pointer chain preserves the completed lap when an interior dword straddles a mapping', async () => {
+  // Four MOV EAX,[EBX+EAX*4], then SUB ECX,1 and JNE head.
+  const code = hex('8b0483'.repeat(4) + '83e90175ef');
+  const data = little([1n, 2n, 3n, 4n, 5n, 6n, 7n, 0x40000001n], 4);
+  const codeMap = {
+    ...mapping(head, 'code', code.length),
+    permissions: { ...readOnly, execute: true },
+  };
+  const indices = mapping(row, 'indices', data.length);
+  const cpu = await createCpu({
+    compiler,
+    entry: head,
+    context: protectedSnapshot(),
+    limits: LIMITS,
+    memory: {
+      backings: [
+        { id: 'code', bytes: code },
+        { id: 'indices', bytes: data },
+      ],
+      mappings: [codeMap, { ...indices, length: 30 }],
+    },
+    memoryLimits: { maxBackings: 2, maxMappings: 2, maxBackingBytes: code.length + data.length },
+  });
+  try {
+    const high = 0x1234567800000000n;
+    const input = initial(head, { 0: high, 1: high | 3n, 3: high | row }, 0x893n);
+    const stop = head + BigInt(code.length);
+    cpu.setState(input);
+    const cut = await cpu.run({ budget: 8n, stop });
+    exit(cut, 'budget', 8n, 8n, changed(input, head + 6n, { 0: high | 6n, 1: high | 2n }, 2n));
+
+    cpu.setState(input);
+    const denied = await cpu.run({ budget: 24n, stop });
+    const pc = head + 9n;
+    exit(denied, 'data-fault', 24n, 9n, changed(input, pc, { 0: high | 7n, 1: high | 2n }, 2n));
+    fault(denied, {
+      instructionPc: pc,
+      address: row + 28n,
+      failingAddress: row + 30n,
+      width: 4,
+      access: 'read',
+      cause: 'unmapped',
+      segment: 'ds',
+    });
+
+    cpu.setMappings([codeMap, indices]);
+    // The repaired dword returns 0x40000001, whose scaled address wraps to row + 4.
+    const resumed = await cpu.run({ budget: 24n, stop });
+    exit(resumed, 'stop', 24n, 9n, changed(input, stop, { 0: high | 5n, 1: high }, 0x46n));
+  } finally {
+    cpu.dispose();
+  }
+});
+
 test('Long64 dependent dword reads preserve full indices and resume a denied load', async () => {
   const code = hex('8b4483fc'.repeat(4) + '83e90175eb');
   // MOV EAX,[RBX+RAX*4-4] four times, followed by SUB ECX,1; JNE head.

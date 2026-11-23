@@ -25,6 +25,7 @@ pub(in crate::dbt::wasm) struct IndexedReadWindow {
     pub(in crate::dbt::wasm) span: super::SpanCache,
     pub(in crate::dbt::wasm) host: u32,
     pub(in crate::dbt::wasm) limit: u32,
+    pub(in crate::dbt::wasm) chain_rejected: Option<u32>,
 }
 
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]

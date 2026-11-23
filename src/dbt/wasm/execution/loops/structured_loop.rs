@@ -2359,6 +2359,23 @@ impl Emitter {
             && self.loop_gates_prechecked
             && body.kind == LoopKind::IntegerReads;
         let mut flags_on_next_read_fault = None;
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        let indexed_chain = self.indexed_read_window.and_then(|window| {
+            let rejected = window
+                .chain_rejected
+                .filter(|_| self.loop_gates_prechecked)?;
+            let body = &instructions[body.head as usize..=body.tail as usize];
+            let is_load =
+                |instruction: &Instruction| matches!(instruction.operation, Operation::Load { .. });
+            let first = body.iter().position(is_load)?;
+            let last = body.iter().rposition(is_load)?;
+            Some((
+                window,
+                rejected,
+                first as u32..last as u32 + 1,
+                &body[first..=last],
+            ))
+        });
         for position in 0..order.len() {
             let ordinal = order.at(position) as usize;
             if body.forward_edges() && position != 0 {
@@ -2372,6 +2389,17 @@ impl Emitter {
                     self.op(Op::End);
                 }
                 depth + u32::from(self.current_index < body.tail - 2)
+            } else {
+                depth
+            };
+            #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+            let depth = if let Some((window, rejected, range, loads)) = &indexed_chain {
+                if position == range.start {
+                    self.guarded_indexed_chain(*window, *rejected, loads);
+                } else if position == range.end {
+                    self.op(Op::End);
+                }
+                depth + u32::from(range.contains(&position))
             } else {
                 depth
             };

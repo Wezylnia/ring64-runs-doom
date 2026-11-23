@@ -422,6 +422,9 @@ impl Emitter {
             align,
             memory_index: PRIVATE_MEMORY,
         };
+        if let Some(rejected) = window.chain_rejected {
+            self.op(Op::I32Const(0)).op(Op::LocalSet(rejected));
+        }
         self.op(Op::I64Const(0)).op(Op::LocalSet(window.limit));
         self.op(Op::Block(BlockType::Empty))
             .op(Op::LocalGet(REMAINING))
@@ -495,6 +498,57 @@ impl Emitter {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    fn read_indexed_window_dword(&mut self, window: read_loop::IndexedReadWindow) {
+        let scale = window.address.index.unwrap().scale;
+        self.op(Op::LocalGet(window.host))
+            .op(Op::LocalGet(VALUE))
+            .op(Op::I32WrapI64);
+        if scale != 1 {
+            self.op(Op::I32Const(scale.trailing_zeros() as i32))
+                .op(Op::I32Shl);
+        }
+        self.op(Op::I32Add);
+        self.ram_load(
+            Op::I64Load32U,
+            MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: PRIVATE_MEMORY,
+            },
+        );
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(in crate::dbt::wasm) fn guarded_indexed_chain(
+        &mut self,
+        window: read_loop::IndexedReadWindow,
+        rejected: u32,
+        loads: &[crate::x86::instruction::Instruction],
+    ) {
+        let index = window.address.index.unwrap().register;
+        // Direct reads have no side effects. Commit the funded group together
+        // or replay the original instructions at the first window miss.
+        self.op(Op::Block(BlockType::Empty))
+            .op(Op::Block(BlockType::Empty));
+        self.op(Op::LocalGet(rejected)).op(Op::BrIf(0));
+        self.register(index, window.address.size);
+        for _ in loads {
+            self.op(Op::LocalTee(VALUE))
+                .op(Op::LocalGet(window.limit))
+                .op(Op::I64GeU)
+                .op(Op::BrIf(0));
+            self.read_indexed_window_dword(window);
+        }
+        self.write_register(RegisterView::low(index), Width::W32);
+        self.retire_instructions(loads.len() as u32);
+        self.op(Op::I64Const(loads.last().unwrap().next_pc as i64))
+            .op(Op::LocalSet(crate::dbt::wasm::RIP))
+            .op(Op::Br(1))
+            .op(Op::End);
+        self.op(Op::I32Const(1)).op(Op::LocalSet(rejected));
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     fn load_indexed_dword(
         &mut self,
         dst: RegisterView,
@@ -508,27 +562,14 @@ impl Emitter {
         self.op(Op::LocalTee(VALUE))
             .op(Op::LocalGet(window.limit))
             .op(Op::I64LtU)
-            .op(Op::If(BlockType::Empty))
-            .op(Op::LocalGet(window.host))
-            .op(Op::LocalGet(VALUE))
-            .op(Op::I32WrapI64);
-        if index.scale != 1 {
-            self.op(Op::I32Const(index.scale.trailing_zeros() as i32))
-                .op(Op::I32Shl);
-        }
-        self.op(Op::I32Add);
-        let memory = MemArg {
-            offset: 0,
-            align: 0,
-            memory_index: PRIVATE_MEMORY,
-        };
+            .op(Op::If(BlockType::Empty));
+        self.read_indexed_window_dword(window);
         let long64 = self.context.is_long64();
         if long64 {
             // The load has already zero-extended the architectural destination.
-            self.ram_load(Op::I64Load32U, memory);
             self.write_register(dst, Width::W32);
         } else {
-            self.direct_scalar_load(Width::W32, memory);
+            self.op(Op::LocalSet(VALUE));
         }
         self.op(Op::Else);
         self.address(address, next_pc);

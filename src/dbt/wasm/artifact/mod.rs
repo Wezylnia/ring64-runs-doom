@@ -1714,7 +1714,14 @@ fn emit_body(
         let host = next_local;
         locals.extend([(1, ValType::I32), (1, ValType::I64)]);
         next_local += 2;
+        let chain_rejected = (!observed && !paged && !unit.context.is_long64()).then(|| {
+            let local = next_local;
+            next_local += 1;
+            locals.push((1, ValType::I32));
+            local
+        });
         Some(read_loop::IndexedReadWindow {
+            chain_rejected,
             address,
             span,
             host,
