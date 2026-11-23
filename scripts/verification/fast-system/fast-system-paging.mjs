@@ -241,6 +241,9 @@ await writeFile(
         ),
       ),
     ),
+    ...(browserMode
+      ? { browserDriverSha256: hash(await readFile(new URL('../browser.mjs', import.meta.url))) }
+      : {}),
     entryDriverSha256: hash(
       await readFile(resolve(root, 'scripts/verification/fast-system/fast-system-paging.mjs')),
     ),
