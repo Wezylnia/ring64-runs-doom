@@ -128,13 +128,19 @@ fn enabled_admission_preserves_default_mf_and_live_control_repair_on_the_same_ow
             });
             assert_eq!(translation::core_publish(owner), 1);
             for disabled in [cr0 | 4, cr0 | 8] {
-                assert_eq!(paging::core_paging_control(1, 0, disabled, PC, RF, 0), 0);
+                assert_eq!(
+                    paging::control::core_paging_control(1, 0, disabled, PC, RF, 0),
+                    0
+                );
                 assert_eq!(boundary(reached, PC), DEVICE_NOT_AVAILABLE);
                 BRIDGE.with_borrow(|bridge| {
                     let fault = bridge.core.as_ref().unwrap().numeric_fault.unwrap();
                     assert_eq!((fault.vector(), fault.instruction_pc), (7, PC));
                 });
-                assert_eq!(paging::core_paging_control(1, 0, cr0, PC, RF, 0), 0);
+                assert_eq!(
+                    paging::control::core_paging_control(1, 0, cr0, PC, RF, 0),
+                    0
+                );
                 assert_eq!(translation::core_validity(owner), 1);
                 assert_eq!(translation::core_activate(owner), 1);
                 assert_eq!(boundary(reached, PC), 0);
@@ -201,7 +207,10 @@ fn paged_integer_fetch_does_not_bypass_admission_at_a_numeric_neighbor() {
 fn simd_numeric_ud_uses_reached_pc_then_default_repair_returns_to_xm_without_stale_source() {
     for reached in [false, true] {
         paged(&[0x90, 0xf2, 0x0f, 0x5e, 0xc1]); // NOP; DIVSD xmm0,xmm1
-        assert_eq!(paging::core_paging_control(1, 4, 0x228, PC, RF, 0), 0);
+        assert_eq!(
+            paging::control::core_paging_control(1, 4, 0x228, PC, RF, 0),
+            0
+        );
         let divide = FloatOp {
             kind: FloatKind::Div,
             format: FloatFormat::F64,
@@ -228,7 +237,10 @@ fn simd_numeric_ud_uses_reached_pc_then_default_repair_returns_to_xm_without_sta
             );
             assert!(core.simd_exception.is_none());
         });
-        assert_eq!(paging::core_paging_control(1, 4, 0x628, PC, RF, 0), 0);
+        assert_eq!(
+            paging::control::core_paging_control(1, 4, 0x628, PC, RF, 0),
+            0
+        );
         assert_eq!(boundary(reached, PC + 1), 0);
         assert_eq!(
             numeric::core_float(divide, 0x3ff0000000000000, 0, 0, 0),

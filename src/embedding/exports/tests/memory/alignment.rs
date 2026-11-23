@@ -81,7 +81,7 @@ fn paging_import_clears_transient_alignment_only_after_validation_and_keeps_pend
         })
     };
     input("0x80040010");
-    assert_eq!(paging::core_import_paging(), 1);
+    assert_eq!(paging::control::core_import_paging(), 1);
     BRIDGE.with_borrow(|bridge| {
         let core = bridge.core.as_ref().unwrap();
         assert_eq!(core.alignment_check, failure);
@@ -89,7 +89,7 @@ fn paging_import_clears_transient_alignment_only_after_validation_and_keeps_pend
         assert_eq!(unsafe { (*core.state.get()).event_state() }, Ok(event));
     });
     input("0x11");
-    assert_eq!(paging::core_import_paging(), 0);
+    assert_eq!(paging::control::core_import_paging(), 0);
     assert_eq!(paging::core_paged_access_failed(), 0);
     BRIDGE.with_borrow(|bridge| {
         let core = bridge.core.as_ref().unwrap();

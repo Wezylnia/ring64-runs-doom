@@ -155,7 +155,7 @@ fn pending_owner_cannot_publish_after_memory_admin_at_saturated_epoch() {
 fn equal_and_irrelevant_paging_imports_keep_retained_guest_mapping_facts() {
     for change in 0..6 {
         fixture(0);
-        assert_eq!(paging::core_paging_state(), 0);
+        assert_eq!(paging::control::core_paging_state(), 0);
         BRIDGE.with_borrow_mut(|bridge| {
             let mut bank: serde_json::Value = serde_json::from_slice(&bridge.info).unwrap();
             let field = match change {
@@ -171,7 +171,7 @@ fn equal_and_irrelevant_paging_imports_keep_retained_guest_mapping_facts() {
             }
             bridge.input = serde_json::to_vec(&bank).unwrap();
         });
-        assert_eq!(paging::core_import_paging(), 0, "import {change}");
+        assert_eq!(paging::control::core_import_paging(), 0, "import {change}");
         assert_eq!(
             retained_data_physical(),
             Some(0xa000),

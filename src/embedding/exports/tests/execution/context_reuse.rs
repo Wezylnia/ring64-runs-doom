@@ -244,7 +244,7 @@ fn fsgsbase_only_changed_writes_cancel_pending_and_suspend_the_published_context
         }
         assert_eq!(core_write_segment_base(gs, noncanonical), INVALID);
         assert_eq!(
-            paging::core_paging_control(1, 4, 0x10628, 0x400000, 2, 0),
+            paging::control::core_paging_control(1, 4, 0x10628, 0x400000, 2, 0),
             0
         );
         assert_eq!(core_write_segment_base(gs, noncanonical), PROTECTION);
@@ -263,7 +263,7 @@ fn fsgsbase_only_changed_writes_cancel_pending_and_suspend_the_published_context
 
 #[test]
 fn changed_guest_root_fences_active_work_but_preserves_valid_root_bound_owners() {
-    use crate::embedding::exports::memory::paging::core_paging_control;
+    use crate::embedding::exports::memory::paging::control::core_paging_control;
     for epoch in [0, u64::MAX] {
         paged_fixture();
         assert_eq!(core_paging_control(1, 4, 0x6a8, 0x400000, 2, 0), 0); // PGE
@@ -314,7 +314,9 @@ fn changed_guest_root_fences_active_work_but_preserves_valid_root_bound_owners()
 
 #[test]
 fn context_reuse_keeps_exact_paging_fences_and_dynamic_nonfences() {
-    use crate::embedding::exports::memory::paging::{core_import_paging, core_paging_control};
+    use crate::embedding::exports::memory::paging::control::{
+        core_import_paging, core_paging_control,
+    };
     for (kind, register, value, destructive) in [
         (1, 3, 0x1000, true),
         (1, 0, 0x80010033, true),
@@ -499,7 +501,7 @@ fn context_proof_all_seven_publishers_clear_a_primed_proof_even_at_saturation() 
                     );
                 }
                 _ => assert_eq!(
-                    paging::core_paging_control(3, 0xc0000100, 0x10000, 0x400000, 2, 0),
+                    paging::control::core_paging_control(3, 0xc0000100, 0x10000, 0x400000, 2, 0),
                     0
                 ),
             }
@@ -539,7 +541,10 @@ fn context_proof_does_not_override_image_alias_death_release_or_paging_fences() 
     paged_fixture();
     let owner = paged_owner();
     assert_eq!(translation::core_activate(owner), 1);
-    assert_eq!(paging::core_paging_control(1, 3, 0x1000, 0x400000, 2, 0), 0);
+    assert_eq!(
+        paging::control::core_paging_control(1, 3, 0x1000, 0x400000, 2, 0),
+        0
+    );
     assert_eq!(
         translation::core_activate(owner),
         0,
@@ -549,7 +554,7 @@ fn context_proof_does_not_override_image_alias_death_release_or_paging_fences() 
 
 #[test]
 fn numeric_publication_retains_live_guards_but_cancels_pending_aba_at_epoch_max() {
-    use crate::embedding::exports::memory::paging::core_paging_control;
+    use crate::embedding::exports::memory::paging::control::core_paging_control;
     for epoch in [0, u64::MAX - 1, u64::MAX] {
         paged_fixture();
         BRIDGE.with_borrow_mut(|b| b.core.as_mut().unwrap().context_version = epoch);

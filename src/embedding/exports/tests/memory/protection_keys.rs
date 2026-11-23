@@ -28,7 +28,10 @@ fn bank() -> Keys {
 #[test]
 fn pkrs_msr_is_live_with_pks_disabled_and_rejects_reserved_upper_bits_atomically() {
     setup();
-    assert_eq!(paging::core_paging_control(2, PKRS_MSR, 0, 0x1000, 2, 0), 0);
+    assert_eq!(
+        paging::control::core_paging_control(2, PKRS_MSR, 0, 0x1000, 2, 0),
+        0
+    );
     BRIDGE.with_borrow(|bridge| {
         let raw = unsafe { &*bridge.core.as_ref().unwrap().state.get() };
         assert_eq!(
@@ -38,7 +41,7 @@ fn pkrs_msr_is_live_with_pks_disabled_and_rejects_reserved_upper_bits_atomically
     });
     for value in [0, u64::from(u32::MAX)] {
         assert_eq!(
-            paging::core_paging_control(3, PKRS_MSR, value, 0x1000, 2, 0),
+            paging::control::core_paging_control(3, PKRS_MSR, value, 0x1000, 2, 0),
             0
         );
         assert_eq!(
@@ -51,7 +54,7 @@ fn pkrs_msr_is_live_with_pks_disabled_and_rejects_reserved_upper_bits_atomically
     }
     for value in [1 << 32, u64::MAX] {
         assert_eq!(
-            paging::core_paging_control(3, PKRS_MSR, value, 0x1000, 2, 0),
+            paging::control::core_paging_control(3, PKRS_MSR, value, 0x1000, 2, 0),
             crate::embedding::layout::PROTECTION
         );
         assert_eq!(

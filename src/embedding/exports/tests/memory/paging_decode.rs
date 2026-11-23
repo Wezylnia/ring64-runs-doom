@@ -721,7 +721,7 @@ fn paged_decode_retains_a_guest_pte_remap_until_invlpg() {
         assert_mov(0, core.paged_decode(PC).unwrap());
     });
     assert_eq!(
-        paging::core_paging_control(4, Segment::Ds as u32, PC, PC, RF, 0),
+        paging::control::core_paging_control(4, Segment::Ds as u32, PC, PC, RF, 0),
         0
     );
     BRIDGE.with_borrow_mut(|bridge| {
@@ -767,7 +767,7 @@ fn lmsw_memory_checks_privilege_and_the_full_word_before_publishing_cr0() {
         debug.write(7, 0x0003_0001);
         (core.paging.unwrap(), core.context.clone())
     });
-    let lmsw = || paging::core_paging_control(7, Segment::Ds as u32, 0x1fff, PC, RF, 0);
+    let lmsw = || paging::control::core_paging_control(7, Segment::Ds as u32, 0x1fff, PC, RF, 0);
     physical_counts::take();
     assert_eq!(lmsw(), crate::embedding::layout::PROTECTION);
     assert_eq!(physical_counts::take(), [0; 6], "no explicit read at CPL3");
@@ -822,7 +822,10 @@ fn lmsw_register_writes_only_numeric_bits_and_a_sticky_pe() {
         core.context.set_mode_and_cpl(Mode::Real, 0);
         core.context.clone()
     });
-    assert_eq!(paging::core_paging_control(6, 0, 0xfff1, PC, RF, 0), 0);
+    assert_eq!(
+        paging::control::core_paging_control(6, 0, 0xfff1, PC, RF, 0),
+        0
+    );
     BRIDGE.with_borrow(|bridge| {
         let core = bridge.core.as_ref().unwrap();
         let mut expected = initial_context;
@@ -830,7 +833,10 @@ fn lmsw_register_writes_only_numeric_bits_and_a_sticky_pe() {
         assert_eq!(core.context, expected);
         assert_eq!(core.paging.unwrap().cr0, 0x60040031);
     });
-    assert_eq!(paging::core_paging_control(6, 0, 0xfffa, PC, RF, 0), 0);
+    assert_eq!(
+        paging::control::core_paging_control(6, 0, 0xfffa, PC, RF, 0),
+        0
+    );
     BRIDGE.with_borrow(|bridge| {
         let core = bridge.core.as_ref().unwrap();
         assert_eq!(core.context.mode(), Mode::Protected);

@@ -241,7 +241,7 @@ fn invpcid_type_scopes_preserve_other_pcids_addresses_and_globals() {
         assert_eq!(core_paged_load(0x6000, 4), 0x22222222);
         assert_eq!(core_paged_load(0x9000, 4), 0x33333333);
         assert_eq!(
-            paging::core_paging_control(1, 3, 0x8000000000004002, 0x1000, 2, 0),
+            paging::control::core_paging_control(1, 3, 0x8000000000004002, 0x1000, 2, 0),
             0
         );
         assert_eq!(core_paged_load(0x4000, 4), 0x11111111);
@@ -254,7 +254,7 @@ fn invpcid_type_scopes_preserve_other_pcids_addresses_and_globals() {
         });
         assert_eq!(core_invpcid(Segment::Ds as u32, 0x5000, kind, 2), 0);
         assert_eq!(
-            paging::core_paging_control(1, 3, 0x8000000000004001, 0x1000, 2, 0),
+            paging::control::core_paging_control(1, 3, 0x8000000000004001, 0x1000, 2, 0),
             0
         );
         assert_eq!(core_paged_load(0x4000, 4), 0x22222222, "type{kind} target");
@@ -269,7 +269,7 @@ fn invpcid_type_scopes_preserve_other_pcids_addresses_and_globals() {
             "type{kind} global"
         );
         assert_eq!(
-            paging::core_paging_control(1, 3, 0x8000000000004002, 0x1000, 2, 0),
+            paging::control::core_paging_control(1, 3, 0x8000000000004002, 0x1000, 2, 0),
             0
         );
         assert_eq!(

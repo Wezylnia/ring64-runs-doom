@@ -118,7 +118,7 @@ fn loaded_cs_activation_invalidity_precedes_a_combined_paging_and_alignment_writ
             .set_segment(Segment::Cs, 8, c.context.segment(Segment::Cs), attrs);
     });
     assert_eq!(
-        crate::embedding::exports::memory::paging::core_paging_control(
+        crate::embedding::exports::memory::paging::control::core_paging_control(
             1, 0, 0x80040033, 0x1000, 2, 0
         ),
         crate::embedding::layout::PROTECTION

@@ -149,8 +149,8 @@ fn initial_image(input: &[u8], metadata_len: u32) -> Result<InitialImage, Memory
             image!(mapped, false).map(InitialImage::linear)
         }
         Some(Value::String(model)) if model == "ia32e-paged" => {
-            let state =
-                super::paging::parse_bank(&config["paging"]).map_err(MemoryError::Invalid)?;
+            let state = super::paging::control::parse_bank(&config["paging"])
+                .map_err(MemoryError::Invalid)?;
             state.validate().map_err(MemoryError::Invalid)?;
             let fast_system = config
                 .get("fastSystem")
@@ -175,8 +175,8 @@ fn initial_image(input: &[u8], metadata_len: u32) -> Result<InitialImage, Memory
                 .unwrap_or_default();
             let context = ExecutionContext::from_json_profile(&config["context"], true)
                 .map_err(MemoryError::Invalid)?;
-            let state =
-                super::paging::parse_bank(&config["paging"]).map_err(MemoryError::Invalid)?;
+            let state = super::paging::control::parse_bank(&config["paging"])
+                .map_err(MemoryError::Invalid)?;
             state
                 .validate_physical_context(&context)
                 .map_err(MemoryError::Invalid)?;

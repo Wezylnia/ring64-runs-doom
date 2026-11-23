@@ -90,10 +90,13 @@ fn timestamp_bridge_uses_the_live_delta_without_settling_and_cpuid_ignores_tsd()
 #[test]
 fn time_msr_bridge_rebases_the_authoritative_bank_and_distinguishes_fault_phases() {
     prepare(true, 0, false);
-    assert_eq!(paging::core_paging_control(2, TSC_MSR, 0, 0x1000, 2, 9), 0);
+    assert_eq!(
+        paging::control::core_paging_control(2, TSC_MSR, 0, 0x1000, 2, 9),
+        0
+    );
     assert_eq!(u64::from_le_bytes(scratch()[..8].try_into().unwrap()), 109);
     assert_eq!(
-        paging::core_paging_control(3, TSC_MSR, u64::MAX, 0x1000, 2, 9),
+        paging::control::core_paging_control(3, TSC_MSR, u64::MAX, 0x1000, 2, 9),
         0
     );
     assert_eq!(time().tsc, u64::MAX - 10);
@@ -103,7 +106,7 @@ fn time_msr_bridge_rebases_the_authoritative_bank_and_distinguishes_fault_phases
     assert_eq!(time().tsc, u64::MAX);
     let before = time();
     assert_eq!(
-        paging::core_paging_control(3, TSC_AUX_MSR, 1 << 32, 0x1000, 2, 0),
+        paging::control::core_paging_control(3, TSC_AUX_MSR, 1 << 32, 0x1000, 2, 0),
         PROTECTION
     );
     assert_eq!(time(), before);
@@ -120,7 +123,7 @@ fn time_msr_bridge_rebases_the_authoritative_bank_and_distinguishes_fault_phases
         )
     });
     assert_eq!(
-        paging::core_paging_control(3, TSC_AUX_MSR, 0x12345678, 0x1000, 2, 0),
+        paging::control::core_paging_control(3, TSC_AUX_MSR, 0x12345678, 0x1000, 2, 0),
         0
     );
     assert_eq!(time().tsc_aux, 0x12345678);
@@ -133,7 +136,7 @@ fn time_msr_bridge_rebases_the_authoritative_bank_and_distinguishes_fault_phases
             .set_mode_and_cpl(Mode::Protected, 3)
     });
     assert_eq!(
-        paging::core_paging_control(3, TSC_AUX_MSR, 1 << 32, 0x1000, 2, 0),
+        paging::control::core_paging_control(3, TSC_AUX_MSR, 1 << 32, 0x1000, 2, 0),
         PROTECTION
     );
     BRIDGE.with_borrow(|bridge| {
@@ -150,7 +153,7 @@ fn time_msr_bridge_rebases_the_authoritative_bank_and_distinguishes_fault_phases
     });
     prepare(false, 0, false);
     assert_eq!(
-        paging::core_paging_control(2, TSC_MSR, 0, 0x1000, 2, 0),
+        paging::control::core_paging_control(2, TSC_MSR, 0, 0x1000, 2, 0),
         UNSUPPORTED
     );
 }
@@ -244,7 +247,10 @@ fn tsd_only_guest_and_host_pae_changes_never_reload_the_unmapped_pdpt() {
     BRIDGE.with_borrow_mut(|bridge| bridge.core.as_mut().unwrap().paging = Some(original));
     let before = time();
     let epoch = context::core_context_version();
-    assert_eq!(paging::core_paging_control(1, 4, 0x62c, 0x1000, 2, 123), 0);
+    assert_eq!(
+        paging::control::core_paging_control(1, 4, 0x62c, 0x1000, 2, 123),
+        0
+    );
     BRIDGE.with_borrow(|bridge| {
         let core = bridge.core.as_ref().unwrap();
         assert_eq!(core.paging.unwrap().pdpte, original.pdpte);
@@ -254,12 +260,12 @@ fn tsd_only_guest_and_host_pae_changes_never_reload_the_unmapped_pdpt() {
     BRIDGE.with_borrow_mut(|bridge| {
         bridge.input = br#"{"cr0":"0x80000033","cr2":"0x0","cr3":"0x8000","cr4":"0x628","efer":"0x0","pdpte":["0x3001","0x0","0x0","0x0"]}"#.to_vec();
     });
-    assert_eq!(paging::core_import_paging(), 0);
+    assert_eq!(paging::control::core_import_paging(), 0);
     assert_eq!(context::core_context_version(), epoch);
     assert_eq!(time(), before);
     // The same-root CR3 control proves a real reload cannot succeed in this image.
     assert_eq!(
-        paging::core_paging_control(1, 3, 0x8000, 0x1000, 2, 123),
+        paging::control::core_paging_control(1, 3, 0x8000, 0x1000, 2, 123),
         25
     );
     BRIDGE.with_borrow(|bridge| {
@@ -277,7 +283,7 @@ fn time_msr_unknown_frontiers_and_privilege_rejection_keep_the_output_packet() {
             prepare(true, 3, false);
             let before = (time(), scratch());
             assert_eq!(
-                paging::core_paging_control(
+                paging::control::core_paging_control(
                     if write { 3 } else { 2 },
                     index,
                     u64::MAX,
@@ -306,11 +312,11 @@ fn time_msr_unknown_frontiers_and_privilege_rejection_keep_the_output_packet() {
         prepare(true, 0, false);
         let before = (time(), scratch());
         assert_eq!(
-            paging::core_paging_control(2, index, 0, 0x1000, 2, 123),
+            paging::control::core_paging_control(2, index, 0, 0x1000, 2, 123),
             UNSUPPORTED
         );
         assert_eq!(
-            paging::core_paging_control(3, index, u64::MAX, 0x1000, 2, 123),
+            paging::control::core_paging_control(3, index, u64::MAX, 0x1000, 2, 123),
             UNSUPPORTED
         );
         assert_eq!((time(), scratch()), before);
@@ -353,7 +359,7 @@ fn xcr_access_requires_osxsave_and_uses_low_input_dwords_at_the_current_cpl() {
     );
     for kind in [2, 3] {
         assert_eq!(
-            paging::core_paging_control(kind, XSS_MSR, 0, 0x1000, 2, 0),
+            paging::control::core_paging_control(kind, XSS_MSR, 0, 0x1000, 2, 0),
             PROTECTION
         );
     }

@@ -77,7 +77,7 @@ fn import_bits(bits: u64) {
         serde_json::json!({"cr0":"0x80000033","cr2":"0xabc","cr3":"0x1000","cr4":format!("0x{:x}",0x608|bits),"efer":"0x0"}),
         &[],
     );
-    assert_eq!(paging::core_import_paging(), 0);
+    assert_eq!(paging::control::core_import_paging(), 0);
 }
 
 #[test]
@@ -151,7 +151,7 @@ fn supervisor_control_fences_cancel_pending_and_aba_owners_at_epoch_saturation()
             assert_eq!(translation::core_validity(installed), 1);
             assert_eq!(translation::core_validity(pending), 1);
             assert_eq!(
-                paging::core_paging_control(1, 4, 0x608, 0x1000, 2 | AC, 0),
+                paging::control::core_paging_control(1, 4, 0x608, 0x1000, 2 | AC, 0),
                 0
             );
             assert_eq!(translation::core_validity(installed), 1);
@@ -165,7 +165,7 @@ fn supervisor_control_fences_cancel_pending_and_aba_owners_at_epoch_saturation()
             assert!(fresh > pending);
             assert_eq!(translation::core_publish(fresh), 1);
             assert_eq!(
-                paging::core_paging_control(1, 4, 0x608 | bits, 0x1000, 2 | AC, 0),
+                paging::control::core_paging_control(1, 4, 0x608 | bits, 0x1000, 2 | AC, 0),
                 0
             );
             assert_eq!(translation::core_validity(fresh), 0);
