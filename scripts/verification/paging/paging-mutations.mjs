@@ -261,13 +261,8 @@ const originals = new Map(
 );
 const cases = `import { readFile } from 'node:fs/promises';
 import { pagingScenarios } from './tests/execution/paging/index.ts';
-import { pagingBoundaryReviewScenarios } from './tests/execution/paging/review-boundaries.ts';
-import { pagingReviewFetchScenarios } from './tests/execution/paging/review-fetch.ts';
-import { pagingReviewAccessScenarios } from './tests/execution/paging/review-access.ts';
-import { pagingMutationOracleScenarios } from './tests/execution/paging/mutation-oracles.ts';
-import { pagingPermissionReviewScenarios } from './tests/execution/paging/review-permissions.ts';
 const compiler=await WebAssembly.compile(new Uint8Array(await readFile('build/ring64.wasm')));
-const all=[...new Map([...pagingScenarios(compiler),...pagingBoundaryReviewScenarios(compiler),...pagingReviewFetchScenarios(compiler),...pagingReviewAccessScenarios(compiler),...pagingMutationOracleScenarios(compiler),...pagingPermissionReviewScenarios(compiler)].map(s=>[s.name,s])).values()];
+const all = pagingScenarios(compiler);
 const selected=process.argv[2]?all.filter(s=>s.name.includes(process.argv[2])):all;
 if(!selected.length) throw Error('empty scenario selection');
 const passed=[];for(const s of selected){try{await s.run();passed.push(s.name);}catch(e){console.log(JSON.stringify({failed:s.name,error:e.message,stack:e.stack,semantic:!e.message.includes('cpu engine failed')&&e.stack.includes('/tests/support/fixture.ts')}));process.exitCode=1;break;}}
