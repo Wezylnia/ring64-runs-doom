@@ -192,6 +192,32 @@ impl State {
         self.prepare_physical_cr_write(register, value, context.mode())
     }
 
+    fn normalize_cr0_write(&self, value: u64, mode: Mode) -> Result<u64, ControlFailure> {
+        if value >> 32 != 0 {
+            return Err(ControlFailure::GeneralProtection);
+        }
+        let value = (value & 0xe005003f) | 0x10;
+        if value & 0x80000001 == 0x80000000
+            || value & 0x60000000 == 0x20000000
+            || (mode == Mode::Long64 || self.cr4 & CR4_PCIDE != 0) && value & 0x80000000 == 0
+        {
+            return Err(ControlFailure::GeneralProtection);
+        }
+        Ok(value)
+    }
+
+    fn check_cr4_write(&self, value: u64) -> Result<(), ControlFailure> {
+        let defined = 0x7fff | (0x3ff << 16) | (3 << 27) | (1 << 32);
+        if value & !defined != 0
+            || value & CR4_PCIDE != 0
+                && (self.efer & 0x400 == 0 || self.cr4 & CR4_PCIDE == 0 && self.cr3 & 0xfff != 0)
+            || value & (1 << 23) != 0 && self.cr0 & CR0_WP == 0
+        {
+            return Err(ControlFailure::GeneralProtection);
+        }
+        Ok(())
+    }
+
     pub fn prepare_physical_cr_write(
         self,
         register: u8,
@@ -202,16 +228,8 @@ impl State {
         let mut candidate = self;
         match register {
             0 => {
-                if value >> 32 != 0 {
-                    return Err(GeneralProtection);
-                }
-                let value = (value & 0xe005003f) | 0x10;
-                if value & 0x80000001 == 0x80000000
-                    || value & 0x60000000 == 0x20000000
-                    || mode == Mode::Long64 && value & 0x80000000 == 0
-                    || self.cr4 & CR4_PCIDE != 0 && value & 0x80000000 == 0
-                    || value & 0x80000000 != 0 && self.efer & 0x100 != 0 && self.cr4 & 0x20 == 0
-                {
+                let value = self.normalize_cr0_write(value, mode)?;
+                if value & 0x80000000 != 0 && self.efer & 0x100 != 0 && self.cr4 & 0x20 == 0 {
                     return Err(GeneralProtection);
                 }
                 candidate.cr0 = value;
@@ -236,14 +254,8 @@ impl State {
                 }
             }
             4 => {
-                let defined = 0x7fff | (0x3ff << 16) | (3 << 27) | (1 << 32);
-                if value & !defined != 0
-                    || self.efer & 0x400 != 0
-                        && (value & 0x20 == 0 || (self.cr4 ^ value) & 0x1000 != 0)
-                    || value & CR4_PCIDE != 0
-                        && (self.efer & 0x400 == 0
-                            || self.cr4 & CR4_PCIDE == 0 && self.cr3 & 0xfff != 0)
-                    || value & (1 << 23) != 0 && self.cr0 & CR0_WP == 0
+                self.check_cr4_write(value)?;
+                if self.efer & 0x400 != 0 && (value & 0x20 == 0 || (self.cr4 ^ value) & 0x1000 != 0)
                 {
                     return Err(GeneralProtection);
                 }
@@ -358,17 +370,7 @@ impl State {
         let mut candidate = self;
         match register {
             0 => {
-                if value >> 32 != 0 {
-                    return Err(GeneralProtection);
-                }
-                let value = (value & 0xe005003f) | 0x10;
-                if value & 0x80000001 == 0x80000000
-                    || value & 0x60000000 == 0x20000000
-                    || matches!(mode, Mode::Long64) && value & 0x80000000 == 0
-                    || self.cr4 & CR4_PCIDE != 0 && value & 0x80000000 == 0
-                {
-                    return Err(GeneralProtection);
-                }
+                let value = self.normalize_cr0_write(value, mode)?;
                 if value & !(CR0_WP | CR0_AM | CR0_NUMERIC) != CR0_FIXED & !CR0_NUMERIC {
                     return Err(Unsupported);
                 }
@@ -392,15 +394,8 @@ impl State {
                     };
             }
             4 => {
-                let defined = 0x7fff | (0x3ff << 16) | (3 << 27) | (1 << 32);
-                if value & !defined != 0
-                    || value & (1 << 5) == 0
-                    || value & (1 << 12) != 0
-                    || value & CR4_PCIDE != 0
-                        && (self.efer & 0x400 == 0
-                            || self.cr4 & CR4_PCIDE == 0 && self.cr3 & 0xfff != 0)
-                    || value & (1 << 23) != 0 && self.cr0 & CR0_WP == 0
-                {
+                self.check_cr4_write(value)?;
+                if value & (1 << 5) == 0 || value & (1 << 12) != 0 {
                     return Err(GeneralProtection);
                 }
                 if value
