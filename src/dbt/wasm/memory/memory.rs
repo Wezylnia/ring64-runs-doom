@@ -570,25 +570,64 @@ impl Emitter {
     fn load_paged_pair_window(&mut self, pair: PagedDwordReadPair, read: u32, exit_depth: u32) {
         use wasm_encoder::ValType;
 
+        let handoff = pair
+            .handoff
+            .filter(|handoff| handoff.read == self.current_index);
+        let indexed = handoff.zip(self.indexed_paged_read);
         self.op(Op::LocalSet(ADDRESS))
             .op(Op::LocalGet(pair.host))
-            .op(Op::If(BlockType::Result(ValType::I32)))
-            .op(Op::LocalGet(ADDRESS))
+            .op(Op::If(BlockType::Result(ValType::I32)));
+        if let Some((handoff, locals)) = indexed {
+            // One published RAM page must cover the tail and both aligned operands
+            // carried back to the head. Keep the original clipped-window resolver on misses.
+            self.op(Op::Block(BlockType::Result(ValType::I32)))
+                .op(Op::Block(BlockType::Empty))
+                .op(Op::LocalGet(handoff.address))
+                .op(Op::LocalGet(ADDRESS))
+                .op(Op::I64Xor)
+                .op(Op::I64Const(!4095 | 3))
+                .op(Op::I64And)
+                .op(Op::I64Eqz)
+                .op(Op::I32Eqz)
+                .op(Op::BrIf(0))
+                .op(Op::LocalGet(handoff.address))
+                .op(Op::I32WrapI64)
+                .op(Op::I32Const(4095))
+                .op(Op::I32And)
+                .op(Op::I32Const(4088))
+                .op(Op::I32GtU)
+                .op(Op::BrIf(0));
+            self.indexed_read_host(locals, 4, true, IndexedOperand::Read);
+            self.op(Op::LocalTee(STORE_STATUS))
+                .op(Op::I32Eqz)
+                .op(Op::BrIf(0))
+                .op(Op::LocalGet(STORE_STATUS))
+                .op(Op::LocalGet(handoff.address))
+                .op(Op::LocalGet(ADDRESS))
+                .op(Op::I64Sub)
+                .op(Op::I32WrapI64)
+                .op(Op::I32Add)
+                .op(Op::LocalSet(pair.host))
+                .op(Op::LocalGet(STORE_STATUS))
+                .op(Op::Br(1))
+                .op(Op::End);
+        }
+        self.op(Op::LocalGet(ADDRESS))
             .op(Op::I32Const(4))
             .op(Op::I32Const(
                 crate::embedding::layout::PAGED_PAIR_WINDOW as i32,
             ))
-            .op(Op::Call(pair.resolve))
-            .op(Op::Else)
+            .op(Op::Call(pair.resolve));
+        if indexed.is_some() {
+            self.op(Op::End);
+        }
+        self.op(Op::Else)
             .op(Op::I32Const(0))
             .op(Op::End)
             .op(Op::I64ExtendI32U)
             .op(Op::LocalTee(VALUE))
             .op(Op::I32WrapI64);
-        if let Some(handoff) = pair
-            .handoff
-            .filter(|handoff| handoff.read == self.current_index)
-        {
+        if let Some(handoff) = handoff {
             // This successful tail read leaves the pair's data and execute entries newest.
             self.op(Op::I32Const(0))
                 .op(Op::I32Ne)

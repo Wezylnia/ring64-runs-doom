@@ -2876,6 +2876,7 @@ fn emit_body(
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let indexed_paged_read = (indexed_scalar_stamp.is_some()
         || indexed_dword_prefixes
+        || indexed_paging && paged_dword_read_pair.is_some_and(|pair| pair.handoff.is_some())
         || indexed_paging && unit.sampled && register_prefix_read.is_some())
     .then(|| {
         let first = super::GPR + locals.iter().map(|(count, _)| count).sum::<u32>();

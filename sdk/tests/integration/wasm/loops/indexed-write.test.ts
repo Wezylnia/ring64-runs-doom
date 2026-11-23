@@ -290,12 +290,14 @@ test('a tail read carries live paired operands only across its own loop edge', a
   };
   const imports = prototype.artifactImports;
   let pairs = 0;
+  let resolvedTails = 0;
   prototype.artifactImports = function (observed) {
     const env = imports.call(this, observed);
     const span = env.paged_loop_read_span;
     if (typeof span === 'function') {
       env.paged_loop_read_span = (address: bigint, bytes: number, segment: number) => {
         if (bytes === 8 && (segment === 6 || segment === 7)) pairs++;
+        if (bytes === 4 && segment === 8) resolvedTails++;
         return span(address, bytes, segment);
       };
     }
@@ -317,6 +319,7 @@ test('a tail read carries live paired operands only across its own loop edge', a
             initial(PC, { 0: 1n, 1: 17n, 2: draws, 3: data + 8n, 6: data + 8n, 7: 0n, 12: 0n }),
           );
           const before = pairs;
+          const tailsBefore = resolvedTails;
           const result = await cpu.run({ stop, budget: 200n });
           assert.equal(result.reason, 'stop');
           assert.equal(result.retired, draws ? 165n : 117n);
@@ -324,6 +327,10 @@ test('a tail read carries live paired operands only across its own loop edge', a
           assert.equal(result.state.registers[12], 119n);
           assert.equal(result.state.registers[7], draws ? 23n : 0n);
           const resolved = pairs - before;
+          assert.ok(
+            resolvedTails - tailsBefore <= 2,
+            'full-page tail reads should reuse the mapping',
+          );
           assert.ok(
             draws ? resolved > 0 && resolved <= 2 : resolved >= 15,
             `paired lookups with draws=${draws}: ${resolved}`,

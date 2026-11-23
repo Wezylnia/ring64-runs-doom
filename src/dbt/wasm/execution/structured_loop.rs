@@ -1896,7 +1896,12 @@ impl Emitter {
         self.system_bits();
         self.op(Op::LocalGet(super::SHADOW));
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-        if body.paged_vector_copy() && self.paged_copy_access_cache.is_some() {
+        if body.paged_vector_copy() && self.paged_copy_access_cache.is_some()
+            || self.indexed_paged_read.is_some()
+                && self
+                    .paged_dword_read_pair
+                    .is_some_and(|pair| pair.handoff.is_some())
+        {
             self.op(Op::I32Const(
                 crate::embedding::layout::paging::INDEXED_PAGED_READ_GUARD as i32,
             ))
