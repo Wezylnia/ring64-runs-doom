@@ -4,7 +4,7 @@ import { sourceScenarios } from './sources.js';
 import { stateScenarios } from './state.js';
 import { frontierScenarios } from './frontiers.js';
 import { cacheScenarios } from './cache.js';
-import { architectureReviewScenarios } from './architecture-review.js';
+import { architectureReviewScenarios } from './pending-checkpoints.js';
 import type { Scenario } from './fixture.js';
 
 export function externalInterruptScenarios(compiler: WebAssembly.Module): Scenario[] {

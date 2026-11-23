@@ -9,7 +9,7 @@ import { diagnosticScenarios } from './diagnostics.js';
 import { returnScenarios } from './frames/returns.js';
 import { boundaryScenarios } from './frames/boundaries.js';
 import { aliasScenarios } from './frames/aliases.js';
-import { cacheReviewScenarios } from './cache-review.js';
+import { cacheReviewScenarios } from './translation-refusals.js';
 
 export function softwareEventScenarios(compiler: WebAssembly.Module): Scenario[] {
   return [

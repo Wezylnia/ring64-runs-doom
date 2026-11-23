@@ -17,8 +17,8 @@ import {
   tssDescriptor,
   type Factory,
   type Scenario,
-} from './fixture.js';
-import { fastSetup, FAST_FORMS, USER } from './warm.js';
+} from '../fixture.js';
+import { fastSetup, FAST_FORMS, USER } from './warmup.js';
 
 const CODE32 = 'ffff0000009bcf00',
   CODE64 = 'ffff0000009baf00';

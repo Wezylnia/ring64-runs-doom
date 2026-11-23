@@ -1,4 +1,4 @@
-import { Core } from '../../../../sdk/src/wasm/core.js';
+import { Core } from '../../../../../sdk/src/wasm/core.js';
 import {
   changed,
   check,
@@ -10,8 +10,8 @@ import {
   same,
   type Factory,
   type Scenario,
-} from './fixture.js';
-import { fastSetup, FAST_FORMS, KERNEL, USER } from './warm.js';
+} from '../fixture.js';
+import { fastSetup, FAST_FORMS, KERNEL, USER } from '../variants/warmup.js';
 
 export function reviewPagingScenarios(compiler: WebAssembly.Module, make: Factory): Scenario[] {
   return [

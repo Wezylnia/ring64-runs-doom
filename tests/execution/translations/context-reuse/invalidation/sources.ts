@@ -1,5 +1,5 @@
-import { LIMITS } from '../../../support/fixture.js';
-import { mapping, RX, RW } from '../../memory/mappings/fixture.js';
+import { LIMITS } from '../../../../support/fixture.js';
+import { mapping, RX, RW } from '../../../memory/mappings/fixture.js';
 import {
   changed,
   check,
@@ -12,8 +12,8 @@ import {
   same,
   type Factory,
   type Scenario,
-} from './fixture.js';
-import { fastSetup, FAST_FORMS, KERNEL, USER } from './warm.js';
+} from '../fixture.js';
+import { fastSetup, FAST_FORMS, KERNEL, USER } from '../variants/warmup.js';
 
 export function sourceScenarios(compiler: WebAssembly.Module, make: Factory): Scenario[] {
   return [

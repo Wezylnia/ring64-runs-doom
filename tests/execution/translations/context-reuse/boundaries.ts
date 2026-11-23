@@ -11,7 +11,7 @@ import {
   type Factory,
   type Scenario,
 } from './fixture.js';
-import { fastSetup, FAST_FORMS, FAST, KERNEL, USER } from './warm.js';
+import { fastSetup, FAST_FORMS, FAST, KERNEL, USER } from './variants/warmup.js';
 
 export function boundaryScenarios(compiler: WebAssembly.Module, make: Factory): Scenario[] {
   return [

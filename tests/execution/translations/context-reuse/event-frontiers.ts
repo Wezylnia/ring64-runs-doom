@@ -11,7 +11,7 @@ import {
   type Factory,
   type Scenario,
 } from './fixture.js';
-import { eventSetup } from './writers.js';
+import { eventSetup } from './variants/context-writers.js';
 
 export function reviewBoundaryScenarios(compiler: WebAssembly.Module, make: Factory): Scenario[] {
   return [

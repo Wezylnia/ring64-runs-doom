@@ -12,7 +12,7 @@ import {
   same,
   type Factory,
   type Scenario,
-} from './fixture.js';
+} from '../fixture.js';
 
 export function variantScenarios(compiler: WebAssembly.Module, make: Factory): Scenario[] {
   return [

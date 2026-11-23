@@ -10,8 +10,8 @@ import {
   same,
   type Factory,
   type Scenario,
-} from './fixture.js';
-import { fastSetup, FAST_FORMS, KERNEL, USER } from './warm.js';
+} from '../fixture.js';
+import { fastSetup, FAST_FORMS, KERNEL, USER } from '../variants/warmup.js';
 
 export function fenceScenarios(compiler: WebAssembly.Module, make: Factory): Scenario[] {
   return [

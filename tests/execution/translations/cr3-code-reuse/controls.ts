@@ -1,6 +1,6 @@
 import { createCpu } from '../../../../sdk/src/index.js';
 import { initial } from '../../../support/fixture.js';
-import { FAST_FORMS, USER, USER_SP, fastSetup } from '../context-reuse/warm.js';
+import { FAST_FORMS, USER, USER_SP, fastSetup } from '../context-reuse/variants/warmup.js';
 import {
   at,
   equal,

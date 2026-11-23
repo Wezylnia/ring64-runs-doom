@@ -1,14 +1,14 @@
 import { createCpu } from '../../../../sdk/src/index.js';
-import { variantScenarios } from './variants.js';
-import { warmScenarios } from './warm.js';
-import { writerScenarios } from './writers.js';
-import { sourceScenarios } from './sources.js';
-import { fenceScenarios } from './fences.js';
-import { capacityScenarios } from './capacity.js';
+import { variantScenarios } from './variants/selection.js';
+import { warmScenarios } from './variants/warmup.js';
+import { writerScenarios } from './variants/context-writers.js';
+import { sourceScenarios } from './invalidation/sources.js';
+import { fenceScenarios } from './invalidation/fences.js';
+import { capacityScenarios } from './variants/capacity.js';
 import { lifecycleScenarios } from './lifecycle.js';
 import { boundaryScenarios } from './boundaries.js';
-import { reviewBoundaryScenarios } from './review-boundaries.js';
-import { reviewPagingScenarios } from './review-paging.js';
+import { reviewBoundaryScenarios } from './event-frontiers.js';
+import { reviewPagingScenarios } from './invalidation/root-replacement.js';
 import type { Factory, Scenario } from './fixture.js';
 
 export function contextReuseScenarios(
