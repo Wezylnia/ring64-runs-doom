@@ -63,6 +63,8 @@ struct Core {
     image: Image,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     direct_span: crate::memory::DirectSpan,
+    #[cfg(guest_memory64)]
+    guest_span: crate::memory::GuestSpan,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     return_read: crate::embedding::layout::ReturnRead,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
@@ -154,6 +156,8 @@ impl Bridge {
             image,
             #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
             direct_span: Default::default(),
+            #[cfg(guest_memory64)]
+            guest_span: Default::default(),
             #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
             return_read: Default::default(),
             #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]

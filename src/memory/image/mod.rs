@@ -11,6 +11,8 @@ use std::rc::Rc;
 
 #[cfg(guest_memory64)]
 mod memory64;
+#[cfg(guest_memory64)]
+pub(crate) use memory64::GuestSpan;
 mod storage;
 pub(super) use storage::BackingOffset;
 

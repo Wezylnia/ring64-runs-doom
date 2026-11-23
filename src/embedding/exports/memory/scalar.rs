@@ -8,6 +8,19 @@ pub extern "C" fn core_load(address: u64, width: u32) -> u64 {
     core_load_impl::<false, false>(address, width)
 }
 
+#[cfg(guest_memory64)]
+#[unsafe(no_mangle)]
+pub extern "C" fn core_guest64_span(address: u64, width: u32, write: u32) -> u32 {
+    BRIDGE.with_borrow_mut(|bridge| {
+        let core = bridge.core.as_mut().unwrap();
+        let Some(span) = core.image.guest_span(address, width, write != 0) else {
+            return 0;
+        };
+        core.guest_span = span;
+        &raw const core.guest_span as u32
+    })
+}
+
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 #[unsafe(no_mangle)]
 pub extern "C" fn core_read_span(address: u64, width: u32, segment: i32) -> u32 {

@@ -1398,6 +1398,13 @@ fn emit_body(
     let write_span = write_segments
         .contains(&true)
         .then(|| span_import("write_span"));
+    #[cfg(guest_memory64)]
+    let guest64_resolve = (!observed
+        && !segmented
+        && !paged
+        && !mmio
+        && (read_span.is_some() || write_span.is_some()))
+    .then(|| span_import("guest64_span"));
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let paged_f32_read_pair = loop_body
         .filter(|body| optional.paged_f32_read_pair && body.paged_sse())
@@ -1511,6 +1518,13 @@ fn emit_body(
     if dword_writes != 0 {
         locals.push((dword_writes.count_ones(), ValType::I64));
     }
+    #[cfg(guest_memory64)]
+    let guest64_cache = guest64_resolve.map(|resolve| {
+        let first = next_local;
+        locals.extend([(6, ValType::I64), (1, ValType::I32)]);
+        next_local += 7;
+        memory::guest64::SpanLocals { first, resolve }
+    });
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let mut span_cache = |resolve| {
         let first = next_local;
@@ -2167,6 +2181,8 @@ fn emit_body(
             (base, base + 1, base + 2)
         });
     let mut emitter = Emitter {
+        #[cfg(guest_memory64)]
+        guest64_cache,
         paged,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         paged_copy_access_cache: copy_access_cache.map(|(index, _)| index),
@@ -2801,6 +2817,20 @@ fn emit_body(
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     if let Some((_, resolver)) = copy_access_cache {
         code.function(&paged_copy::emit_copy_access_cache(resolver));
+    }
+    #[cfg(guest_memory64)]
+    if guest64_cache.is_some() {
+        imports.import(
+            "env",
+            "guest_ram",
+            EntityType::Memory(MemoryType {
+                minimum: 0,
+                maximum: None,
+                memory64: true,
+                shared: false,
+                page_size_log2: None,
+            }),
+        );
     }
     let mut module = Module::new();
     module

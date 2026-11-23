@@ -271,6 +271,7 @@ export type CoreExports = WebAssembly.Exports & {
   core_paged_loop_write_block?(address: bigint, valuePointer: number): number;
   core_paged_loop_copy_window?(source: bigint, destination: bigint, width: number): number;
   core_load(address: bigint, width: number): bigint;
+  core_guest64_span?(address: bigint, width: number, write: number): number;
   core_read_span?(address: bigint, width: number, segment: number): number;
   core_write_span?(address: bigint, width: number, segment: number): number;
   core_load_for_write(address: bigint, width: number): bigint;

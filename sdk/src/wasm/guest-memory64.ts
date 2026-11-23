@@ -97,6 +97,6 @@ export function bindGuestMemory64() {
   }
   return {
     env: { memory },
-    guest64: { allocate, release, read: helpers.read!, write: helpers.write! },
+    guest64: { ram, allocate, release, read: helpers.read!, write: helpers.write! },
   };
 }

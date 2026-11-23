@@ -1,5 +1,7 @@
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 pub(super) mod flat;
+#[cfg(guest_memory64)]
+pub(super) mod guest64;
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 pub(super) mod indexed;
 pub(super) mod mmio;
@@ -638,6 +640,11 @@ impl Emitter {
             operand,
             DirectOperand::ScalarStore(_) | DirectOperand::VectorBlockStore { .. }
         );
+        #[cfg(guest_memory64)]
+        if let Some(cache) = self.guest64_cache {
+            self.guest64_access(operand, bytes, store, cache, exit_depth, slow);
+            return true;
+        }
         if self.segment == Segment::Ss
             && let Some((host, access)) = self.flat_stack_access
             && let Some(offset) = match operand {
@@ -790,6 +797,13 @@ impl Emitter {
             align: 0,
             memory_index: 0,
         };
+        self.direct_operand(operand, memory);
+        self.op(Op::End);
+        true
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    fn direct_operand(&mut self, operand: DirectOperand, memory: MemArg) {
         match operand {
             DirectOperand::VectorDword(vector) => {
                 self.op(Op::V128Load32Zero(memory)).op(Op::LocalSet(vector));
@@ -810,8 +824,6 @@ impl Emitter {
                 self.op(Op::I32Const(1)).op(Op::LocalSet(STORE_STATUS));
             }
         }
-        self.op(Op::End);
-        true
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]

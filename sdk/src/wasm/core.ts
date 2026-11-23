@@ -346,13 +346,17 @@ export class Core {
   #stateDataView?: DataView;
   #standaloneStateBuffer: ArrayBuffer | undefined;
 
+  get memory64(): boolean {
+    return this.guestRam !== undefined;
+  }
+
   protected constructor(
     exports: CoreExports,
     readonly isPaged = false,
     readonly physicalControls = false,
     private readonly io?: IoBridge,
     private readonly mmio?: MmioBridge,
-    readonly memory64 = false,
+    private readonly guestRam?: WebAssembly.Memory,
   ) {
     this.#exports = exports;
     const takeSourceInvalidation = exports.core_take_source_invalidation;
@@ -490,8 +494,9 @@ export class Core {
           memory.backings.some((b) => b.byteLength !== undefined))
       )
         throw new TypeError('extended backing size requires the memory64 compiler');
+      const binding = memory64 ? bindGuestMemory64() : undefined;
       const instance = await WebAssembly.instantiate(module, {
-        ...(memory64 && bindGuestMemory64()),
+        ...binding,
         io: io.imports,
         mmio: mmio?.imports ?? unconfiguredMmioImports,
       });
@@ -526,7 +531,7 @@ export class Core {
         metadataLength,
         io,
         physicalControls ? undefined : context,
-        () => new Core(exports, isPaged, physicalControls, io, mmio, memory64),
+        () => new Core(exports, isPaged, physicalControls, io, mmio, binding?.guest64.ram),
       );
     } catch (error) {
       io.release();
@@ -1318,7 +1323,16 @@ export class Core {
   }
 
   protected artifactImports(observed: boolean): Record<string, WebAssembly.ImportValue> {
-    return bindArtifactImports(this.#exports, { observed, paged: this.isPaged, mmio: !!this.mmio });
+    const env = bindArtifactImports(this.#exports, {
+      observed,
+      paged: this.isPaged,
+      mmio: !!this.mmio,
+    });
+    if (this.guestRam) {
+      env.guest_ram = this.guestRam;
+      env.guest64_span = this.#exports.core_guest64_span!;
+    }
+    return env;
   }
 
   execute(

@@ -41,3 +41,35 @@ impl Drop for Extent {
         unsafe { release(self.base) };
     }
 }
+
+#[derive(Clone, Copy, Debug, Default)]
+#[repr(C)]
+pub(crate) struct GuestSpan {
+    pub(crate) base: u64,
+    pub(crate) length: u64,
+    pub(crate) host: u64,
+}
+
+impl super::Image {
+    pub(crate) fn guest_span(&self, address: u64, width: u32, write: bool) -> Option<GuestSpan> {
+        if self.physical || width == 0 {
+            return None;
+        }
+        let mapping = &self.mappings[self.locate_index(address)?];
+        let relative = address - mapping.base;
+        if write {
+            if !self.direct_mapping_writable(mapping, relative, width) {
+                return None;
+            }
+        } else if !mapping.permissions.read
+            || u64::from(width) > u64::from(mapping.length) - relative
+        {
+            return None;
+        }
+        Some(GuestSpan {
+            base: mapping.base,
+            length: u64::from(mapping.length),
+            host: self.backings[mapping.backing].extent.base + mapping.offset,
+        })
+    }
+}
