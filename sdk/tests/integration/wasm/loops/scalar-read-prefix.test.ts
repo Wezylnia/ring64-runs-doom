@@ -263,11 +263,20 @@ test('a sampled prefix can decline a narrow read after a stack comparison and br
   const compile = Core.prototype.compile;
   Core.prototype.compile = function (pc, limits, seeds, regionPoints) {
     if (pc === PC && !seeds?.length)
-      return compile.call(this, pc, limits, offsets.map((offset) => PC + BigInt(offset)), true);
+      return compile.call(
+        this,
+        pc,
+        limits,
+        offsets.map((offset) => PC + BigInt(offset)),
+        true,
+      );
     return compile.call(this, pc, limits, seeds, regionPoints);
   };
   try {
-    for (const [opcode, expected] of [['b6', 7n], ['b7', 0x807n]] as const) {
+    for (const [opcode, expected] of [
+      ['b6', 7n],
+      ['b7', 0x807n],
+    ] as const) {
       const code = '488d4701483b0424770c0f' + opcode + '174801d183fa077401f490f4';
       const source = PC + 4096n;
       const data = new Uint8Array(4096);
