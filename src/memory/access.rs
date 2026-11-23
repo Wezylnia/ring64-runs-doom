@@ -5,6 +5,19 @@ use super::{Access, Cause, Fault, Image};
 mod prepared;
 pub(crate) use prepared::{PreparedPhysicalUpdate, PreparedPhysicalWrite};
 
+#[inline]
+fn copy_field(target: &mut [u8], source: &[u8]) {
+    match target.len() {
+        1 => target[0] = source[0],
+        2 => target[..2].copy_from_slice(&source[..2]),
+        4 => target[..4].copy_from_slice(&source[..4]),
+        8 => target[..8].copy_from_slice(&source[..8]),
+        10 => target[..10].copy_from_slice(&source[..10]),
+        16 => target[..16].copy_from_slice(&source[..16]),
+        _ => target.copy_from_slice(source),
+    }
+}
+
 impl Image {
     pub fn physical_fetch(&self, address: u64) -> Result<u8, Fault> {
         let first = self.preflight::<true>(address, 1, Access::Execute, false, false)?;
@@ -279,21 +292,7 @@ impl Image {
             return output;
         }
         let mut output = [0; 16];
-        let mut cursor = address;
-        let mut copied = 0;
-        while copied < width as usize {
-            let mapping = &self.mappings[index];
-            let offset = mapping.offset as usize + (cursor - mapping.base) as usize;
-            let count =
-                (width as usize - copied).min((mapping.end() - u128::from(cursor)) as usize);
-            output[copied..copied + count]
-                .copy_from_slice(&self.backings[mapping.backing].bytes[offset..offset + count]);
-            copied += count;
-            if copied < width as usize {
-                cursor += count as u64;
-                index += 1;
-            }
-        }
+        self.read_across_mappings(address, &mut output[..width as usize], &mut index);
         output
     }
 
@@ -360,40 +359,36 @@ impl Image {
                 let begin = offset + start as usize;
                 let source = &backing[begin..begin + length as usize];
                 let target = &mut output[start as usize..(start + length) as usize];
-                match length {
-                    1 => target[0] = source[0],
-                    2 => target[..2].copy_from_slice(&source[..2]),
-                    4 => target[..4].copy_from_slice(&source[..4]),
-                    8 => target[..8].copy_from_slice(&source[..8]),
-                    10 => target[..10].copy_from_slice(&source[..10]),
-                    16 => target[..16].copy_from_slice(&source[..16]),
-                    _ => target.copy_from_slice(source),
-                }
+                copy_field(target, source);
             }
             return Ok(());
         }
         for &(start, length) in fields {
-            let mut cursor = address + u64::from(start);
+            let cursor = address + u64::from(start);
             while self.mappings[index].end() <= u128::from(cursor) {
                 index += 1;
             }
             let target = &mut output[start as usize..(start + length) as usize];
-            let mut copied = 0;
-            while copied < target.len() {
-                let mapping = &self.mappings[index];
-                let relative = (cursor - mapping.base) as usize;
-                let offset = mapping.offset as usize + relative;
-                let count = (target.len() - copied).min(mapping.length as usize - relative);
-                target[copied..copied + count]
-                    .copy_from_slice(&self.backings[mapping.backing].bytes[offset..offset + count]);
-                copied += count;
-                if copied < target.len() {
-                    cursor += count as u64;
-                    index += 1;
-                }
-            }
+            self.read_across_mappings(cursor, target, &mut index);
         }
         Ok(())
+    }
+
+    fn read_across_mappings(&self, mut cursor: u64, target: &mut [u8], index: &mut usize) {
+        let mut copied = 0;
+        while copied < target.len() {
+            let mapping = &self.mappings[*index];
+            let relative = (cursor - mapping.base) as usize;
+            let offset = mapping.offset as usize + relative;
+            let count = (target.len() - copied).min(mapping.length as usize - relative);
+            target[copied..copied + count]
+                .copy_from_slice(&self.backings[mapping.backing].bytes[offset..offset + count]);
+            copied += count;
+            if copied < target.len() {
+                cursor += count as u64;
+                *index += 1;
+            }
+        }
     }
 
     pub fn write_fields(
@@ -437,15 +432,7 @@ impl Image {
                 }
                 let target = &mut backing.bytes[begin..end];
                 let source = &bytes[start as usize..(start + length) as usize];
-                match length {
-                    1 => target[0] = source[0],
-                    2 => target[..2].copy_from_slice(&source[..2]),
-                    4 => target[..4].copy_from_slice(&source[..4]),
-                    8 => target[..8].copy_from_slice(&source[..8]),
-                    10 => target[..10].copy_from_slice(&source[..10]),
-                    16 => target[..16].copy_from_slice(&source[..16]),
-                    _ => target.copy_from_slice(source),
-                }
+                copy_field(target, source);
             }
             return Ok(());
         }
