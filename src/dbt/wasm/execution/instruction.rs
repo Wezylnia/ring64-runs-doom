@@ -1375,16 +1375,16 @@ impl Emitter {
     ) {
         use super::REMAINING;
 
+        debug_assert!(first.pc <= last.pc);
+        // An unsigned difference places stops below the prefix above its span.
         self.op(Op::LocalGet(REMAINING))
             .op(Op::I64Const(i64::from(count)))
             .op(Op::I64GeU)
             .op(Op::LocalGet(3))
             .op(Op::LocalGet(2))
             .op(Op::I64Const(first.pc as i64))
-            .op(Op::I64GeU)
-            .op(Op::I32And)
-            .op(Op::LocalGet(2))
-            .op(Op::I64Const(last.pc as i64))
+            .op(Op::I64Sub)
+            .op(Op::I64Const((last.pc - first.pc) as i64))
             .op(Op::I64LeU)
             .op(Op::I32And)
             .op(Op::I32Eqz)
