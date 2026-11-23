@@ -2234,6 +2234,32 @@ fn emit_body(
         write_caches[1] = write_caches[1].map(|span| span.with_dword_bound(stack_dword_bound));
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let flat_stack_windows = flat_integer_groups
+        .as_ref()
+        .filter(|_| {
+            complete_flat_call && flat_stack_pointer_span.is_some() && write_caches[1].is_some()
+        })
+        .map(|groups| {
+            groups
+                .iter()
+                .enumerate()
+                .map(|(first, end)| {
+                    super::flat_stack::FlatStackWindow::recognize(
+                        &unit.context,
+                        &unit.instructions[first..(*end)?],
+                    )
+                })
+                .collect::<Vec<_>>()
+        })
+        .filter(|windows| windows.iter().any(Option::is_some));
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    let flat_stack_host = flat_stack_windows.as_ref().map(|_| {
+        let host = next_local;
+        locals.push((1, ValType::I32));
+        next_local += 1;
+        host
+    });
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let linear_scalar_copy_prefix =
         (!paged && !observed && !mmio && optional.scalar_copy_prefix && !unit.context.is_long64())
             .then(|| ScalarCopyGroup::finite_prefix(unit, [loop_body, None]))
@@ -2802,6 +2828,8 @@ fn emit_body(
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         flat_stack_pointer_span,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        flat_stack_access: None,
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         stack_pointer_relative: false,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         read_loop_diamond,
@@ -3090,7 +3118,15 @@ fn emit_body(
             .as_ref()
             .and_then(|groups| groups[index])
         {
-            emitter.emit_flat_integer_group(&unit.instructions[index..end], loop_depth);
+            let stack_window = flat_stack_windows
+                .as_ref()
+                .and_then(|windows| windows[index].as_ref())
+                .zip(flat_stack_host);
+            emitter.emit_flat_integer_group(
+                &unit.instructions[index..end],
+                loop_depth,
+                stack_window,
+            );
         }
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         let additional =

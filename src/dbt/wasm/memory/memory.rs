@@ -1023,6 +1023,28 @@ impl Emitter {
             operand,
             DirectOperand::ScalarStore(_) | DirectOperand::VectorBlockStore { .. }
         );
+        if self.segment == Segment::Ss
+            && let Some((host, access)) = self.flat_stack_access
+            && let Some(offset) = match operand {
+                DirectOperand::ScalarLoad(Width::W32) => access.read,
+                DirectOperand::ScalarStore(Width::W32) => access.write,
+                _ => None,
+            }
+        {
+            let arg = MemArg {
+                offset: offset as u64,
+                align: 0,
+                memory_index: 0,
+            };
+            self.op(Op::LocalGet(host));
+            if store {
+                self.op(Op::LocalGet(RESULT));
+                self.direct_scalar_store(Width::W32, arg);
+            } else {
+                self.direct_scalar_load(Width::W32, arg);
+            }
+            return true;
+        }
         let stack_pointer = !store
             && self.segment == Segment::Ss
             && self.stack_pointer_relative
@@ -1198,7 +1220,15 @@ impl Emitter {
     }
 
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    fn flat_span_contains(&mut self, span: SpanCache, bytes: u32) {
+    pub(super) fn flat_span_pointer(&mut self, span: SpanCache) {
+        self.op(Op::LocalGet(span.host))
+            .op(Op::LocalGet(VALUE))
+            .op(Op::I32WrapI64)
+            .op(Op::I32Add);
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(super) fn flat_span_contains(&mut self, span: SpanCache, bytes: u32) {
         // A retained span cannot cross 4 GiB. An offset below its base
         // wraps to an unsigned delta at or beyond the end of that span.
         self.op(Op::I32WrapI64)

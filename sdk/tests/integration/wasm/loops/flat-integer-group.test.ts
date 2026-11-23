@@ -666,3 +666,73 @@ test('a flat read chain does not reuse a disjoint loop indexed window', async ()
     Core.prototype.compile = compile;
   }
 });
+
+test('funded stack groups preserve wrapped offsets and partial stack effects', async () => {
+  const head = 0x31000n;
+  const stack = 0xffffffe8n;
+  // PUSH EAX; PUSH ECX; CALL EBX; ADD ESP,8; DEC EDX; JNZ head; HLT;
+  // PUSH ESI; MOV EAX,[ESP+8]; MOV ECX,[ESP+12]; POP ESI; RET.
+  const code = hex('5051ffd383c4084a75f6f4568b4424088b4c240c5ec3');
+  const seeds = [0n, 1n, 2n, 4n, 7n, 8n, 10n, 11n, 12n, 16n, 20n, 21n].map(
+    (offset) => head + offset,
+  );
+  const compile = Core.prototype.compile;
+  Core.prototype.compile = function (pc, limits, entries, regionPoints) {
+    if (pc === head && !entries?.length) return compile.call(this, pc, limits, seeds, true);
+    return compile.call(this, pc, limits, entries, regionPoints);
+  };
+  try {
+    const cpu = await createCpu({
+      compiler,
+      entry: head,
+      limits: LIMITS,
+      context: protectedSnapshot(),
+      memoryLimits: { maxBackings: 2, maxMappings: 2, maxBackingBytes: code.length + 24 },
+      memory: {
+        backings: [
+          { id: 'code', bytes: code },
+          { id: 'stack', bytes: new Uint8Array(24) },
+        ],
+        mappings: [
+          {
+            base: head,
+            backing: 'code',
+            offset: 0,
+            length: code.length,
+            permissions: { read: true, write: false, execute: true },
+          },
+          {
+            base: stack,
+            backing: 'stack',
+            offset: 0,
+            length: 24,
+            permissions: { read: true, write: true, execute: false },
+          },
+        ],
+      },
+    });
+    try {
+      for (const [sp, stop, reason, retired, rip, expectedSp] of [
+        [0x100000000n, 10n, 'stop', 22n, 10n, 0x100000000n],
+        [0x100000000n, 10n, 'stop', 22n, 10n, 0x100000000n],
+        [0x100000000n, 12n, 'stop', 4n, 12n, 0x1fffffff0n],
+        [stack + 12n, 10n, 'data-fault', 3n, 11n, stack],
+      ] as const) {
+        cpu.setState(initial(head, { 0: 10n, 1: 20n, 2: 2n, 3: head + 11n, 4: sp, 6: 50n }));
+        const result = await cpu.run({ budget: 64n, stop: head + stop });
+        assert.equal(result.reason, reason);
+        assert.equal(result.retired, retired);
+        assert.equal(result.state.rip, head + rip);
+        assert.deepEqual(result.state.registers.slice(0, 2), [10n, 20n]);
+        assert.equal(result.state.registers[4], expectedSp);
+        assert.equal(result.state.registers[6], 50n);
+      }
+      const prefix = await cpu.readMemory(stack, 12);
+      assert.deepEqual(prefix, hex('04100300140000000a000000'));
+    } finally {
+      cpu.dispose();
+    }
+  } finally {
+    Core.prototype.compile = compile;
+  }
+});

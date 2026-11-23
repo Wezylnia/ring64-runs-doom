@@ -1327,6 +1327,7 @@ impl Emitter {
         &mut self,
         instructions: &[Instruction],
         loop_depth: u32,
+        stack: Option<(&super::flat_stack::FlatStackWindow, u32)>,
     ) {
         use super::{RIP, control::InstructionRetirement};
 
@@ -1334,7 +1335,10 @@ impl Emitter {
         let last = instructions.last().unwrap();
         let count = instructions.len() as u32;
         self.guard_straight_prefix(first, last, count);
-        let loop_depth = loop_depth + 1;
+        if let Some((plan, host)) = stack {
+            self.guard_flat_stack_window(plan, host);
+        }
+        let loop_depth = loop_depth + 1 + u32::from(stack.is_some());
         let branch = matches!(
             last.operation,
             Operation::Jcc { .. } | Operation::Call { .. } | Operation::Return { .. }
@@ -1346,7 +1350,9 @@ impl Emitter {
                 count: index as u32,
                 terminal,
             };
+            self.flat_stack_access = stack.map(|(plan, host)| (host, plan.access(index)));
             self.emit_instruction(*instruction, None, loop_depth, None, None, terminal);
+            self.flat_stack_access = None;
             if !terminal && self.stores {
                 self.code_write_boundary(
                     loop_depth + 1,
@@ -1361,6 +1367,9 @@ impl Emitter {
                 .op(Op::LocalSet(RIP));
             self.retire_instructions(count);
             self.route(last.next_pc, loop_depth, loop_depth + 1);
+        }
+        if stack.is_some() {
+            self.op(Op::End);
         }
         self.op(Op::End);
     }
