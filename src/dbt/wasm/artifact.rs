@@ -1745,7 +1745,7 @@ fn emit_body(
         && unit.context.cpl() == 0
         && optional.indexed_scalar_read
         && unit.instructions.iter().any(|instruction| {
-            super::instruction::indexed_scalar_write(instruction.operation, unit.sampled)
+            super::indexed::indexed_scalar_write(instruction.operation, unit.sampled)
         }))
     .then(|| {
         let signature = add_function_type(&mut types, [ValType::I64, ValType::I32], []);
@@ -2890,10 +2890,10 @@ fn emit_body(
     let indexed_scalar_stamp = (indexed_paging
         && optional.indexed_scalar_read
         && unit.instructions.iter().any(|instruction| {
-            super::instruction::indexed_scalar_read(instruction.operation)
+            super::indexed::indexed_scalar_read(instruction.operation)
                 || super::vector::indexed_vector_operand(instruction.operation)
                 || indexed_store_fill.is_some()
-                    && super::instruction::indexed_scalar_write(instruction.operation, unit.sampled)
+                    && super::indexed::indexed_scalar_write(instruction.operation, unit.sampled)
         }))
     .then(|| {
         let stamp = super::GPR + locals.iter().map(|(count, _)| count).sum::<u32>();
@@ -3676,7 +3676,7 @@ fn emit_body(
         );
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    if (quiet_fetch_page.is_some() || emitter.used_paged_quiet_completion) {
+    if quiet_fetch_page.is_some() || emitter.used_paged_quiet_completion {
         return retry_body(
             _guard_reads,
             OptionalLowering {
@@ -3697,9 +3697,9 @@ fn emit_body(
         );
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    if (scalar_copy_prefix.is_some()
+    if scalar_copy_prefix.is_some()
         || linear_scalar_copy_prefix.is_some()
-        || linear_vector_copy_prefixes.is_some())
+        || linear_vector_copy_prefixes.is_some()
     {
         return retry_body(
             _guard_reads,
@@ -3710,7 +3710,7 @@ fn emit_body(
         );
     }
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-    if (copy_prefix.is_some() || preloaded_copy_prefix.is_some()) {
+    if copy_prefix.is_some() || preloaded_copy_prefix.is_some() {
         return retry_body(
             _guard_reads,
             OptionalLowering {

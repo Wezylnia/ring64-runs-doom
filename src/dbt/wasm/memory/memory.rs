@@ -1,5 +1,5 @@
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-use super::instruction::IndexedOperand;
+use super::indexed::IndexedOperand;
 use super::{ADDRESS, Emitter, GPR, REASON, RESULT, STORE_STATUS, VALUE};
 use crate::embedding::layout::{DATA, RunState};
 use crate::x86::context::Segment;

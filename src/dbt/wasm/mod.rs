@@ -45,6 +45,9 @@ mod float_dyadic;
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 #[path = "execution/float_loop.rs"]
 mod float_loop;
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+#[path = "memory/indexed.rs"]
+mod indexed;
 #[path = "execution/instruction.rs"]
 mod instruction;
 #[path = "integer/integer.rs"]

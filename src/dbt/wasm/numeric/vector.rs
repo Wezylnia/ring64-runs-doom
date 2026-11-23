@@ -1,5 +1,5 @@
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
-use super::instruction::IndexedOperand;
+use super::indexed::IndexedOperand;
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 use super::memory::{DirectOperand, PagedReadWindow};
 use super::{ADDRESS, Emitter, REASON, RHS, STORE_STATUS};

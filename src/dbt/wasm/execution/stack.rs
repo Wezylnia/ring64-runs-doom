@@ -64,7 +64,7 @@ impl Emitter {
         second: crate::x86::instruction::Instruction,
         loop_depth: u32,
     ) {
-        use super::{RIP, STORE_STATUS, instruction::IndexedOperand};
+        use super::{RIP, STORE_STATUS, indexed::IndexedOperand};
         use crate::x86::instruction::Operation;
         use wasm_encoder::{BlockType, MemArg};
 
@@ -207,7 +207,7 @@ impl Emitter {
         instruction: crate::x86::instruction::Instruction,
         exit_depth: u32,
     ) -> bool {
-        use super::{STORE_STATUS, instruction::IndexedOperand};
+        use super::{STORE_STATUS, indexed::IndexedOperand};
         use crate::embedding::layout::debug::CONTINUE_ACTIVE;
         use crate::x86::instruction::Operation;
         use wasm_encoder::{BlockType, MemArg, ValType};
@@ -299,7 +299,7 @@ impl Emitter {
         instruction: crate::x86::instruction::Instruction,
         exit_depth: u32,
     ) -> bool {
-        use super::{STORE_STATUS, instruction::IndexedOperand};
+        use super::{STORE_STATUS, indexed::IndexedOperand};
         use crate::embedding::layout::QUIET_RETURN_READ;
         use wasm_encoder::{BlockType, MemArg, ValType};
 
