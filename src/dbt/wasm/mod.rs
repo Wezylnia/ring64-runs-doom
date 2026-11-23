@@ -389,8 +389,17 @@ impl Emitter {
     }
 
     fn unlikely(&mut self, branch: Op<'_>) -> &mut Self {
+        self.hint_unlikely(branch, !self.observed && !cfg!(feature = "parallel"))
+    }
+
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    fn indexed_miss(&mut self, branch: Op<'_>) -> &mut Self {
+        self.hint_unlikely(branch, self.retouch_prefix_fetch)
+    }
+
+    fn hint_unlikely(&mut self, branch: Op<'_>, enabled: bool) -> &mut Self {
         debug_assert!(matches!(branch, Op::If(_) | Op::BrIf(_)));
-        if !self.observed && !cfg!(feature = "parallel") {
+        if enabled {
             self.branch_hints.push(wasm_encoder::BranchHint {
                 branch_func_offset: self.body.byte_len() as u32,
                 branch_hint_value: 0,
