@@ -169,6 +169,14 @@ impl SharedLayout {
         })
     }
 
+    #[cfg(parallel_memory64)]
+    pub(super) fn requires_memory64(self) -> bool {
+        (self.base + self.capacity)
+            .max(self.guards + self.capacity / 16)
+            .max(self.watches + self.capacity / 8)
+            > 1 << 32
+    }
+
     pub(super) fn check_backing(
         self,
         present: impl IntoIterator<Item = SharedBacking>,

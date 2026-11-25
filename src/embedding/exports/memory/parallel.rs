@@ -12,6 +12,12 @@ pub extern "C" fn core_parallel_memory64() -> u32 {
     1
 }
 
+#[cfg(parallel_memory64)]
+#[unsafe(no_mangle)]
+pub extern "C" fn core_parallel_adaptive_ram() -> u32 {
+    1
+}
+
 fn complete(bridge: &mut Bridge, result: Result<(), MemoryError>) -> i32 {
     match result {
         Ok(()) => 0,

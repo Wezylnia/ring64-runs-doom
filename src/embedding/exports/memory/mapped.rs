@@ -117,10 +117,7 @@ fn initial_image(input: &[u8], metadata_len: u32) -> Result<InitialImage, Memory
         return Err(MemoryError::Capacity("backing byte capacity exceeded"));
     }
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
-    let shared = config.get("shared").map(|shared| {
-        ["ramBase", "ramCapacity", "guardBase", "watchBase"]
-            .map(|field| backing_size(&shared[field]))
-    });
+    let shared = config.get("shared");
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     let payload_bytes = if shared.is_some() { 0 } else { total };
     #[cfg(not(any(all(feature = "parallel", target_arch = "wasm32"), guest_memory64)))]
@@ -161,14 +158,8 @@ fn initial_image(input: &[u8], metadata_len: u32) -> Result<InitialImage, Memory
     macro_rules! image {
         ($standalone:ident, $physical:literal) => {{
             #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
-            if let Some([ram_base, ram_capacity, guard_base, watch_base]) = shared {
-                shared_image(
-                    inputs,
-                    maps,
-                    limits,
-                    $physical,
-                    [ram_base?, ram_capacity?, guard_base?, watch_base?],
-                )
+            if let Some(shared) = shared {
+                shared_image(inputs, maps, limits, $physical, shared)
             } else {
                 Image::$standalone(backings, maps, limits)
             }
@@ -276,8 +267,12 @@ fn shared_image(
     maps: Vec<MappingInput>,
     limits: MemoryLimits,
     physical: bool,
-    layout: [crate::memory::SharedOffset; 4],
+    shared: &Value,
 ) -> Result<Image, MemoryError> {
+    let [ram_base, ram_capacity, guard_base, watch_base] =
+        ["ramBase", "ramCapacity", "guardBase", "watchBase"]
+            .map(|field| backing_size(&shared[field]));
+    let layout = [ram_base?, ram_capacity?, guard_base?, watch_base?];
     let mut backings = Vec::new();
     backings
         .try_reserve_exact(inputs.len())
@@ -293,7 +288,14 @@ fn shared_image(
                 .ok_or_else(invalid)?,
         ));
     }
-    Image::mapped_shared(backings, maps, limits, physical, layout)
+    let image = Image::mapped_shared(backings, maps, limits, physical, layout)?;
+    #[cfg(parallel_memory64)]
+    let image = match shared.get("narrowRam") {
+        Some(Value::Bool(true)) => image.with_narrow_shared_ram()?,
+        None | Some(Value::Bool(false)) => image,
+        _ => return Err(invalid()),
+    };
+    Ok(image)
 }
 
 #[unsafe(no_mangle)]

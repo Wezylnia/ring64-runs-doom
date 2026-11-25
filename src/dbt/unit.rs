@@ -3,6 +3,8 @@ use crate::x86::{context::ExecutionContext, instruction::Instruction};
 
 pub(crate) struct Unit {
     pub context: ExecutionContext,
+    #[cfg(parallel_memory64)]
+    pub shared_ram_memory64: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     pub sampled: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]

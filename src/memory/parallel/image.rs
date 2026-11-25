@@ -21,6 +21,22 @@ impl Image {
         self.shared.is_some()
     }
 
+    #[cfg(parallel_memory64)]
+    pub(crate) fn shared_ram_memory64(&self) -> bool {
+        !self.narrow_shared_ram
+    }
+
+    #[cfg(parallel_memory64)]
+    pub(crate) fn with_narrow_shared_ram(mut self) -> Result<Self, MemoryError> {
+        if self.shared.is_none_or(SharedLayout::requires_memory64) {
+            return Err(MemoryError::Invalid(
+                "shared RAM and metadata exceed memory32",
+            ));
+        }
+        self.narrow_shared_ram = true;
+        Ok(self)
+    }
+
     pub(crate) fn shared_exclusive(&self) -> Option<SharedExclusive> {
         self.shared.map(|_| SharedExclusive::acquire())
     }

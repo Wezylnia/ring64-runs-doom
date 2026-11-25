@@ -47,6 +47,8 @@ const REPEAT_REMAINING: u32 = 35;
 const ENTRY_FLAGS: u32 = 36;
 
 struct Emitter {
+    #[cfg(parallel_memory64)]
+    shared_ram_memory64: bool,
     #[cfg(guest_memory64)]
     guest64_cache: Option<memory::guest64::SpanLocals>,
     #[cfg(guest_memory64)]

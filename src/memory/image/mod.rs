@@ -71,6 +71,8 @@ pub struct Image {
     pub(super) previous_mapping: Cell<usize>,
     #[cfg(all(feature = "parallel", any(target_arch = "wasm32", test)))]
     pub(super) shared: Option<super::parallel::SharedLayout>,
+    #[cfg(parallel_memory64)]
+    pub(super) narrow_shared_ram: bool,
     #[cfg(all(feature = "parallel", any(target_arch = "wasm32", test)))]
     pub(super) shared_rmw: Option<super::parallel::SharedHeld>,
 }
@@ -206,6 +208,8 @@ impl Image {
             previous_mapping: Cell::new(usize::MAX),
             #[cfg(all(feature = "parallel", any(target_arch = "wasm32", test)))]
             shared: None,
+            #[cfg(parallel_memory64)]
+            narrow_shared_ram: false,
             #[cfg(all(feature = "parallel", any(target_arch = "wasm32", test)))]
             shared_rmw: None,
         };

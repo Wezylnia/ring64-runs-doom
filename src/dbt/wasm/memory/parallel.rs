@@ -449,7 +449,9 @@ impl Emitter {
 
     fn shared_memory_address(&mut self) {
         #[cfg(parallel_memory64)]
-        self.op(Op::I64ExtendI32U);
+        if self.shared_ram_memory64 {
+            self.op(Op::I64ExtendI32U);
+        }
     }
 
     fn shared_segment(&self) -> i32 {

@@ -12,10 +12,13 @@ pub(crate) use ram::{SharedBacking, SharedExclusive, SharedHeld, SharedLayout};
 pub(crate) type SharedOffset = super::image::BackingOffset;
 
 #[cfg(feature = "parallel")]
+pub(crate) const SHARED_RAM_MEMORY32_PAGES: u64 = 65_536;
+
+#[cfg(feature = "parallel")]
 pub(crate) const SHARED_RAM_MAX_PAGES: u64 = if cfg!(parallel_memory64) {
     262_144
 } else {
-    65_536
+    SHARED_RAM_MEMORY32_PAGES
 };
 
 #[cfg(feature = "parallel")]

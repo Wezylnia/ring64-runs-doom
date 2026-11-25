@@ -28,6 +28,7 @@ export const SIGNAL = { pause: 1, phase: 2, ingress: 4 } as const;
 
 export interface SharedLayout {
   memory64: boolean;
+  narrowRam?: true;
   cpus: number;
   ramBase: number;
   ramCapacity: number;

@@ -849,13 +849,21 @@ fn emit_candidate(
     );
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     {
+        #[cfg(parallel_memory64)]
+        let shared_ram_memory64 = unit.shared_ram_memory64;
+        #[cfg(not(parallel_memory64))]
+        let shared_ram_memory64 = false;
         imports.import(
             "env",
             "shared_ram",
             EntityType::Memory(MemoryType {
                 minimum: 1,
-                maximum: Some(crate::memory::SHARED_RAM_MAX_PAGES),
-                memory64: cfg!(parallel_memory64),
+                maximum: Some(if shared_ram_memory64 {
+                    crate::memory::SHARED_RAM_MAX_PAGES
+                } else {
+                    crate::memory::SHARED_RAM_MEMORY32_PAGES
+                }),
+                memory64: shared_ram_memory64,
                 shared: true,
                 page_size_log2: None,
             }),
@@ -2205,6 +2213,8 @@ fn emit_candidate(
             (base, base + 1, base + 2)
         });
     let mut emitter = Emitter {
+        #[cfg(parallel_memory64)]
+        shared_ram_memory64: unit.shared_ram_memory64,
         #[cfg(guest_memory64)]
         guest64_cache,
         #[cfg(guest_memory64)]

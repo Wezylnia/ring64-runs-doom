@@ -23,8 +23,10 @@ import type {
 } from './parallel/protocol.js';
 import {
   bindRam,
+  MAX_SHARED_MEMORY32_PAGES,
   ramModule,
   sharedRam,
+  supportsAdaptiveParallelRam,
   supportsParallelMemory64,
   usesParallelMemory64,
 } from './parallel/memory/ram.js';
@@ -153,11 +155,15 @@ export async function createMachine(options: MachineOptions): Promise<Machine> {
     );
   const memory64 = usesParallelMemory64(compiler);
   if (!memory64) input.layout = memory32Layout(input);
+  const sharedMemory64 =
+    memory64 &&
+    (input.layout.pages > MAX_SHARED_MEMORY32_PAGES || !supportsAdaptiveParallelRam(compiler));
+  if (memory64 && !sharedMemory64) input.layout.narrowRam = true;
   let helper: WebAssembly.Module;
   try {
     if (memory64 && !supportsParallelMemory64())
       throw new Error('parallel memory64 requires shared Wasm memory64 and atomics');
-    helper = ramModule(memory64);
+    helper = ramModule(memory64, sharedMemory64);
   } catch (cause) {
     throw new ParallelError(
       'unsupported',
@@ -167,7 +173,7 @@ export async function createMachine(options: MachineOptions): Promise<Machine> {
   }
   let memory: WebAssembly.Memory;
   try {
-    memory = sharedRam(input.layout.pages, memory64);
+    memory = sharedRam(input.layout.pages, sharedMemory64);
   } catch (cause) {
     throw new ParallelError('capacity', 'parallel RAM allocation failed', { cause });
   }

@@ -7,6 +7,7 @@ function section(id: number, payload: number[]): number[] {
   return [id, payload.length, ...payload];
 }
 
+export const MAX_SHARED_MEMORY32_PAGES = 65536;
 export const MAX_SHARED_MEMORY64_PAGES = 262144;
 
 function unsignedLeb128(value: number): number[] {
@@ -25,8 +26,14 @@ export function usesParallelMemory64(compiler: WebAssembly.Module): boolean {
   );
 }
 
+export function supportsAdaptiveParallelRam(compiler: WebAssembly.Module): boolean {
+  return WebAssembly.Module.exports(compiler).some(
+    ({ name, kind }) => name === 'core_parallel_adaptive_ram' && kind === 'function',
+  );
+}
+
 // memory 0 is the worker's private Core memory. All of these operations address memory 1.
-export function ramModule(memory64 = false): WebAssembly.Module {
+export function ramModule(wideOffsets = false, memory64 = wideOffsets): WebAssembly.Module {
   const i32 = 0x7f;
   const i64 = 0x7e;
   const helpers = [
@@ -52,7 +59,7 @@ export function ramModule(memory64 = false): WebAssembly.Module {
       ...helpers.flatMap(({ operands, value }) => [
         0x60,
         operands,
-        memory64 ? i64 : i32,
+        wideOffsets ? i64 : i32,
         ...Array<number>(operands - 1).fill(value),
         ...(operands === 2 ? [0] : [1, value]),
       ]),
@@ -69,7 +76,7 @@ export function ramModule(memory64 = false): WebAssembly.Module {
       2,
       memory64 ? 7 : 3,
       1,
-      ...unsignedLeb128(memory64 ? MAX_SHARED_MEMORY64_PAGES : 65536),
+      ...unsignedLeb128(memory64 ? MAX_SHARED_MEMORY64_PAGES : MAX_SHARED_MEMORY32_PAGES),
     ]),
     ...section(3, [count, ...helpers.map((_, index) => index)]),
     ...section(7, [count, ...helpers.flatMap(({ name }, index) => [...wasmName(name), 0, index])]),
@@ -78,7 +85,10 @@ export function ramModule(memory64 = false): WebAssembly.Module {
       ...helpers.flatMap(({ operands, opcode, align }) => {
         const body = [
           0,
-          ...Array.from({ length: operands }, (_, index) => [0x20, index]).flat(),
+          0x20,
+          0,
+          ...(wideOffsets && !memory64 ? [0xa7] : []), // i32.wrap_i64 for an arena that fits memory32
+          ...Array.from({ length: operands - 1 }, (_, index) => [0x20, index + 1]).flat(),
           0xfe,
           opcode,
           align | 0x40,

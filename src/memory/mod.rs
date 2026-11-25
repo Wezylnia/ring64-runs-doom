@@ -22,7 +22,8 @@ mod parallel;
 
 #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
 pub(crate) use parallel::{
-    CAS_ATTEMPTS as SHARED_CAS_ATTEMPTS, SHARED_RAM_MAX_PAGES, SharedDword, SharedOffset,
+    CAS_ATTEMPTS as SHARED_CAS_ATTEMPTS, SHARED_RAM_MAX_PAGES, SHARED_RAM_MEMORY32_PAGES,
+    SharedDword, SharedOffset,
 };
 
 #[cfg(all(feature = "parallel", any(target_arch = "wasm32", test)))]
