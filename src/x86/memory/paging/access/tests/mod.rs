@@ -884,12 +884,17 @@ fn prepared_frame_dirty_refusal_cannot_leak_earlier_slots_or_dirty_updates() {
     let error = memory
         .write_event_frame(0, &slots, |_| panic!("no descriptor payload may publish"))
         .unwrap_err();
-    let EventFrameWriteFailure::Publication(error) = error else {
+    let EventFrameWriteFailure::Publication {
+        failure,
+        frame_start,
+    } = error
+    else {
         panic!("the frame was admitted before the dirty update failed");
     };
-    assert_eq!(error.index, Some(2));
+    assert_eq!(frame_start, 1);
+    assert_eq!(failure.index, Some(2));
     assert!(
-        matches!(error.failure, AccessFailure::Paging(Failure::Physical(f))
+        matches!(failure.failure, AccessFailure::Paging(Failure::Physical(f))
             if f.phase == PhysicalPhase::DirtyWrite && f.physical.failing == 0x4038)
     );
     for address in [0x8000, 0x8008, 0x7ff8] {

@@ -97,8 +97,13 @@ impl Frame {
                     segment: Segment::Ss,
                     failure,
                 },
-                EventFrameWriteFailure::Publication(failure) => {
-                    descriptor_publication_failure(descriptors, failure)
+                EventFrameWriteFailure::Publication {
+                    failure,
+                    frame_start,
+                } => {
+                    let descriptor_start =
+                        frame_start.saturating_sub(descriptors.iter().flatten().count());
+                    descriptor_publication_failure(descriptors, descriptor_start, failure)
                 }
             })
     }

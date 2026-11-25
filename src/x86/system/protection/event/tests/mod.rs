@@ -139,18 +139,21 @@ fn frame_dirty_refusal_is_not_attributed_to_a_descriptor_at_the_same_address() {
         cause: Cause::Permission,
         failing: 0x100d,
     });
-    let classify =
-        |index| descriptor_publication_failure(descriptors, PublicationFailure { index, failure });
+    let classify = |index| {
+        descriptor_publication_failure(descriptors, 1, PublicationFailure { index, failure })
+    };
 
     assert!(matches!(classify(None), EventFailure::SystemMemory(_)));
-    assert!(matches!(classify(Some(0)), EventFailure::SystemMemory(_)));
-    assert_eq!(
-        classify(Some(1)),
-        EventFailure::Operand {
-            segment: Segment::Ss,
-            failure,
-        }
-    );
+    assert!(matches!(classify(Some(1)), EventFailure::SystemMemory(_)));
+    for index in [0, 2] {
+        assert_eq!(
+            classify(Some(index)),
+            EventFailure::Operand {
+                segment: Segment::Ss,
+                failure,
+            }
+        );
+    }
 }
 
 #[test]

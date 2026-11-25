@@ -150,6 +150,7 @@ fn publish_descriptors(
     image.prepare_publication().map_err(|failure| {
         descriptor_publication_failure(
             descriptors,
+            0,
             PublicationFailure {
                 index: None,
                 failure,
@@ -162,11 +163,14 @@ fn publish_descriptors(
 
 fn descriptor_publication_failure(
     descriptors: [Option<DescriptorWrite>; 2],
+    descriptor_start: usize,
     PublicationFailure { index, failure }: PublicationFailure,
 ) -> EventFailure {
     let mut writes = descriptors.into_iter().flatten();
     let descriptor = match index {
-        Some(index) => writes.nth(index),
+        Some(index) => index
+            .checked_sub(descriptor_start)
+            .and_then(|index| writes.nth(index)),
         None => writes.find(|write| write.contains(failure)),
     };
     if let Some(write) = descriptor {
