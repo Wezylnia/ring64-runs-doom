@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import { supportsGuestMemory64 } from '../../../../../src/wasm/guest-memory64.js';
 import { observeArtifactImports } from '../../../../../../tests/support/artifact-imports.js';
 import {
   BANK,
@@ -9,7 +11,56 @@ import {
 } from '../../../../../../tests/execution/memory/paging/fixture.js';
 import { compiler } from '../fixture.js';
 
-test('indexed writes reuse a subpage of a large data leaf with 4 KiB code pages', async () => {
+const supportsWide = supportsGuestMemory64();
+if (process.env.RING64_REQUIRE_MEMORY64 === '1') {
+  assert.ok(supportsWide, 'this check requires mixed-width Wasm memory operations');
+}
+const wideCompiler = supportsWide
+  ? await WebAssembly.compile(
+      new Uint8Array(
+        await readFile(new URL('../../../../../../build/ring64-memory64.wasm', import.meta.url)),
+      ),
+    )
+  : undefined;
+
+function indexedTest(name: string, run: (compiler: WebAssembly.Module) => Promise<void>) {
+  test(`memory32: ${name}`, () => run(compiler));
+  test(`memory64: ${name}`, async (t) => {
+    if (!wideCompiler) return t.skip('runtime lacks mixed-width Wasm memory operations');
+    await run(wideCompiler);
+  });
+}
+
+indexedTest(
+  'indexed writes reuse a subpage of a large data leaf with 4 KiB code pages',
+  reuseLargeDataLeaf,
+);
+indexedTest(
+  'indexed stores reuse full pages and reload the palette through a writable alias',
+  reloadPaletteThroughAlias,
+);
+indexedTest(
+  'an admitted indexed store publishes both registers and TEST flags before the next fault',
+  publishStateBeforeFault,
+);
+indexedTest(
+  'an indexed write resumes guarded execution after filling a destination page',
+  resumeAcrossDestinationPage,
+);
+indexedTest(
+  'paired dword reads keep live aliases and retire before a split-page fault',
+  retireBeforeSplitReadFault,
+);
+indexedTest(
+  'the paired read window sees intervening writes and respects a clipped backing',
+  respectClippedReadBacking,
+);
+indexedTest(
+  'a tail read carries live paired operands only across its own loop edge',
+  carryOperandsAcrossOwnLoopEdge,
+);
+
+async function reuseLargeDataLeaf(compiler: WebAssembly.Module) {
   // Both transparent and opaque paths return to the counted-loop header.
   const code = 'ffc9741548ffc74883c6040fb60785c074ee8b04838906ebe7';
   const data = 0x601000n;
@@ -79,9 +130,9 @@ test('indexed writes reuse a subpage of a large data leaf with 4 KiB code pages'
   } finally {
     restoreImports();
   }
-});
+}
 
-test('indexed stores reuse full pages and reload the palette through a writable alias', async () => {
+async function reloadPaletteThroughAlias(compiler: WebAssembly.Module) {
   const code = 'ffc9741548ffc74883c6040fb60785c074ee8b04838906ebe7';
   const indices = PC + 0x1000n;
   const palette = PC + 0x2000n;
@@ -158,9 +209,9 @@ test('indexed stores reuse full pages and reload the palette through a writable 
   } finally {
     restoreImports();
   }
-});
+}
 
-test('an admitted indexed store publishes both registers and TEST flags before the next fault', async () => {
+async function publishStateBeforeFault(compiler: WebAssembly.Module) {
   // ADD RDI,R10; MOVZX EAX,[RDI]; TEST EAX,EAX; JZ head; MOV EDX,[RBX+RAX*4]; MOV [RSI],EDX;
   // MOV EBP,[R8] exposes the completed group's state on a fault.
   const code = 'ffc974184883c6044c01d70fb60785c074ee8b14838916418b28ebe4';
@@ -257,9 +308,9 @@ test('an admitted indexed store publishes both registers and TEST flags before t
       assert.equal(readOut(), 0);
     },
   );
-});
+}
 
-test('an indexed write resumes guarded execution after filling a destination page', async () => {
+async function resumeAcrossDestinationPage(compiler: WebAssembly.Module) {
   const code = 'ffc9741548ffc74883c6040fb60785c074ee8b04838906ebe7';
   const data = PC + 0x1000n;
   const output = PC + 0x3000n;
@@ -324,9 +375,9 @@ test('an indexed write resumes guarded execution after filling a destination pag
   } finally {
     restoreImports();
   }
-});
+}
 
-test('paired dword reads keep live aliases and retire before a split-page fault', async () => {
+async function retireBeforeSplitReadFault(compiler: WebAssembly.Module) {
   // DEC ECX; JZ end; ADD EAX,[RBX]; ADD R12D,[RBX+4]; MOV EDI,[RBX+4];
   // TEST EDI,EDI; JZ head; MOV [RSI],EAX; JMP head.
   const code = 'ffc974110303440363048b7b0485ff74ef8906ebeb';
@@ -385,9 +436,9 @@ test('paired dword reads keep live aliases and retire before a split-page fault'
   } finally {
     restoreImports();
   }
-});
+}
 
-test('the paired read window sees intervening writes and respects a clipped backing', async () => {
+async function respectClippedReadBacking(compiler: WebAssembly.Module) {
   // ADD EAX,[RBX]; ADD R12D,[RBX+4]; MOV [RSI],EAX; MOV EDI,[RBX-4].
   const code = 'ffc9741103034403630489068b7bfc85ff74edebeb';
   const data = PC + 0x1000n;
@@ -442,9 +493,9 @@ test('the paired read window sees intervening writes and respects a clipped back
   } finally {
     restoreImports();
   }
-});
+}
 
-test('a tail read carries live paired operands only across its own loop edge', async () => {
+async function carryOperandsAcrossOwnLoopEdge(compiler: WebAssembly.Module) {
   // DEC ECX; ADD EAX,[RBX]; ADD R12D,[RBX+4]; TEST ECX,ECX; JZ end;
   // TEST EDX,EDX; JZ head; MOV [RSI],EAX; MOV EDI,[RBX-4]; JMP head.
   const code = 'ffc903034403630485c9740b85d274f089068b7bfcebe9';
@@ -504,4 +555,4 @@ test('a tail read carries live paired operands only across its own loop edge', a
   } finally {
     restoreImports();
   }
-});
+}
