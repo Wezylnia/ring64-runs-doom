@@ -1,5 +1,5 @@
 #![cfg_attr(
-    guest_memory64,
+    any(guest_memory64, parallel_memory64),
     allow(
         clippy::useless_conversion,
         reason = "backing offsets widen from u32 only in the memory64 build"
@@ -325,7 +325,10 @@ impl Image {
 
 #[cfg(all(feature = "parallel", any(target_arch = "wasm32", test)))]
 impl Image {
-    pub(crate) fn parallel_proof(&self, owner: u64) -> Option<Vec<(u32, u32)>> {
+    pub(crate) fn parallel_proof(
+        &self,
+        owner: u64,
+    ) -> Option<Vec<(super::parallel::SharedOffset, u32)>> {
         let record = self.validity.owners.get(&owner)?;
         if !record.valid {
             return None;

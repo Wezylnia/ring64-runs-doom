@@ -1,9 +1,14 @@
+#![allow(
+    clippy::useless_conversion,
+    reason = "shared offsets follow the RAM profile"
+)]
+
 use super::super::image::Backing;
 #[cfg(target_arch = "wasm32")]
 use super::super::{Access, Fault};
 use super::super::{Image, MemoryError};
 use super::ram::{SharedBacking, SharedExclusive, SharedLayout};
-use super::{gather, lane, scatter};
+use super::{SharedOffset, direct_offset, gather, lane, scatter};
 
 #[cfg(target_arch = "wasm32")]
 pub(crate) enum SharedDword {
@@ -22,11 +27,11 @@ impl Image {
 
     pub(crate) fn bind_shared_layout(
         &mut self,
-        ram_base: u32,
-        ram_capacity: u32,
-        guard_base: u32,
-        watch_base: u32,
-        extents: &[(u32, u64)],
+        ram_base: SharedOffset,
+        ram_capacity: SharedOffset,
+        guard_base: SharedOffset,
+        watch_base: SharedOffset,
+        extents: &[(SharedOffset, u64)],
     ) -> Result<(), MemoryError> {
         if self.shared.is_some() || extents.len() != self.backings.len() {
             return Err(MemoryError::Invalid(
@@ -39,7 +44,7 @@ impl Image {
             let record = SharedBacking {
                 offset,
                 incarnation,
-                length: backing.bytes.len() as u32,
+                length: backing.bytes.len() as SharedOffset,
             };
             layout.check_backing(prepared.iter().copied(), record)?;
             prepared.push(record);
@@ -55,8 +60,8 @@ impl Image {
     pub(crate) fn add_shared_backing(
         &mut self,
         id: String,
-        length: u32,
-        offset: u32,
+        length: SharedOffset,
+        offset: SharedOffset,
         incarnation: u64,
     ) -> Result<(), MemoryError> {
         let layout = self
@@ -85,8 +90,8 @@ impl Image {
         Ok(())
     }
 
-    pub(crate) fn parallel_invalidate_range(&mut self, absolute: u32, length: u32) {
-        let end = u64::from(absolute) + u64::from(length);
+    pub(crate) fn parallel_invalidate_range(&mut self, absolute: SharedOffset, length: u32) {
+        let end = u64::from(absolute).saturating_add(u64::from(length));
         for backing in &self.backings {
             let Some(shared) = backing.shared else {
                 continue;
@@ -129,14 +134,14 @@ impl Image {
         let backing = self.backings[mapping.backing]
             .shared
             .expect("shared backing binding");
-        let absolute = backing.offset + mapping.offset + relative;
-        if (absolute & 7) + width > 8
+        let absolute = backing.offset + mapping.offset + SharedOffset::from(relative);
+        if (absolute & 7) + SharedOffset::from(width) > 8
             || !layout.unpromoted(absolute)
             || access == Access::Write && layout.watched(absolute, width)
         {
             return Ok(None);
         }
-        Ok(Some(absolute))
+        Ok(direct_offset(absolute))
     }
 
     #[cfg(target_arch = "wasm32")]
@@ -181,7 +186,12 @@ impl Image {
         }
         let backing = self.backings[mapping.backing].shared?;
         let host = backing.offset + mapping.offset;
-        Some((base, [limit, host, layout.guard_bias()]))
+        let last = host.checked_add(SharedOffset::from(limit + 2))?;
+        direct_offset(last)?;
+        Some((
+            base,
+            [limit, direct_offset(host)?, layout.guard_bias(last)?],
+        ))
     }
 
     #[cfg(target_arch = "wasm32")]
@@ -197,13 +207,13 @@ impl Image {
         let mapping = &self.mappings[index];
         let relative = (address - mapping.base) as u32;
         let backing = self.backings[mapping.backing].shared?;
-        let absolute = backing.offset + mapping.offset + relative;
+        let absolute = backing.offset + mapping.offset + SharedOffset::from(relative);
         let mut bytes = (mapping.length - relative).min(layout.byte_store_room(absolute)?);
         if let Some(limit) = segment_limit {
             bytes = u64::from(bytes).min((u64::from(limit) + 1).checked_sub(address)?) as u32;
         }
         super::super::address::check_span(address, bytes, Access::Write).ok()?;
-        (bytes != 0).then_some((absolute, bytes))
+        (bytes != 0).then_some((direct_offset(absolute)?, bytes))
     }
 
     #[cfg(target_arch = "wasm32")]
@@ -230,7 +240,7 @@ impl Image {
     }
 
     // Form exact canonical coordinates after architectural access admission.
-    fn offsets(&self, address: u64, offsets: &mut [u32], mut index: usize) {
+    fn offsets(&self, address: u64, offsets: &mut [SharedOffset], mut index: usize) {
         for (current, offset) in (u128::from(address)..).zip(offsets) {
             if self.mappings[index].end() <= current {
                 index += 1;
@@ -239,7 +249,8 @@ impl Image {
             let backing = self.backings[mapping.backing]
                 .shared
                 .expect("shared backing binding");
-            *offset = backing.offset + mapping.offset + (current as u64 - mapping.base) as u32;
+            *offset =
+                backing.offset + mapping.offset + (current as u64 - mapping.base) as SharedOffset;
         }
     }
 
@@ -248,7 +259,7 @@ impl Image {
         address: u64,
         length: usize,
         mut index: usize,
-        mut visit: impl FnMut(u32, usize, usize),
+        mut visit: impl FnMut(SharedOffset, usize, usize),
     ) {
         let mut current = u128::from(address);
         let mut done = 0;
@@ -257,7 +268,8 @@ impl Image {
             let backing = self.backings[mapping.backing]
                 .shared
                 .expect("shared backing binding");
-            let absolute = backing.offset + mapping.offset + (current as u64 - mapping.base) as u32;
+            let absolute =
+                backing.offset + mapping.offset + (current as u64 - mapping.base) as SharedOffset;
             let remainder = (mapping.end() - current) as usize;
             let count = (length - done)
                 .min(remainder)
@@ -294,17 +306,18 @@ impl Image {
                     let backing = self.backings[mapping.backing]
                         .shared
                         .expect("shared backing binding");
-                    let absolute = backing.offset + mapping.offset + relative;
+                    let absolute = backing.offset + mapping.offset + SharedOffset::from(relative);
                     if (absolute & 63) <= 60 {
                         if layout.read_contiguous_dword::<NATIVE_DWORD>(absolute, bytes) {
+                            let host = direct_offset(absolute).expect("admitted direct dword");
                             let bytes = if SPAN && absolute & 3 == 0 {
                                 (mapping.length - relative)
-                                    .min(64 - (absolute & 63))
+                                    .min(64 - (host & 63))
                                     .min(64 - (address as u32 & 63))
                             } else {
                                 4
                             };
-                            return Some((absolute, bytes));
+                            return Some((host, bytes));
                         }
                         return None;
                     }
@@ -320,7 +333,7 @@ impl Image {
             return None;
         }
         self.pieces(address, bytes.len(), index, |absolute, done, count| {
-            let offsets = std::array::from_fn::<_, 8, _>(|i| lane(absolute) + i as u32);
+            let offsets = std::array::from_fn::<_, 8, _>(|i| lane(absolute) + i as SharedOffset);
             let start = (absolute & 7) as usize;
             let offsets = &offsets[start..start + count];
             layout.access(offsets, false, self.shared_rmw.as_ref(), |_| {
@@ -344,7 +357,8 @@ impl Image {
             });
         } else {
             self.pieces(address, bytes.len(), index, |absolute, done, count| {
-                let offsets = std::array::from_fn::<_, 8, _>(|i| lane(absolute) + i as u32);
+                let offsets =
+                    std::array::from_fn::<_, 8, _>(|i| lane(absolute) + i as SharedOffset);
                 let start = (absolute & 7) as usize;
                 let offsets = &offsets[start..start + count];
                 layout.access(offsets, true, self.shared_rmw.as_ref(), |held| {
@@ -359,7 +373,7 @@ impl Image {
         while current < last {
             let mapping = &self.mappings[position];
             let backing = &self.backings[mapping.backing];
-            let offset = mapping.offset + (current as u64 - mapping.base) as u32;
+            let offset = mapping.offset + (current as u64 - mapping.base) as SharedOffset;
             let count = (last.min(mapping.end()) - current) as u32;
             if backing.has_sources {
                 self.validity.write(&backing.incarnation, offset, count);
@@ -369,14 +383,13 @@ impl Image {
         }
     }
 }
-
 impl Image {
     pub(crate) fn mapped_shared(
-        backings: Vec<(String, u32, u32, u64)>,
+        backings: Vec<(String, SharedOffset, SharedOffset, u64)>,
         mappings: Vec<super::super::MappingInput>,
         limits: super::super::MemoryLimits,
         physical: bool,
-        [ram_base, ram_capacity, guard_base, watch_base]: [u32; 4],
+        [ram_base, ram_capacity, guard_base, watch_base]: [SharedOffset; 4],
     ) -> Result<Self, MemoryError> {
         let mut image = if physical {
             Self::physical_mapped(Vec::new(), Vec::new(), limits)?

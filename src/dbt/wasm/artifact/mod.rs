@@ -854,8 +854,8 @@ fn emit_candidate(
             "shared_ram",
             EntityType::Memory(MemoryType {
                 minimum: 1,
-                maximum: Some(65536),
-                memory64: false,
+                maximum: Some(crate::memory::SHARED_RAM_MAX_PAGES),
+                memory64: cfg!(parallel_memory64),
                 shared: true,
                 page_size_log2: None,
             }),

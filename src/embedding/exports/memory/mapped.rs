@@ -1,5 +1,5 @@
 #![cfg_attr(
-    guest_memory64,
+    any(guest_memory64, parallel_memory64),
     allow(
         clippy::useless_conversion,
         reason = "backing offsets widen from u32 only in the memory64 build"
@@ -31,14 +31,14 @@ fn word(value: &Value) -> Result<u32, MemoryError> {
         .and_then(|value| u32::try_from(value).ok())
         .ok_or_else(invalid)
 }
-#[cfg(guest_memory64)]
+#[cfg(any(guest_memory64, parallel_memory64))]
 fn backing_size(value: &Value) -> Result<u64, MemoryError> {
     value
         .as_u64()
         .filter(|&n| n < (1 << 53))
         .ok_or_else(invalid)
 }
-#[cfg(not(guest_memory64))]
+#[cfg(not(any(guest_memory64, parallel_memory64)))]
 use word as backing_size;
 
 fn name(value: &Value) -> Result<&str, MemoryError> {
@@ -118,7 +118,8 @@ fn initial_image(input: &[u8], metadata_len: u32) -> Result<InitialImage, Memory
     }
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     let shared = config.get("shared").map(|shared| {
-        ["ramBase", "ramCapacity", "guardBase", "watchBase"].map(|field| word(&shared[field]))
+        ["ramBase", "ramCapacity", "guardBase", "watchBase"]
+            .map(|field| backing_size(&shared[field]))
     });
     #[cfg(all(feature = "parallel", target_arch = "wasm32"))]
     let payload_bytes = if shared.is_some() { 0 } else { total };
@@ -275,7 +276,7 @@ fn shared_image(
     maps: Vec<MappingInput>,
     limits: MemoryLimits,
     physical: bool,
-    layout: [u32; 4],
+    layout: [crate::memory::SharedOffset; 4],
 ) -> Result<Image, MemoryError> {
     let mut backings = Vec::new();
     backings
@@ -284,8 +285,8 @@ fn shared_image(
     for row in inputs {
         backings.push((
             name(&row["id"])?.into(),
-            word(&row["length"])?,
-            word(&row["offset"])?,
+            backing_size(&row["length"])?,
+            backing_size(&row["offset"])?,
             row["incarnation"]
                 .as_str()
                 .and_then(|value| value.parse::<u64>().ok())
@@ -321,7 +322,7 @@ pub extern "C" fn core_add_backing(metadata_len: u32) -> i32 {
             }
             #[cfg(not(guest_memory64))]
             {
-                image.check_backing(id, u32::try_from(input.len()).map_err(|_| invalid())?)?;
+                image.check_backing(id, input.len().try_into().map_err(|_| invalid())?)?;
                 image.add_backing(id.into(), copy(input)?)
             }
         })();

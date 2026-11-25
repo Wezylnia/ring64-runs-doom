@@ -1,38 +1,45 @@
+#![allow(
+    clippy::useless_conversion,
+    reason = "shared offsets follow the RAM profile"
+)]
+
 use super::super::MemoryError;
-use super::{Lanes, each_lane, lane, shift};
+use super::{Lanes, SHARED_RAM_MAX_PAGES, SharedOffset, each_lane, lane, shift};
 
 #[cfg(target_arch = "wasm32")]
 #[link(wasm_import_module = "ring64_ram")]
 unsafe extern "C" {
-    fn load_lane(offset: u32) -> u64;
-    fn store_lane(offset: u32, value: u64);
-    fn compare_exchange_lane(offset: u32, expected: u64, replacement: u64) -> u64;
-    fn load_control(offset: u32) -> u32;
-    fn store_control(offset: u32, value: u32);
-    fn compare_exchange_control(offset: u32, expected: u32, replacement: u32) -> u32;
+    fn load_lane(offset: SharedOffset) -> u64;
+    fn store_lane(offset: SharedOffset, value: u64);
+    fn compare_exchange_lane(offset: SharedOffset, expected: u64, replacement: u64) -> u64;
+    fn load_control(offset: SharedOffset) -> u32;
+    fn store_control(offset: SharedOffset, value: u32);
+    fn compare_exchange_control(offset: SharedOffset, expected: u32, replacement: u32) -> u32;
     fn enter_exclusive() -> i32;
     fn leave_exclusive(token: i32);
-    fn note_write(offset: u32, length: u32);
+    fn note_write(offset: SharedOffset, length: u32);
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 mod unavailable {
-    pub(super) unsafe fn load_lane(_: u32) -> u64 {
+    use super::SharedOffset;
+
+    pub(super) unsafe fn load_lane(_: SharedOffset) -> u64 {
         unreachable!("shared RAM requires Wasm")
     }
-    pub(super) unsafe fn store_lane(_: u32, _: u64) {
+    pub(super) unsafe fn store_lane(_: SharedOffset, _: u64) {
         unreachable!("shared RAM requires Wasm")
     }
-    pub(super) unsafe fn compare_exchange_lane(_: u32, _: u64, _: u64) -> u64 {
+    pub(super) unsafe fn compare_exchange_lane(_: SharedOffset, _: u64, _: u64) -> u64 {
         unreachable!("shared RAM requires Wasm")
     }
-    pub(super) unsafe fn load_control(_: u32) -> u32 {
+    pub(super) unsafe fn load_control(_: SharedOffset) -> u32 {
         unreachable!("shared RAM requires Wasm")
     }
-    pub(super) unsafe fn store_control(_: u32, _: u32) {
+    pub(super) unsafe fn store_control(_: SharedOffset, _: u32) {
         unreachable!("shared RAM requires Wasm")
     }
-    pub(super) unsafe fn compare_exchange_control(_: u32, _: u32, _: u32) -> u32 {
+    pub(super) unsafe fn compare_exchange_control(_: SharedOffset, _: u32, _: u32) -> u32 {
         unreachable!("shared RAM requires Wasm")
     }
     pub(super) unsafe fn enter_exclusive() -> i32 {
@@ -41,7 +48,7 @@ mod unavailable {
     pub(super) unsafe fn leave_exclusive(_: i32) {
         unreachable!("shared RAM requires Wasm")
     }
-    pub(super) unsafe fn note_write(_: u32, _: u32) {
+    pub(super) unsafe fn note_write(_: SharedOffset, _: u32) {
         unreachable!("shared RAM requires Wasm")
     }
 }
@@ -51,8 +58,8 @@ use unavailable::*;
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct SharedBacking {
-    pub offset: u32,
-    pub length: u32,
+    pub offset: SharedOffset,
+    pub length: SharedOffset,
     pub incarnation: u64,
 }
 
@@ -64,22 +71,22 @@ impl SharedBacking {
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct SharedLayout {
-    base: u32,
-    capacity: u32,
-    guards: u32,
-    watches: u32,
+    base: SharedOffset,
+    capacity: SharedOffset,
+    guards: SharedOffset,
+    watches: SharedOffset,
 }
 
 impl Lanes for SharedLayout {
-    fn load(&self, offset: u32) -> u64 {
+    fn load(&self, offset: SharedOffset) -> u64 {
         unsafe { load_lane(offset) }
     }
 
-    fn store(&self, offset: u32, value: u64) {
+    fn store(&self, offset: SharedOffset, value: u64) {
         unsafe { store_lane(offset, value) }
     }
 
-    fn compare_exchange(&self, offset: u32, expected: u64, replacement: u64) -> u64 {
+    fn compare_exchange(&self, offset: SharedOffset, expected: u64, replacement: u64) -> u64 {
         unsafe { compare_exchange_lane(offset, expected, replacement) }
     }
 }
@@ -103,7 +110,7 @@ impl Drop for SharedExclusive {
 
 #[derive(Debug)]
 pub(crate) struct SharedHeld {
-    offsets: [u32; 16],
+    offsets: [SharedOffset; 16],
     count: usize,
 }
 
@@ -117,12 +124,12 @@ impl Drop for SharedHeld {
 
 impl SharedLayout {
     pub(super) fn new(
-        base: u32,
-        capacity: u32,
-        guards: u32,
-        watches: u32,
+        base: SharedOffset,
+        capacity: SharedOffset,
+        guards: SharedOffset,
+        watches: SharedOffset,
     ) -> Result<Self, MemoryError> {
-        const END: u64 = 1 << 32;
+        const END: u64 = SHARED_RAM_MAX_PAGES * 65_536;
         if capacity == 0
             || base == 0
             || base & 4095 != 0
@@ -131,6 +138,12 @@ impl SharedLayout {
             || watches & 3 != 0
         {
             return Err(MemoryError::Invalid("misaligned shared RAM layout"));
+        }
+        if [base, capacity, guards, watches]
+            .into_iter()
+            .any(|value| u64::from(value) >= END)
+        {
+            return Err(MemoryError::Invalid("out-of-range shared RAM layout"));
         }
         let ram = u64::from(base)..u64::from(base) + u64::from(capacity);
         let locks = u64::from(guards)..u64::from(guards) + u64::from(capacity / 64 * 4);
@@ -165,6 +178,8 @@ impl SharedLayout {
             || next.length == 0
             || next.offset & 4095 != 0
             || next.offset < self.base
+            || next.length > self.capacity
+            || u64::from(next.offset) >= u64::from(self.base) + u64::from(self.capacity)
             || next.padded_end() > u64::from(self.base) + u64::from(self.capacity)
         {
             return Err(MemoryError::Invalid("shared backing outside its RAM arena"));
@@ -182,13 +197,13 @@ impl SharedLayout {
         Ok(())
     }
 
-    fn stripe(self, absolute: u32) -> u32 {
+    fn stripe(self, absolute: SharedOffset) -> SharedOffset {
         self.guards + ((absolute - self.base) / 64) * 4
     }
 
-    pub(super) fn watched(self, start: u32, length: u32) -> bool {
+    pub(super) fn watched(self, start: SharedOffset, length: u32) -> bool {
         let mut cur = start - self.base;
-        let end = cur + length;
+        let end = cur + SharedOffset::from(length);
         while cur < end {
             let bit = cur & 31;
             let count = (end - cur).min(32 - bit);
@@ -201,7 +216,7 @@ impl SharedLayout {
         false
     }
 
-    fn stripes(self, offsets: &[u32]) -> ([u32; 16], usize) {
+    fn stripes(self, offsets: &[SharedOffset]) -> ([SharedOffset; 16], usize) {
         let mut stripes = [0; 16];
         for (stripe, &offset) in stripes.iter_mut().zip(offsets) {
             *stripe = self.stripe(offset);
@@ -218,7 +233,7 @@ impl SharedLayout {
         (stripes, unique)
     }
 
-    fn try_hold(self, stripes: &[u32], require_promoted: bool) -> Option<SharedHeld> {
+    fn try_hold(self, stripes: &[SharedOffset], require_promoted: bool) -> Option<SharedHeld> {
         let mut held = SharedHeld {
             offsets: [0; 16],
             count: 0,
@@ -236,7 +251,7 @@ impl SharedLayout {
         Some(held)
     }
 
-    fn promote(self, stripes: &[u32]) {
+    fn promote(self, stripes: &[SharedOffset]) {
         for &stripe in stripes {
             if unsafe { load_control(stripe) } == 0 {
                 unsafe { store_control(stripe, 1) };
@@ -244,7 +259,7 @@ impl SharedLayout {
         }
     }
 
-    fn has_watched_byte(self, offsets: &[u32]) -> bool {
+    fn has_watched_byte(self, offsets: &[SharedOffset]) -> bool {
         let Some(&first) = offsets.first() else {
             return false;
         };
@@ -263,7 +278,7 @@ impl SharedLayout {
 
     pub(super) fn access<T>(
         self,
-        offsets: &[u32],
+        offsets: &[SharedOffset],
         write: bool,
         held_rmw: Option<&SharedHeld>,
         mut operation: impl FnMut(bool) -> Option<T>,
@@ -295,10 +310,10 @@ impl SharedLayout {
         }
         let result = operation(true).expect("exclusive parallel RAM operation was incomplete");
         if write {
-            let mut pending: Option<(u32, u32)> = None;
+            let mut pending: Option<(SharedOffset, u32)> = None;
             for &offset in offsets {
                 if let Some((start, length)) = pending.take() {
-                    if start.checked_add(length) == Some(offset) {
+                    if start.checked_add(SharedOffset::from(length)) == Some(offset) {
                         pending = Some((start, length + 1));
                         continue;
                     }
@@ -313,7 +328,7 @@ impl SharedLayout {
         result
     }
 
-    fn note_if_watched(self, start: u32, length: u32) {
+    fn note_if_watched(self, start: SharedOffset, length: u32) {
         if self.watched(start, length) {
             unsafe { note_write(start, length) };
         }
@@ -321,29 +336,33 @@ impl SharedLayout {
 
     #[cfg(target_arch = "wasm32")]
     #[inline]
-    pub(super) fn unpromoted(self, absolute: u32) -> bool {
+    pub(super) fn unpromoted(self, absolute: SharedOffset) -> bool {
         unsafe { load_control(self.stripe(absolute)) == 0 }
     }
 
     #[cfg(target_arch = "wasm32")]
-    pub(super) fn guard_bias(self) -> u32 {
-        self.guards.wrapping_sub((self.base / 64) * 4)
+    pub(super) fn guard_bias(self, last: SharedOffset) -> Option<u32> {
+        super::direct_offset(self.stripe(last))?;
+        let bias = self.guards.wrapping_sub((self.base / 64) * 4);
+        #[cfg(parallel_memory64)]
+        let bias = bias as u32;
+        Some(bias)
     }
 
     #[cfg(target_arch = "wasm32")]
     #[inline]
-    pub(super) fn byte_store_room(self, absolute: u32) -> Option<u32> {
+    pub(super) fn byte_store_room(self, absolute: SharedOffset) -> Option<u32> {
         let in_word = (absolute - self.base) & 31;
         // Both the source-watch word and its containing stripe must stay clear.
         if !self.unpromoted(absolute) || self.watched(absolute - in_word, 32) {
             return None;
         }
-        Some(32 - in_word)
+        Some(super::direct_offset(32 - in_word).expect("in-word byte count"))
     }
 
     #[cfg(target_arch = "wasm32")]
     #[inline]
-    pub(super) fn begin_rmw(self, offsets: &[u32], hold: &mut Option<SharedHeld>) -> bool {
+    pub(super) fn begin_rmw(self, offsets: &[SharedOffset], hold: &mut Option<SharedHeld>) -> bool {
         if self.has_watched_byte(offsets) {
             return false;
         }
@@ -368,7 +387,7 @@ impl SharedLayout {
     #[inline(always)]
     pub(super) fn read_contiguous_dword<const NATIVE_DWORD: bool>(
         self,
-        absolute: u32,
+        absolute: SharedOffset,
         bytes: &mut [u8],
     ) -> bool {
         debug_assert!(bytes.len() == 4 && (absolute & 63) <= 60);
@@ -376,7 +395,10 @@ impl SharedLayout {
         let stripes = [self.stripe(absolute)];
         // Same one-attempt hold and exclusive promotion order as access().
         let held = self.try_hold(&stripes, crosses_lane);
-        if NATIVE_DWORD && held.as_ref().is_some_and(|held| held.count == 0) {
+        if NATIVE_DWORD
+            && super::direct_offset(absolute).is_some()
+            && held.as_ref().is_some_and(|held| held.count == 0)
+        {
             debug_assert!(!crosses_lane);
             return true;
         }

@@ -1,9 +1,15 @@
 use crate::embedding::exports::*;
-use crate::memory::{MemoryError, SharedDword};
+use crate::memory::{MemoryError, SharedDword, SharedOffset};
 
 #[unsafe(no_mangle)]
 pub extern "C" fn core_parallel_abi() -> u32 {
-    6
+    if cfg!(parallel_memory64) { 7 } else { 6 }
+}
+
+#[cfg(parallel_memory64)]
+#[unsafe(no_mangle)]
+pub extern "C" fn core_parallel_memory64() -> u32 {
+    1
 }
 
 fn complete(bridge: &mut Bridge, result: Result<(), MemoryError>) -> i32 {
@@ -20,7 +26,11 @@ fn complete(bridge: &mut Bridge, result: Result<(), MemoryError>) -> i32 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn core_parallel_add_backing(length: u32, offset: u32, incarnation: u64) -> i32 {
+pub extern "C" fn core_parallel_add_backing(
+    length: SharedOffset,
+    offset: SharedOffset,
+    incarnation: u64,
+) -> i32 {
     BRIDGE.with_borrow_mut(|bridge| {
         let Ok(id) = serde_json::from_slice::<String>(&bridge.input) else {
             return bridge.error("invalid shared backing name");
@@ -53,7 +63,7 @@ pub extern "C" fn core_parallel_proof(owner: u64) -> i32 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn core_parallel_invalidate(offset: u32, length: u32) {
+pub extern "C" fn core_parallel_invalidate(offset: SharedOffset, length: u32) {
     BRIDGE.with_borrow_mut(|bridge| {
         bridge
             .core

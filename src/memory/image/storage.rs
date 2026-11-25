@@ -1,8 +1,8 @@
 use super::Backing;
 
-#[cfg(not(guest_memory64))]
+#[cfg(not(any(guest_memory64, parallel_memory64)))]
 pub type BackingOffset = u32;
-#[cfg(guest_memory64)]
+#[cfg(any(guest_memory64, parallel_memory64))]
 pub type BackingOffset = u64;
 
 impl Backing {

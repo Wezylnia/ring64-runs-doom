@@ -438,11 +438,18 @@ impl Emitter {
     }
 
     fn parallel_signal(&mut self) {
-        self.op(Op::GlobalGet(0)).op(Op::I32AtomicLoad(MemArg {
+        self.op(Op::GlobalGet(0));
+        self.shared_memory_address();
+        self.op(Op::I32AtomicLoad(MemArg {
             offset: 0,
             align: 2,
             memory_index: 1,
         }));
+    }
+
+    fn shared_memory_address(&mut self) {
+        #[cfg(parallel_memory64)]
+        self.op(Op::I64ExtendI32U);
     }
 
     fn shared_segment(&self) -> i32 {
@@ -457,6 +464,7 @@ impl Emitter {
         self.op(Op::LocalGet(scalar.address))
             .op(Op::I32Const(!7))
             .op(Op::I32And);
+        self.shared_memory_address();
     }
 
     fn lane_shift(&mut self, scalar: Scalar) {
@@ -499,9 +507,9 @@ impl Emitter {
         self.op(Op::LocalGet(scalar.address))
             .op(Op::If(BlockType::Empty));
         self.data_operand(source, width);
-        self.op(Op::LocalSet(RHS))
-            .op(Op::LocalGet(scalar.address))
-            .op(Op::LocalGet(RHS))
+        self.op(Op::LocalSet(RHS)).op(Op::LocalGet(scalar.address));
+        self.shared_memory_address();
+        self.op(Op::LocalGet(RHS))
             .op(instruction)
             .op(Op::LocalSet(LHS));
         if matches!(kind, Alu::Add | Alu::Sub) {
@@ -626,13 +634,14 @@ impl Emitter {
             .op(Op::I32Const(2))
             .op(Op::I32Shl)
             .op(Op::LocalGet(window.guard_bias))
-            .op(Op::I32Add)
-            .op(Op::I32AtomicLoad(MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 1,
-            }))
-            .op(Op::I32Eqz);
+            .op(Op::I32Add);
+        self.shared_memory_address();
+        self.op(Op::I32AtomicLoad(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 1,
+        }))
+        .op(Op::I32Eqz);
         if width == Width::W32 {
             self.op(Op::Else).op(Op::I32Const(0)).op(Op::End);
         }

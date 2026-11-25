@@ -1,5 +1,5 @@
 #![cfg_attr(
-    guest_memory64,
+    any(guest_memory64, parallel_memory64),
     allow(
         clippy::useless_conversion,
         reason = "backing offsets widen from u32 only in the memory64 build"
@@ -253,7 +253,7 @@ impl Image {
         {
             self.check_backing(
                 &id,
-                u32::try_from(bytes.len())
+                BackingOffset::try_from(bytes.len())
                     .map_err(|_| MemoryError::Invalid("backing exceeds wasm32"))?,
             )?;
             self.backings
@@ -664,7 +664,7 @@ impl Backing {
         }
         #[cfg(not(guest_memory64))]
         {
-            self.bytes.len() as u32
+            self.bytes.len() as BackingOffset
         }
         #[cfg(guest_memory64)]
         {
