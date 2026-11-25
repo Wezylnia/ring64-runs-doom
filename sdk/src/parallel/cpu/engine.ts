@@ -10,6 +10,7 @@ import {
   type RunResult,
 } from '../../cpu/cpu.js';
 import { captureInitialContext, captureLimits, type Limits } from '../../cpu/options.js';
+import { validateNativeProgress } from '../../cpu/run-progress.js';
 import type { InstalledEntry } from '../../cpu/translations.js';
 import { captureIo, type IoProvider } from '../../embedding/io.js';
 import type {
@@ -291,32 +292,28 @@ export class ParallelCpu extends Cpu {
         const repeatBefore = remainingRepeatBudget;
         const sliceBudget = binding.sliceLimit(remaining);
         const sliceRepeats = binding.sliceLimit(remainingRepeatBudget);
-        let reason = core.execute(entry.artifact.run, entry.index, sliceBudget, stop, sliceRepeats);
+        const reason = core.execute(
+          entry.artifact.run,
+          entry.index,
+          sliceBudget,
+          stop,
+          sliceRepeats,
+        );
         core.parallelFinishSlice();
         timings.executionMs += performance.now() - executionBegan;
         cache.touch(entry.artifact);
         if (cached) resources.cacheHits++;
         resources.nativeEntries++;
         const current = core.current();
+        validateNativeProgress(reason, sliceBudget, sliceRepeats, current);
         remaining = current.remaining + (before - sliceBudget);
         remainingRepeatBudget = current.repeatRemaining + (repeatBefore - sliceRepeats);
         if (
+          reason === 'parallel-boundary' ||
           (reason === 'budget' && remaining !== 0n) ||
           (reason === 'repeat-budget' && remainingRepeatBudget !== 0n)
         )
-          reason = 'parallel-boundary';
-        if (
-          remaining > before ||
-          remainingRepeatBudget > repeatBefore ||
-          (reason === 'dispatch' &&
-            remaining === before &&
-            remainingRepeatBudget === repeatBefore) ||
-          (reason === 'budget' && remaining !== 0n) ||
-          (reason === 'repeat-budget' && (remainingRepeatBudget !== 0n || remaining === 0n))
-        ) {
-          throw new Error('generated execution violated its progress contract');
-        }
-        if (reason === 'parallel-boundary') continue execution;
+          continue execution;
         if (reason === 'paging-restart') {
           resources.pagingRestarts = (resources.pagingRestarts ?? 0) + 1;
           if (resources.pagingRestarts >= limits.maxTranslationsPerRun)

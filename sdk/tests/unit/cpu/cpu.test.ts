@@ -3,6 +3,8 @@ import test from 'node:test';
 import { registerBank } from '../../../../tests/support/fixture.js';
 import { Core } from '../../../src/wasm/core.js';
 import { Cpu, createCpu } from '../../../src/cpu/cpu.js';
+import type { ParallelCore } from '../../../src/parallel/cpu/core.js';
+import { ParallelCpu } from '../../../src/parallel/cpu/engine.js';
 
 const limits = {
   maxInstructions: 32,
@@ -169,7 +171,7 @@ type Step = {
   boundaryObserved?: boolean;
 };
 
-async function fixture(steps: Step[] = []) {
+async function fixture(steps: Step[] = [], parallelSlice?: bigint) {
   let current = { rip: 0x1000n, remaining: 0n, repeatRemaining: 0n };
   let xmm = Array<bigint>(16).fill(0n);
   const entries: { budget: bigint; repeatBudget: bigint | undefined }[] = [];
@@ -182,6 +184,15 @@ async function fixture(steps: Step[] = []) {
   const preparedProfiles: boolean[] = [];
   const queriedProfiles: boolean[] = [];
   const engine = {
+    parallelBinding: {
+      checkpoint: async () => false,
+      sliceLimit: (budget: bigint) =>
+        parallelSlice !== undefined && parallelSlice < budget ? parallelSlice : budget,
+      compile: (bytes: Uint8Array<ArrayBuffer>) => WebAssembly.compile(bytes),
+      imports: { enter_exclusive: () => 0, leave_exclusive() {} },
+      watch() {},
+    },
+    parallelFinishSlice() {},
     current: () => current,
     snapshot: () => ({
       registers: registerBank(),
@@ -273,12 +284,22 @@ async function fixture(steps: Step[] = []) {
   const create = Core.create;
   Core.create = async () => engine as unknown as Core;
   try {
-    const cpu = await createCpu({
-      compiler: new Uint8Array(),
-      code: { base: 0x1000n, bytes: Uint8Array.of(0x90) },
-      ram: { base: 0x8000n, bytes: new Uint8Array(1) },
-      limits,
-    });
+    const cpu =
+      parallelSlice === undefined
+        ? await createCpu({
+            compiler: new Uint8Array(),
+            code: { base: 0x1000n, bytes: Uint8Array.of(0x90) },
+            ram: { base: 0x8000n, bytes: new Uint8Array(1) },
+            limits,
+          })
+        : new ParallelCpu(
+            engine as unknown as ParallelCore,
+            limits,
+            0,
+            { maxBackings: 2, maxMappings: 2, maxBackingBytes: 2 },
+            new Map(),
+            'linear',
+          );
     return {
       cpu,
       entries,
@@ -654,6 +675,49 @@ for (const [name, steps] of Object.entries({
     }
   });
 }
+
+for (const reason of ['budget', 'repeat-budget']) {
+  test(`parallel slices reject ${reason} when neither native allowance was exhausted`, async () => {
+    const { cpu, entries } = await fixture(
+      [
+        { reason, remaining: 2n, repeatRemaining: 2n },
+        { reason: 'stop', remaining: 1n, repeatRemaining: 2n },
+      ],
+      2n,
+    );
+    try {
+      await assert.rejects(cpu.run({ budget: 5n }), (error: unknown) => {
+        assert.ok(error instanceof Error && error.cause instanceof Error);
+        assert.match(error.cause.message, /progress contract/);
+        return true;
+      });
+      assert.deepEqual(entries, [{ budget: 2n, repeatBudget: 2n }]);
+    } finally {
+      cpu.dispose();
+    }
+  });
+}
+
+test('parallel slices resume valid native budget exits and preserve both public allowances', async () => {
+  const { cpu } = await fixture(
+    [
+      { reason: 'budget', remaining: 0n, repeatRemaining: 2n },
+      { reason: 'repeat-budget', remaining: 2n, repeatRemaining: 0n },
+      { reason: 'stop', remaining: 1n, repeatRemaining: 2n },
+    ],
+    2n,
+  );
+  try {
+    const result = await cpu.run({ budget: 5n });
+    assert.equal(result.reason, 'stop');
+    assert.equal(result.retired, 3n);
+    assert.equal(result.remaining, 2n);
+    assert.equal(result.repeatIterations, 2n);
+    assert.equal(result.remainingRepeatBudget, 3n);
+  } finally {
+    cpu.dispose();
+  }
+});
 
 for (const reason of ['parallel-boundary', 'unknown-core-exit']) {
   test(`${reason} cannot become a public run result`, async () => {

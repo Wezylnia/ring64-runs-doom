@@ -22,6 +22,7 @@ import { captureX87State, type X87State } from '../state/numeric/x87.js';
 import { Core, usesMemory64, type CompilerSource } from '../wasm/core.js';
 import type { GeneratedRun } from '../wasm/abi.js';
 import { captureInitialContext, captureLimits, type Limits } from './options.js';
+import { validateNativeProgress } from './run-progress.js';
 import {
   isRunReason,
   readRunDiagnostics,
@@ -1054,22 +1055,12 @@ export class Cpu {
           if (receipt.continuations > 0) sampling = undefined;
         }
         const current = engine.current();
+        validateNativeProgress(nativeReason, nativeBudget, repeatBefore, current);
         remaining = withheld === 0n ? current.remaining : current.remaining + withheld;
         remainingRepeatBudget = current.repeatRemaining;
         // The alias may yield at the sample budget without ending the public run.
         const traceYield = nativeReason === 'budget' && withheld > 0n;
         const reason = traceYield ? 'dispatch' : nativeReason;
-        if (
-          current.remaining > nativeBudget ||
-          remainingRepeatBudget > repeatBefore ||
-          (reason === 'dispatch' &&
-            remaining === before &&
-            remainingRepeatBudget === repeatBefore) ||
-          (nativeReason === 'budget' && current.remaining !== 0n) ||
-          (reason === 'repeat-budget' && (remainingRepeatBudget !== 0n || remaining === 0n))
-        ) {
-          throw new Error('generated execution violated its progress contract');
-        }
         if (capture && reason !== 'dispatch') abortCapture();
         if (reason === 'paging-restart') {
           resources.pagingRestarts = (resources.pagingRestarts ?? 0) + 1;
