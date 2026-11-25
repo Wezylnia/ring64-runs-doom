@@ -106,7 +106,7 @@ export interface Binding {
   readonly imports: {
     enter_exclusive(): number;
     leave_exclusive(token: number): void;
-    note_write(offset: number, length: number): void;
+    note_write(offset: number | bigint, length: number): void;
   };
   checkpoint(core: ParallelCore): Promise<boolean>;
   suspend(): void;

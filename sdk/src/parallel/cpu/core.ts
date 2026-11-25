@@ -16,6 +16,7 @@ import {
   writeInput,
 } from '../../wasm/core.js';
 import type { BackingRecord } from '../memory/backings.js';
+import { wasmRamOffset } from '../memory/ram.js';
 import type { Binding, Range } from '../protocol.js';
 
 export class ParallelCore extends Core {
@@ -50,9 +51,9 @@ export class ParallelCore extends Core {
         ring64_ram: { ...binding.ramImports, ...binding.imports },
       });
       const exports = instance.exports as ParallelCoreExports;
+      const abi = typeof exports.core_parallel_abi === 'function' ? exports.core_parallel_abi() : 0;
       if (
-        typeof exports.core_parallel_abi !== 'function' ||
-        ![1, 2, 3, 4, 5, 6].includes(exports.core_parallel_abi()) ||
+        (binding.layout.memory64 ? abi !== 7 : ![1, 2, 3, 4, 5, 6].includes(abi)) ||
         exports.memory !== binding.privateMemory
       )
         throw new Error('parallel core ABI mismatch');
@@ -131,20 +132,34 @@ export class ParallelCore extends Core {
       throw new Error('parallel core refused source proof');
     const bytes = this.output();
     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.length);
-    if (view.byteLength % 8 !== 0) throw new Error('malformed parallel source proof');
+    const offsetBytes = this.parallelBinding.layout.memory64 ? 8 : 4;
+    const rangeBytes = offsetBytes + 4;
+    if (view.byteLength % rangeBytes !== 0) throw new Error('malformed parallel source proof');
     const ranges: Range[] = [];
-    for (let at = 0; at < view.byteLength; at += 8)
-      ranges.push({ offset: view.getUint32(at, true), length: view.getUint32(at + 4, true) });
+    for (let at = 0; at < view.byteLength; at += rangeBytes) {
+      const offset =
+        offsetBytes === 8 ? Number(view.getBigUint64(at, true)) : view.getUint32(at, true);
+      if (!Number.isSafeInteger(offset)) throw new Error('malformed parallel source proof offset');
+      ranges.push({ offset, length: view.getUint32(at + offsetBytes, true) });
+    }
     return ranges;
   }
 
   parallelInvalidate(offset: number, length: number): void {
-    this.#parallelExports.core_parallel_invalidate(offset, length);
+    const memory64 = this.parallelBinding.layout.memory64;
+    this.#parallelExports.core_parallel_invalidate(wasmRamOffset(offset, memory64), length);
   }
 
   parallelAddBacking({ id, length, offset, incarnation }: BackingRecord): void {
     writeInput(this.#parallelExports, backingKey(id));
-    this.memoryResult(this.#parallelExports.core_parallel_add_backing(length, offset, incarnation));
+    const memory64 = this.parallelBinding.layout.memory64;
+    this.memoryResult(
+      this.#parallelExports.core_parallel_add_backing(
+        wasmRamOffset(length, memory64),
+        wasmRamOffset(offset, memory64),
+        incarnation,
+      ),
+    );
   }
 
   parallelHostMemoryChanged(): void {

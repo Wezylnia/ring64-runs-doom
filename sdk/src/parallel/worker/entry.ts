@@ -10,7 +10,7 @@ import type {
   Start,
   ToWorker,
 } from '../protocol.js';
-import { bindRam } from '../memory/ram.js';
+import { bindRam, wasmRamOffset } from '../memory/ram.js';
 import { markSourceWatches } from '../memory/source-watches.js';
 import { connectWorker } from './transport.js';
 
@@ -47,15 +47,16 @@ class WorkerRuntime implements Binding {
     this.layout = data.layout;
     this.backings = data.backings;
     this.#id = data.id;
-    this.#control = new SharedControl(data.shared);
+    this.#control = new SharedControl(data.shared, data.layout.cpus);
     this.signal = new WebAssembly.Global({ value: 'i32' }, cpuOffset(data.id) + SLOT.signal);
     this.ramImports = bindRam(data.ramModule, this.privateMemory, data.shared);
   }
 
   startup(): void {
-    let previous = this.ramImports.load_lane(STARTUP_WORD);
+    const offset = wasmRamOffset(STARTUP_WORD, this.layout.memory64);
+    let previous = this.ramImports.load_lane(offset);
     for (;;) {
-      const found = this.ramImports.compare_exchange_lane(STARTUP_WORD, previous, previous + 1n);
+      const found = this.ramImports.compare_exchange_lane(offset, previous, previous + 1n);
       if (found === previous) return;
       previous = found;
     }
@@ -242,10 +243,11 @@ class WorkerRuntime implements Binding {
       if (!this.#scopes.delete(token >>> 0)) throw new Error('invalid parallel exclusive token');
       // The grant stays live until the reached compound effect leaves native execution.
     },
-    note_write: (offset: number, length: number): void => {
+    note_write: (offset: number | bigint, length: number): void => {
       if (this.#scopes.size === 0 && this.#exclusive === 0n && this.#admin === 0n)
         throw new Error('watched RAM write outside parallel exclusivity');
-      this.send({ kind: 'write', range: { offset: offset >>> 0, length: length >>> 0 } });
+      const byte = typeof offset === 'bigint' ? Number(offset) : offset >>> 0;
+      this.send({ kind: 'write', range: { offset: byte, length: length >>> 0 } });
     },
   };
 

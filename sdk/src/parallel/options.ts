@@ -21,6 +21,7 @@ import {
 import { capturePagingState, type PagingState } from '../state/system/paging.js';
 import { sharedLayout } from './control.js';
 import { backingAllocationBytes } from './memory/backings.js';
+import { usesParallelMemory64 } from './memory/ram.js';
 
 interface Common {
   compiler: CompilerSource;
@@ -69,16 +70,21 @@ export type CpuInput = {
 
 export function captureMachine(options: MachineOptions) {
   if ('mmio' in options) throw new TypeError('MMIO requires a standalone CPU');
+  const compiler = options.compiler;
+  if (!(compiler instanceof WebAssembly.Module) && !(compiler instanceof Uint8Array))
+    throw new TypeError('compiler must be bytes or a WebAssembly.Module');
+  // Capture all input before awaiting a byte-supplied compiler's actual profile.
+  const memory64 = compiler instanceof WebAssembly.Module ? usesParallelMemory64(compiler) : true;
   const memoryModel = options.memoryModel;
   if (memoryModel !== 'linear' && memoryModel !== 'ia32e-paged' && memoryModel !== 'physical')
     throw new TypeError('memoryModel must be linear, ia32e-paged or physical');
-  const memoryLimits = captureMemoryLimits(options.memoryLimits);
+  const memoryLimits = captureMemoryLimits(options.memoryLimits, memory64);
   const memory = options.memory;
   const mappingInput = memory.mappings;
   if (!Array.isArray(mappingInput) || mappingInput.length > memoryLimits.maxMappings)
     throw new TypeError('invalid machine maps');
-  const backings = captureBackings(memory.backings, memoryLimits);
-  const mappings = captureMappings(mappingInput, memoryLimits, memoryModel);
+  const backings = captureBackings(memory.backings, memoryLimits, undefined, memory64);
+  const mappings = captureMappings(mappingInput, memoryLimits, memoryModel, memory64);
   validateMappings(mappings, validateBackings(backings, new Map(), memoryLimits));
 
   const limits = captureLimits(options.limits);
@@ -91,9 +97,10 @@ export function captureMachine(options: MachineOptions) {
     options.sharedRamCapacity,
     limits.maxSourceBytes,
     limits.maxCachedArtifacts,
+    memory64,
   );
   const arenaBytes = backings.reduce(
-    (used, { bytes }) => used + backingAllocationBytes(bytes.length),
+    (used, { bytes, byteLength }) => used + backingAllocationBytes(byteLength ?? bytes.length),
     0,
   );
   if (arenaBytes > layout.ramCapacity)
@@ -117,9 +124,6 @@ export function captureMachine(options: MachineOptions) {
     cpus.push(settings);
   }
   const io = captureIo(options);
-  const compiler = options.compiler;
-  if (!(compiler instanceof WebAssembly.Module) && !(compiler instanceof Uint8Array))
-    throw new TypeError('compiler must be bytes or a WebAssembly.Module');
   return {
     memoryModel,
     memoryLimits,
@@ -131,4 +135,18 @@ export function captureMachine(options: MachineOptions) {
     io,
     compiler: compiler instanceof WebAssembly.Module ? compiler : copyMemoryInput(compiler),
   };
+}
+
+export function memory32Layout(input: ReturnType<typeof captureMachine>) {
+  if (!input.layout.memory64) return input.layout;
+  captureMemoryLimits(input.memoryLimits);
+  if (input.backings.some(({ byteLength }) => byteLength !== undefined))
+    throw new TypeError('extended backing length requires memory64');
+  // The captured mapping offsets already fit the checked backing lengths.
+  return sharedLayout(
+    input.layout.cpus,
+    input.layout.ramCapacity,
+    input.limits.maxSourceBytes,
+    input.limits.maxCachedArtifacts,
+  );
 }

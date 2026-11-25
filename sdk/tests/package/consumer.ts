@@ -65,10 +65,11 @@ export async function checkCpu(profile?: 'memory32' | 'memory64'): Promise<void>
   }
 }
 
-export async function checkParallel(): Promise<void> {
+export async function checkParallel(profile?: 'memory32' | 'memory64'): Promise<void> {
   const { createMachine, loadParallelCompiler } = await import('ring64/parallel');
+  const compiler = await loadParallelCompiler(profile);
   const machineOptions = {
-    compiler: await loadParallelCompiler(),
+    compiler,
     limits,
     sharedRamCapacity: 4096,
     memoryModel: 'linear',

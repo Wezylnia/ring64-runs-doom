@@ -45,6 +45,7 @@ test(
       'ring64.wasm',
       'ring64-parallel.wasm',
       'ring64-memory64.wasm',
+      'ring64-parallel-memory64.wasm',
       'parallel/worker/entry.js',
       'parallel/cpu/engine.js',
       'parallel/cpu/engine.d.ts',
@@ -124,6 +125,7 @@ test(
     await checkCpu('memory32');
     if (supportsWide) await checkCpu('memory64');
     await checkParallel();
+    await checkParallel('memory32');
   `,
     );
     await exec(process.execPath, ['check.mjs'], { cwd: project, timeout: 30_000 });
@@ -187,10 +189,12 @@ async function checkBrowser(project) {
     await runInBrowser(page, 'checkCpu');
     assert.equal(paths.filter((path) => path.endsWith('.wasm')).length, 1);
     assert.ok(
-      !paths.some((path) => /\/parallel\/|\/machine\.js$|ring64-parallel\.wasm$/.test(path)),
+      !paths.some((path) =>
+        /\/parallel\/|\/machine\.js$|ring64-parallel(-memory64)?\.wasm$/.test(path),
+      ),
     );
     await runInBrowser(page, 'checkParallel');
-    assert.ok(paths.includes(`${moduleRoot}ring64-parallel.wasm`));
+    assert.equal(paths.filter((path) => /ring64-parallel(-memory64)?\.wasm$/.test(path)).length, 1);
   } finally {
     try {
       await browser?.close();

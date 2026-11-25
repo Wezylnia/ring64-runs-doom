@@ -3,7 +3,9 @@ import { copyFile, mkdir } from 'node:fs/promises';
 
 const target = 'wasm32-unknown-unknown';
 const profile = process.argv[2] ?? 'parallel';
-if (profile !== 'parallel' && profile !== 'memory64') throw new Error('unknown Core profile');
+if (!['parallel', 'memory64', 'parallel-memory64'].includes(profile))
+  throw new Error('unknown Core profile');
+const features = profile === 'parallel-memory64' ? 'parallel,memory64' : profile;
 const output = `target/${profile}`;
 const result = spawnSync(
   'cargo',
@@ -17,7 +19,7 @@ const result = spawnSync(
     output,
     '--lib',
     '--features',
-    profile,
+    features,
     '--',
     '-C',
     'link-arg=--import-memory',

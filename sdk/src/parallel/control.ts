@@ -1,4 +1,5 @@
 import { BACKING_PAGE_BYTES } from './memory/backings.js';
+import { MAX_SHARED_MEMORY64_PAGES } from './memory/ram.js';
 
 const HEADER = 64;
 const RECORD = 128;
@@ -26,6 +27,7 @@ export const SLOT = {
 export const SIGNAL = { pause: 1, phase: 2, ingress: 4 } as const;
 
 export interface SharedLayout {
+  memory64: boolean;
   cpus: number;
   ramBase: number;
   ramCapacity: number;
@@ -39,6 +41,7 @@ export function sharedLayout(
   ramCapacity: number,
   maxSourceBytes: number,
   maxCachedArtifacts: number,
+  memory64 = false,
 ): SharedLayout {
   if (
     !Number.isSafeInteger(ramCapacity) ||
@@ -54,8 +57,14 @@ export function sharedLayout(
     BigInt(cpus) * (BigInt(maxCachedArtifacts) + 1n) * BigInt(maxSourceBytes) * 6n;
   const ramBase = ((afterWatches + proofCapacity * 24n + 65535n) / 65536n) * 65536n;
   const end = ramBase + BigInt(ramCapacity);
-  if (end >= 1n << 32n) throw new RangeError('parallel RAM and metadata exceed memory32');
+  if (memory64) {
+    if (end > BigInt(MAX_SHARED_MEMORY64_PAGES) * 65536n)
+      throw new RangeError('parallel RAM and metadata exceed the 16 GiB memory64 arena');
+  } else if (end >= 1n << 32n) {
+    throw new RangeError('parallel RAM and metadata exceed memory32');
+  }
   return {
+    memory64,
     cpus,
     ramBase: Number(ramBase),
     ramCapacity,
@@ -78,16 +87,21 @@ export class SharedControl {
   private readonly wide: BigUint64Array<SharedArrayBuffer>;
   private readonly words: Int32Array<SharedArrayBuffer>;
 
-  constructor(memory: WebAssembly.Memory) {
+  constructor(memory: WebAssembly.Memory, cpus = 1) {
     const buffer: ArrayBuffer | SharedArrayBuffer = memory.buffer;
     if (!(buffer instanceof SharedArrayBuffer))
       throw new TypeError('parallel memory must be shared');
-    this.wide = new BigUint64Array(buffer as SharedArrayBuffer);
-    this.words = new Int32Array(buffer as SharedArrayBuffer);
+    const controlBytes = cpuOffset(cpus);
+    this.wide = new BigUint64Array(buffer, 0, controlBytes / 8);
+    this.words = new Int32Array(buffer, 0, controlBytes / 4);
   }
 
   get phase(): bigint {
     return Atomics.load(this.wide, 0);
+  }
+
+  get startups(): bigint {
+    return Atomics.load(this.wide, STARTUP_WORD / 8);
   }
 
   initialize(): void {

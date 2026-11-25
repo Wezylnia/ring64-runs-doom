@@ -17,7 +17,7 @@ npm('run', 'lint');
 
 run('cargo', 'clippy', '--all-targets', '--', '-D', 'warnings');
 run('cargo', 'clippy', '--target', 'wasm32-unknown-unknown', '--lib', '--', '-D', 'warnings');
-for (const profile of ['parallel', 'memory64']) {
+for (const profile of ['parallel', 'memory64', 'parallel,memory64']) {
   run(
     'cargo',
     'clippy',

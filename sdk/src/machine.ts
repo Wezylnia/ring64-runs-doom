@@ -8,9 +8,9 @@ import {
   type MemoryBackingInput,
   type MemoryMapping,
 } from './embedding/memory.js';
-import { SharedControl, SIGNAL, SLOT, STARTUP_WORD, nextIdentity } from './parallel/control.js';
+import { SharedControl, SIGNAL, SLOT, nextIdentity } from './parallel/control.js';
 import { handle, type ParallelCpu } from './parallel/handle.js';
-import { captureMachine, type MachineOptions } from './parallel/options.js';
+import { captureMachine, memory32Layout, type MachineOptions } from './parallel/options.js';
 import { findOffset, seedBacking, type BackingRecord } from './parallel/memory/backings.js';
 import type {
   Command,
@@ -21,7 +21,13 @@ import type {
   RunOptions,
   Start,
 } from './parallel/protocol.js';
-import { bindRam, ramModule } from './parallel/memory/ram.js';
+import {
+  bindRam,
+  ramModule,
+  sharedRam,
+  supportsParallelMemory64,
+  usesParallelMemory64,
+} from './parallel/memory/ram.js';
 import { SourceWatches } from './parallel/memory/source-watches.js';
 import {
   launchWorker,
@@ -34,10 +40,23 @@ export type { MachineOptions, ParallelCpu, ParallelRunResult, RunOptions };
 export type { RunReason } from './cpu/cpu.js';
 export { ParallelError };
 
-/** Compile the packaged parallel Core for reuse across machines. */
-export async function loadParallelCompiler(): Promise<WebAssembly.Module> {
+/** Prefer shared memory64 when supported. Reuse the compiled Core across machines. */
+export async function loadParallelCompiler(
+  guestMemory: 'memory32' | 'memory64' = supportsParallelMemory64() ? 'memory64' : 'memory32',
+): Promise<WebAssembly.Module> {
+  if (guestMemory !== 'memory32' && guestMemory !== 'memory64')
+    throw new TypeError('guestMemory must be memory32 or memory64');
+  if (guestMemory === 'memory64' && !supportsParallelMemory64())
+    throw new ParallelError(
+      'unsupported',
+      'parallel memory64 requires shared Wasm memory64 and atomics',
+    );
   const { loadCompiler } = await import('./wasm/load.js');
-  return loadCompiler(new URL('./ring64-parallel.wasm', import.meta.url));
+  return loadCompiler(
+    guestMemory === 'memory64'
+      ? new URL('./ring64-parallel-memory64.wasm', import.meta.url)
+      : new URL('./ring64-parallel.wasm', import.meta.url),
+  );
 }
 
 interface Deferred<T> {
@@ -119,16 +138,6 @@ export interface Machine {
 export async function createMachine(options: MachineOptions): Promise<Machine> {
   const input = captureMachine(options);
   requireWorkerCapability();
-  let helper: WebAssembly.Module;
-  try {
-    helper = ramModule();
-  } catch (cause) {
-    throw new ParallelError(
-      'unsupported',
-      'parallel execution requires Wasm multiple memories and atomics',
-      { cause },
-    );
-  }
   const compiler =
     input.compiler instanceof WebAssembly.Module
       ? input.compiler
@@ -142,18 +151,31 @@ export async function createMachine(options: MachineOptions): Promise<Machine> {
       'unsupported',
       'parallel execution requires the parallel Core artifact',
     );
+  const memory64 = usesParallelMemory64(compiler);
+  if (!memory64) input.layout = memory32Layout(input);
+  let helper: WebAssembly.Module;
+  try {
+    if (memory64 && !supportsParallelMemory64())
+      throw new Error('parallel memory64 requires shared Wasm memory64 and atomics');
+    helper = ramModule(memory64);
+  } catch (cause) {
+    throw new ParallelError(
+      'unsupported',
+      'parallel execution requires compatible Wasm memories and atomics',
+      { cause },
+    );
+  }
   let memory: WebAssembly.Memory;
   try {
-    memory = new WebAssembly.Memory({
-      initial: input.layout.pages,
-      maximum: input.layout.pages,
-      shared: true,
-    });
+    memory = sharedRam(input.layout.pages, memory64);
   } catch (cause) {
     throw new ParallelError('capacity', 'parallel RAM allocation failed', { cause });
   }
   const backingStore = bindRam(helper, new WebAssembly.Memory({ initial: 1 }), memory);
-  const machine = new ParallelMachine(input, memory, backingStore.store_lane);
+  const storeLane: MachineResources['storeLane'] = memory64
+    ? (offset, value) => backingStore.store_lane(BigInt(offset), value)
+    : backingStore.store_lane;
+  const machine = new ParallelMachine(input, memory, storeLane);
   await initializeMachine(machine, input, compiler, helper);
   return machine;
 }
@@ -176,6 +198,7 @@ class ParallelMachine implements Machine {
   #writes: Range[] = [];
   #records = new Map<string, BackingRecord>();
   #maps: MemoryMapping[];
+  #seededEnd = 0;
   #incarnation = 0n;
   #ingressSequence = 0n;
   #invalidation = 0n;
@@ -196,7 +219,7 @@ class ParallelMachine implements Machine {
     memory: WebAssembly.Memory,
     storeLane: MachineResources['storeLane'],
   ) {
-    const control = new SharedControl(memory);
+    const control = new SharedControl(memory, input.layout.cpus);
     control.initialize();
     const { layout, memoryModel, memoryLimits, io } = input;
     this.#resources = {
@@ -223,7 +246,7 @@ class ParallelMachine implements Machine {
     }));
     for (const backing of input.backings) {
       const record = this.#record(backing);
-      seedBacking(this.#active.storeLane, record.offset, backing.bytes);
+      this.#seed(record, backing.bytes);
       this.#records.set(backing.id, record);
     }
     input.backings.length = 0;
@@ -309,10 +332,7 @@ class ParallelMachine implements Machine {
           );
         }),
       ]);
-      if (
-        Atomics.load(new BigUint64Array(this.#active.memory.buffer), STARTUP_WORD / 8) !==
-        BigInt(this.#peers.length)
-      )
+      if (this.#active.control.startups !== BigInt(this.#peers.length))
         throw new Error('parallel worker atomic handshake failed');
       if (this.#failure) throw this.#failure;
       this.#state = 'idle';
@@ -345,9 +365,23 @@ class ParallelMachine implements Machine {
   }
 
   #record(backing: MemoryBackingInput): BackingRecord {
-    const offset = findOffset(this.#active.layout, this.#records.values(), backing.bytes.length);
+    const length = backing.byteLength ?? backing.bytes.length;
+    const offset = findOffset(this.#active.layout, this.#records.values(), length);
     this.#incarnation = nextIdentity(this.#incarnation);
-    return { id: backing.id, length: backing.bytes.length, offset, incarnation: this.#incarnation };
+    return { id: backing.id, length, offset, incarnation: this.#incarnation };
+  }
+
+  #seed(record: BackingRecord, bytes: Uint8Array): void {
+    const { memory, storeLane } = this.#active;
+    const end = record.offset + record.length;
+    const reusedEnd = Math.min(end, this.#seededEnd);
+    this.#seededEnd = Math.max(this.#seededEnd, end);
+    // RAM beyond the last backing is already zero. Clear only reused bytes after the seeded lanes.
+    const clearFrom = record.offset + Math.ceil(bytes.length / 8) * 8;
+    const chunkBytes = 64 * 1024 * 1024;
+    for (let at = clearFrom; at < reusedEnd; at += chunkBytes)
+      new Uint8Array(memory.buffer, at, Math.min(reusedEnd - at, chunkBytes)).fill(0);
+    seedBacking(storeLane, record.offset, bytes);
   }
 
   #lengths(): Map<string, number> {
@@ -857,12 +891,17 @@ class ParallelMachine implements Machine {
   addBacking(input: MemoryBackingInput): Promise<void> {
     this.#check();
     const [backing] = this.#capture(() =>
-      captureBackings([input], this.#active.memoryLimits, this.#lengths()),
+      captureBackings(
+        [input],
+        this.#active.memoryLimits,
+        this.#lengths(),
+        this.#active.layout.memory64,
+      ),
     );
     return this.#admin(async (permit) => {
       validateBackings([backing!], this.#lengths(), this.#active.memoryLimits);
       const record = this.#record(backing!);
-      seedBacking(this.#active.storeLane, record.offset, backing!.bytes);
+      this.#seed(record, backing!.bytes);
       await this.#all('addBacking', [record], permit);
       this.#records.set(record.id, record);
     });
@@ -879,17 +918,22 @@ class ParallelMachine implements Machine {
       await this.#all('removeBacking', [id], permit);
       this.#records.delete(id);
       const { ramBase, guardBase } = this.#active.layout;
-      const words = new Int32Array(this.#active.memory.buffer);
-      const first = guardBase / 4 + (record.offset - ramBase) / 64;
+      const guardOffset = guardBase + (record.offset - ramBase) / 16;
       const slots = Math.ceil(record.length / 4096) * 64;
-      for (let i = 0; i < slots; i++) Atomics.store(words, first + i, 0);
+      const words = new Int32Array(this.#active.memory.buffer, guardOffset, slots);
+      for (let i = 0; i < slots; i++) Atomics.store(words, i, 0);
     });
   }
 
   setMappings(mappings: MemoryMapping[]): Promise<void> {
     this.#check();
     const input = this.#capture(() =>
-      captureMappings(mappings, this.#active.memoryLimits, this.#active.memoryModel),
+      captureMappings(
+        mappings,
+        this.#active.memoryLimits,
+        this.#active.memoryModel,
+        this.#active.layout.memory64,
+      ),
     );
     return this.#admin(async (permit) => {
       validateMappings(input, this.#lengths());

@@ -18,6 +18,7 @@ await mkdir('build', { recursive: true });
 await copyFile('target/wasm32-unknown-unknown/release/ring64.wasm', 'build/ring64.wasm');
 run('node', ['scripts/build/profile-core.mjs', 'parallel']);
 run('node', ['scripts/build/profile-core.mjs', 'memory64']);
+run('node', ['scripts/build/profile-core.mjs', 'parallel-memory64']);
 run('node', ['scripts/build/build-sdk.mjs']);
 
 if (source) {

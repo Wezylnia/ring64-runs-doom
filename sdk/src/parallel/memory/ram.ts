@@ -7,8 +7,26 @@ function section(id: number, payload: number[]): number[] {
   return [id, payload.length, ...payload];
 }
 
+export const MAX_SHARED_MEMORY64_PAGES = 262144;
+
+function unsignedLeb128(value: number): number[] {
+  const bytes = [];
+  while (value >= 128) {
+    bytes.push((value % 128) | 128);
+    value = Math.floor(value / 128);
+  }
+  bytes.push(value);
+  return bytes;
+}
+
+export function usesParallelMemory64(compiler: WebAssembly.Module): boolean {
+  return WebAssembly.Module.exports(compiler).some(
+    ({ name, kind }) => name === 'core_parallel_memory64' && kind === 'function',
+  );
+}
+
 // memory 0 is the worker's private Core memory. All of these operations address memory 1.
-export function ramModule(): WebAssembly.Module {
+export function ramModule(memory64 = false): WebAssembly.Module {
   const i32 = 0x7f;
   const i64 = 0x7e;
   const helpers = [
@@ -34,7 +52,7 @@ export function ramModule(): WebAssembly.Module {
       ...helpers.flatMap(({ operands, value }) => [
         0x60,
         operands,
-        i32,
+        memory64 ? i64 : i32,
         ...Array<number>(operands - 1).fill(value),
         ...(operands === 2 ? [0] : [1, value]),
       ]),
@@ -49,11 +67,9 @@ export function ramModule(): WebAssembly.Module {
       ...wasmName('env'),
       ...wasmName('shared'),
       2,
-      3,
+      memory64 ? 7 : 3,
       1,
-      0x80,
-      0x80,
-      4,
+      ...unsignedLeb128(memory64 ? MAX_SHARED_MEMORY64_PAGES : 65536),
     ]),
     ...section(3, [count, ...helpers.map((_, index) => index)]),
     ...section(7, [count, ...helpers.flatMap(({ name }, index) => [...wasmName(name), 0, index])]),
@@ -77,13 +93,59 @@ export function ramModule(): WebAssembly.Module {
   return new WebAssembly.Module(bytes);
 }
 
+export function sharedRam(pages: number, memory64: boolean): WebAssembly.Memory {
+  if (!memory64) return new WebAssembly.Memory({ initial: pages, maximum: pages, shared: true });
+  // The Wasm memory type also works on hosts that cannot construct memory64 from JS.
+  const count = unsignedLeb128(pages);
+  const bytes = Uint8Array.from([
+    0,
+    97,
+    115,
+    109,
+    1,
+    0,
+    0,
+    0,
+    ...section(5, [1, 7, ...count, ...count]),
+    ...section(7, [1, ...wasmName('ram'), 2, 0]),
+  ]);
+  return new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports.ram as WebAssembly.Memory;
+}
+
+let memory64Supported: boolean | undefined;
+
+export function supportsParallelMemory64(): boolean {
+  if (memory64Supported !== undefined) return memory64Supported;
+  try {
+    const memory = sharedRam(1, true);
+    const helpers = bindRam(ramModule(true), new WebAssembly.Memory({ initial: 1 }), memory);
+    memory64Supported = helpers.compare_exchange_lane(0n, 0n, 1n) === 0n;
+  } catch (error) {
+    if (
+      !(error instanceof WebAssembly.CompileError) &&
+      !(error instanceof WebAssembly.LinkError) &&
+      !(error instanceof WebAssembly.RuntimeError) &&
+      !(error instanceof RangeError)
+    )
+      throw error;
+    memory64Supported = false;
+  }
+  return memory64Supported;
+}
+
+type RamOffset = number | bigint;
+
+export function wasmRamOffset(offset: number, memory64: boolean): RamOffset {
+  return memory64 ? BigInt(offset) : offset;
+}
+
 export type RamHelpers = WebAssembly.Exports & {
-  load_lane(offset: number): bigint;
-  store_lane(offset: number, value: bigint): void;
-  compare_exchange_lane(offset: number, previous: bigint, next: bigint): bigint;
-  load_control(offset: number): number;
-  store_control(offset: number, value: number): void;
-  compare_exchange_control(offset: number, previous: number, next: number): number;
+  load_lane(offset: RamOffset): bigint;
+  store_lane(offset: RamOffset, value: bigint): void;
+  compare_exchange_lane(offset: RamOffset, previous: bigint, next: bigint): bigint;
+  load_control(offset: RamOffset): number;
+  store_control(offset: RamOffset, value: number): void;
+  compare_exchange_control(offset: RamOffset, previous: number, next: number): number;
 };
 
 export function bindRam(
