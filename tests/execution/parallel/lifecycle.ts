@@ -63,6 +63,37 @@ export function parallelLifecycleScenarios(
       },
     },
     {
+      name: 'parallel machine pause settles active runs despite a sibling command rejection',
+      async run() {
+        await withMachine(factory, linearMachine(compiler, 'ebfe'), async (machine) => {
+          const [first, second] = machine.cpus;
+          const rejected = first!.run({ budget: -1n }).then(
+            () => false,
+            (error: unknown) => error instanceof TypeError,
+          );
+          const active = second!.run({ budget: 10_000_000_000n });
+          await machine.pause();
+          const state = await second!.readState();
+          const paused = await active;
+          equal(paused.reason, 'paused', 'sibling run stopped before pause completed');
+          equal(state.rip, paused.state.rip, 'CPU is available for another command');
+          equal(await rejected, true, 'the invalid run reports its own validation error');
+        });
+      },
+    },
+    {
+      name: 'parallel disposal waits for an in-flight machine pause',
+      async run() {
+        await withMachine(factory, linearMachine(compiler, 'ebfe'), async (machine) => {
+          const active = machine.cpus[0]!.run({ budget: 10_000_000_000n });
+          const pause = machine.pause();
+          const disposal = machine.dispose();
+          await Promise.all([pause, disposal]);
+          equal((await active).reason, 'paused', 'disposal preserves the run result');
+        });
+      },
+    },
+    {
       name: 'shared Protected32 register loops preserve upper halves across partial laps',
       async run() {
         // SHL EAX,1; SUB ECX,1; JNZ entry.
@@ -121,7 +152,12 @@ export function parallelLifecycleScenarios(
           equal((await a!.readTimeState()).tsc, 0n, 'local clock resets');
           equal((await b!.readState()).rip, stop, 'peer architectural state intact');
           equal((await b!.readTimeState()).tsc, 1n, 'peer clock intact');
+          const rejected = a!.setXmmState([]).then(
+            () => false,
+            (error: unknown) => error instanceof TypeError,
+          );
           await machine.reset();
+          equal(await rejected, true, 'the rejected state command does not veto cohort reset');
           for (const cpu of machine.cpus) {
             equal((await cpu.readState()).rip, reset, 'cohort returns to reset vector');
             equal((await cpu.readTimeState()).tsc, 0n, 'cohort reset updates local clock');

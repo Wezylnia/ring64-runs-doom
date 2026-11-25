@@ -684,10 +684,26 @@ class ParallelMachine implements Machine {
   #pausePeer(peer: Peer): Promise<void> {
     const command = peer.command;
     if (!command || command.method !== 'run') return Promise.resolve();
-    this.#active.control.store(peer.id, SLOT.pause, command.sequence);
-    this.#active.control.signal(peer.id, SIGNAL.pause);
-    peer.transport!.post({ kind: 'phase' });
+    if (!this.#failure) {
+      this.#active.control.store(peer.id, SLOT.pause, command.sequence);
+      this.#active.control.signal(peer.id, SIGNAL.pause);
+      try {
+        peer.transport!.post({ kind: 'phase' });
+      } catch (cause) {
+        this.#fail(cause);
+      }
+    }
     return command.promise.then(() => {});
+  }
+
+  #settleCommands() {
+    return Promise.allSettled(
+      this.#peers.map((peer) =>
+        peer.command?.method === 'run'
+          ? this.#pausePeer(peer)
+          : (peer.replacement ?? peer.command?.promise),
+      ),
+    );
   }
 
   #reserve(reset: boolean): Promise<void> {
@@ -697,18 +713,23 @@ class ParallelMachine implements Machine {
     this.#reservation = result.promise;
     void (async () => {
       try {
-        await Promise.all(
-          this.#peers.map((peer) =>
-            peer.command?.method === 'run' ? this.#pausePeer(peer) : peer.command?.promise,
-          ),
-        );
+        // Recoverable errors belong to the individual commands. Keep the machine
+        // reserved until every worker has stopped, even if one command is rejected.
+        await this.#settleCommands();
+        if (this.#failure) throw this.#failure;
         if (reset)
           await this.#admin(async (permit) => {
-            await Promise.all(
+            const resets = await Promise.allSettled(
               this.#peers.map((peer) =>
                 this.#replace(peer, this.#start(peer, 'reset', [], permit)),
               ),
             );
+            const rejected = resets.find((result) => result.status === 'rejected');
+            if (rejected) {
+              // A partial cohort reset cannot resume as a usable machine.
+              this.#fail(rejected.reason);
+              throw this.#failure;
+            }
           });
         result.resolve();
       } catch (cause) {
@@ -736,12 +757,7 @@ class ParallelMachine implements Machine {
     if (this.#state !== 'failed') this.#state = 'disposing';
     this.#dispose = (async () => {
       try {
-        await Promise.allSettled([
-          this.#reservation,
-          ...this.#peers.map((peer) =>
-            peer.command?.method === 'run' ? this.#pausePeer(peer) : peer.command?.promise,
-          ),
-        ]);
+        await Promise.allSettled([this.#reservation, this.#settleCommands()]);
         await this.#drain;
       } finally {
         await this.#terminate();

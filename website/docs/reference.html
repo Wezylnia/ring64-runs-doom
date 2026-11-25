@@ -651,7 +651,8 @@ Cross-Origin-Embedder-Policy: require-corp</code></pre>
         </dt>
         <dd>
           pause one vcpu or all active runs on the machine. a run that yields returns
-          <code>paused</code>.
+          <code>paused</code>. machine pause waits for outstanding vcpu commands to settle. each
+          command reports its own validation errors.
         </dd>
       </div>
     </dl>
@@ -686,7 +687,8 @@ Cross-Origin-Embedder-Policy: require-corp</code></pre>
         </dt>
         <dd>
           physical mode only. reset one idle vcpu or pause active runs and reset all vcpus. both
-          preserve shared memory.
+          preserve shared memory. machine reset waits for outstanding vcpu commands to settle before
+          resetting the vcpus.
         </dd>
       </div>
       <div>
