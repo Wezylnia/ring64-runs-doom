@@ -1,5 +1,7 @@
 use crate::dbt::wasm::{Emitter, LHS, RESULT, RHS, VALUE};
 use crate::x86::instruction::{Address, Alu, MemoryAluOperands, Width};
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+use wasm_encoder::BlockType;
 use wasm_encoder::Instruction as Op;
 
 impl Emitter {
@@ -64,11 +66,26 @@ impl Emitter {
                 self.store_result(width, exit_depth);
             }
         }
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        let paired = self.paged_dword_read_pair.filter(|pair| {
+            self.guarded_paged_lap && self.loop_gates_prechecked && self.current_index == pair.first
+        });
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if let Some(pair) = paired {
+            // A live pair covers the next ADD, which replaces these flags.
+            self.op(Op::LocalGet(pair.host))
+                .op(Op::I32Eqz)
+                .op(Op::If(BlockType::Empty));
+        }
         // A failed store exits above with the incoming flags still live.
         match kind {
             Alu::Add | Alu::Sub | Alu::Cmp => self.arithmetic_flags(kind, width),
             Alu::Adc | Alu::Sbb => self.carry_flags(kind, width),
             Alu::And | Alu::Or | Alu::Xor | Alu::Test => self.logical_flags(width),
+        }
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        if paired.is_some() {
+            self.op(Op::End);
         }
         if let MemoryAluOperands::RegisterFirst(register) = operands
             && kind.writes_result()

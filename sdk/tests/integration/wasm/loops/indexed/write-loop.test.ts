@@ -296,6 +296,14 @@ test('paired dword reads keep live aliases and retire before a split-page fault'
         assert.equal(split.retired, 3n);
         assert.equal(split.state.rip, PC + 6n);
         assert.equal(split.state.registers[0], 10n);
+        assert.equal(split.state.flags, 6n);
+
+        const registers = { 0: 1n, 1: 17n, 3: data, 6: data, 7: 1n };
+        cpu.setState(initial(PC, registers));
+        const partial = await cpu.run({ stop, budget: 3n });
+        assert.equal(partial.state.rip, PC + 6n);
+        assert.equal(partial.state.registers[0], 65537n);
+        assert.equal(partial.state.flags, 2n);
       },
     );
   } finally {
