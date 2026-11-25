@@ -22,6 +22,7 @@ import { captureX87State, type X87State } from '../state/numeric/x87.js';
 import { Core, usesMemory64, type CompilerSource } from '../wasm/core.js';
 import type { GeneratedRun } from '../wasm/abi.js';
 import { captureInitialContext, captureLimits, type Limits } from './options.js';
+import { observeInterruptExit, taskResumeExit } from './run-events.js';
 import { validateNativeProgress } from './run-progress.js';
 import {
   isRunReason,
@@ -758,14 +759,8 @@ export class Cpu {
         this.pruneTranslations();
         eventKind = engine.eventKind();
         queuedInterrupts = engine.hasQueuedInterrupts();
-        if (typeof resumed !== 'string') {
-          if (deliveryBudget === undefined) return finish(resumed.taskEvent);
-        } else if (
-          resumed !== 'dispatch' &&
-          !(resumed === 'pending-interrupt' && deliveryBudget !== undefined)
-        ) {
-          return finish(resumed);
-        }
+        const exit = taskResumeExit(resumed, deliveryBudget !== undefined);
+        if (exit !== undefined) return finish(exit);
         servicingEvent = eventKind === 'pending' || eventKind === 'pending-interrupt';
       }
       let dispatchedPc: bigint | undefined;
@@ -848,12 +843,9 @@ export class Cpu {
         if (queuedInterrupts || eventKind === 'halted' || eventKind === 'shutdown') {
           const reason = engine.externalBoundary();
           if (reason === 'pending-interrupt') {
-            eventKind = engine.eventKind();
-            queuedInterrupts = engine.hasQueuedInterrupts();
-            if (deliveryBudget === undefined) return finish(reason);
-            if (eventKind !== 'pending-interrupt')
-              throw new Error('core failed to accept eligible interrupt');
-            servicingEvent = true;
+            const event = observeInterruptExit(engine, reason, deliveryBudget !== undefined);
+            if (event === 'pending-interrupt') return finish(event);
+            ({ eventKind, queuedInterrupts, servicingEvent } = event);
             continue;
           }
           if (reason !== 'dispatch') return finish(reason);
@@ -1079,23 +1071,9 @@ export class Cpu {
             continue;
           }
           if (reason === 'pending-interrupt' || reason === 'halted') {
-            eventKind = engine.eventKind();
-            queuedInterrupts = engine.hasQueuedInterrupts();
-            if (reason === 'pending-interrupt') {
-              if (deliveryBudget === undefined) return finish(reason);
-              if (eventKind !== 'pending-interrupt')
-                throw new Error('core failed to accept eligible interrupt');
-              servicingEvent = true;
-              continue;
-            }
-            if (queuedInterrupts && engine.externalBoundary() === 'pending-interrupt') {
-              eventKind = engine.eventKind();
-              queuedInterrupts = engine.hasQueuedInterrupts();
-              if (deliveryBudget === undefined) return finish('pending-interrupt');
-              if (eventKind !== 'pending-interrupt')
-                throw new Error('core failed to accept eligible interrupt');
-              servicingEvent = true;
-            }
+            const event = observeInterruptExit(engine, reason, deliveryBudget !== undefined);
+            if (event === 'pending-interrupt') return finish(event);
+            ({ eventKind, queuedInterrupts, servicingEvent } = event);
             continue;
           }
           if ((deliveryBudget !== undefined || boundaryObserved) && engine.stageException(reason)) {
