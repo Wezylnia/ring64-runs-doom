@@ -30,7 +30,7 @@ mkdir -p "$obj"
 
 CC="${CC:-gcc}"
 CFLAGS=(
-  -m64 -O2 -g0 -std=gnu99
+  -m64 -march=x86-64 -mtune=generic -O2 -g0 -std=gnu99
   -ffreestanding -fno-builtin-printf -nostdinc
   -isystem "$here/libc/include" -isystem "$($CC -print-file-name=include)"
   -I "$here/libc" -I "$src"

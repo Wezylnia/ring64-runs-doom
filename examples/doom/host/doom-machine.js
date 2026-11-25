@@ -275,7 +275,14 @@ export class DoomMachine {
       const detail = result.fault
         ? ` ${JSON.stringify(result.fault, (_, v) => (typeof v === 'bigint' ? `0x${v.toString(16)}` : v))}`
         : '';
-      throw new Error(`guest stopped with ${result.reason} at 0x${rip}${detail}`);
+      let bytes = '';
+      try {
+        const code = this.#cpu.readMemory(result.state.rip, 16);
+        bytes = ` bytes ${[...code].map((b) => b.toString(16).padStart(2, '0')).join(' ')}`;
+      } catch {
+        // rip is outside readable memory
+      }
+      throw new Error(`guest stopped with ${result.reason} at 0x${rip}${bytes}${detail}`);
     }
   }
 
