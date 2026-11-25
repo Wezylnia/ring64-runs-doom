@@ -6,3 +6,5 @@
 /package-lock.json
 /Cargo.lock
 /specs/processor-identity-and-virtual-time/verification/raw/
+/examples/doom/build/
+/examples/doom/.cache/

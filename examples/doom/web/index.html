@@ -1,0 +1,606 @@
+<title>DOOM on ring64</title>
+<meta name="claude:viewport-fit-sides" content="cover" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link
+  rel="stylesheet"
+  href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
+/>
+<style>
+  /* Layout: a techbase console. The game screen is the instrument; a
+     narrow readout rail beside it reports what the emulated CPU is doing. */
+  :root {
+    --steel-900: #121417;
+    --steel-800: #1a1d21;
+    --steel-700: #252a30;
+    --steel-500: #4a525c;
+    --text: #d9d4cb;
+    --muted: #9a958c;
+    --amber: #f0b43c;
+    --amber-dim: #8a6a2a;
+    --blood: #c8402c;
+    --display: "Chakra Petch", "Bahnschrift", "DIN Alternate", system-ui, sans-serif;
+    --body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+    color-scheme: dark;
+  }
+  html { background: var(--steel-900); }
+  body {
+    background: var(--steel-900);
+    color: var(--text);
+    font-family: var(--body);
+    font-size: 15px;
+    line-height: 1.55;
+  }
+  .shell {
+    max-width: 1220px;
+    margin: 0 auto;
+    padding-block: 28px 40px;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+    display: grid;
+    gap: 22px;
+  }
+  .masthead { display: grid; gap: 6px; max-width: 70ch; }
+  .eyebrow {
+    margin: 0;
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--amber);
+  }
+  h1 {
+    margin: 0;
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: clamp(34px, 5vw, 52px);
+    line-height: 1.02;
+    letter-spacing: 0.01em;
+    text-transform: uppercase;
+    text-wrap: balance;
+  }
+  h1 span { color: var(--blood); }
+  .lede { margin: 4px 0 0; color: var(--muted); max-width: 66ch; }
+
+  .stage {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 300px;
+    gap: 20px;
+    align-items: start;
+  }
+  @media (max-width: 900px) { .stage { grid-template-columns: minmax(0, 1fr); } }
+
+  .screen {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 4 / 3;
+    max-width: 100%;
+    background: #000;
+    border: 1px solid var(--steel-500);
+    box-shadow: 0 0 0 6px var(--steel-800), 0 0 0 7px var(--steel-700);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .screen:focus-visible { outline: 2px solid var(--amber); outline-offset: 9px; }
+  canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+  }
+  .overlay {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-content: center;
+    justify-items: center;
+    gap: 12px;
+    padding: 16px;
+    text-align: center;
+    background: rgba(10, 11, 13, 0.55);
+  }
+  .overlay.loading { background: rgba(10, 11, 13, 0.92); }
+  .overlay p { margin: 0; font-family: var(--mono); font-size: 13px; color: var(--text); max-width: 46ch; }
+  .overlay p.error { color: #ff9b85; white-space: pre-wrap; text-align: left; }
+  .play {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: 22px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--steel-900);
+    background: var(--amber);
+    border: 0;
+    border-radius: 2px;
+    padding: 12px 26px;
+    cursor: pointer;
+  }
+  .play:hover { background: #ffc85a; }
+  .play:focus-visible { outline: 2px solid var(--text); outline-offset: 3px; }
+  .play[disabled] { background: var(--steel-700); color: var(--muted); cursor: progress; }
+
+  .toolbar { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; margin-top: 14px; }
+  .toolbar button {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--text);
+    background: var(--steel-800);
+    border: 1px solid var(--steel-700);
+    border-radius: 2px;
+    padding: 6px 10px;
+    cursor: pointer;
+  }
+  .toolbar button:hover { border-color: var(--steel-500); }
+  .toolbar button:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+  .hint { font-size: 13px; color: var(--muted); }
+
+  .readout { display: grid; gap: 18px; min-width: 0; }
+  .panel { background: var(--steel-800); border: 1px solid var(--steel-700); padding: 14px 14px 12px; display: grid; gap: 10px; min-width: 0; }
+  .panel h2 {
+    margin: 0;
+    font-family: var(--mono);
+    font-weight: 500;
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .meters { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 10px; margin: 0; }
+  .meters div { display: grid; gap: 1px; min-width: 0; }
+  .meters dt { font-size: 12px; color: var(--muted); }
+  .meters dd {
+    margin: 0;
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: 26px;
+    line-height: 1.1;
+    color: var(--amber);
+    font-variant-numeric: tabular-nums;
+    overflow-wrap: anywhere;
+  }
+  .meters dd small { font-family: var(--mono); font-weight: 400; font-size: 11px; color: var(--muted); }
+  .mode { font-family: var(--mono); font-size: 12px; color: var(--muted); margin: 0; }
+
+  table { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 12px; font-variant-numeric: tabular-nums; }
+  td { padding: 4px 0; border-top: 1px solid var(--steel-700); vertical-align: top; }
+  td:first-child { color: var(--amber); white-space: nowrap; padding-right: 10px; }
+  td:nth-child(2) { color: var(--text); }
+  td:last-child { color: var(--muted); text-align: right; white-space: nowrap; padding-left: 8px; }
+
+  .keys { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; font-size: 13px; }
+  .keys li { display: flex; justify-content: space-between; gap: 10px; }
+  .keys span:last-child { color: var(--muted); text-align: right; }
+  kbd {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text);
+    background: var(--steel-700);
+    border: 1px solid var(--steel-500);
+    border-bottom-width: 2px;
+    border-radius: 3px;
+    padding: 1px 5px;
+    white-space: nowrap;
+  }
+
+  .touch { display: none; }
+  @media (pointer: coarse) {
+    .touch {
+      display: grid;
+      grid-template-columns: repeat(3, 56px) 1fr repeat(2, 72px);
+      grid-template-rows: repeat(2, 56px);
+      gap: 8px;
+      margin-top: 14px;
+      user-select: none;
+      -webkit-user-select: none;
+      touch-action: none;
+    }
+    .touch button {
+      font-family: var(--mono);
+      font-size: 12px;
+      color: var(--text);
+      background: var(--steel-800);
+      border: 1px solid var(--steel-500);
+      border-radius: 4px;
+    }
+    .touch button.active { background: var(--amber-dim); }
+    .touch .up { grid-column: 2; grid-row: 1; }
+    .touch .left { grid-column: 1; grid-row: 2; }
+    .touch .down { grid-column: 2; grid-row: 2; }
+    .touch .right { grid-column: 3; grid-row: 2; }
+    .touch .enter { grid-column: 5; grid-row: 1; }
+    .touch .esc { grid-column: 6; grid-row: 1; }
+    .touch .use { grid-column: 5; grid-row: 2; }
+    .touch .fire { grid-column: 6; grid-row: 2; background: var(--blood); }
+  }
+
+  details { background: var(--steel-800); border: 1px solid var(--steel-700); padding: 10px 14px; min-width: 0; }
+  summary { cursor: pointer; font-family: var(--mono); font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+  summary:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+  #log {
+    margin: 10px 0 0;
+    max-height: 260px;
+    overflow: auto;
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.45;
+    color: var(--text);
+    white-space: pre;
+  }
+  footer { font-size: 12px; color: var(--muted); max-width: 90ch; }
+  footer p { margin: 0 0 4px; }
+  a { color: var(--amber); }
+  a:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+</style>
+
+<main class="shell">
+  <header class="masthead">
+    <p class="eyebrow">ring64 · x86-64 → WebAssembly</p>
+    <h1>DOOM <span>on</span> ring64</h1>
+    <p class="lede">
+      The 1993 shareware episode, built from the doomgeneric C source as a freestanding x86-64
+      program. ring64 decodes its machine code and translates it to WebAssembly while it runs, right
+      here in the page. No DOS box, no JavaScript port of the engine.
+    </p>
+  </header>
+
+  <section class="stage">
+    <div>
+      <div class="screen" id="screen" tabindex="0" aria-label="DOOM game screen">
+        <canvas id="canvas" width="320" height="200"></canvas>
+        <div class="overlay loading" id="overlay">
+          <button class="play" id="play" type="button" disabled>Loading</button>
+          <p id="status">Fetching the ring64 core, doom.elf and doom1.wad</p>
+        </div>
+      </div>
+      <div class="touch" id="touch" aria-label="Touch controls">
+        <button class="up" data-key="173" type="button">▲</button>
+        <button class="left" data-key="172" type="button">◀</button>
+        <button class="down" data-key="175" type="button">▼</button>
+        <button class="right" data-key="174" type="button">▶</button>
+        <button class="enter" data-key="13" type="button">ENTER</button>
+        <button class="esc" data-key="27" type="button">ESC</button>
+        <button class="use" data-key="162" type="button">USE</button>
+        <button class="fire" data-key="163" type="button">FIRE</button>
+      </div>
+      <div class="toolbar">
+        <button id="fullscreen" type="button">Fullscreen</button>
+        <button id="restart" type="button">Restart</button>
+        <span class="hint" id="hint"
+          >Click the screen, then press Enter to open the menu. The game is silent.</span
+        >
+      </div>
+    </div>
+
+    <aside class="readout">
+      <section class="panel" aria-live="off">
+        <h2>Emulated CPU</h2>
+        <dl class="meters">
+          <div>
+            <dt>Frames / s</dt>
+            <dd id="fps">0</dd>
+          </div>
+          <div>
+            <dt>Guest MIPS</dt>
+            <dd id="mips">0</dd>
+          </div>
+          <div>
+            <dt>Instructions</dt>
+            <dd id="retired">0</dd>
+          </div>
+          <div>
+            <dt>Translations</dt>
+            <dd id="translations">0</dd>
+          </div>
+        </dl>
+        <p class="mode" id="mode">long mode · linear memory</p>
+      </section>
+
+      <section class="panel">
+        <h2>Guest memory map</h2>
+        <table>
+          <tbody>
+            <tr>
+              <td>0x0040_0000</td>
+              <td>.text .rodata</td>
+              <td>r-x</td>
+            </tr>
+            <tr>
+              <td>0x0100_0000</td>
+              <td>data, heap, stack 64 MiB</td>
+              <td>rw-</td>
+            </tr>
+            <tr>
+              <td>0x1000_0000</td>
+              <td>doom1.wad 4.0 MiB</td>
+              <td>r--</td>
+            </tr>
+            <tr>
+              <td>port 0x70</td>
+              <td>millisecond clock</td>
+              <td>in</td>
+            </tr>
+            <tr>
+              <td>port 0x72</td>
+              <td>keyboard queue</td>
+              <td>in</td>
+            </tr>
+            <tr>
+              <td>port 0xe9</td>
+              <td>console</td>
+              <td>out</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section class="panel">
+        <h2>Controls</h2>
+        <ul class="keys">
+          <li>
+            <span><kbd>↑</kbd> <kbd>↓</kbd> <kbd>←</kbd> <kbd>→</kbd></span
+            ><span>move, turn</span>
+          </li>
+          <li>
+            <span><kbd>Ctrl</kbd></span
+            ><span>fire</span>
+          </li>
+          <li>
+            <span><kbd>Space</kbd></span
+            ><span>open doors, switches</span>
+          </li>
+          <li>
+            <span><kbd>Shift</kbd></span
+            ><span>run</span>
+          </li>
+          <li>
+            <span><kbd>Alt</kbd> / <kbd>,</kbd> <kbd>.</kbd></span
+            ><span>strafe</span>
+          </li>
+          <li>
+            <span><kbd>1</kbd>–<kbd>7</kbd></span
+            ><span>weapons</span>
+          </li>
+          <li>
+            <span><kbd>Tab</kbd></span
+            ><span>automap</span>
+          </li>
+          <li>
+            <span><kbd>Esc</kbd> <kbd>Enter</kbd></span
+            ><span>menu</span>
+          </li>
+        </ul>
+      </section>
+    </aside>
+  </section>
+
+  <details id="console">
+    <summary>Guest console (port 0xe9)</summary>
+    <pre id="log"></pre>
+  </details>
+
+  <footer>
+    <p>
+      Engine:
+      <a href="https://github.com/ozkl/doomgeneric" target="_blank" rel="noopener">doomgeneric</a>,
+      GPL-2.0, from id Software's 1997 source release. Game data: DOOM shareware v1.9 (doom1.wad),
+      freely distributable shareware by id Software. DOOM is a trademark of id Software.
+    </p>
+    <p>
+      Emulator:
+      <a href="https://github.com/fatihguzeldev/ring64" target="_blank" rel="noopener">ring64</a>,
+      MIT. The guest's C library, platform layer and this host page live in
+      <code>examples/doom</code>.
+    </p>
+  </footer>
+</main>
+
+<script type="module">
+  const $ = (id) => document.getElementById(id);
+  const canvas = $('canvas');
+  const context = canvas.getContext('2d');
+  const overlay = $('overlay');
+  const play = $('play');
+  const statusLine = $('status');
+  const screen = $('screen');
+
+  // Browser key -> doomkeys.h code.
+  const byCode = {
+    ArrowLeft: 0xac, ArrowRight: 0xae, ArrowUp: 0xad, ArrowDown: 0xaf,
+    Enter: 13, NumpadEnter: 13, Escape: 27, Tab: 9, Backspace: 0x7f, Space: 0xa2,
+    ControlLeft: 0xa3, ControlRight: 0xa3, ShiftLeft: 0xb6, ShiftRight: 0xb6,
+    AltLeft: 0xb8, AltRight: 0xb8, Comma: 0xa0, Period: 0xa1, Minus: 0x2d, Equal: 0x3d,
+    Pause: 0xff, F1: 0xbb, F2: 0xbc, F3: 0xbd, F4: 0xbe, F5: 0xbf, F6: 0xc0, F7: 0xc1,
+    F8: 0xc2, F9: 0xc3, F10: 0xc4, F11: 0xd7, F12: 0xd8,
+  };
+  function doomKey(event) {
+    if (event.code in byCode) return byCode[event.code];
+    if (event.key.length === 1) {
+      const c = event.key.toLowerCase().charCodeAt(0);
+      if (c > 32 && c < 127) return c;
+    }
+    return undefined;
+  }
+
+  let doom;
+  let createMachine;
+  let focused = false;
+  let generation = 0;
+  const log = [];
+  const logView = $('log');
+  function appendLog(line) {
+    log.push(line);
+    if (log.length > 400) log.shift();
+    logView.textContent = log.join('\n');
+  }
+
+  function showError(error) {
+    overlay.hidden = false;
+    overlay.classList.add('loading');
+    play.hidden = true;
+    statusLine.classList.add('error');
+    statusLine.textContent = `${error?.message ?? error}`;
+    console.error(error);
+  }
+
+  const channel = new MessageChannel();
+  const waiting = [];
+  channel.port1.onmessage = () => waiting.shift()?.();
+  const nextTask = () => new Promise((resolve) => { waiting.push(resolve); channel.port2.postMessage(0); });
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  let image;
+  async function boot() {
+    const mine = ++generation;
+    doom?.dispose();
+    doom = await createMachine();
+    doom.onFrame = (rgba) => {
+      image ??= new ImageData(rgba, 320, 200);
+      if (image.data !== rgba) image = new ImageData(rgba, 320, 200);
+      context.putImageData(image, 0, 0);
+    };
+    doom.onLog = appendLog;
+    doom.onTitle = (title) => { document.title = `${title} on ring64`; };
+    for (;;) {
+      if (mine !== generation) return;
+      let step;
+      try {
+        step = await doom.slice(8_000_000n);
+      } catch (error) {
+        showError(error);
+        return;
+      }
+      if (step.event === 'exit') {
+        overlay.hidden = false;
+        play.hidden = false;
+        play.disabled = false;
+        play.textContent = 'Play again';
+        statusLine.textContent = `DOOM exited with code ${doom.exitCode}.`;
+        play.onclick = () => { overlay.hidden = true; boot(); screen.focus(); };
+        return;
+      }
+      if (step.event === 'sleep') await sleep(Math.max(1, step.sleepMs));
+      else await nextTask();
+    }
+  }
+
+  // Live counters.
+  let last = { t: performance.now(), frames: 0, retired: 0n };
+  setInterval(() => {
+    if (!doom) return;
+    const now = performance.now();
+    const dt = (now - last.t) / 1000;
+    $('fps').textContent = ((doom.frames - last.frames) / dt).toFixed(0);
+    $('mips').textContent = (Number(doom.retired - last.retired) / dt / 1e6).toFixed(0);
+    const retired = Number(doom.retired);
+    $('retired').innerHTML = retired >= 1e9 ? `${(retired / 1e9).toFixed(2)}<small> G</small>` : `${(retired / 1e6).toFixed(0)}<small> M</small>`;
+    $('translations').textContent = (doom.stats.resources.compilations ?? 0).toLocaleString('en-US');
+    const generated = (doom.stats.resources.generatedBytes ?? 0) / 1048576;
+    $('mode').textContent = `long mode · linear memory · ${generated.toFixed(1)} MiB of wasm generated`;
+    last = { t: now, frames: doom.frames, retired: doom.retired };
+  }, 1000);
+
+  if (matchMedia('(pointer: coarse)').matches)
+    $('hint').textContent = 'Tap the screen, then ENTER opens the menu. The game is silent.';
+
+  function focusGame() {
+    focused = true;
+    overlay.hidden = true;
+    screen.focus({ preventScroll: true });
+  }
+  play.addEventListener('click', focusGame);
+  screen.addEventListener('pointerdown', () => { if (!play.disabled) focusGame(); });
+  screen.addEventListener('blur', () => { focused = false; });
+  screen.addEventListener('focus', () => { focused = true; });
+
+  const held = new Set();
+  window.addEventListener('keydown', (event) => {
+    if (!focused || !doom) return;
+    const key = doomKey(event);
+    if (key === undefined) return;
+    event.preventDefault();
+    if (event.repeat || held.has(event.code)) return;
+    held.add(event.code);
+    doom.key(key, true);
+  });
+  window.addEventListener('keyup', (event) => {
+    if (!doom) return;
+    const key = doomKey(event);
+    if (key === undefined || !held.has(event.code)) return;
+    event.preventDefault();
+    held.delete(event.code);
+    doom.key(key, false);
+  });
+  window.addEventListener('blur', () => {
+    for (const code of held) {
+      const key = byCode[code] ?? code.toLowerCase().charCodeAt(code.length - 1);
+      doom?.key(key, false);
+    }
+    held.clear();
+  });
+
+  for (const button of document.querySelectorAll('#touch button')) {
+    const key = Number(button.dataset.key);
+    const release = () => {
+      if (!button.classList.contains('active')) return;
+      button.classList.remove('active');
+      doom?.key(key, false);
+    };
+    button.addEventListener('pointerdown', (event) => {
+      event.preventDefault();
+      button.setPointerCapture?.(event.pointerId);
+      button.classList.add('active');
+      doom?.key(key, true);
+    });
+    button.addEventListener('pointerup', release);
+    button.addEventListener('pointercancel', release);
+    button.addEventListener('lostpointercapture', release);
+  }
+
+  $('fullscreen').addEventListener('click', async () => {
+    try {
+      await screen.requestFullscreen();
+      screen.focus();
+    } catch {
+      $('hint').textContent = 'Fullscreen is not available in this view.';
+    }
+  });
+  $('restart').addEventListener('click', () => { boot().catch(showError); screen.focus(); });
+
+  try {
+    const [{ createCpu, loadCpuCompiler }, { DoomMachine }] = await Promise.all([
+      import('./ring64.js'),
+      import('./doom-machine.js'),
+    ]);
+    // doom.elf and doom1.wad ship as gzip compressed base64 text.
+    const fetchPacked = async (name) => {
+      const response = await fetch(new URL(name, import.meta.url));
+      if (!response.ok) throw new Error(`Could not load ${name} (HTTP ${response.status}).`);
+      const text = atob((await response.text()).trim());
+      const packed = new Uint8Array(text.length);
+      for (let i = 0; i < text.length; i++) packed[i] = text.charCodeAt(i);
+      const stream = new Blob([packed]).stream().pipeThrough(new DecompressionStream('gzip'));
+      return new Uint8Array(await new Response(stream).arrayBuffer());
+    };
+    // Local testing only: ?core=memory32 and ?args=-timedemo+demo1
+    const params = new URLSearchParams(location.search);
+    const core = params.get('core') ?? undefined;
+    const args = params.get('args')?.split(' ').filter(Boolean) ?? [];
+    const [compiler, elf, wad] = await Promise.all([
+      loadCpuCompiler(core).catch((error) => {
+        throw new Error(`This browser could not compile the ring64 core: ${error.message}\nDOOM needs WebAssembly with SIMD; a page policy that blocks WebAssembly compilation stops it too.`);
+      }),
+      fetchPacked('./doom.elf.txt'),
+      fetchPacked('./doom1.wad.txt'),
+    ]);
+    createMachine = () => DoomMachine.create({ createCpu, compiler, elf, wad, args });
+    play.disabled = false;
+    play.textContent = 'Click to play';
+    statusLine.textContent = 'The title demo is running. Click to take the controls.';
+    overlay.classList.remove('loading');
+    boot().catch(showError);
+  } catch (error) {
+    showError(error);
+  }
+</script>
