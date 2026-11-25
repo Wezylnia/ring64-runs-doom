@@ -34,6 +34,8 @@
   --font-print: 'Newsreader', Georgia, serif;
   --font-code: ui-monospace, 'SFMono-Regular', Consolas, monospace;
   --gutter: clamp(1rem, 4vw, 3.75rem);
+  --page-content-top: clamp(1.75rem, 4vw, 3rem);
+  --page-title-size: clamp(2rem, 4vw, 2.75rem);
   --artwork-surroundings: 24.25rem;
   font-family: var(--font-site);
   background-color: var(--paper);

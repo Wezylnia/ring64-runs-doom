@@ -3,6 +3,7 @@ import { dirname, join, posix } from 'node:path';
 import hljs from 'highlight.js/lib/core';
 import c from 'highlight.js/lib/languages/c';
 import typescript from 'highlight.js/lib/languages/typescript';
+import { renderBenchmarks } from './benchmarks.mjs';
 
 hljs.registerLanguage('c', c);
 hljs.registerLanguage('typescript', typescript);
@@ -14,8 +15,17 @@ export async function writeSitePages(source, output) {
     readFile(join(source, 'wet-ink/controls.html'), 'utf8'),
     readFile(join(source, 'docs/reference.html'), 'utf8'),
   ]);
-  for (const page of ['index.html', 'under-the-ink/index.html', 'docs/index.html']) {
+  for (const page of [
+    'index.html',
+    'under-the-ink/index.html',
+    'docs/index.html',
+    'benchmarks/index.html',
+  ]) {
     let html = await readFile(join(source, page), 'utf8');
+    if (page === 'benchmarks/index.html') {
+      const results = JSON.parse(await readFile(join(source, 'benchmarks/results.json'), 'utf8'));
+      html = renderBenchmarks(html, results);
+    }
     if (page === 'docs/index.html') {
       html = html.replace('<!-- docs-reference -->', () => reference.trimEnd());
       for (const [marker, name] of html.matchAll(/<!-- example:([^ ]+) -->/g)) {
@@ -36,6 +46,7 @@ export async function writeSitePages(source, output) {
           masthead
             .replaceAll('{{root}}', siteRoot)
             .replaceAll('{{docsCurrent}}', String(page.startsWith('docs/')))
+            .replaceAll('{{benchmarksCurrent}}', String(page.startsWith('benchmarks/')))
             .trim(),
         )
         .replace('<!-- wet-ink-canvas -->', () => canvas.trim())

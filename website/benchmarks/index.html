@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#faeee1" />
+    <meta name="description" content="32-bit and 64-bit x86 benchmarks for ring64, v64 and v86." />
+    <title>benchmarks</title>
+    <link rel="icon" href="../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../style.css" />
+    <link rel="stylesheet" href="./style.css" />
+    <link
+      rel="preload"
+      href="../assets/fonts/national-park.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link
+      rel="preload"
+      href="../assets/fonts/newsreader-italic.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link
+      rel="preload"
+      href="../assets/fonts/newsreader.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+  </head>
+  <body>
+    <div class="shell benchmarks-shell">
+      <!-- site-masthead -->
+      <main class="benchmarks">
+        <header class="bench-intro">
+          <h1>benchmarks</h1>
+          <p>i picked five tests that cover cpu basics like math, branching, and memory access.</p>
+        </header>
+        <section class="bench-figures" aria-label="rounds per second">
+          <!-- benchmark-figures -->
+        </section>
+        <p class="bench-axis-note">
+          higher means faster data access. farther right means faster compute.
+        </p>
+        <section class="bench-results" aria-labelledby="timings">
+          <h2 id="timings">workload timings</h2>
+          <p id="timings-note">the charts use these timings. lower is faster.</p>
+          <table class="bench-timings" aria-labelledby="timings" aria-describedby="timings-note">
+            <colgroup span="1"></colgroup>
+            <colgroup span="2"></colgroup>
+            <colgroup span="2"></colgroup>
+            <thead>
+              <tr>
+                <td rowspan="2"></td>
+                <th scope="colgroup" colspan="2">64-bit</th>
+                <th scope="colgroup" colspan="2">32-bit</th>
+              </tr>
+              <tr>
+                <th scope="col">ring64</th>
+                <th scope="col">v64</th>
+                <th scope="col">ring64</th>
+                <th scope="col">v86</th>
+              </tr>
+            </thead>
+            <tbody>
+              <!-- benchmark-rows -->
+            </tbody>
+          </table>
+        </section>
+        <section class="bench-method" aria-labelledby="method">
+          <h2 id="method">how i tested</h2>
+          <div>
+            <p>
+              i averaged median times from chrome on macos (apple m4 pro) and edge on windows (ryzen
+              7 7800x3d).
+            </p>
+            <p>
+              ring64 timings include the sdk call, which added 5–43 µs in the full suite. v64 and
+              v86 are timed between guest markers.
+            </p>
+            <a href="./results.json" download="ring64-benchmarks.json">raw measurements</a>
+          </div>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>

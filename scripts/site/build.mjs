@@ -34,6 +34,9 @@ try {
   await writeSitePages(source, staged);
   await copyFile(join(source, 'style.css'), join(staged, 'style.css'));
   await copyFile(join(source, 'docs/style.css'), join(staged, 'docs.css'));
+  for (const file of ['style.css', 'results.json']) {
+    await copyFile(join(source, 'benchmarks', file), join(staged, 'benchmarks', file));
+  }
   await cp(join(source, 'assets'), assets, { recursive: true });
   await cp(join(source, 'docs/examples'), join(staged, 'docs/examples'), { recursive: true });
   await mkdir(guestAssets, { recursive: true });
