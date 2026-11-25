@@ -538,7 +538,7 @@ fn emit_body(
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let register_prefixes = (paged
         && !mmio
-        && loop_body.is_none_or(StructuredLoop::paged_vector_copy)
+        && loop_body.is_none_or(|body| body.paged_vector_copy() || body.paged_scalar_writes())
         && optional.paged_register_prefixes)
         .then(|| {
             paged_register_prefixes(
