@@ -1,4 +1,4 @@
-export async function awaitBrowserResult(page, name, timeoutMessage) {
+export async function awaitBrowserResult(page, name, timeoutMessage, timeoutMs = 120_000) {
   await page.waitForFunction((key) => globalThis[key] !== undefined, name, {
     timeout: 30_000,
   });
@@ -19,7 +19,7 @@ export async function awaitBrowserResult(page, name, timeoutMessage) {
       }
     }, name),
     new Promise((_, reject) => {
-      deadline = setTimeout(() => reject(new Error(timeoutMessage)), 120_000);
+      deadline = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
     }),
   ]).finally(() => clearTimeout(deadline));
 }

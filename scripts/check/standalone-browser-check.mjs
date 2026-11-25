@@ -20,10 +20,12 @@ try {
   const errors = [];
   page.on('pageerror', (error) => errors.push(error.message));
   await page.goto(server.origin);
+  // Chromium runs the full suite for both guest memory profiles when supported.
   const encoded = await awaitBrowserResult(
     page,
     'ring64Result',
     'browser execution checks timed out',
+    240_000,
   );
   if (errors.length) throw new Error(errors.join('\n'));
   const result = JSON.parse(encoded);
