@@ -1,0 +1,75 @@
+name: DOOM Pages
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/doom-pages.yml
+      - examples/doom/**
+      - src/**
+      - sdk/**
+      - scripts/build/**
+      - build.rs
+      - Cargo.toml
+      - Cargo.lock
+      - package.json
+      - package-lock.json
+      - rust-toolchain.toml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: doom-pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+          cache: npm
+      - run: rustup show
+      - run: npm ci
+      - run: npm run build
+      - name: Build the DOOM guest
+        run: examples/doom/guest/build.sh
+      - name: Fetch the shareware IWAD
+        run: |
+          curl -fsSL -o examples/doom/build/doom1.wad \
+            https://raw.githubusercontent.com/Daivuk/PureDOOM/355cfbd16fac119718879239336ee2ea408886bd/doom1.wad
+          echo "f0cefca49926d00903cf57551d901abe  examples/doom/build/doom1.wad" | md5sum -c -
+      - name: Play ten seconds in Node
+        run: node examples/doom/host/run-node.mjs --seconds 10
+      - run: node examples/doom/host/stage-web.mjs
+      - name: Assemble the site
+        working-directory: examples/doom/build/web
+        run: |
+          mkdir -p "$RUNNER_TEMP/site"
+          cp index.html ring64.js ring64.wasm ring64-memory64.wasm doom-machine.js \
+            doom.elf.txt doom1.wad.txt "$RUNNER_TEMP/site/"
+      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: ${{ runner.temp }}/site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

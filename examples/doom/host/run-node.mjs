@@ -145,4 +145,5 @@ while (performance.now() < deadline && doom.exitCode === undefined) {
 }
 if (latest) await writeFile(path.join(shots, 'last.png'), png(latest, SCREEN_WIDTH, SCREEN_HEIGHT));
 console.log(`[host] done: frames=${doom.frames} exit=${doom.exitCode}`);
+if (doom.frames === 0) process.exitCode = 1;
 doom.dispose();

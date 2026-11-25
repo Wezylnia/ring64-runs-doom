@@ -2,20 +2,26 @@
 # Builds doom.elf: doomgeneric as a freestanding x86-64 program for ring64.
 #
 # usage: guest/build.sh [path/to/doomgeneric/doomgeneric]
-# The doomgeneric sources (https://github.com/ozkl/doomgeneric) are cloned
-# into .cache/ when no path is given.
+# The doomgeneric sources (https://github.com/ozkl/doomgeneric) are fetched
+# at a fixed commit into .cache/ when no path is given.
 set -euo pipefail
+
+doomgeneric_repo=https://github.com/ozkl/doomgeneric
+doomgeneric_commit=e257a09527062bfb986b6e5e0780839b6cbd5b71
 
 here="$(cd "$(dirname "$0")" && pwd)"
 root="$(dirname "$here")"
 cache="$root/.cache"
 src="${1:-}"
 if [ -z "$src" ]; then
-  if [ ! -d "$cache/doomgeneric" ]; then
-    mkdir -p "$cache"
-    git clone --depth 1 https://github.com/ozkl/doomgeneric "$cache/doomgeneric"
+  checkout="$cache/doomgeneric"
+  if [ "$(git -C "$checkout" rev-parse HEAD 2>/dev/null)" != "$doomgeneric_commit" ]; then
+    rm -rf "$checkout"
+    git init -q "$checkout"
+    git -C "$checkout" fetch -q --depth 1 "$doomgeneric_repo" "$doomgeneric_commit"
+    git -C "$checkout" checkout -q FETCH_HEAD
   fi
-  src="$cache/doomgeneric/doomgeneric"
+  src="$checkout/doomgeneric"
 fi
 
 out="$root/build"
