@@ -493,6 +493,12 @@ pub(in crate::dbt::wasm) fn compare_predicates(
             dst: Location::Register(_),
             ..
         } => omit_dead_status,
+        Operation::Shift {
+            kind: Shift::Shl | Shift::Shr | Shift::Sar,
+            dst: Location::Register(_),
+            count: Count::Immediate(count),
+            width: width @ (Width::W32 | Width::W64),
+        } => omit_dead_status && count & (width.bits() - 1) as u8 != 0,
         _ => false,
     };
     let preserves_until_next = |operation| {

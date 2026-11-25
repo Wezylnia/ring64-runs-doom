@@ -2321,6 +2321,10 @@ impl Emitter {
             .is_some_and(|(preamble, _, _)| preamble.body.head == body.head);
         #[cfg(any(feature = "parallel", not(target_arch = "wasm32")))]
         let finite_preamble = false;
+        #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+        let paged_scalar_writes = self.guarded_paged_lap && body.paged_scalar_writes();
+        #[cfg(any(feature = "parallel", not(target_arch = "wasm32")))]
+        let paged_scalar_writes = false;
         let (predicates, read_prefix_len) = if !cfg!(feature = "parallel")
             && self.loop_gates_prechecked
             && body.forward_edges()
@@ -2340,7 +2344,7 @@ impl Emitter {
                     instructions,
                     order,
                     &self.context,
-                    !self.paged,
+                    !self.paged || paged_scalar_writes,
                     (!self.paged && !self.context.is_long64() && self.context.code32())
                         .then_some(body.max_lap_len),
                 ),

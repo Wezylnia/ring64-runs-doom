@@ -2,6 +2,50 @@ use super::*;
 
 #[cfg(not(feature = "parallel"))]
 #[test]
+fn guarded_graph_skips_nonzero_shift_status_before_register_writers() {
+    use crate::dbt::wasm::execution::loops::loop_cfg::{
+        CompareAction, LoopOrder, compare_predicates,
+    };
+    use crate::x86::instruction::Count;
+
+    let code = [
+        0xc1, 0xe8, 16, // shr eax, 16
+        0x83, 0xe0, 127, // and eax, 127
+        0xc1, 0xea, 9, // shr edx, 9
+        0x74, 2, // je after_load
+        0x8b, 0x0f, // mov ecx, [rdi]
+        0x83, 0xee, 1, // after_load: sub esi, 1
+        0x75, 0xee, // jne head
+        0x90,
+    ];
+    let artifact = compiled_fixture(0x1000, &code, 0x1000);
+    let mut instructions = artifact.instructions;
+    let order = LoopOrder {
+        earlier: 0,
+        head: 0,
+        tail: 6,
+    };
+    let context = crate::x86::context::ExecutionContext::default();
+    assert_eq!(
+        compare_predicates(&instructions, order, &context, true, None)[..3],
+        [
+            CompareAction::SkipStatus,
+            CompareAction::SkipStatus,
+            CompareAction::Ordinary
+        ]
+    );
+    let Operation::Shift { ref mut count, .. } = instructions[2].operation else {
+        unreachable!();
+    };
+    *count = Count::Immediate(32);
+    assert_eq!(
+        compare_predicates(&instructions, order, &context, true, None)[1],
+        CompareAction::Ordinary
+    );
+}
+
+#[cfg(not(feature = "parallel"))]
+#[test]
 fn guarded_forward_graph_skips_only_unobservable_arithmetic_status() {
     use crate::dbt::wasm::execution::loops::loop_cfg::{CompareAction, compare_predicates, select};
     use crate::embedding::layout::DATA;
