@@ -66,8 +66,13 @@ export async function checkCpu(profile?: 'memory32' | 'memory64'): Promise<void>
 }
 
 export async function checkParallel(profile?: 'memory32' | 'memory64'): Promise<void> {
-  const { createMachine, loadParallelCompiler } = await import('ring64/parallel');
-  const compiler = await loadParallelCompiler(profile);
+  const { createMachine, loadParallelCompiler, ParallelError } = await import('ring64/parallel');
+  const compiler = await loadParallelCompiler(profile).catch((error: unknown) => {
+    if (profile === 'memory64' && error instanceof ParallelError && error.code === 'unsupported')
+      return undefined;
+    throw error;
+  });
+  if (!compiler) return;
   const machineOptions = {
     compiler,
     limits,

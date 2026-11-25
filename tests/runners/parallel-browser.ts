@@ -51,10 +51,9 @@ page.ring64Parallel = (async () => {
   }
   if (!crossOriginIsolated) throw new Error('worker conformance requires cross-origin isolation');
   const baseline = await runParallelScenarios(api.createMachine, bytes);
-  const supported = supportsParallelMemory64();
-  const compiler = await api.loadParallelCompiler();
-  equal(isParallelMemory64(compiler), supported, 'automatic parallel profile');
-  if (!supported) return baseline;
+  equal(isParallelMemory64(await api.loadParallelCompiler()), false, 'default parallel profile');
+  if (!supportsParallelMemory64()) return baseline;
+  const compiler = await api.loadParallelCompiler('memory64');
   const wide = await runParallelScenarios(api.createMachine, compiler);
   await checkParallelMemory64(api.createMachine, compiler);
   return {

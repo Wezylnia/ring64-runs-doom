@@ -25,7 +25,7 @@ test('parallel public API runs real dedicated Node workers', { timeout: 120_000 
 });
 
 test(
-  'parallel compiler selects a supported profile and memory64 workers share bytes beyond 4 GiB',
+  'parallel defaults to memory32 and the memory64 profile shares bytes beyond 4 GiB',
   { timeout: 120_000, skip: selected !== undefined },
   async () => {
     const api: {
@@ -34,7 +34,7 @@ test(
     } = await import(entry.href);
     const supported = supportsParallelMemory64();
     const compiler = await api.loadParallelCompiler();
-    assert.equal(isParallelMemory64(compiler), supported, 'automatic parallel profile');
+    assert.equal(isParallelMemory64(compiler), false, 'default parallel profile');
     assert.equal(isParallelMemory64(await api.loadParallelCompiler('memory32')), false);
     if (!supported) {
       assert.notEqual(process.env.RING64_REQUIRE_PARALLEL_MEMORY64, '1');
@@ -43,7 +43,7 @@ test(
     }
     const explicit = await api.loadParallelCompiler('memory64');
     assert.equal(isParallelMemory64(explicit), true, 'explicit shared memory64 profile');
-    const result = await runParallelScenarios(api.createMachine, compiler);
+    const result = await runParallelScenarios(api.createMachine, explicit);
     assert.ok(result.passed.length > 0);
     await checkParallelMemory64(api.createMachine, explicit);
   },
