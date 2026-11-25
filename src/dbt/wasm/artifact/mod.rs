@@ -2865,7 +2865,14 @@ fn emit_candidate(
     let extra_spans = false;
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     let extra_spans = write_span.is_some() || stack_read_span.is_some();
-    let oversize = (artifact.bytes.len() > max_artifact_bytes).then(|| OversizeCandidate {
+    if artifact.bytes.len() <= max_artifact_bytes {
+        return Candidate {
+            artifact,
+            extra_spans,
+            oversize: None,
+        };
+    }
+    let oversize = Some(OversizeCandidate {
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         retouch_prefix_fetch,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
