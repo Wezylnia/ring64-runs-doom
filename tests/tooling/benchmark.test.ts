@@ -140,6 +140,17 @@ test('frozen benchmarks preserve saved source and refuse changed artifacts befor
       '-m',
       'Newer checkout',
     );
+    const { sourceSnapshot } = await import(
+      new URL('../../scripts/build/source.mjs', import.meta.url).href
+    );
+    assert.equal((await sourceSnapshot(directory)).commit, git('rev-parse', 'HEAD'));
+    const archive = join(directory, 'nested-source-archive');
+    await mkdir(archive);
+    assert.equal(
+      await sourceSnapshot(archive),
+      undefined,
+      'the parent checkout does not own the archive',
+    );
     await rm(join(directory, 'paging-source.json'));
     const { manifest } = await import(
       new URL('../../scripts/verification/artifacts.mjs', import.meta.url).href
