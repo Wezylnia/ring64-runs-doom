@@ -2,6 +2,7 @@ use super::access::DescriptorWrite;
 use super::{ExecutionContext, GuestMemory, ProtectionFault, ProtectionPhase, SystemMemoryFault};
 #[cfg(test)]
 use crate::memory::Image;
+use crate::x86::access::PublicationFailure;
 use crate::x86::context::{AccessFailure, Mode, Segment, SegmentFault};
 use crate::x86::exception::{ExceptionEvent, InterruptEvent};
 use crate::x86::instruction::{SoftwareEventDescriptor, SoftwareEventKind, Width};
@@ -146,22 +147,29 @@ fn publish_descriptors(
     stack_write: Option<DescriptorWrite>,
 ) -> Result<(), EventFailure> {
     let descriptors = [code_write, stack_write];
-    image
-        .prepare_publication()
-        .map_err(|failure| descriptor_publication_failure(descriptors, failure))?;
+    image.prepare_publication().map_err(|failure| {
+        descriptor_publication_failure(
+            descriptors,
+            PublicationFailure {
+                index: None,
+                failure,
+            },
+        )
+    })?;
     commit_descriptors(image, descriptors);
     Ok(())
 }
 
 fn descriptor_publication_failure(
     descriptors: [Option<DescriptorWrite>; 2],
-    failure: AccessFailure,
+    PublicationFailure { index, failure }: PublicationFailure,
 ) -> EventFailure {
-    if let Some(write) = descriptors
-        .into_iter()
-        .flatten()
-        .find(|write| write.contains(failure))
-    {
+    let mut writes = descriptors.into_iter().flatten();
+    let descriptor = match index {
+        Some(index) => writes.nth(index),
+        None => writes.find(|write| write.contains(failure)),
+    };
+    if let Some(write) = descriptor {
         descriptor_failure(write.failure(failure))
     } else {
         EventFailure::Operand {

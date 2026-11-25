@@ -1089,7 +1089,7 @@ impl GuestMemory for Memory<'_> {
         }
         // Descriptor preparations precede the frame in both metadata and payload order.
         self.publish_ordered_metadata(&prepared)
-            .map_err(|failure| EventFrameWriteFailure::Publication(failure.failure))?;
+            .map_err(EventFrameWriteFailure::Publication)?;
         commit_descriptors(self);
         for (slot, admitted) in frame.iter().zip(prepared) {
             self.publish_write_payload(&admitted, &admitted.fields, &slot.value.to_le_bytes());

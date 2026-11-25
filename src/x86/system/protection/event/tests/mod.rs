@@ -118,6 +118,42 @@ fn protected_trap_gate_saves_three_dwords_and_preserves_if() {
 }
 
 #[test]
+fn frame_dirty_refusal_is_not_attributed_to_a_descriptor_at_the_same_address() {
+    use crate::memory::{Access, Cause, Fault};
+
+    let mut context = context("protected", 0);
+    context.set_gdtr(TableRegister {
+        base: 0x1000,
+        limit: 15,
+    });
+    let image = image(vec![0; 16], vec![mapping(0x1000, 0, 16, true, true)]);
+    let descriptor = super::super::access::Lookup::resolve(&context, 8)
+        .unwrap()
+        .prepare_accessed(&context, &image, 0x9a)
+        .unwrap();
+    let descriptors = [Some(descriptor), None];
+    let failure = AccessFailure::Linear(Fault {
+        address: 0x100d,
+        width: 1,
+        access: Access::Write,
+        cause: Cause::Permission,
+        failing: 0x100d,
+    });
+    let classify =
+        |index| descriptor_publication_failure(descriptors, PublicationFailure { index, failure });
+
+    assert!(matches!(classify(None), EventFailure::SystemMemory(_)));
+    assert!(matches!(classify(Some(0)), EventFailure::SystemMemory(_)));
+    assert_eq!(
+        classify(Some(1)),
+        EventFailure::Operand {
+            segment: Segment::Ss,
+            failure,
+        }
+    );
+}
+
+#[test]
 fn inner_entry_uses_cached_tss_width_new_stack_width_and_old_full_frame_values() {
     for (attributes, sp_bytes, ss_at, expected_sp) in [
         (0x83u16, &[0x30, 0][..], 4, 0x1c),

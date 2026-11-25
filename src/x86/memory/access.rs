@@ -19,7 +19,7 @@ pub struct EventFrameWrite {
 #[derive(Debug)]
 pub enum EventFrameWriteFailure {
     Admission(AccessFailure),
-    Publication(AccessFailure),
+    Publication(PublicationFailure),
 }
 
 /// Instruction and system owners share access semantics without choosing a backing plane.
@@ -193,8 +193,12 @@ pub trait GuestMemory {
             )
             .map_err(EventFrameWriteFailure::Admission)?;
         }
-        self.prepare_publication()
-            .map_err(EventFrameWriteFailure::Publication)?;
+        self.prepare_publication().map_err(|failure| {
+            EventFrameWriteFailure::Publication(PublicationFailure {
+                index: None,
+                failure,
+            })
+        })?;
         commit_descriptors(self);
         for slot in frame {
             self.write(slot.address, slot.width, slot.value)
