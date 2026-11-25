@@ -126,7 +126,6 @@ a:hover {
 .masthead nav a {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
   min-height: 2.75rem;
   text-decoration: none;
 }
@@ -137,15 +136,6 @@ a:hover {
 
 .masthead nav a[aria-current='true'] {
   color: var(--brick);
-}
-
-.star-count {
-  color: var(--brick);
-  display: inline-flex;
-  align-items: center;
-  gap: 0.1875rem;
-  font-size: 0.875rem;
-  font-variant-numeric: tabular-nums;
 }
 
 .landing {
