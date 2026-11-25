@@ -170,6 +170,16 @@ pub(crate) struct IndexedReadTable {
     pub(crate) clipped_last_dword: u32,
 }
 
+// Offsets read by the SDK indexed-write recency regression.
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+const _: () = {
+    assert!(CAPACITY == 64);
+    assert!(std::mem::offset_of!(IndexedDwordWrite, ages) == 36);
+    assert!(std::mem::offset_of!(IndexedDwordWrite, recency) == 56);
+    assert!(std::mem::offset_of!(IndexedReadTable, ages) == 8);
+    assert!(std::mem::offset_of!(IndexedReadTable, live_ids) == 8 + CAPACITY * 8);
+};
+
 #[cfg(all(not(feature = "parallel"), any(target_arch = "wasm32", test)))]
 impl IndexedReadTable {
     fn retire_pages(&mut self) {
