@@ -1,8 +1,19 @@
 {
   "name": "ring64",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "private": true,
   "description": "The fastest x86 and x86-64 CPU emulator for JavaScript runtimes",
+  "keywords": [
+    "x86",
+    "x86-64",
+    "emulator",
+    "cpu-emulator",
+    "webassembly",
+    "wasm",
+    "memory64",
+    "dynamic-binary-translation"
+  ],
+  "homepage": "https://ring64.fatihguzel.dev/",
   "license": "MIT",
   "type": "module",
   "exports": {
