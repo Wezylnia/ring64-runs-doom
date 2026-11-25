@@ -160,10 +160,22 @@ a:hover {
 }
 
 .project-slogan {
-  font-size: clamp(1.375rem, min(3.25vw, 5svh, 7.6cqi), 2.625rem);
-  font-weight: 750;
-  line-height: 1.05;
-  letter-spacing: -0.038em;
+  font-family: var(--font-print);
+  font-size: clamp(1.5rem, min(3.7vw, 5.5svh, 8cqi), 3rem);
+  font-style: italic;
+  font-weight: 500;
+  line-height: 1.15;
+  letter-spacing: -0.035em;
+}
+
+.project-slogan a {
+  color: var(--brick);
+  text-decoration-thickness: 0.065em;
+  text-underline-offset: 0.13em;
+}
+
+.project-slogan a:is(:hover, :focus-visible) {
+  color: #c43b27;
 }
 
 .project-details {
@@ -582,7 +594,7 @@ sup.ink-note-mark {
   }
 
   .project-slogan {
-    font-size: clamp(1rem, 7.6cqi, 1.625rem);
+    font-size: clamp(1.125rem, 8cqi, 1.875rem);
   }
 
   .wet-ink {
@@ -645,7 +657,7 @@ sup.ink-note-mark {
   }
 
   .project-slogan {
-    font-size: clamp(1.125rem, 7.6cqi, clamp(1.3125rem, 6vw, 1.875rem));
+    font-size: clamp(1.25rem, 8cqi, clamp(1.5rem, 6.5vw, 2.125rem));
   }
 
   .colophon {
