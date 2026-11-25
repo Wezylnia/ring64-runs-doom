@@ -698,11 +698,10 @@ class ParallelMachine implements Machine {
 
   #settleCommands() {
     return Promise.allSettled(
-      this.#peers.map((peer) =>
-        peer.command?.method === 'run'
-          ? this.#pausePeer(peer)
-          : (peer.replacement ?? peer.command?.promise),
-      ),
+      this.#peers.flatMap((peer) => [
+        peer.command?.method === 'run' ? this.#pausePeer(peer) : peer.command?.promise,
+        peer.replacement,
+      ]),
     );
   }
 
