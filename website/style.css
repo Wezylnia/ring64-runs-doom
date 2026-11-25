@@ -649,11 +649,7 @@ sup.ink-note-mark {
   }
 
   .masthead nav {
-    column-gap: 0.5rem;
-  }
-
-  .masthead nav a {
-    gap: 0.375rem;
+    column-gap: clamp(0.875rem, 4vw, 1.25rem);
   }
 
   .install code {
@@ -675,13 +671,13 @@ sup.ink-note-mark {
   }
 
   .colophon {
-    grid-template-columns: minmax(0, 1fr) auto;
-    padding-block: 0.625rem 0.75rem;
+    align-items: center;
+    column-gap: 0.625rem;
+    padding-block: 0.75rem;
   }
 
-  .signature {
-    grid-row: 2;
-    grid-column: 1 / -1;
+  .source {
+    text-align: end;
   }
 }
 
@@ -690,8 +686,8 @@ sup.ink-note-mark {
     width: 5.25rem;
   }
 
-  .masthead nav a {
-    min-height: 2rem;
+  .masthead nav {
+    font-size: 0.875rem;
   }
 
   .landing {
