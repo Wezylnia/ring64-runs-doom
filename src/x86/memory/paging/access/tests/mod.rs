@@ -970,6 +970,19 @@ fn sparse_nominal_probe_dirties_only_a_participating_page() {
     assert_eq!(image.physical_read(0x4010, 8).unwrap(), 0xb027);
 }
 #[test]
+fn sparse_write_dirties_only_nonempty_fragment_intersections() {
+    let (mut image, state) = fixture(0xa027, true, false);
+    let mut work = AccessState::default();
+    Memory::new(&mut image, &state, 3, 0, &mut work, &Keys::ZERO)
+        .write_fields(0x1ff8, 16, &[(4, 0), (8, 1)], &[0x5a; 16])
+        .unwrap();
+    assert_eq!(image.physical_read(0x4008, 8), Ok(0x9027));
+    assert_eq!(image.physical_read(0x4010, 8), Ok(0xa067));
+    assert_eq!(image.physical_read(0x9ff8, 8), Ok(0));
+    assert_eq!(image.physical_read(0xa000, 8), Ok(0x5a));
+}
+
+#[test]
 fn ordered_dirty_refusal_identifies_duplicate_spans_and_discards_the_failed_batch() {
     let mut bytes = vec![0xa5; 0xc000];
     bytes[0x1000..0x1004].copy_from_slice(&0x20023_u32.to_le_bytes());

@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::ops::Range;
 
 #[cfg(not(feature = "parallel"))]
 use super::cache::RetainedSpan;
@@ -26,6 +27,19 @@ struct Fragment {
     entry_width: u32,
     cache_id: Option<u64>,
     write: Option<PreparedPhysicalWrite>,
+}
+
+impl Fragment {
+    fn field_intersections<'a>(
+        &'a self,
+        fields: &'a [(u32, u32)],
+    ) -> impl Iterator<Item = Range<u32>> + 'a {
+        fields.iter().filter_map(move |&(start, length)| {
+            let begin = start.max(self.offset);
+            let end = (start + length).min(self.offset + self.length);
+            (begin < end).then_some(begin..end)
+        })
+    }
 }
 
 #[derive(Debug)]
@@ -124,7 +138,7 @@ impl<'a> Memory<'a> {
     fn mark_dirty(&self, prepared: &Prepared, fields: &[(u32, u32)]) {
         if let Some(cache) = self.cache {
             for fragment in &prepared.fragments {
-                if fragment.dirty && participates(fragment, fields) {
+                if fragment.dirty && fragment.field_intersections(fields).next().is_some() {
                     cache.mark_dirty(fragment.cache_id, fragment.leaf);
                 }
             }
@@ -538,18 +552,14 @@ impl<'a> Memory<'a> {
             self.prepare_aligned(address, width, Access::Read, false, self.class, intent)?;
         let storage = self.storage.borrow();
         for fragment in &prepared.fragments {
-            for &(start, length) in fields {
-                let begin = start.max(fragment.offset);
-                let end = (start + length).min(fragment.offset + fragment.length);
-                if begin < end {
-                    storage
-                        .image
-                        .physical_read_into(
-                            fragment.physical + u64::from(begin - fragment.offset),
-                            &mut output[begin as usize..end as usize],
-                        )
-                        .expect("admitted physical field read");
-                }
+            for Range { start, end } in fragment.field_intersections(fields) {
+                storage
+                    .image
+                    .physical_read_into(
+                        fragment.physical + u64::from(start - fragment.offset),
+                        &mut output[start as usize..end as usize],
+                    )
+                    .expect("admitted physical field read");
             }
         }
         Ok(())
@@ -590,7 +600,7 @@ impl<'a> Memory<'a> {
         let storage = self.storage.borrow();
         let mut updates = Vec::new();
         for fragment in &prepared.fragments {
-            if fragment.dirty && participates(fragment, fields) {
+            if fragment.dirty && fragment.field_intersections(fields).next().is_some() {
                 let update = storage
                     .image
                     .prepare_physical_update(fragment.leaf, fragment.entry_width)
@@ -759,28 +769,18 @@ impl<'a> Memory<'a> {
     fn publish_write_payload(&self, prepared: &Prepared, fields: &[(u32, u32)], bytes: &[u8]) {
         let mut storage = self.storage.borrow_mut();
         for fragment in &prepared.fragments {
-            for &(start, length) in fields {
-                let begin = start.max(fragment.offset);
-                let end = (start + length).min(fragment.offset + fragment.length);
-                if begin < end {
-                    storage.image.publish_physical(
-                        fragment
-                            .write
-                            .as_ref()
-                            .expect("captured physical payload admission"),
-                        begin - fragment.offset,
-                        &bytes[begin as usize..end as usize],
-                    );
-                }
+            for Range { start, end } in fragment.field_intersections(fields) {
+                storage.image.publish_physical(
+                    fragment
+                        .write
+                        .as_ref()
+                        .expect("captured physical payload admission"),
+                    start - fragment.offset,
+                    &bytes[start as usize..end as usize],
+                );
             }
         }
     }
-}
-
-fn participates(fragment: &Fragment, fields: &[(u32, u32)]) -> bool {
-    fields.iter().any(|&(start, length)| {
-        start < fragment.offset + fragment.length && fragment.offset < start + length
-    })
 }
 
 impl GuestMemory for Memory<'_> {
