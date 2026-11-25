@@ -1,4 +1,6 @@
-use super::{GuardedReads, OptionalLowering, SharedIndexedReads, StructuredLoop, Unit, emit_body};
+use super::{
+    GuardedReads, OptionalLowering, SharedIndexedReads, StructuredLoop, Unit, fit::emit_body,
+};
 #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
 use crate::dbt::wasm::execution::paged::copy::{CopyGroup, ScalarCopyGroup};
 use crate::x86::context::Segment;
