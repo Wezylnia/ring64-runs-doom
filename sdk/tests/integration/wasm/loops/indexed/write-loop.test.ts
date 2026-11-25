@@ -161,9 +161,9 @@ test('indexed stores reuse full pages and reload the palette through a writable 
 });
 
 test('an admitted indexed store publishes both registers and TEST flags before the next fault', async () => {
-  // MOVZX EAX,[RDI]; TEST EAX,EAX; JZ head; MOV EDX,[RBX+RAX*4]; MOV [RSI],EDX;
+  // ADD RDI,R10; MOVZX EAX,[RDI]; TEST EAX,EAX; JZ head; MOV EDX,[RBX+RAX*4]; MOV [RSI],EDX;
   // MOV EBP,[R8] exposes the completed group's state on a fault.
-  const code = 'ffc9741848ffc74883c6040fb60785c074ee8b14838916418b28ebe4';
+  const code = 'ffc974184883c6044c01d70fb60785c074ee8b14838916418b28ebe4';
   const data = PC + 0x1000n;
   const ram = new Uint8Array(4096);
   const words = new DataView(ram.buffer);
@@ -191,9 +191,18 @@ test('an admitted indexed store publishes both registers and TEST flags before t
           6: destination + 0xfcn,
           7: data - 1n,
           8: suffix,
+          10: 1n,
         });
       cpu.setState(start());
       assert.equal((await cpu.run({ stop: end, budget: 1000n })).reason, 'stop');
+      const missingIndex = data + 4096n;
+      cpu.setState(initial(PC, { 1: 33n, 7: 0xffffffffffffffffn, 10: missingIndex + 1n }));
+      const refused = await cpu.run({ stop: end, budget: 1000n });
+      assert.equal(refused.reason, 'page-fault');
+      assert.equal(refused.retired, 4n);
+      assert.equal(refused.state.rip, PC + 11n);
+      assert.equal(refused.state.registers[7], missingIndex);
+      assert.equal(refused.state.flags, 0x17n);
       const out = 0xa100n;
       const readOut = () => new DataView(cpu.readPhysicalMemory(out, 4).buffer).getUint32(0, true);
       for (const [index, flags] of [

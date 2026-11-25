@@ -467,6 +467,40 @@ pub(in crate::dbt::wasm) enum ReadFaultFlags {
     Shift(Shift, Width),
 }
 
+#[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+pub(super) fn defer_add_before_indexed_test(
+    instructions: &[Instruction],
+    order: LoopOrder,
+    index: u32,
+    predicates: &mut [CompareAction],
+) {
+    let Some(position) = order.position(index).filter(|&position| position > 0) else {
+        return;
+    };
+    let read = instructions[index as usize];
+    let preceding = instructions[order.at(position - 1) as usize];
+    let Operation::Alu {
+        kind: Alu::Add,
+        width,
+        ..
+    } = preceding.operation
+    else {
+        return;
+    };
+    let position = position as usize;
+    if preceding.next_pc == read.pc
+        && predicates[position - 1..=position] == [CompareAction::Ordinary; 2]
+        && !instructions[order.earlier as usize..=order.tail as usize]
+            .iter()
+            .any(|instruction| branch_target(instruction.operation) == Some(read.pc))
+    {
+        // A successful guarded byte read reaches the TEST before exposing flags.
+        predicates[position - 1] = CompareAction::SkipStatus;
+        predicates[position] =
+            CompareAction::RestoreOnLoadFault(ReadFaultFlags::Arithmetic(Alu::Add, width));
+    }
+}
+
 pub(in crate::dbt::wasm) fn compare_predicates(
     instructions: &[Instruction],
     order: LoopOrder,

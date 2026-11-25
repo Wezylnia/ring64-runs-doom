@@ -2339,17 +2339,28 @@ impl Emitter {
             } else {
                 0
             };
-            (
-                super::loop_cfg::compare_predicates(
-                    instructions,
-                    order,
-                    &self.context,
-                    !self.paged || paged_scalar_writes,
-                    (!self.paged && !self.context.is_long64() && self.context.code32())
-                        .then_some(body.max_lap_len),
-                ),
-                read_prefix_len,
-            )
+            let predicates = super::loop_cfg::compare_predicates(
+                instructions,
+                order,
+                &self.context,
+                !self.paged || paged_scalar_writes,
+                (!self.paged && !self.context.is_long64() && self.context.code32())
+                    .then_some(body.max_lap_len),
+            );
+            #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+            let predicates = {
+                let mut predicates = predicates;
+                if paged_scalar_writes && let Some(group) = self.paged_indexed_write {
+                    super::loop_cfg::defer_add_before_indexed_test(
+                        instructions,
+                        order,
+                        group.shape.index,
+                        &mut predicates,
+                    );
+                }
+                predicates
+            };
+            (predicates, read_prefix_len)
         } else {
             (Vec::new(), 0)
         };
