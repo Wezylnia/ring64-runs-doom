@@ -42,9 +42,9 @@ export type { MachineOptions, ParallelCpu, ParallelRunResult, RunOptions };
 export type { RunReason } from './cpu/cpu.js';
 export { ParallelError };
 
-/** Load a parallel Core for reuse across machines. */
+/** Prefer shared memory64 when supported. Reuse the compiled Core across machines. */
 export async function loadParallelCompiler(
-  guestMemory: 'memory32' | 'memory64' = 'memory32',
+  guestMemory: 'memory32' | 'memory64' = supportsParallelMemory64() ? 'memory64' : 'memory32',
 ): Promise<WebAssembly.Module> {
   if (guestMemory !== 'memory32' && guestMemory !== 'memory64')
     throw new TypeError('guestMemory must be memory32 or memory64');

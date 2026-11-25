@@ -597,8 +597,10 @@ Cross-Origin-Embedder-Policy: require-corp</code></pre>
           >
         </dt>
         <dd>
-          defaults to <code>memory32</code>. pass <code>'memory64'</code> for larger shared guest
-          ram on hosts with shared wasm memory64 and atomics. reuse the module across machines.
+          defaults to <code>memory64</code> on hosts with shared wasm memory64 and atomics. other
+          hosts use <code>memory32</code>. the memory64 profile uses 32-bit wasm memory when the
+          shared ram and metadata fit within 4 gib. pass <code>'memory32'</code> or
+          <code>'memory64'</code> to select a profile explicitly.
         </dd>
       </div>
       <div>

@@ -40,7 +40,7 @@ test('parallel public API runs real dedicated Node workers', { timeout: 120_000 
 });
 
 test(
-  'parallel defaults to memory32 and the memory64 profile shares bytes beyond 4 GiB',
+  'parallel selects an available profile and uses the narrowest shared RAM that fits',
   { timeout: 120_000, skip: selected !== undefined },
   async (t) => {
     const api: {
@@ -49,7 +49,7 @@ test(
     } = await import(entry.href);
     const supported = supportsParallelMemory64();
     const compiler = await api.loadParallelCompiler();
-    assert.equal(isParallelMemory64(compiler), false, 'default parallel profile');
+    assert.equal(isParallelMemory64(compiler), supported, 'default parallel profile');
     assert.equal(isParallelMemory64(await api.loadParallelCompiler('memory32')), false);
     if (!supported) {
       assert.notEqual(process.env.RING64_REQUIRE_PARALLEL_MEMORY64, '1');
@@ -70,7 +70,7 @@ test(
         return post.apply(this, args);
       },
     );
-    const small = linearMachine(explicit, '90');
+    const small = linearMachine(compiler, '90');
     small.memory.backings[1] = { id: 'data', bytes: Uint8Array.of(42), byteLength: 4096 };
     await withMachine(api.createMachine, small, async (machine) => {
       assert.deepEqual(await machine.readMemory(RAM, 2), Uint8Array.of(42, 0));
@@ -84,7 +84,7 @@ test(
     assert.ok(result.passed.length > 0);
 
     shared = undefined;
-    await checkParallelMemory64(api.createMachine, explicit);
+    await checkParallelMemory64(api.createMachine, compiler);
     assert.ok(shared, 'large machine started a worker');
     assert.doesNotThrow(
       () => new WebAssembly.Instance(sharedMemoryImport(true), { env: { ram: shared! } }),
