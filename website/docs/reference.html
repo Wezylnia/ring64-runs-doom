@@ -362,7 +362,11 @@
     <dl class="docs-members">
       <div>
         <dt><code>MemoryBackingInput</code></dt>
-        <dd>pairs an <code>id</code> with <code>bytes</code>.</dd>
+        <dd>
+          pairs an <code>id</code> with <code>bytes</code>. with memory64, set
+          <code>byteLength</code>
+          to reserve a larger backing. bytes beyond the initial data start at zero.
+        </dd>
       </div>
       <div>
         <dt><code>MemoryMapping</code></dt>
@@ -573,9 +577,9 @@
   <details>
     <summary>browser requirements</summary>
     <p id="parallel-browser-requirements" tabindex="-1">
-      keep the package's worker modules and <code>ring64-parallel.wasm</code> available at their
-      relative urls. the browser needs shared memory with atomics and wasm multiple memories. serve
-      the page with these headers to enable cross-origin isolation.
+      keep the package's worker modules and both parallel wasm files available at their relative
+      urls. the browser needs shared memory with atomics and wasm multiple memories. serve the page
+      with these headers to enable cross-origin isolation.
     </p>
     <div class="docs-example">
       <pre><code>Cross-Origin-Opener-Policy: same-origin
@@ -589,10 +593,14 @@ Cross-Origin-Embedder-Policy: require-corp</code></pre>
       <div>
         <dt id="loadParallelCompiler" tabindex="-1">
           <a href="#loadParallelCompiler"
-            ><code>loadParallelCompiler(): Promise&lt;WebAssembly.Module&gt;</code></a
+            ><code>loadParallelCompiler(guestMemory?): Promise&lt;WebAssembly.Module&gt;</code></a
           >
         </dt>
-        <dd>loads the packaged <code>ring64-parallel.wasm</code> for reuse across machines.</dd>
+        <dd>
+          defaults to <code>memory64</code> on hosts that support shared wasm memory64. other hosts
+          use <code>memory32</code>. pass <code>'memory32'</code> or <code>'memory64'</code> to
+          select a profile explicitly. reuse the module across machines.
+        </dd>
       </div>
       <div>
         <dt id="createMachine" tabindex="-1">
