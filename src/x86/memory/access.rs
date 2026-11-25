@@ -1,6 +1,7 @@
 use super::alignment::Intent;
 use crate::memory::Image;
 use crate::x86::context::AccessFailure;
+use crate::x86::instruction::Width;
 
 /// A refusal belongs to one captured write in the current preparation batch.
 #[derive(Clone, Copy, Debug)]
@@ -9,10 +10,10 @@ pub struct PublicationFailure {
     pub failure: AccessFailure,
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct EventFrameWrite {
     pub address: u64,
-    pub width: u32,
+    pub width: Width,
     pub value: u64,
 }
 
@@ -189,13 +190,9 @@ pub trait GuestMemory {
         Self: Sized,
     {
         for slot in frame {
-            self.check_frame_write_aligned(
-                slot.address,
-                slot.width,
-                cpl,
-                Intent::Natural(slot.width),
-            )
-            .map_err(EventFrameWriteFailure::Admission)?;
+            let width = u32::from(slot.width.bytes());
+            self.check_frame_write_aligned(slot.address, width, cpl, Intent::Natural(width))
+                .map_err(EventFrameWriteFailure::Admission)?;
         }
         self.prepare_publication()
             .map_err(|failure| EventFrameWriteFailure::Publication {
@@ -207,7 +204,7 @@ pub trait GuestMemory {
             })?;
         commit_descriptors(self);
         for slot in frame {
-            self.write(slot.address, slot.width, slot.value)
+            self.write(slot.address, u32::from(slot.width.bytes()), slot.value)
                 .expect("admitted private event frame write");
         }
         Ok(())

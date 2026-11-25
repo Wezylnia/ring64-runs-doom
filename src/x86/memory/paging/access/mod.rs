@@ -1075,14 +1075,15 @@ impl GuestMemory for Memory<'_> {
         let class = AccessClass::operand(cpl, self.raw_ac);
         let mut prepared = Vec::with_capacity(frame.len());
         for slot in frame {
+            let width = u32::from(slot.width.bytes());
             prepared.push(
                 self.prepare_aligned(
                     slot.address,
-                    slot.width,
+                    width,
                     Access::Write,
                     false,
                     class,
-                    Intent::Natural(slot.width),
+                    Intent::Natural(width),
                 )
                 .map_err(EventFrameWriteFailure::Admission)?,
             );

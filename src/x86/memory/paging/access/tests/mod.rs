@@ -4,6 +4,7 @@ mod retained;
 
 use super::*;
 use crate::memory::{MappingInput, MemoryLimits, Permissions};
+use crate::x86::instruction::Width;
 use crate::x86::paging::walk::{Failure, PageFault, PhysicalPhase};
 use crate::x86::protection_keys::State as Keys;
 
@@ -853,7 +854,7 @@ fn event_frame_uses_its_own_admitted_translation_for_a_duplicate_span() {
             0,
             &[EventFrameWrite {
                 address: 0x1000,
-                width: 8,
+                width: Width::W64,
                 value: 0xbeef,
             }],
             |_| {},
@@ -878,7 +879,7 @@ fn prepared_frame_dirty_refusal_cannot_leak_earlier_slots_or_dirty_updates() {
     memory.check_system_write(0x8000, 8).unwrap();
     let slots = [0x8008, 0x7ff8].map(|address| EventFrameWrite {
         address,
-        width: 8,
+        width: Width::W64,
         value: 1,
     });
     let error = memory

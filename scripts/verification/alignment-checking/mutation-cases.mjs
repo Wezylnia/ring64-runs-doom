@@ -449,29 +449,8 @@ export const mutants = [
     frameGate,
     edit(
       access,
-      `    fn check_frame_write_aligned(
-        &self,
-        address: u64,
-        width: u32,
-        cpl: u8,
-        intent: Intent,
-    ) -> Result<(), AccessFailure> {
-        self.capture_write(
-            address,
-            width,
-            AccessClass::operand(cpl, self.raw_ac),
-            intent,
-        )
-    }`,
-      `    fn check_frame_write_aligned(
-        &self,
-        address: u64,
-        width: u32,
-        _cpl: u8,
-        intent: Intent,
-    ) -> Result<(), AccessFailure> {
-        self.capture_write(address, width, self.class, intent)
-    }`,
+      'let class = AccessClass::operand(cpl, self.raw_ac);',
+      'let _ = cpl;\n        let class = self.class;',
     ),
   ),
   native(
@@ -479,8 +458,14 @@ export const mutants = [
     'captured_frame_authority_does_not_recheck_initiating_privilege_at_commit',
     edit(
       access,
-      '.position(|p| p.address == address && p.width == width);',
-      '.position(|p| false && p.address == address && p.width == width);',
+      `        for (slot, admitted) in frame.iter().zip(prepared) {
+            self.publish_write_payload(&admitted, &admitted.fields, &slot.value.to_le_bytes());
+        }`,
+      `        for slot in frame {
+            let width = u32::from(slot.width.bytes());
+            self.write_aligned(slot.address, width, slot.value, Intent::Natural(width))
+                .map_err(EventFrameWriteFailure::Admission)?;
+        }`,
     ),
   ),
   native(

@@ -16,7 +16,11 @@ impl Frame {
     pub fn new(context: &ExecutionContext, sp: u64, new_stack_error: Option<u16>) -> Self {
         let pointer_width = context.stack_width();
         Self {
-            writes: [EventFrameWrite::default(); 10],
+            writes: [EventFrameWrite {
+                address: 0,
+                width: Width::W16,
+                value: 0,
+            }; 10],
             count: 0,
             cursor: sp & pointer_width.mask(),
             raw: sp,
@@ -76,7 +80,7 @@ impl Frame {
             })?;
         self.writes[self.count] = EventFrameWrite {
             address,
-            width: u32::from(width.bytes()),
+            width,
             value,
         };
         self.count += 1;

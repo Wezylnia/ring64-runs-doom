@@ -1,6 +1,7 @@
 use super::super::*;
 use crate::memory::{MappingInput, MemoryLimits, Permissions};
 use crate::x86::alignment::{Fault as AlignmentFault, Intent};
+use crate::x86::instruction::Width;
 use crate::x86::paging::walk::{Failure, PageFault, PhysicalPhase};
 use crate::x86::protection_keys::State as Keys;
 
@@ -168,16 +169,24 @@ fn alignment_uses_current_controls_and_prospective_frame_privilege() {
         let (mut image, mut state) = fixture(0xb007);
         state.cr0 = 0x40011;
         let mut work = AccessState::default();
-        let memory = Memory::new(&mut image, &state, current, 0x40002, &mut work, &Keys::ZERO);
-        let expected = if fails {
-            Err(alignment(0x6001, 4, Access::Write, 4))
-        } else {
-            Ok(())
-        };
-        assert_eq!(
-            memory.check_frame_write_aligned(0x6001, 4, target, Intent::Natural(4)),
-            expected
+        let mut memory = Memory::new(&mut image, &state, current, 0x40002, &mut work, &Keys::ZERO);
+        let result = memory.write_event_frame(
+            target,
+            &[EventFrameWrite {
+                address: 0x6001,
+                width: Width::W32,
+                value: 0x12345678,
+            }],
+            |_| {},
         );
+        if fails {
+            assert!(
+                matches!(result, Err(EventFrameWriteFailure::Admission(failure))
+                if failure == alignment(0x6001, 4, Access::Write, 4))
+            );
+        } else {
+            result.unwrap();
+        }
     }
 }
 
@@ -247,17 +256,19 @@ fn captured_frame_authority_does_not_recheck_initiating_privilege_at_commit() {
     let mut work = AccessState::default();
     let mut memory = Memory::new(&mut image, &state, 3, 0x40002, &mut work, &Keys::ZERO);
     // The prospective CPL0 admission is authoritative even though the caller is CPL3.
-    memory
-        .write_event_frame(
-            0,
-            &[EventFrameWrite {
-                address: 0x6001,
-                width: 4,
-                value: 0x12345678,
-            }],
-            |_| {},
-        )
-        .unwrap();
+    let result = memory.write_event_frame(
+        0,
+        &[EventFrameWrite {
+            address: 0x6001,
+            width: Width::W32,
+            value: 0x12345678,
+        }],
+        |_| {},
+    );
+    assert!(
+        result.is_ok(),
+        "prospective CPL0 capture should publish: {result:?}"
+    );
     assert!(work.pending.is_empty());
     assert_eq!(image.physical_read(0x6001, 4), Ok(0x12345678));
 }
