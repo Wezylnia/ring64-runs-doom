@@ -145,24 +145,36 @@ fn publish_descriptors(
     code_write: Option<DescriptorWrite>,
     stack_write: Option<DescriptorWrite>,
 ) -> Result<(), EventFailure> {
-    image.prepare_publication().map_err(|failure| {
-        if let Some(write) = code_write
-            .into_iter()
-            .chain(stack_write)
-            .find(|write| write.contains(failure))
-        {
-            descriptor_failure(write.failure(failure))
-        } else {
-            EventFailure::Operand {
-                segment: Segment::Ss,
-                failure,
-            }
+    let descriptors = [code_write, stack_write];
+    image
+        .prepare_publication()
+        .map_err(|failure| descriptor_publication_failure(descriptors, failure))?;
+    commit_descriptors(image, descriptors);
+    Ok(())
+}
+
+fn descriptor_publication_failure(
+    descriptors: [Option<DescriptorWrite>; 2],
+    failure: AccessFailure,
+) -> EventFailure {
+    if let Some(write) = descriptors
+        .into_iter()
+        .flatten()
+        .find(|write| write.contains(failure))
+    {
+        descriptor_failure(write.failure(failure))
+    } else {
+        EventFailure::Operand {
+            segment: Segment::Ss,
+            failure,
         }
-    })?;
-    for write in code_write.into_iter().chain(stack_write) {
+    }
+}
+
+fn commit_descriptors(image: &mut impl GuestMemory, descriptors: [Option<DescriptorWrite>; 2]) {
+    for write in descriptors.into_iter().flatten() {
         write.commit(image);
     }
-    Ok(())
 }
 
 fn descriptor_failure(failure: super::Failure) -> EventFailure {

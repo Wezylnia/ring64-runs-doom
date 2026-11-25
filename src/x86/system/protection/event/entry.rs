@@ -117,18 +117,11 @@ fn enter(
         ] {
             frame.push(context, value, Width::W16)?;
         }
-        frame.admit(image)?;
         let pc = u64::from(u16::from_le_bytes(gate[..2].try_into().unwrap()));
         let selector = u16::from_le_bytes(gate[2..4].try_into().unwrap());
         let mut cache = context.segment(Segment::Cs);
         cache.base = u64::from(selector) << 4;
-        image
-            .prepare_publication()
-            .map_err(|failure| EventFailure::Operand {
-                segment: Segment::Ss,
-                failure,
-            })?;
-        frame.commit(image);
+        frame.publish(image, [None, None])?;
         let changed = context.set_segment(
             Segment::Cs,
             selector,
@@ -319,9 +312,7 @@ fn enter(
     } else {
         None
     };
-    frame.admit(image)?;
-    publish_descriptors(image, code_write, stack_write)?;
-    frame.commit(image);
+    frame.publish(image, [code_write, stack_write])?;
     let context_changed = *context != prepared;
     *context = prepared;
     Ok(EventOutcome {

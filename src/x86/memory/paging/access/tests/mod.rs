@@ -839,19 +839,60 @@ fn nonadjacent_fragments_write_exact_bytes_after_all_dirty_admission() {
 }
 
 #[test]
+fn event_frame_uses_its_own_admitted_translation_for_a_duplicate_span() {
+    let (mut image, state) = fixture(0, true, false);
+    let mut work = AccessState::default();
+    Memory::new(&mut image, &state, 0, 0, &mut work, &Keys::ZERO)
+        .check_system_write(0x1000, 8)
+        .unwrap();
+    image.physical_write(0x4008, 8, 0xa027).unwrap();
+
+    let mut memory = Memory::new(&mut image, &state, 3, 0, &mut work, &Keys::ZERO);
+    memory
+        .write_event_frame(
+            0,
+            &[EventFrameWrite {
+                address: 0x1000,
+                width: 8,
+                value: 0xbeef,
+            }],
+            |_| {},
+        )
+        .unwrap();
+    {
+        let storage = memory.storage.borrow();
+        assert_eq!(storage.image.physical_read(0x9000, 8), Ok(0));
+        assert_eq!(storage.image.physical_read(0xa000, 8), Ok(0xbeef));
+    }
+    memory.write_system(0x1000, 8, 0xface).unwrap();
+    assert_eq!(image.physical_read(0x9000, 8), Ok(0xface));
+    assert_eq!(image.physical_read(0xa000, 8), Ok(0xbeef));
+    assert!(work.pending.is_empty());
+}
+
+#[test]
 fn prepared_frame_dirty_refusal_cannot_leak_earlier_slots_or_dirty_updates() {
     let (mut image, state) = fixture(0, true, true);
     let mut work = AccessState::default();
     let mut memory = Memory::new(&mut image, &state, 0, 0, &mut work, &Keys::ZERO);
-    memory.check_frame_write(0x8008, 8, 0).unwrap();
-    memory.check_frame_write(0x7ff8, 8, 0).unwrap();
-    let error = memory.prepare_publication().unwrap_err();
+    memory.check_system_write(0x8000, 8).unwrap();
+    let slots = [0x8008, 0x7ff8].map(|address| EventFrameWrite {
+        address,
+        width: 8,
+        value: 1,
+    });
+    let error = memory
+        .write_event_frame(0, &slots, |_| panic!("no descriptor payload may publish"))
+        .unwrap_err();
     assert!(
-        matches!(error,AccessFailure::Paging(Failure::Physical(f)) if f.phase==PhysicalPhase::DirtyWrite && f.physical.failing==0x4038)
+        matches!(error, EventFrameWriteFailure::Publication(AccessFailure::Paging(Failure::Physical(f)))
+            if f.phase == PhysicalPhase::DirtyWrite && f.physical.failing == 0x4038)
     );
-    assert_eq!(image.physical_read(0x8008, 8).unwrap(), 0);
-    assert_eq!(image.physical_read(0x7ff8, 8).unwrap(), 0);
+    for address in [0x8000, 0x8008, 0x7ff8] {
+        assert_eq!(image.physical_read(address, 8).unwrap(), 0);
+    }
     assert_eq!(image.physical_read(0x4040, 8).unwrap(), 0x8027);
+    assert!(work.pending.is_empty());
 }
 
 #[test]

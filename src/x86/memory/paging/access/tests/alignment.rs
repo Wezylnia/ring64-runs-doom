@@ -246,16 +246,18 @@ fn captured_frame_authority_does_not_recheck_initiating_privilege_at_commit() {
     state.cr0 = 0x40011;
     let mut work = AccessState::default();
     let mut memory = Memory::new(&mut image, &state, 3, 0x40002, &mut work, &Keys::ZERO);
+    // The prospective CPL0 admission is authoritative even though the caller is CPL3.
     memory
-        .check_frame_write_aligned(0x6001, 4, 0, Intent::Natural(4))
+        .write_event_frame(
+            0,
+            &[EventFrameWrite {
+                address: 0x6001,
+                width: 4,
+                value: 0x12345678,
+            }],
+            |_| {},
+        )
         .unwrap();
-    memory.prepare_publication().unwrap();
-    // The saved prospective-CPL0 admission is authoritative, even at current CPL3.
-    assert_eq!(
-        memory.write_aligned(0x6001, 4, 0x12345678, Intent::Natural(4)),
-        Ok(()),
-        "captured prospective-CPL0 authority remains valid at commit",
-    );
     assert!(work.pending.is_empty());
     assert_eq!(image.physical_read(0x6001, 4), Ok(0x12345678));
 }

@@ -1,16 +1,9 @@
 use super::*;
 use crate::memory::Access;
-use crate::x86::alignment::Intent;
-
-#[derive(Clone, Copy, Default)]
-struct Write {
-    address: u64,
-    width: u32,
-    value: u64,
-}
+use crate::x86::access::{EventFrameWrite, EventFrameWriteFailure};
 
 pub(super) struct Frame {
-    writes: [Write; 10],
+    writes: [EventFrameWrite; 10],
     count: usize,
     cursor: u64,
     raw: u64,
@@ -23,7 +16,7 @@ impl Frame {
     pub fn new(context: &ExecutionContext, sp: u64, new_stack_error: Option<u16>) -> Self {
         let pointer_width = context.stack_width();
         Self {
-            writes: [Write::default(); 10],
+            writes: [EventFrameWrite::default(); 10],
             count: 0,
             cursor: sp & pointer_width.mask(),
             raw: sp,
@@ -81,7 +74,7 @@ impl Frame {
                     }
                 }
             })?;
-        self.writes[self.count] = Write {
+        self.writes[self.count] = EventFrameWrite {
             address,
             width: u32::from(width.bytes()),
             value,
@@ -90,29 +83,24 @@ impl Frame {
         Ok(())
     }
 
-    pub fn admit(&self, image: &impl GuestMemory) -> Result<(), EventFailure> {
-        for slot in &self.writes[..self.count] {
-            image
-                .check_frame_write_aligned(
-                    slot.address,
-                    slot.width,
-                    self.cpl,
-                    Intent::Natural(slot.width),
-                )
-                .map_err(|failure| EventFailure::Operand {
+    pub fn publish(
+        &self,
+        image: &mut impl GuestMemory,
+        descriptors: [Option<DescriptorWrite>; 2],
+    ) -> Result<(), EventFailure> {
+        image
+            .write_event_frame(self.cpl, &self.writes[..self.count], |image| {
+                commit_descriptors(image, descriptors);
+            })
+            .map_err(|fault| match fault {
+                EventFrameWriteFailure::Admission(failure) => EventFailure::Operand {
                     segment: Segment::Ss,
                     failure,
-                })?;
-        }
-        Ok(())
-    }
-
-    pub fn commit(&self, image: &mut impl GuestMemory) {
-        for slot in &self.writes[..self.count] {
-            image
-                .write(slot.address, slot.width, slot.value)
-                .expect("admitted private event frame write");
-        }
+                },
+                EventFrameWriteFailure::Publication(failure) => {
+                    descriptor_publication_failure(descriptors, failure)
+                }
+            })
     }
 
     pub fn sp(&self) -> u64 {

@@ -9,6 +9,19 @@ pub struct PublicationFailure {
     pub failure: AccessFailure,
 }
 
+#[derive(Clone, Copy, Default)]
+pub struct EventFrameWrite {
+    pub address: u64,
+    pub width: u32,
+    pub value: u64,
+}
+
+#[derive(Debug)]
+pub enum EventFrameWriteFailure {
+    Admission(AccessFailure),
+    Publication(AccessFailure),
+}
+
 /// Instruction and system owners share access semantics without choosing a backing plane.
 pub trait GuestMemory {
     fn fetch(&self, address: u64) -> Result<u8, AccessFailure>;
@@ -159,6 +172,35 @@ pub trait GuestMemory {
         _intent: Intent,
     ) -> Result<(), AccessFailure> {
         self.check_frame_write(address, width, cpl)
+    }
+    /// Admit the ordered frame, publish all dirty updates, then commit pending
+    /// descriptor payloads before the frame slots.
+    fn write_event_frame(
+        &mut self,
+        cpl: u8,
+        frame: &[EventFrameWrite],
+        commit_descriptors: impl FnOnce(&mut Self),
+    ) -> Result<(), EventFrameWriteFailure>
+    where
+        Self: Sized,
+    {
+        for slot in frame {
+            self.check_frame_write_aligned(
+                slot.address,
+                slot.width,
+                cpl,
+                Intent::Natural(slot.width),
+            )
+            .map_err(EventFrameWriteFailure::Admission)?;
+        }
+        self.prepare_publication()
+            .map_err(EventFrameWriteFailure::Publication)?;
+        commit_descriptors(self);
+        for slot in frame {
+            self.write(slot.address, slot.width, slot.value)
+                .expect("admitted private event frame write");
+        }
+        Ok(())
     }
     /// Admit and apply every captured dirty update before a prepared owner's publications.
     fn prepare_publication(&mut self) -> Result<(), AccessFailure> {

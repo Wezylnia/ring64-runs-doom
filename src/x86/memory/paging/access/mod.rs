@@ -9,7 +9,7 @@ use super::{
 };
 use crate::memory::{Access, Image, PreparedPhysicalUpdate, PreparedPhysicalWrite, check_span};
 use crate::x86::{
-    access::{GuestMemory, PublicationFailure},
+    access::{EventFrameWrite, EventFrameWriteFailure, GuestMemory, PublicationFailure},
     alignment::Intent,
     context::AccessFailure,
     protection_keys::State as ProtectionKeys,
@@ -614,6 +614,29 @@ impl<'a> Memory<'a> {
         }
     }
 
+    fn publish_ordered_metadata(&mut self, frame: &[Prepared]) -> Result<(), PublicationFailure> {
+        let mut pending = std::mem::take(&mut self.storage.borrow_mut().work.pending);
+        let ordered = || pending.iter().chain(frame);
+        let mut updates = Vec::new();
+        for (index, prepared) in ordered().enumerate() {
+            updates.extend(self.dirty_admission(prepared, &prepared.fields).map_err(
+                |failure| PublicationFailure {
+                    index: Some(index),
+                    failure,
+                },
+            )?);
+        }
+        self.dirty_publish(&updates);
+        for prepared in ordered() {
+            self.mark_dirty(prepared, &prepared.fields);
+        }
+        for prepared in &mut pending {
+            prepared.published = true;
+        }
+        self.storage.borrow_mut().work.pending = pending;
+        Ok(())
+    }
+
     fn write_at(
         &self,
         address: u64,
@@ -1043,33 +1066,42 @@ impl GuestMemory for Memory<'_> {
             intent,
         )
     }
+    fn write_event_frame(
+        &mut self,
+        cpl: u8,
+        frame: &[EventFrameWrite],
+        commit_descriptors: impl FnOnce(&mut Self),
+    ) -> Result<(), EventFrameWriteFailure> {
+        let class = AccessClass::operand(cpl, self.raw_ac);
+        let mut prepared = Vec::with_capacity(frame.len());
+        for slot in frame {
+            prepared.push(
+                self.prepare_aligned(
+                    slot.address,
+                    slot.width,
+                    Access::Write,
+                    false,
+                    class,
+                    Intent::Natural(slot.width),
+                )
+                .map_err(EventFrameWriteFailure::Admission)?,
+            );
+        }
+        // Descriptor preparations precede the frame in both metadata and payload order.
+        self.publish_ordered_metadata(&prepared)
+            .map_err(|failure| EventFrameWriteFailure::Publication(failure.failure))?;
+        commit_descriptors(self);
+        for (slot, admitted) in frame.iter().zip(prepared) {
+            self.publish_write_payload(&admitted, &admitted.fields, &slot.value.to_le_bytes());
+        }
+        Ok(())
+    }
     fn prepare_publication(&mut self) -> Result<(), AccessFailure> {
         self.prepare_publication_ordered()
             .map_err(|fault| fault.failure)
     }
     fn prepare_publication_ordered(&mut self) -> Result<(), PublicationFailure> {
-        let pending = std::mem::take(&mut self.storage.borrow_mut().work.pending);
-        let mut updates = Vec::new();
-        for (index, prepared) in pending.iter().enumerate() {
-            updates.extend(self.dirty_admission(prepared, &prepared.fields).map_err(
-                |failure| PublicationFailure {
-                    index: Some(index),
-                    failure,
-                },
-            )?);
-        }
-        self.dirty_publish(&updates);
-        for prepared in &pending {
-            self.mark_dirty(prepared, &prepared.fields);
-        }
-        self.storage.borrow_mut().work.pending = pending
-            .into_iter()
-            .map(|mut p| {
-                p.published = true;
-                p
-            })
-            .collect();
-        Ok(())
+        self.publish_ordered_metadata(&[])
     }
 }
 
