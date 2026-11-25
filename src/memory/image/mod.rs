@@ -73,6 +73,8 @@ pub struct Image {
     pub(super) shared: Option<super::parallel::SharedLayout>,
     #[cfg(parallel_memory64)]
     pub(super) narrow_shared_ram: bool,
+    #[cfg(parallel_memory64)]
+    pub(super) shared_ram_signal_offset: Option<u64>,
     #[cfg(all(feature = "parallel", any(target_arch = "wasm32", test)))]
     pub(super) shared_rmw: Option<super::parallel::SharedHeld>,
 }
@@ -210,6 +212,8 @@ impl Image {
             shared: None,
             #[cfg(parallel_memory64)]
             narrow_shared_ram: false,
+            #[cfg(parallel_memory64)]
+            shared_ram_signal_offset: None,
             #[cfg(all(feature = "parallel", any(target_arch = "wasm32", test)))]
             shared_rmw: None,
         };

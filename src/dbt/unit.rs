@@ -5,6 +5,8 @@ pub(crate) struct Unit {
     pub context: ExecutionContext,
     #[cfg(parallel_memory64)]
     pub shared_ram_memory64: bool,
+    #[cfg(parallel_memory64)]
+    pub shared_ram_signal_offset: Option<u64>,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     pub sampled: bool,
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]

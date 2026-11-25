@@ -49,6 +49,8 @@ const ENTRY_FLAGS: u32 = 36;
 struct Emitter {
     #[cfg(parallel_memory64)]
     shared_ram_memory64: bool,
+    #[cfg(parallel_memory64)]
+    shared_ram_signal_offset: Option<u64>,
     #[cfg(guest_memory64)]
     guest64_cache: Option<memory::guest64::SpanLocals>,
     #[cfg(guest_memory64)]

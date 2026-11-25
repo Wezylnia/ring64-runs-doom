@@ -853,11 +853,17 @@ fn emit_candidate(
         let shared_ram_memory64 = unit.shared_ram_memory64;
         #[cfg(not(parallel_memory64))]
         let shared_ram_memory64 = false;
+        let minimum = 1;
+        // A fixed signal in the guaranteed prefix needs no dynamic bounds check.
+        #[cfg(parallel_memory64)]
+        let minimum = unit
+            .shared_ram_signal_offset
+            .map_or(minimum, |offset| (offset + 4).div_ceil(65_536));
         imports.import(
             "env",
             "shared_ram",
             EntityType::Memory(MemoryType {
-                minimum: 1,
+                minimum,
                 maximum: Some(if shared_ram_memory64 {
                     crate::memory::SHARED_RAM_MAX_PAGES
                 } else {
@@ -2215,6 +2221,8 @@ fn emit_candidate(
     let mut emitter = Emitter {
         #[cfg(parallel_memory64)]
         shared_ram_memory64: unit.shared_ram_memory64,
+        #[cfg(parallel_memory64)]
+        shared_ram_signal_offset: unit.shared_ram_signal_offset,
         #[cfg(guest_memory64)]
         guest64_cache,
         #[cfg(guest_memory64)]

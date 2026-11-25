@@ -290,10 +290,14 @@ fn shared_image(
     }
     let image = Image::mapped_shared(backings, maps, limits, physical, layout)?;
     #[cfg(parallel_memory64)]
-    let image = match shared.get("narrowRam") {
-        Some(Value::Bool(true)) => image.with_narrow_shared_ram()?,
-        None | Some(Value::Bool(false)) => image,
-        _ => return Err(invalid()),
+    let image = {
+        let narrow = match shared.get("narrowRam") {
+            Some(Value::Bool(value)) => *value,
+            None => false,
+            _ => return Err(invalid()),
+        };
+        let signal_offset = shared.get("signalOffset").map(backing_size).transpose()?;
+        image.with_shared_ram_transport(narrow, signal_offset)?
     };
     Ok(image)
 }

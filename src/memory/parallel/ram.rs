@@ -177,6 +177,11 @@ impl SharedLayout {
             > 1 << 32
     }
 
+    #[cfg(parallel_memory64)]
+    pub(super) fn allows_signal_offset(self, offset: u64) -> bool {
+        offset.is_multiple_of(4) && offset.checked_add(4).is_some_and(|end| end <= self.guards)
+    }
+
     pub(super) fn check_backing(
         self,
         present: impl IntoIterator<Item = SharedBacking>,

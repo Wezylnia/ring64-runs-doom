@@ -62,7 +62,10 @@ export class ParallelCore extends Core {
       const metadataLength = writeInput(exports, {
         ...metadata,
         memoryLimits: memory.memoryLimits,
-        shared: binding.layout,
+        shared:
+          binding.layout.memory64 && !binding.layout.narrowRam
+            ? { ...binding.layout, signalOffset: Number(binding.signal.value) >>> 0 }
+            : binding.layout,
         backings: binding.backings.map(({ id, length, offset, incarnation }) => ({
           id: backingKey(id),
           length,

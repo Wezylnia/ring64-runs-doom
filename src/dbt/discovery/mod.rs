@@ -291,6 +291,8 @@ pub(super) fn discover_with_entries(
         context: context.clone(),
         #[cfg(parallel_memory64)]
         shared_ram_memory64: image.shared_ram_memory64(),
+        #[cfg(parallel_memory64)]
+        shared_ram_signal_offset: image.shared_ram_signal_offset(),
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
         sampled,
         #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]

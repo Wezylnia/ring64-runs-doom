@@ -438,8 +438,16 @@ impl Emitter {
     }
 
     fn parallel_signal(&mut self) {
-        self.op(Op::GlobalGet(0));
-        self.shared_memory_address();
+        #[cfg(parallel_memory64)]
+        let signal_offset = self.shared_ram_signal_offset;
+        #[cfg(not(parallel_memory64))]
+        let signal_offset = None::<u64>;
+        if let Some(offset) = signal_offset {
+            self.op(Op::I64Const(offset as i64));
+        } else {
+            self.op(Op::GlobalGet(0));
+            self.shared_memory_address();
+        }
         self.op(Op::I32AtomicLoad(MemArg {
             offset: 0,
             align: 2,

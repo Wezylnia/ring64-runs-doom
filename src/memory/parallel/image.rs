@@ -27,13 +27,29 @@ impl Image {
     }
 
     #[cfg(parallel_memory64)]
-    pub(crate) fn with_narrow_shared_ram(mut self) -> Result<Self, MemoryError> {
-        if self.shared.is_none_or(SharedLayout::requires_memory64) {
+    pub(crate) fn shared_ram_signal_offset(&self) -> Option<u64> {
+        self.shared_ram_signal_offset
+    }
+
+    #[cfg(parallel_memory64)]
+    pub(crate) fn with_shared_ram_transport(
+        mut self,
+        narrow: bool,
+        signal_offset: Option<u64>,
+    ) -> Result<Self, MemoryError> {
+        let layout = self
+            .shared
+            .ok_or(MemoryError::Invalid("no shared RAM attachment"))?;
+        if narrow && layout.requires_memory64() {
             return Err(MemoryError::Invalid(
                 "shared RAM and metadata exceed memory32",
             ));
         }
-        self.narrow_shared_ram = true;
+        if signal_offset.is_some_and(|offset| !layout.allows_signal_offset(offset)) {
+            return Err(MemoryError::Invalid("invalid shared RAM signal offset"));
+        }
+        self.narrow_shared_ram = narrow;
+        self.shared_ram_signal_offset = signal_offset.filter(|_| !narrow);
         Ok(self)
     }
 
