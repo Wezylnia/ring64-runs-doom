@@ -65,6 +65,7 @@ pub const PENDING_INTERRUPT: i32 = 22;
 pub const HALTED: i32 = 23;
 pub const PAGE_FAULT: i32 = 24;
 pub const PHYSICAL_MEMORY: i32 = 25;
+pub const PAGING_RESTART: i32 = 26;
 pub const DEVICE_NOT_AVAILABLE: i32 = 27;
 pub const ALIGNMENT_CHECK: i32 = 28;
 pub const SCALAR_STATE_SIZE: usize = 176;

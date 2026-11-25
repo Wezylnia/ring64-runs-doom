@@ -1938,11 +1938,11 @@ pub extern "C" fn core_paged_debug_begin(pc: u64, flags: u64, shadow: u32) -> i3
                     })
                 {
                     core.invalidate_runtime_sources();
-                    return 26;
+                    return PAGING_RESTART;
                 }
                 core.instruction_admission(instruction.operation, pc, true)
             }
-            Ok(_) | Err(DecodeError::PagingRestart) => 26,
+            Ok(_) | Err(DecodeError::PagingRestart) => PAGING_RESTART,
             Err(DecodeError::Paging(failure)) => core.paging_failure(failure),
             Err(DecodeError::Fetch(fault)) => {
                 core.fault = Some(fault);

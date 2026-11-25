@@ -270,7 +270,7 @@ fn reached_near_transfer_preserves_debug_and_live_fetch_checks() {
         assert!(core.image.active_changed());
     });
     assert_eq!(translation::core_validity(owner), 0);
-    assert_eq!(reached(RF, 0), 26);
+    assert_eq!(reached(RF, 0), PAGING_RESTART);
 }
 
 #[cfg(not(feature = "parallel"))]
@@ -598,7 +598,7 @@ fn reached_long64_instruction_keeps_byte_and_execute_source_invalidation() {
                 assert_eq!(core.paging.unwrap().cr2, 0xdead);
             });
         } else {
-            assert_eq!(paging::core_paged_debug_begin(PC, RF, 0), 26);
+            assert_eq!(paging::core_paged_debug_begin(PC, RF, 0), PAGING_RESTART);
             BRIDGE.with_borrow_mut(|bridge| {
                 assert_mov(1, bridge.core.as_mut().unwrap().paged_decode(PC).unwrap());
             });
@@ -671,7 +671,7 @@ fn reached_paged_32_bit_instruction_uses_the_translated_cs_span() {
             assert_eq!(core.warm_paged_instruction(PC), None);
         });
         assert_eq!(translation::core_validity(owner), 0);
-        assert_eq!(paging::core_paged_debug_begin(PC, RF, 0), 26);
+        assert_eq!(paging::core_paged_debug_begin(PC, RF, 0), PAGING_RESTART);
         BRIDGE.with_borrow_mut(|bridge| {
             assert_mov(1, bridge.core.as_mut().unwrap().paged_decode(PC).unwrap());
         });

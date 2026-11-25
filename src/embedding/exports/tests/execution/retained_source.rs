@@ -118,7 +118,7 @@ fn one_entry_cache_admits_a_two_page_instruction_then_reconciles_evicted_source_
     });
     assert_eq!(
         paging::core_paged_debug_begin(PC, 2, 0),
-        26,
+        PAGING_RESTART,
         "freshly exposed mapping must not execute the old generated MOV"
     );
     assert_eq!(translation::core_validity(old), 0);

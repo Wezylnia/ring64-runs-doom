@@ -111,7 +111,7 @@ pub extern "C" fn core_probe(pc: u64) -> i32 {
             .err()
             .and_then(|error| error.architectural_fault());
         match decoded {
-            Err(DecodeError::PagingRestart) => 26,
+            Err(DecodeError::PagingRestart) => PAGING_RESTART,
             Err(DecodeError::Paging(failure)) => core.paging_failure(failure),
             Ok(instruction) => core.instruction_admission(instruction.operation, pc, false),
             Err(DecodeError::Segment(fault)) => {

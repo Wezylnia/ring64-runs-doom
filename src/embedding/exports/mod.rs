@@ -1,8 +1,8 @@
 use std::cell::RefCell;
 
 use super::layout::{
-    DATA, FETCH, INVALID, RESOURCE, RawInterruptState, RunState, SEGMENT, StateStorage, TARGET,
-    UNSUPPORTED,
+    DATA, FETCH, INVALID, PAGING_RESTART, RESOURCE, RawInterruptState, RunState, SEGMENT,
+    StateStorage, TARGET, UNSUPPORTED,
 };
 use crate::dbt::{self, CompileError, Limits};
 use crate::memory::{Access, Cause, Fault, Image};
