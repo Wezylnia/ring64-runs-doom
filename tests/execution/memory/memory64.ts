@@ -5,11 +5,6 @@ import { context } from '../processor/modes/fixture.js';
 import { BANK, little, word } from './paging/fixture.js';
 import { mapping, RW, RX } from './mappings/fixture.js';
 
-export function supportsMemory64(): boolean {
-  // A module containing one i64-indexed memory with zero initial pages.
-  return WebAssembly.validate(Uint8Array.of(0, 97, 115, 109, 1, 0, 0, 0, 5, 3, 1, 4, 0));
-}
-
 export async function checkMemory64(compiler: WebAssembly.Module) {
   const boundary = 2 ** 32;
   const entry = 0x1000n;

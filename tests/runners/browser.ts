@@ -1,6 +1,7 @@
-import { checkMemory64, supportsMemory64 } from '../execution/memory/memory64.js';
+import { checkMemory64 } from '../execution/memory/memory64.js';
 import { registerBank } from '../support/fixture.js';
 import { createCpu } from '../../sdk/src/index.js';
+import { supportsGuestMemory64 } from '../../sdk/src/wasm/guest-memory64.js';
 import { runScenarios } from '../suite.js';
 
 const resultWindow = window as Window & { ring64Result?: Promise<string> };
@@ -9,7 +10,7 @@ resultWindow.ring64Result = (async () => {
   const bytes = new Uint8Array(await (await fetch('/build/ring64.wasm')).arrayBuffer());
   const conformance = await runScenarios(bytes);
   let memory64Scenarios: number | undefined;
-  if (supportsMemory64()) {
+  if (supportsGuestMemory64()) {
     const response = await fetch('/build/ring64-memory64.wasm');
     const compiler = await WebAssembly.compile(await response.arrayBuffer());
     await checkMemory64(compiler);

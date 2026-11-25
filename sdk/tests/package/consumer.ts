@@ -18,10 +18,19 @@ function checkFetchFault(result: RunResult): void {
     throw new Error('expected a fetch fault after the end of code');
 }
 
-// This module declares one memory32 and one memory64.
-export const supportsWide = WebAssembly.validate(
-  Uint8Array.of(0, 97, 115, 109, 1, 0, 0, 0, 5, 5, 2, 0, 0, 4, 0),
-);
+// Some hosts accept both memory types but reject memory.copy between them.
+const memory64Probe = [
+  [0, 97, 115, 109, 1, 0, 0, 0],
+  [1, 4, 1, 0x60, 0, 0], // type () -> ()
+  [3, 2, 1, 0], // one function of that type
+  [5, 5, 2, 0, 0, 4, 0], // one memory32 and one memory64
+  [10, 33, 1, 31, 0], // one function body with no locals
+  [0x41, 0, 0x42, 0, 0x41, 0, 0xfc, 10, 0, 1], // copy into memory32
+  [0x42, 0, 0x41, 0, 0x41, 0, 0xfc, 10, 1, 0], // copy into memory64
+  [0x42, 0, 0x41, 0, 0x42, 0, 0xfc, 11, 1], // fill memory64
+  [0x0b],
+];
+export const supportsWide = WebAssembly.validate(Uint8Array.from(memory64Probe.flat()));
 
 export async function checkCpu(profile?: 'memory32' | 'memory64'): Promise<void> {
   const compiler = await loadCpuCompiler(profile);

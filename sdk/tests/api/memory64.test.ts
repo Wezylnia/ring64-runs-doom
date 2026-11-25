@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
-import { bindGuestMemory64 } from '../../src/wasm/guest-memory64.js';
+import { bindGuestMemory64, supportsGuestMemory64 } from '../../src/wasm/guest-memory64.js';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import { checkMemory64, supportsMemory64 } from '../../../tests/execution/memory/memory64.js';
+import { checkMemory64 } from '../../../tests/execution/memory/memory64.js';
 
 test(
   'memory64 backing reads and writes cross 4 GiB with intact aliases and faults',
   {
-    skip: !supportsMemory64() && 'runtime lacks Wasm memory64',
+    skip: !supportsGuestMemory64() && 'runtime lacks mixed-width Wasm memory operations',
   },
   async () => {
     const bytes = await readFile(new URL('../../../build/ring64-memory64.wasm', import.meta.url));
@@ -18,7 +18,7 @@ test(
 test(
   'requesting memory64 on an unsupported engine reports the missing Wasm features',
   {
-    skip: supportsMemory64(),
+    skip: supportsGuestMemory64(),
   },
   () => {
     assert.throws(bindGuestMemory64, /memory64.*multi-memory/);
@@ -28,7 +28,7 @@ test(
 test(
   'bounded memory64 backings stay aligned when first-fit reuses a hole',
   {
-    skip: !supportsMemory64(),
+    skip: !supportsGuestMemory64(),
   },
   () => {
     const { allocate, release, ram } = bindGuestMemory64().guest64;
