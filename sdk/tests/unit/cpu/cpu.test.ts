@@ -292,14 +292,7 @@ async function fixture(steps: Step[] = [], parallelSlice?: bigint) {
             ram: { base: 0x8000n, bytes: new Uint8Array(1) },
             limits,
           })
-        : new ParallelCpu(
-            engine as unknown as ParallelCore,
-            limits,
-            0,
-            { maxBackings: 2, maxMappings: 2, maxBackingBytes: 2 },
-            new Map(),
-            'linear',
-          );
+        : new ParallelCpu(engine as unknown as ParallelCore, limits, 0, 'linear');
     return {
       cpu,
       entries,
@@ -714,6 +707,24 @@ test('parallel slices resume valid native budget exits and preserve both public 
     assert.equal(result.remaining, 2n);
     assert.equal(result.repeatIterations, 2n);
     assert.equal(result.remainingRepeatBudget, 3n);
+  } finally {
+    cpu.dispose();
+  }
+});
+
+test('the worker CPU refuses inherited topology changes before reading caller input', async () => {
+  const { cpu } = await fixture([], 2n);
+  try {
+    assert.throws(
+      () =>
+        cpu.addBacking({
+          get id(): string {
+            return assert.fail('the coordinator owns topology validation');
+          },
+          bytes: Uint8Array.of(0),
+        }),
+      /parallel machine owns backing and mapping changes/,
+    );
   } finally {
     cpu.dispose();
   }

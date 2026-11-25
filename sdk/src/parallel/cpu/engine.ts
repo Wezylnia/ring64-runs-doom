@@ -14,12 +14,7 @@ import { observeInterruptExit, taskResumeExit } from '../../cpu/run-events.js';
 import { validateNativeProgress } from '../../cpu/run-progress.js';
 import type { InstalledEntry } from '../../cpu/translations.js';
 import { captureIo, type IoProvider } from '../../embedding/io.js';
-import type {
-  InitialMemory,
-  MemoryLimits,
-  MemoryMapping,
-  MemoryModel,
-} from '../../embedding/memory.js';
+import type { InitialMemory, MemoryMapping, MemoryModel } from '../../embedding/memory.js';
 import type { ExecutionContext } from '../../state/system/context.js';
 import { ParallelCore } from './core.js';
 import type { BackingRecord } from '../memory/backings.js';
@@ -44,31 +39,20 @@ export async function createParallelEngine(
   const memory = options.memory;
   const context = captureInitialContext(options.context, memory.memoryModel);
   const core = await ParallelCore.createWorker(options.compiler, memory, context, io, binding);
-  return new ParallelCpu(
-    core,
-    limits,
-    performance.now() - began,
-    memory.memoryLimits,
-    new Map(binding.backings.map(({ id, length }) => [id, length])),
-    memory.memoryModel,
-  );
+  return new ParallelCpu(core, limits, performance.now() - began, memory.memoryModel);
 }
 
 export class ParallelCpu extends Cpu {
   readonly #core: ParallelCore;
-  readonly #backingLengths: Map<string, number>;
 
   constructor(
     core: ParallelCore,
     limits: Limits,
     creationMs: number,
-    memoryLimits: MemoryLimits,
-    backings: Map<string, number>,
     memoryModel: MemoryModel | undefined,
   ) {
-    super(CONSTRUCTION, core, limits, creationMs, memoryLimits, backings, memoryModel);
+    super(CONSTRUCTION, core, limits, creationMs, memoryModel);
     this.#core = core;
-    this.#backingLengths = backings;
   }
 
   get parallelOwner(): ParallelCore {
@@ -78,18 +62,12 @@ export class ParallelCpu extends Cpu {
   parallelAdmin(method: Command['method'], args: unknown[]): unknown {
     const core = this.parallelOwner;
     switch (method) {
-      case 'addBacking': {
-        const backing = args[0] as BackingRecord;
-        core.parallelAddBacking(backing);
-        this.#backingLengths.set(backing.id, backing.length);
+      case 'addBacking':
+        core.parallelAddBacking(args[0] as BackingRecord);
         break;
-      }
-      case 'removeBacking': {
-        const id = args[0] as string;
-        core.removeBacking(id);
-        this.#backingLengths.delete(id);
+      case 'removeBacking':
+        core.removeBacking(args[0] as string);
         break;
-      }
       case 'setMappings':
         core.setMappings(args[0] as MemoryMapping[]);
         this.pruneTranslations();

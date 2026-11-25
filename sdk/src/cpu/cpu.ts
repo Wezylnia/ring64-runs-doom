@@ -75,6 +75,11 @@ export type RunOptions = {
   eventDelivery?: { budget: bigint } | undefined;
 };
 
+interface StandaloneTopology {
+  limits: MemoryLimits;
+  backings: Map<string, number>;
+}
+
 export const CONSTRUCTION = Symbol('createCpu');
 export const BEGIN_RUN = Symbol('beginRun');
 export const FINISH_RUN = Symbol('finishRun');
@@ -137,20 +142,15 @@ export async function createCpu(options: Options): Promise<Cpu> {
     mmio === undefined
       ? await Core.create(compiler, memory, context, io)
       : await Core.create(compiler, memory, context, io, mmio);
-  return new Cpu(
-    CONSTRUCTION,
-    core,
-    limits,
-    performance.now() - began,
-    mmio
-      ? {
-          ...memory.memoryLimits,
-          maxMappings: memory.memoryLimits.maxMappings - mmio.ranges.length,
-        }
-      : memory.memoryLimits,
-    new Map(memory.backings.map(({ id, bytes, byteLength }) => [id, byteLength ?? bytes.length])),
-    memory.memoryModel,
-  );
+  return new Cpu(CONSTRUCTION, core, limits, performance.now() - began, memory.memoryModel, {
+    limits: {
+      ...memory.memoryLimits,
+      maxMappings: memory.memoryLimits.maxMappings - (mmio?.ranges.length ?? 0),
+    },
+    backings: new Map(
+      memory.backings.map(({ id, bytes, byteLength }) => [id, byteLength ?? bytes.length]),
+    ),
+  });
 }
 
 export class Cpu {
@@ -160,18 +160,16 @@ export class Cpu {
   readonly #cache: Translations;
   #core: Core | undefined;
   readonly #limits: Limits;
-  readonly #memoryLimits: MemoryLimits;
   readonly #memoryModel: MemoryModel;
-  #backings: Map<string, number>;
+  readonly #topology: StandaloneTopology | undefined;
 
   constructor(
     token: typeof CONSTRUCTION,
     core: Core,
     limits: Limits,
     readonly creationMs: number,
-    memoryLimits: MemoryLimits,
-    backings: Map<string, number>,
     memoryModel: MemoryModel = 'linear',
+    topology?: StandaloneTopology,
   ) {
     if (token !== CONSTRUCTION) throw new TypeError('use the createCpu factory');
     this.#core = core;
@@ -179,9 +177,8 @@ export class Cpu {
       ...limits,
       maxArtifactBytes: Math.min(limits.maxArtifactBytes, limits.maxCachedBytes),
     };
-    this.#memoryLimits = { ...memoryLimits };
     this.#memoryModel = memoryModel;
-    this.#backings = backings;
+    this.#topology = topology;
     this.#cache = new Translations(limits.maxCachedArtifacts, limits.maxCachedBytes, (artifact) =>
       this.#core?.release(artifact.metadata.owner),
     );
@@ -236,38 +233,46 @@ export class Cpu {
     }
   }
 
+  get #standaloneTopology(): StandaloneTopology {
+    if (!this.#topology) throw new Error('parallel machine owns backing and mapping changes');
+    return this.#topology;
+  }
+
   addBacking(input: MemoryBackingInput): void {
     const generation = this.requireIdle();
+    const topology = this.#standaloneTopology;
     const captured = captureBackings(
       [input],
-      this.#memoryLimits,
-      this.#backings,
+      topology.limits,
+      topology.backings,
       this.#engine.memory64,
     );
     this.requireIdle(generation, true);
-    const lengths = validateBackings(captured, this.#backings, this.#memoryLimits);
+    const lengths = validateBackings(captured, topology.backings, topology.limits);
     this.engineCall(() => this.#engine.addBacking(captured[0]!));
-    this.#backings = lengths;
+    topology.backings = lengths;
   }
 
   removeBacking(id: string): void {
     this.requireIdle();
+    const { backings } = this.#standaloneTopology;
     backingName(id);
-    if (!this.#backings.has(id)) throw new TypeError('unknown backing name');
+    if (!backings.has(id)) throw new TypeError('unknown backing name');
     this.engineCall(() => this.#engine.removeBacking(id));
-    this.#backings.delete(id);
+    backings.delete(id);
   }
 
   setMappings(mappings: MemoryMapping[]): void {
     const generation = this.requireIdle();
+    const topology = this.#standaloneTopology;
     const captured = captureMappings(
       mappings,
-      this.#memoryLimits,
+      topology.limits,
       this.#memoryModel,
       this.#engine.memory64,
     );
     this.requireIdle(generation, true);
-    validateMappings(captured, this.#backings);
+    validateMappings(captured, topology.backings);
     this.engineCall(() => this.#engine.setMappings(captured));
     this.pruneTranslations();
   }
