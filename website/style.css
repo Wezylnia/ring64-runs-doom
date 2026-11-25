@@ -276,17 +276,31 @@ a:hover {
   background: var(--paper);
 }
 
-.wet-ink,
-.ink-display {
+.wet-ink {
   display: flex;
   flex: 1 auto;
   flex-direction: column;
 }
 
-.ink-display > .ink-stage {
+.wet-ink > .ink-stage:not(:fullscreen) {
+  container-type: size;
   flex: 1 1 0px;
   inline-size: 100%;
   min-block-size: clamp(10rem, 28svh, 18rem);
+}
+
+.wet-ink > .ink-stage:not(:fullscreen) #ink {
+  inset: 50% auto auto 50%;
+  width: max(100cqw, 100cqh * 16 / 9);
+  height: auto;
+  aspect-ratio: 16 / 9;
+  translate: -50% -50%;
+  outline: none;
+}
+
+.wet-ink > .ink-stage:not(:fullscreen):has(#ink:focus-visible) {
+  outline: 2px solid var(--brick);
+  outline-offset: 2px;
 }
 
 .ink-stage:has(canvas[data-frame])::after {
@@ -615,13 +629,13 @@ sup.ink-note-mark {
     line-height: 1.2;
   }
 
-  .ink-display > .ink-stage {
+  .wet-ink > .ink-stage:not(:fullscreen) {
     min-block-size: 7rem;
   }
 }
 
 @media (max-width: 37rem), (max-width: 42rem) and (aspect-ratio < 4/3) {
-  .shell:not(:has(> .landing)) {
+  .shell:not(.home-shell) {
     min-block-size: 0;
   }
 
