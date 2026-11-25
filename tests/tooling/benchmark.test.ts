@@ -103,6 +103,7 @@ test('frozen benchmarks preserve saved source and refuse changed artifacts befor
         commit: string;
         workingTree: { dirty: boolean; changes: string[] };
         coreSha256: string;
+        hostSha256: string;
       }[];
       samples: { resources: { nativeEntries: number; compilations: number } }[];
     };
@@ -119,6 +120,59 @@ test('frozen benchmarks preserve saved source and refuse changed artifacts befor
     const before = await readFile(wasm);
     const hash = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
     assert.equal(report.sides[0]?.coreSha256, hash(before));
+
+    // The repository checkout may be newer than either of the staged artifacts.
+    const git = (...args: string[]) => {
+      const result = spawnSync('git', args, { cwd: directory, encoding: 'utf8' });
+      assert.ifError(result.error);
+      assert.equal(result.status, 0, result.stderr);
+      return result.stdout.trim();
+    };
+    git('init', '--quiet');
+    git(
+      '-c',
+      'user.name=Ring64 Tests',
+      '-c',
+      'user.email=tests@example.invalid',
+      'commit',
+      '--allow-empty',
+      '--quiet',
+      '-m',
+      'Newer checkout',
+    );
+    await rm(join(directory, 'paging-source.json'));
+    const { manifest } = await import(
+      new URL('../../scripts/verification/artifacts.mjs', import.meta.url).href
+    );
+    const assertSource = async (commit: string) => {
+      const result = spawnSync(process.execPath, [...args, output], { encoding: 'utf8' });
+      assert.ifError(result.error);
+      assert.equal(result.status, 0, result.stderr);
+      const current = JSON.parse(await readFile(output, 'utf8')) as typeof report;
+      assert.equal(current.sides[0]?.commit, commit);
+      assert.equal((await manifest(directory)).source.commit, commit);
+    };
+    await assertSource('unknown');
+    const builtCommit = 'a'.repeat(40);
+    const receipt = join(directory, 'build/source.json');
+    await writeFile(
+      receipt,
+      JSON.stringify({
+        source: { commit: builtCommit, workingTree: [] },
+        coreSha256: report.sides[0]?.coreSha256,
+        hostSha256: report.sides[0]?.hostSha256,
+      }),
+    );
+    await assertSource(builtCommit);
+    const nested = join(directory, 'build/host/parallel/control.js');
+    const nestedBefore = await readFile(nested);
+    await writeFile(nested, Buffer.concat([nestedBefore, Buffer.from('\n')]));
+    await assertSource('unknown');
+    await writeFile(nested, nestedBefore);
+    await writeFile(wasm, Buffer.concat([before, Buffer.from([0, 1, 0])]));
+    await assertSource('unknown');
+    await writeFile(wasm, before);
+
     const hook = join(directory, 'mutate-after-compile.mjs');
     await writeFile(
       hook,
@@ -154,8 +208,6 @@ WebAssembly.compile = async function(input, ...options) {
     await assert.rejects(access(rejectedOutput), { code: 'ENOENT' });
 
     await writeFile(wasm, before);
-    const nested = join(directory, 'build/host/parallel/control.js');
-    const nestedBefore = await readFile(nested);
     const nestedOutput = join(directory, 'nested-rejected.json');
     const nestedRun = spawnSync(
       process.execPath,

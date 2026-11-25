@@ -2,6 +2,24 @@ import { createHash } from 'node:crypto';
 import { readFile, readdir } from 'node:fs/promises';
 import { relative, resolve, sep } from 'node:path';
 
+export async function artifactSource(path, { coreSha256, hostSha256 }) {
+  for (const file of ['paging-source.json', 'build/source.json']) {
+    let receipt;
+    try {
+      receipt = JSON.parse(await readFile(resolve(path, file), 'utf8'));
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+      continue;
+    }
+    // Historical snapshots and mutation runners may have an explicit source label only.
+    if (file === 'paging-source.json' && !('coreSha256' in receipt) && !('hostSha256' in receipt))
+      return receipt.source;
+    if (receipt.coreSha256 === coreSha256 && receipt.hostSha256 === hostSha256)
+      return receipt.source;
+  }
+  return { commit: 'unknown' };
+}
+
 export async function emittedModules(directory) {
   return (await readdir(directory, { recursive: true, withFileTypes: true }))
     .filter((entry) => (entry.isFile() || entry.isSymbolicLink()) && entry.name.endsWith('.js'))

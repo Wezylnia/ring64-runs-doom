@@ -3,11 +3,10 @@ import { readFile, mkdir, writeFile } from 'node:fs/promises';
 import { resolve, dirname, relative, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
 import os from 'node:os';
 import { chromium } from 'playwright';
 import { loadSides, measure, workloadNames } from '../../benchmarks/kernels.mjs';
-import { hostIdentity } from './emitted-host.mjs';
+import { artifactSource, hostIdentity } from './emitted-host.mjs';
 import { chromiumExecutable } from '../support/browser.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -81,36 +80,15 @@ const encode = (value) =>
   JSON.stringify(value, (_, v) => (typeof v === 'bigint' ? v.toString() : v), 2) + '\n';
 async function manifest(path, label) {
   const core = await readFile(resolve(path, 'build/ring64.wasm'));
+  const coreSha256 = hash(core);
   const { hostSha256 } = await hostIdentity(resolve(path, 'build/host'));
-  let commit, workingTree;
-  try {
-    const { source } = JSON.parse(await readFile(resolve(path, 'paging-source.json'), 'utf8'));
-    commit = source.commit;
-    workingTree = Array.isArray(source.workingTree)
-      ? { dirty: source.workingTree.length !== 0, changes: source.workingTree }
-      : source.workingTree;
-  } catch (error) {
-    if (error.code !== 'ENOENT') throw error;
-    try {
-      commit = execFileSync('git', ['-C', path, 'rev-parse', 'HEAD'], {
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'ignore'],
-      }).trim();
-      const status = execFileSync('git', ['-C', path, 'status', '--porcelain'], {
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'ignore'],
-      }).trim();
-      workingTree = { dirty: status.length !== 0, changes: status ? status.split('\n') : [] };
-    } catch {
-      commit = 'unknown';
-    }
-  }
+  const { commit, workingTree: changes } = await artifactSource(path, { coreSha256, hostSha256 });
   return {
     label,
     path,
     commit,
-    workingTree,
-    coreSha256: hash(core),
+    workingTree: Array.isArray(changes) ? { dirty: changes.length !== 0, changes } : changes,
+    coreSha256,
     coreBytes: core.length,
     hostSha256,
   };

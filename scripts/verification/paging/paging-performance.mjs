@@ -65,16 +65,17 @@ for (const job of jobs) {
   log.end();
   if (status !== 0) throw Error(`${job.name} failed (${status}); inspect its log`);
   const result = JSON.parse(await readFile(job.output, 'utf8'));
-  result.sides = result.sides.map((side) => ({
-    ...side,
-    commit: (side.label === 'baseline' ? old : current).source.commit,
-    workingTree: {
-      dirty: (side.label === 'baseline' ? old : current).source.workingTree.length !== 0,
-      changes: (side.label === 'baseline' ? old : current).source.workingTree,
-    },
-    source: side.label === 'baseline' ? old.source : current.source,
-    frozenBuild: true,
-  }));
+  result.sides = result.sides.map((side) => {
+    const source = (side.label === 'baseline' ? old : current).source;
+    const changes = source.workingTree;
+    return {
+      ...side,
+      commit: source.commit,
+      workingTree: Array.isArray(changes) ? { dirty: changes.length !== 0, changes } : changes,
+      source,
+      frozenBuild: true,
+    };
+  });
   await writeFile(job.output, encode(result));
   const seconds = (performance.now() - began) / 1000;
   window.runs.push({

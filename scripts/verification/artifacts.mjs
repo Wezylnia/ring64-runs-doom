@@ -1,10 +1,9 @@
 import { createHash } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { cp, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { hostIdentity } from '../bench/emitted-host.mjs';
+import { artifactSource, hostIdentity } from '../bench/emitted-host.mjs';
 
 export const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 export const encode = (value) =>
@@ -34,27 +33,12 @@ export function inheritedBenchmarkInput(files, recordedPath) {
 
 export async function manifest(path) {
   const core = await readFile(resolve(path, 'build/ring64.wasm'));
+  const coreSha256 = hash(core);
   const host = await hostIdentity(resolve(path, 'build/host'));
-  const git = (args) =>
-    execFileSync('git', ['-C', path, ...args], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    }).trim();
-  let source;
-  try {
-    source = JSON.parse(await readFile(resolve(path, 'paging-source.json'), 'utf8')).source;
-  } catch (error) {
-    if (error.code !== 'ENOENT') throw error;
-    const changes = git(['status', '--porcelain']);
-    source = {
-      commit: git(['rev-parse', 'HEAD']),
-      workingTree: changes ? changes.split('\n') : [],
-    };
-  }
   return {
     path,
-    source,
-    coreSha256: hash(core),
+    source: await artifactSource(path, { coreSha256, hostSha256: host.hostSha256 }),
+    coreSha256,
     coreBytes: core.length,
     ...host,
   };

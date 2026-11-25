@@ -9,12 +9,12 @@ export const baselineCommit = '8a7ee067bb9d036b4d19434458706490506ce44a';
 export async function checkedBaseline(path = baseline) {
   const result = await manifest(resolve(path));
   if (
-    result.source.commit !== baselineCommit ||
+    (result.source.commit !== 'unknown' && result.source.commit !== baselineCommit) ||
     result.coreSha256 !== 'b003b2071da14209e36f80346346186a9b9a3107fc9a93ece0fcef98749483af' ||
     result.hostSha256 !== '104c0b75ce648a37307519730750418675a482fe44a4175f0b45853cbed25475'
   )
-    throw Error('fast-system baseline must be the exact preserved8a7ee06 build');
-  return result;
+    throw Error('fast-system baseline must be the exact preserved 8a7ee06 build');
+  return { ...result, source: { ...result.source, commit: baselineCommit } };
 }
 
 export async function assertFastCandidate(path) {
