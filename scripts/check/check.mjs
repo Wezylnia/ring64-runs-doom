@@ -32,6 +32,7 @@ for (const profile of ['parallel', 'memory64']) {
   );
 }
 run('cargo', 'test', '--locked');
+run('cargo', 'test', '--locked', '--features', 'parallel');
 
 npm('run', 'build');
 npm('test');
