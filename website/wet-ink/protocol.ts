@@ -6,6 +6,7 @@ export interface StepRequest {
   y: number;
   previous: number;
   active: boolean;
+  compiler?: WebAssembly.Module;
 }
 
 export interface Frame {

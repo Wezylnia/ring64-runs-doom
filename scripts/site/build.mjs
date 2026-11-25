@@ -9,6 +9,13 @@ const source = join(root, 'website');
 const generated = join(root, 'build');
 const sdk = join(generated, 'npm/ring64');
 const output = join(generated, 'website');
+const browserBundle = {
+  alias: { ring64: join(sdk, 'index.js') },
+  bundle: true,
+  minify: true,
+  platform: 'browser',
+  target: 'es2022',
+};
 
 await access(join(sdk, 'ring64.wasm')).catch((error) => {
   if (error.code !== 'ENOENT') throw error;
@@ -31,7 +38,17 @@ try {
   const demo = join(staged, 'wet-ink');
   await mkdir(demo, { recursive: true });
 
-  await writeSitePages(source, staged);
+  const {
+    outputFiles: [compiler],
+  } = await build({
+    ...browserBundle,
+    entryPoints: [join(wetInk, 'compiler.ts')],
+    alias: { ring64: join(sdk, 'compiler.js') },
+    define: { 'import.meta.url': 'wetInkCompilerBase' },
+    format: 'iife',
+    write: false,
+  });
+  await writeSitePages(source, staged, compiler.text.trim());
   await copyFile(join(source, 'style.css'), join(staged, 'style.css'));
   await copyFile(join(source, 'docs/style.css'), join(staged, 'docs.css'));
   for (const file of ['style.css', 'results.json']) {
@@ -47,6 +64,7 @@ try {
   for (const name of ['ring64.wasm', 'ring64-memory64.wasm', 'LICENSE', 'THIRD_PARTY_NOTICES.txt'])
     await copyFile(join(sdk, name), join(demo, name));
   await build({
+    ...browserBundle,
     entryPoints: {
       site: join(source, 'site.ts'),
       docs: join(source, 'docs/navigation.ts'),
@@ -54,12 +72,7 @@ try {
       'wet-ink/worker': join(wetInk, 'worker.ts'),
     },
     outdir: staged,
-    alias: { ring64: join(sdk, 'index.js') },
-    bundle: true,
-    minify: true,
-    platform: 'browser',
     format: 'esm',
-    target: 'es2022',
   });
   execFileSync('sh', [join(wetInk, 'guest/build.sh'), guestAssets], {
     cwd: wetInk,

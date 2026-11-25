@@ -29,12 +29,16 @@ async function loadProgram() {
   return new Uint8Array(await response.arrayBuffer());
 }
 
-async function start(): Promise<Cpu> {
-  const [compiler, program] = await Promise.all([loadCpuCompiler(), loadProgram()]);
+const program = loadProgram();
+// The first step can arrive after the program download has finished.
+void program.catch(() => {});
+
+async function start(preloadedCompiler: WebAssembly.Module | undefined): Promise<Cpu> {
+  const [compiler, bytes] = await Promise.all([preloadedCompiler ?? loadCpuCompiler(), program]);
   return createCpu({
     compiler,
     limits,
-    code: { base: codeBase, bytes: program },
+    code: { base: codeBase, bytes },
     ram: { base: state, bytes: memory },
   });
 }
@@ -43,7 +47,7 @@ let ready: Promise<Cpu> | undefined;
 let tick = 0;
 self.onmessage = async ({ data }: MessageEvent<StepRequest>) => {
   try {
-    const cpu = await (ready ??= start());
+    const cpu = await (ready ??= start(data.compiler));
     const started = performance.now();
     // The flat image starts at step and returns to the sentinel on its SysV stack.
     const registers: Registers = [0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n];

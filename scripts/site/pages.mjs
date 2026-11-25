@@ -8,7 +8,7 @@ import { renderBenchmarks } from './benchmarks.mjs';
 hljs.registerLanguage('c', c);
 hljs.registerLanguage('typescript', typescript);
 
-export async function writeSitePages(source, output) {
+export async function writeSitePages(source, output, wetInkCompiler) {
   const [masthead, canvas, controls, reference] = await Promise.all([
     readFile(join(source, 'masthead.html'), 'utf8'),
     readFile(join(source, 'wet-ink/canvas.html'), 'utf8'),
@@ -49,6 +49,10 @@ export async function writeSitePages(source, output) {
             .replaceAll('{{benchmarksCurrent}}', String(page.startsWith('benchmarks/')))
             .trim(),
         )
+        .replace('<!-- wet-ink-compiler -->', () => {
+          const base = JSON.stringify(`${siteRoot}/wet-ink/`);
+          return `<script>{const wetInkCompilerBase = new URL(${base}, document.baseURI);${wetInkCompiler}}</script>`;
+        })
         .replace('<!-- wet-ink-canvas -->', () => canvas.trim())
         .replace('<!-- wet-ink-controls -->', () => controls.trim()),
     );

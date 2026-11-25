@@ -115,10 +115,20 @@ function attachInk(
     const prior = previous.active && near.active ? previous : near;
     previous = near;
     const packed = ((prior.y << 16) | prior.x) >>> 0;
-    firstFrame = false;
     busy = true;
+    const compiler = firstFrame ? window.wetInkCompiler : undefined;
+    firstFrame = false;
     const step: StepRequest = { x: near.x, y: near.y, previous: packed, active: near.active };
-    worker.postMessage(step);
+    if (!compiler) {
+      worker.postMessage(step);
+      return;
+    }
+
+    void compiler
+      .then((module) => {
+        if (!failed) worker.postMessage({ ...step, compiler: module });
+      })
+      .catch((error: unknown) => fail(error instanceof Error ? error.message : String(error)));
   }
 
   const clamp = (value: number) => Math.round(Math.min(65535, Math.max(0, value)));
