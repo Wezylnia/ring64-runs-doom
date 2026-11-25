@@ -16,6 +16,8 @@ const server = await startBrowserServer(
 try {
   const bytes = await readFile('build/ring64-parallel.wasm');
   const coreSha256 = createHash('sha256').update(bytes).digest('hex');
+  const memory64Bytes = await readFile('build/ring64-parallel-memory64.wasm');
+  const memory64CoreSha256 = createHash('sha256').update(memory64Bytes).digest('hex');
   const rows = [];
   await mkdir('build/verification', { recursive: true });
   for (const [name, engine] of [
@@ -32,6 +34,7 @@ try {
     try {
       const page = await browser.newPage();
       const passed = [];
+      let memory64 = false;
       for (const pathname of ['/', '/unisolated']) {
         await page.goto(server.origin + pathname);
         const conformance = await awaitBrowserResult(
@@ -40,8 +43,17 @@ try {
           'parallel browser run timed out',
         );
         passed.push(...conformance.passed);
+        if (conformance.memory64) memory64 = true;
       }
-      const receipt = { name, engine: browser.version(), coreSha256, passed };
+      if (!memory64 && process.env.RING64_REQUIRE_PARALLEL_MEMORY64 === '1')
+        throw Error(`${name} did not run shared memory64 conformance`);
+      const receipt = {
+        name,
+        engine: browser.version(),
+        coreSha256,
+        ...(memory64 ? { memory64CoreSha256 } : {}),
+        passed,
+      };
       rows.push(receipt);
       await writeFile(
         `build/verification/parallel-browser-${name}.json`,

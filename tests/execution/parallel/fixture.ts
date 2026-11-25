@@ -77,6 +77,10 @@ export interface TestOptions {
 // Runtime callers import the compiled API so dedicated workers can resolve their emitted modules.
 export type MachineFactory = (options: TestOptions) => Promise<TestMachine>;
 
+export function isParallelMemory64(compiler: WebAssembly.Module): boolean {
+  return WebAssembly.Module.exports(compiler).some(({ name }) => name === 'core_parallel_memory64');
+}
+
 export function span(
   base: bigint,
   backing: string,

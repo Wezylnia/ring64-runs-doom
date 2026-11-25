@@ -7,10 +7,11 @@ import { parallelPagingMemoryScenarios } from './paging-memory.js';
 
 export async function runParallelScenarios(
   factory: MachineFactory,
-  bytes: BufferSource,
+  source: BufferSource | WebAssembly.Module,
   selected?: string,
 ): Promise<{ passed: string[] }> {
-  const compiler = await WebAssembly.compile(bytes);
+  const compiler =
+    source instanceof WebAssembly.Module ? source : await WebAssembly.compile(source);
   const scenarios = [
     ...parallelMemoryScenarios(factory, compiler),
     ...parallelPagingMemoryScenarios(factory, compiler),
