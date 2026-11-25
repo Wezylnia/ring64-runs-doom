@@ -87,7 +87,7 @@ struct DwordReadMemo {
 #[repr(C)]
 pub(crate) struct IndexedDwordWrite {
     // Published for one synchronous guarded entry, after proving whole RAM pages.
-    pub(crate) tags: [u64; 3],
+    pub(crate) pages: [u64; 3],
     pub(crate) biases: [u32; 3],
     pub(crate) ages: [u32; 4],
     pub(crate) age_increments: [u8; 4],

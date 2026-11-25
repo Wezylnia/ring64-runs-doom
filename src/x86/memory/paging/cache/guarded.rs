@@ -206,7 +206,7 @@ impl Cache {
         ) {
             let pages = [index.linear, table.linear, store.linear].map(|address| address & !4095);
             let hosts = [source, palette, span.host + offset as u32];
-            proof.tags = pages.map(|page| page | 4);
+            proof.pages = pages;
             proof.biases = std::array::from_fn(|i| hosts[i].wrapping_sub(pages[i] as u32));
             let table = entries.recency_mut();
             proof.recency = table as *mut _ as u32;

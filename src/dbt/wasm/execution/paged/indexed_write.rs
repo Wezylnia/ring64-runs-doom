@@ -1,6 +1,6 @@
 use crate::dbt::wasm::PRIVATE_MEMORY;
 use crate::dbt::wasm::{
-    ADDRESS, Emitter, FLAGS, RESULT, RIP, STORE_STATUS, StructuredLoop, Unit, VALUE,
+    ADDRESS, Emitter, FLAGS, RIP, STORE_STATUS, StructuredLoop, Unit, VALUE,
     execution::control::InstructionRetirement,
 };
 use crate::embedding::layout::INDEXED_WRITE_UNSUPPORTED_LEAF;
@@ -224,8 +224,7 @@ impl Emitter {
             self.write_register(group.shape.index_register, Width::W32);
         }
         // TEST on a zero-extended byte has the same status in 32 and 64 bits.
-        self.op(Op::LocalGet(VALUE)).op(Op::LocalSet(RESULT));
-        self.logical_flags(Width::W32);
+        self.nonzero_byte_test_flags(VALUE);
         self.op(Op::LocalGet(group.value)).op(Op::I64ExtendI32U);
         self.write_register(group.shape.value_register, Width::W32);
         self.op(Op::LocalGet(group.host))
@@ -325,16 +324,14 @@ impl Emitter {
         self.op(Op::End);
     }
 
-    // One tag checks the entire canonical page and the dword alignment.
+    // The page comparison also checks canonicality and dword alignment.
     fn indexed_page_host(&mut self, group: GuardedIndexedWrite, index: usize, width: i64) {
         self.op(Op::LocalTee(ADDRESS))
             .op(Op::I64Const(!4095 | (width - 1)))
             .op(Op::I64And)
-            .op(Op::I64Const(4))
-            .op(Op::I64Or)
             .op(Op::LocalGet(group.record))
             .op(Op::I64Load(field(
-                offset_of!(IndexedDwordWrite, tags) + 8 * index,
+                offset_of!(IndexedDwordWrite, pages) + 8 * index,
                 3,
             )))
             .op(Op::I64Ne)

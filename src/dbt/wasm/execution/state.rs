@@ -128,6 +128,17 @@ impl Emitter {
             .op(Op::I64Or);
     }
 
+    #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
+    pub(in crate::dbt::wasm) fn nonzero_byte_test_flags(&mut self, byte: u32) {
+        debug_assert!(!self.packed_result_status);
+        self.op(Op::LocalGet(byte))
+            .op(Op::I64Const(PARITY_SHIFT))
+            .op(Op::I64Shl)
+            .op(Op::I64Const(6))
+            .op(Op::I64Or)
+            .op(Op::LocalSet(FLAGS));
+    }
+
     pub(in crate::dbt::wasm) fn parity_clear(&mut self) {
         let inputs = if self.packed_result_status {
             PACKED_PARITY_INPUTS
