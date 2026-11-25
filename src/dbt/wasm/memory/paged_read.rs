@@ -708,7 +708,13 @@ impl Emitter {
     #[cfg(all(not(feature = "parallel"), target_arch = "wasm32"))]
     pub(in crate::dbt::wasm) fn rearm_paged_access(&mut self, bytes: u8, ready: u32) {
         let (_, attempts) = self.paged_loop_guard.expect("paged loop guard");
-        let cooldown = if bytes == 16 && self.paged_copy_window.is_some() {
+        let indexed_store = self
+            .paged_indexed_write
+            .is_some_and(|group| group.shape.store == self.current_index);
+        let cooldown = if indexed_store {
+            // A completed checked store proved the missing dword writable.
+            0
+        } else if bytes == 16 && self.paged_copy_window.is_some() {
             // A checked copy lap can establish a new window past a page boundary.
             PAGED_READ_REPLAY - 1
         } else {

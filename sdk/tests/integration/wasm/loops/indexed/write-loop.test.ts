@@ -250,6 +250,73 @@ test('an admitted indexed store publishes both registers and TEST flags before t
   );
 });
 
+test('an indexed write resumes guarded execution after filling a destination page', async () => {
+  const code = 'ffc9741548ffc74883c6040fb60785c074ee8b04838906ebe7';
+  const data = PC + 0x1000n;
+  const output = PC + 0x3000n;
+  const nextPage = output + 0x1000n;
+  const ram = new Uint8Array(4096);
+  ram.fill(1, 0, 32);
+  const color = 0x13572468;
+  new DataView(ram.buffer).setUint32(0x84, color, true);
+  let ready = false;
+  let reentered = false;
+  let extraStores = 0;
+  const restoreImports = observeArtifactImports((env) => {
+    const { debug_begin, paged_loop_guard, paged_loop_write_ready } = env;
+    if (
+      typeof debug_begin !== 'function' ||
+      typeof paged_loop_guard !== 'function' ||
+      typeof paged_loop_write_ready !== 'function'
+    )
+      return;
+    env.debug_begin = (...args: [bigint, bigint, number]) => {
+      if (ready && !reentered && args[0] === PC + 21n) extraStores++;
+      return debug_begin(...args);
+    };
+    env.paged_loop_guard = (...args: [bigint, number, bigint, number]) => {
+      const result = paged_loop_guard(...args);
+      if (ready && result === 1) reentered = true;
+      return result;
+    };
+    env.paged_loop_write_ready = (address: bigint, width: number) => {
+      const result = paged_loop_write_ready(address, width);
+      if (address === nextPage && result === 1) ready = true;
+      return result;
+    };
+  });
+  try {
+    await usingPaged(
+      compiler,
+      {
+        code,
+        words: [
+          [0x4008n, 0xa067n],
+          [0x4018n, 0xb007n],
+          [0x4020n, 0xc007n],
+        ],
+        spans: [
+          { physical: 0xa000n, bytes: ram },
+          { physical: 0xb000n, bytes: new Uint8Array(8192) },
+        ],
+      },
+      async (cpu) => {
+        cpu.setState(initial(PC, { 1: 33n, 3: data + 0x80n, 6: nextPage - 36n, 7: data - 1n }));
+        const result = await cpu.run({ budget: 1000n, stop: PC + BigInt(code.length / 2) });
+        assert.equal(result.reason, 'stop');
+        assert.equal(result.retired, 322n);
+        const values = new DataView(cpu.readPhysicalMemory(0xbfe0n, 128).buffer);
+        for (let offset = 0; offset < values.byteLength; offset += 4)
+          assert.equal(values.getUint32(offset, true), color);
+        assert.ok(ready && reentered, 'the checked store fills the page before the loop reenters');
+        assert.equal(extraStores, 0, 'the next lap uses the filled page');
+      },
+    );
+  } finally {
+    restoreImports();
+  }
+});
+
 test('paired dword reads keep live aliases and retire before a split-page fault', async () => {
   // DEC ECX; JZ end; ADD EAX,[RBX]; ADD R12D,[RBX+4]; MOV EDI,[RBX+4];
   // TEST EDI,EDI; JZ head; MOV [RSI],EAX; JMP head.
